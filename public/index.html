@@ -1,102 +1,138 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IPTV Meta Panel</title>
-  <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-    rel="stylesheet"
-  />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .sortable-ghost {
+      opacity: 0.4;
+      background: #f0f0f0;
+    }
+    .sortable-drag {
+      opacity: 0.8;
+    }
+    .drag-handle {
+      cursor: move;
+      padding: 0 8px;
+      color: #999;
+    }
+    .drag-handle:hover {
+      color: #333;
+    }
+  </style>
 </head>
-<body class="p-3">
-  <div class="container">
-    <h1>IPTV Meta Panel</h1>
-    <hr />
+<body class="bg-light">
+  <div class="container py-4">
+    <h1 class="mb-4">IPTV Meta Panel</h1>
 
-    <h3>1. Benutzer</h3>
-    <form id="user-form" class="row g-2 mb-3">
-      <div class="col-md-3">
-        <input class="form-control" name="username" placeholder="Username" required />
+    <!-- 1. Users -->
+    <h3>1. User-Verwaltung</h3>
+    <div class="row mb-4">
+      <div class="col-md-6">
+        <form id="user-form" class="row g-2 mb-3">
+          <div class="col-4"><input class="form-control" name="username" placeholder="Username" required /></div>
+          <div class="col-4"><input class="form-control" name="password" type="password" placeholder="Passwort" required /></div>
+          <div class="col-4"><button class="btn btn-primary w-100" type="submit">User+</button></div>
+        </form>
+        <ul id="user-list" class="list-group"></ul>
       </div>
-      <div class="col-md-3">
-        <input class="form-control" name="password" placeholder="Passwort" required />
-      </div>
-      <div class="col-md-2">
-        <button class="btn btn-primary w-100" type="submit">User anlegen</button>
-      </div>
-    </form>
-    <ul id="user-list" class="list-group mb-4"></ul>
+    </div>
 
-    <h3>2. Xtream-Provider</h3>
-    <form id="provider-form" class="row g-2 mb-3">
-      <div class="col-md-2">
-        <input class="form-control" name="name" placeholder="Name" required />
+    <!-- 2. Providers -->
+    <h3>2. Provider-Verwaltung</h3>
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <form id="provider-form" class="row g-2 mb-3">
+          <div class="col-md-2"><input class="form-control" name="name" placeholder="Name" required /></div>
+          <div class="col-md-3"><input class="form-control" name="url" placeholder="http://provider.com" required /></div>
+          <div class="col-md-2"><input class="form-control" name="username" placeholder="Username" required /></div>
+          <div class="col-md-2"><input class="form-control" name="password" placeholder="Passwort" required /></div>
+          <div class="col-md-2"><input class="form-control" name="epg_url" placeholder="EPG URL (optional)" /></div>
+          <div class="col-md-1"><button class="btn btn-primary w-100" type="submit">Provider+</button></div>
+        </form>
+        <ul id="provider-list" class="list-group"></ul>
       </div>
-      <div class="col-md-3">
-        <input class="form-control" name="url" placeholder="API URL (http://host:port)" required />
-      </div>
-      <div class="col-md-2">
-        <input class="form-control" name="username" placeholder="User" required />
-      </div>
-      <div class="col-md-2">
-        <input class="form-control" name="password" placeholder="Pass" required />
-      </div>
-      <div class="col-md-3">
-        <input class="form-control" name="epg_url" placeholder="EPG URL (xmltv.php...)" />
-      </div>
-      <div class="col-md-2 mt-2">
-        <button class="btn btn-primary w-100" type="submit">Provider speichern</button>
-      </div>
-    </form>
-    <button id="reload-providers" class="btn btn-secondary btn-sm mb-2">Provider neu laden</button>
-    <ul id="provider-list" class="list-group mb-4"></ul>
+    </div>
 
+    <!-- 3. User-Kategorien & Kanäle -->
     <h3>3. User-Kategorien & Kanäle</h3>
     <div class="row">
       <div class="col-md-4">
         <h5>Ausgewählter User</h5>
         <p id="selected-user-label"><em>Kein User gewählt</em></p>
+        
+        <button id="import-categories-btn" class="btn btn-outline-primary btn-sm w-100 mb-2">
+          📥 Provider-Kategorien importieren
+        </button>
+        
         <form id="category-form" class="row g-2 mb-3">
-          <div class="col-8">
-            <input class="form-control" name="name" placeholder="Kategorie-Name" required />
-          </div>
-          <div class="col-4">
-            <button class="btn btn-primary w-100" type="submit">Kategorie+</button>
-          </div>
+          <div class="col-8"><input class="form-control" name="name" placeholder="Kategorie-Name" required /></div>
+          <div class="col-4"><button class="btn btn-primary w-100" type="submit">Kategorie+</button></div>
         </form>
+        <p class="small text-muted">🖐️ Drag & Drop zum Sortieren</p>
         <ul id="category-list" class="list-group"></ul>
       </div>
+      
       <div class="col-md-8">
         <h5>Kanalzuordnung</h5>
-        <div class="mb-2">
-          <select id="channel-provider-select" class="form-select form-select-sm"></select>
-          <button id="load-provider-channels" class="btn btn-sm btn-secondary mt-1">
-            Provider-Kanäle laden
-          </button>
+        <div class="card mb-3">
+          <div class="card-body">
+            <label class="form-label">Provider auswählen</label>
+            <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
+            <input type="text" id="channel-search" class="form-control form-control-sm" placeholder="🔍 Kanäle durchsuchen..." disabled />
+            <small class="text-muted">Provider auswählen, dann Kanäle durchsuchen</small>
+          </div>
         </div>
+        
         <div class="row">
           <div class="col-md-6">
             <h6>Provider-Kanäle</h6>
-            <ul id="provider-channel-list" class="list-group small" style="max-height:300px; overflow:auto;"></ul>
+            <ul id="provider-channel-list" class="list-group small" style="max-height:400px; overflow:auto;">
+              <li class="list-group-item text-muted">Bitte Provider auswählen</li>
+            </ul>
           </div>
           <div class="col-md-6">
-            <h6>User-Kanäle</h6>
-            <ul id="user-channel-list" class="list-group small" style="max-height:300px; overflow:auto;"></ul>
+            <h6>User-Kanäle <small class="text-muted">🖐️ Drag & Drop</small></h6>
+            <ul id="user-channel-list" class="list-group small" style="max-height:400px; overflow:auto;"></ul>
           </div>
         </div>
       </div>
     </div>
 
-    <hr />
-    <h3>4. Daten für TiviMate</h3>
-    <p>
-      Server-URL: <code id="xtream-url"></code><br />
-      Benutzer: <code id="xtream-user"></code><br />
-      Passwort: <code id="xtream-pass"></code><br />
-      EPG-URL (optional in Apps): <code id="epg-url"></code>
-    </p>
+    <!-- 4. Xtream Codes Info -->
+    <hr class="my-4">
+    <h3>4. Xtream Codes Login</h3>
+    <p><strong>URL:</strong> <code id="xtream-url"></code></p>
+    <p><strong>Username:</strong> <code id="xtream-user">-</code></p>
+    <p><strong>Password:</strong> <code id="xtream-pass">-</code></p>
+    <p><strong>EPG URL:</strong> <code id="epg-url"></code></p>
   </div>
 
+  <!-- Category Import Modal -->
+  <div class="modal fade" id="importCategoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Provider-Kategorien importieren</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="text" id="category-import-search" class="form-control form-control-sm mb-3" placeholder="🔍 Kategorien durchsuchen..." />
+          <ul id="provider-categories-list" class="list-group" style="max-height:400px; overflow:auto;">
+            <li class="list-group-item text-muted">Kategorien werden geladen...</li>
+          </ul>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
