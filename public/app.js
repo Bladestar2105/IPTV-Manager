@@ -115,8 +115,13 @@ async function loadUserCategories() {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     
+    // Adult-Kennzeichnung
+    if (c.is_adult) {
+      li.style.borderLeft = '4px solid #dc3545';
+    }
+    
     const span = document.createElement('span');
-    span.textContent = c.name;
+    span.textContent = c.is_adult ? `🔞 ${c.name}` : c.name;
     span.style.cursor = 'pointer';
     span.onclick = () => {
       [...list.children].forEach(el => el.classList.remove('active'));
@@ -126,6 +131,22 @@ async function loadUserCategories() {
     };
     
     const btnGroup = document.createElement('div');
+    
+    // Adult-Toggle Button
+    const adultBtn = document.createElement('button');
+    adultBtn.className = c.is_adult ? 'btn btn-sm btn-danger me-1' : 'btn btn-sm btn-outline-secondary me-1';
+    adultBtn.textContent = '🔞';
+    adultBtn.title = c.is_adult ? 'Als Adult markiert' : 'Als Adult markieren';
+    adultBtn.onclick = async () => {
+      const newState = c.is_adult ? 0 : 1;
+      await fetchJSON(`/api/user-categories/${c.id}/adult`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({is_adult: newState})
+      });
+      loadUserCategories();
+    };
+    btnGroup.appendChild(adultBtn);
     
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
@@ -163,8 +184,6 @@ async function loadUserCategories() {
 let providerCategories = [];
 
 async function loadProviderCategories() {
-  console.log('🔍 Import-Button geklickt');
-  
   if (!selectedUserId) {
     alert('⚠️ Bitte zuerst einen User auswählen');
     return;
@@ -187,7 +206,6 @@ async function loadProviderCategories() {
 
   try {
     providerCategories = await fetchJSON(`/api/providers/${providerId}/categories`);
-    console.log('✅ Kategorien geladen:', providerCategories.length);
     renderProviderCategories();
   } catch (e) {
     console.error('❌ Fehler:', e);
@@ -220,12 +238,18 @@ function renderProviderCategories() {
     const li = document.createElement('li');
     li.className = 'list-group-item';
     
+    // Adult-Kennzeichnung
+    if (cat.is_adult) {
+      li.style.borderLeft = '4px solid #dc3545';
+    }
+    
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
     
     const info = document.createElement('div');
+    const catNameDisplay = cat.is_adult ? `🔞 ${cat.category_name}` : cat.category_name;
     info.innerHTML = `
-      <strong>${cat.category_name}</strong><br>
+      <strong>${catNameDisplay}</strong><br>
       <small class="text-muted">${cat.channel_count} Kanäle</small>
     `;
     row.appendChild(info);
@@ -276,11 +300,15 @@ async function importCategory(cat, withChannels) {
       })
     });
 
-    if (withChannels) {
-      alert(`✅ Kategorie "${cat.category_name}" mit ${result.channels_imported} Kanälen importiert`);
-    } else {
-      alert(`✅ Kategorie "${cat.category_name}" erstellt (ohne Kanäle)`);
+    let msg = withChannels 
+      ? `✅ Kategorie "${cat.category_name}" mit ${result.channels_imported} Kanälen importiert`
+      : `✅ Kategorie "${cat.category_name}" erstellt (ohne Kanäle)`;
+    
+    if (result.is_adult) {
+      msg += '\n🔞 Als Adult-Content markiert';
     }
+    
+    alert(msg);
 
     loadUserCategories();
     
@@ -319,7 +347,6 @@ async function loadProviderChannels() {
     searchInput.disabled = false;
     searchInput.value = '';
     renderProviderChannels();
-    console.log('✅ Kanäle geladen:', chans.length);
   } catch (e) {
     list.innerHTML = '<li class="list-group-item text-danger">❌ Fehler beim Laden</li>';
     console.error('Channel load error:', e);
@@ -515,8 +542,6 @@ document.getElementById('channel-search').addEventListener('input', () => {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('🚀 DOM loaded');
-  
   document.getElementById('xtream-url').textContent = window.location.origin;
   document.getElementById('xtream-pass').textContent = '<Passwort wie angelegt>';
   document.getElementById('epg-url').textContent = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
@@ -524,23 +549,17 @@ document.addEventListener('DOMContentLoaded', () => {
   // Import-Button Event
   const importBtn = document.getElementById('import-categories-btn');
   if (importBtn) {
-    importBtn.addEventListener('click', () => {
-      console.log('🖱️ Import-Button geklickt');
-      loadProviderCategories();
-    });
+    importBtn.addEventListener('click', loadProviderCategories);
   }
   
   // Kategorie-Suche
   const catSearch = document.getElementById('category-import-search');
   if (catSearch) {
-    catSearch.addEventListener('input', () => {
-      renderProviderCategories();
-    });
+    catSearch.addEventListener('input', renderProviderCategories);
   }
   
   loadUsers();
   loadProviders();
   
   console.log('✅ IPTV Manager loaded');
-  console.log('Bootstrap verfügbar:', typeof bootstrap !== 'undefined');
 });
