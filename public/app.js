@@ -159,7 +159,142 @@ async function loadUserCategories() {
   });
 }
 
-// === Channel Management ===
+// === Provider Category Import ===
+let providerCategories = [];
+
+async function loadProviderCategories() {
+  console.log('🔍 Import-Button geklickt');
+  
+  if (!selectedUserId) {
+    alert('⚠️ Bitte zuerst einen User auswählen');
+    return;
+  }
+
+  const select = document.getElementById('channel-provider-select');
+  const providerId = select.value;
+  
+  if (!providerId) {
+    alert('⚠️ Bitte Provider auswählen');
+    return;
+  }
+
+  const modalEl = document.getElementById('importCategoryModal');
+  const list = document.getElementById('provider-categories-list');
+  list.innerHTML = '<li class="list-group-item text-muted">⏳ Lade Kategorien...</li>';
+  
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+
+  try {
+    providerCategories = await fetchJSON(`/api/providers/${providerId}/categories`);
+    console.log('✅ Kategorien geladen:', providerCategories.length);
+    renderProviderCategories();
+  } catch (e) {
+    console.error('❌ Fehler:', e);
+    list.innerHTML = '<li class="list-group-item text-danger">❌ Fehler beim Laden</li>';
+  }
+}
+
+function renderProviderCategories() {
+  const list = document.getElementById('provider-categories-list');
+  const searchInput = document.getElementById('category-import-search');
+  const search = searchInput.value.toLowerCase().trim();
+  
+  list.innerHTML = '';
+  
+  if (!providerCategories || providerCategories.length === 0) {
+    list.innerHTML = '<li class="list-group-item text-muted">Keine Kategorien gefunden</li>';
+    return;
+  }
+
+  const filtered = search 
+    ? providerCategories.filter(cat => cat.category_name.toLowerCase().includes(search))
+    : providerCategories;
+
+  if (filtered.length === 0) {
+    list.innerHTML = `<li class="list-group-item text-muted">🔍 Keine Treffer für "${search}"</li>`;
+    return;
+  }
+
+  filtered.forEach(cat => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item';
+    
+    const row = document.createElement('div');
+    row.className = 'd-flex justify-content-between align-items-center';
+    
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <strong>${cat.category_name}</strong><br>
+      <small class="text-muted">${cat.channel_count} Kanäle</small>
+    `;
+    row.appendChild(info);
+    
+    const btnGroup = document.createElement('div');
+    
+    const importBtn = document.createElement('button');
+    importBtn.className = 'btn btn-sm btn-primary me-1';
+    importBtn.textContent = '📥 Nur Kategorie';
+    importBtn.onclick = async () => {
+      await importCategory(cat, false);
+    };
+    
+    const importWithChannelsBtn = document.createElement('button');
+    importWithChannelsBtn.className = 'btn btn-sm btn-success';
+    importWithChannelsBtn.textContent = '📥 Mit Kanälen';
+    importWithChannelsBtn.onclick = async () => {
+      await importCategory(cat, true);
+    };
+    
+    btnGroup.appendChild(importBtn);
+    btnGroup.appendChild(importWithChannelsBtn);
+    row.appendChild(btnGroup);
+    
+    li.appendChild(row);
+    list.appendChild(li);
+  });
+}
+
+async function importCategory(cat, withChannels) {
+  if (!selectedUserId) {
+    alert('⚠️ Kein User ausgewählt');
+    return;
+  }
+
+  const select = document.getElementById('channel-provider-select');
+  const providerId = select.value;
+
+  try {
+    const result = await fetchJSON(`/api/providers/${providerId}/import-category`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        user_id: selectedUserId,
+        category_id: cat.category_id,
+        category_name: cat.category_name,
+        import_channels: withChannels
+      })
+    });
+
+    if (withChannels) {
+      alert(`✅ Kategorie "${cat.category_name}" mit ${result.channels_imported} Kanälen importiert`);
+    } else {
+      alert(`✅ Kategorie "${cat.category_name}" erstellt (ohne Kanäle)`);
+    }
+
+    loadUserCategories();
+    
+    const modalEl = document.getElementById('importCategoryModal');
+    const modalInstance = bootstrap.Modal.getInstance(modalEl);
+    if (modalInstance) {
+      modalInstance.hide();
+    }
+  } catch (e) {
+    console.error('❌ Import-Fehler:', e);
+    alert('❌ Fehler: ' + e.message);
+  }
+}
+
 // === Channel Management ===
 async function loadProviderChannels() {
   const select = document.getElementById('channel-provider-select');
@@ -171,46 +306,60 @@ async function loadProviderChannels() {
     list.innerHTML = '<li class="list-group-item text-muted">Bitte Provider auswählen</li>';
     searchInput.disabled = true;
     searchInput.value = '';
+    providerChannelsCache = [];
     return;
   }
   
-  list.innerHTML = '<li class="list-group-item text-muted">Lade Kanäle...</li>';
+  list.innerHTML = '<li class="list-group-item text-muted">⏳ Lade Kanäle...</li>';
   searchInput.disabled = true;
   
   try {
     const chans = await fetchJSON(`/api/providers/${providerId}/channels`);
     providerChannelsCache = chans;
     searchInput.disabled = false;
-    searchInput.focus();
-    renderProviderChannels(chans);
+    searchInput.value = '';
+    renderProviderChannels();
+    console.log('✅ Kanäle geladen:', chans.length);
   } catch (e) {
-    list.innerHTML = '<li class="list-group-item text-danger">Fehler beim Laden</li>';
-    alert('Fehler: ' + e.message);
+    list.innerHTML = '<li class="list-group-item text-danger">❌ Fehler beim Laden</li>';
+    console.error('Channel load error:', e);
   }
 }
 
-// Provider-Select Change Event
-document.getElementById('channel-provider-select').addEventListener('change', loadProviderChannels);
-
-function renderProviderChannels(channels) {
+function renderProviderChannels() {
   const list = document.getElementById('provider-channel-list');
-  const search = document.getElementById('channel-search').value.toLowerCase();
+  const searchInput = document.getElementById('channel-search');
+  const search = searchInput.value.toLowerCase().trim();
   
   list.innerHTML = '';
   
-  const filtered = channels.filter(ch => 
-    ch.name.toLowerCase().includes(search)
-  );
-  
-  if (filtered.length === 0) {
-    list.innerHTML = '<li class="list-group-item text-muted">Keine Kanäle gefunden</li>';
+  if (!providerChannelsCache || providerChannelsCache.length === 0) {
+    list.innerHTML = '<li class="list-group-item text-muted">Keine Kanäle vorhanden</li>';
     return;
   }
   
-  filtered.slice(0, 100).forEach(ch => {
+  const filtered = search 
+    ? providerChannelsCache.filter(ch => ch.name.toLowerCase().includes(search))
+    : providerChannelsCache;
+  
+  if (filtered.length === 0) {
+    list.innerHTML = `<li class="list-group-item text-muted">🔍 Keine Treffer für "${search}"</li>`;
+    return;
+  }
+  
+  const displayCount = Math.min(filtered.length, 100);
+  
+  for (let i = 0; i < displayCount; i++) {
+    const ch = filtered[i];
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
-    li.innerHTML = `<span>${ch.name}</span>`;
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = ch.name;
+    nameSpan.style.flex = '1';
+    nameSpan.style.overflow = 'hidden';
+    nameSpan.style.textOverflow = 'ellipsis';
+    li.appendChild(nameSpan);
     
     if (ch.logo) {
       const img = document.createElement('img');
@@ -218,6 +367,7 @@ function renderProviderChannels(channels) {
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
+      img.onerror = () => img.style.display = 'none';
       li.appendChild(img);
     }
     
@@ -226,7 +376,7 @@ function renderProviderChannels(channels) {
     btn.textContent = '+';
     btn.onclick = async () => {
       if (!selectedUserId || !selectedCategoryId) {
-        alert('Bitte User und Kategorie wählen');
+        alert('⚠️ Bitte User und Kategorie wählen');
         return;
       }
       try {
@@ -237,17 +387,17 @@ function renderProviderChannels(channels) {
         });
         loadUserCategoryChannels();
       } catch (e) {
-        alert('Fehler: ' + e.message);
+        alert('❌ Fehler: ' + e.message);
       }
     };
     
     li.appendChild(btn);
     list.appendChild(li);
-  });
+  }
   
   if (filtered.length > 100) {
     const li = document.createElement('li');
-    li.className = 'list-group-item text-muted';
+    li.className = 'list-group-item text-muted text-center';
     li.textContent = `... und ${filtered.length - 100} weitere (Suche verfeinern)`;
     list.appendChild(li);
   }
@@ -259,10 +409,18 @@ async function loadUserCategoryChannels() {
   const list = document.getElementById('user-channel-list');
   list.innerHTML = '';
   
+  if (chans.length === 0) {
+    list.innerHTML = '<li class="list-group-item text-muted">Keine Kanäle zugeordnet</li>';
+    return;
+  }
+  
   chans.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
-    li.innerHTML = `<span>${ch.name}</span>`;
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = ch.name;
+    li.appendChild(nameSpan);
     
     if (ch.logo) {
       const img = document.createElement('img');
@@ -270,6 +428,7 @@ async function loadUserCategoryChannels() {
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
+      img.onerror = () => img.style.display = 'none';
       li.appendChild(img);
     }
     
@@ -330,7 +489,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
 document.getElementById('category-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (!selectedUserId) {
-    alert('Bitte zuerst einen User auswählen');
+    alert('⚠️ Bitte zuerst einen User auswählen');
     return;
   }
   const f = e.target;
@@ -348,27 +507,40 @@ document.getElementById('category-form').addEventListener('submit', async e => {
   }
 });
 
-document.getElementById('reload-providers').addEventListener('click', loadProviders);
-document.getElementById('load-provider-channels').addEventListener('click', loadProviderChannels);
+// === Event Handlers ===
+document.getElementById('channel-provider-select').addEventListener('change', loadProviderChannels);
+document.getElementById('channel-search').addEventListener('input', () => {
+  renderProviderChannels();
+});
 
-// Channel-Suche Event-Handler
-let searchTimeout;
-function setupChannelSearch() {
-  const searchInput = document.getElementById('channel-search');
-  searchInput.addEventListener('input', (e) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-      renderProviderChannels(providerChannelsCache);
-    }, 300); // 300ms Debounce
-  });
-}
-
-
+// === Init ===
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('🚀 DOM loaded');
+  
   document.getElementById('xtream-url').textContent = window.location.origin;
   document.getElementById('xtream-pass').textContent = '<Passwort wie angelegt>';
   document.getElementById('epg-url').textContent = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
+  
+  // Import-Button Event
+  const importBtn = document.getElementById('import-categories-btn');
+  if (importBtn) {
+    importBtn.addEventListener('click', () => {
+      console.log('🖱️ Import-Button geklickt');
+      loadProviderCategories();
+    });
+  }
+  
+  // Kategorie-Suche
+  const catSearch = document.getElementById('category-import-search');
+  if (catSearch) {
+    catSearch.addEventListener('input', () => {
+      renderProviderCategories();
+    });
+  }
+  
   loadUsers();
   loadProviders();
-  setupChannelSearch();
+  
+  console.log('✅ IPTV Manager loaded');
+  console.log('Bootstrap verfügbar:', typeof bootstrap !== 'undefined');
 });
