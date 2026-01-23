@@ -8,6 +8,8 @@ let selectedUser = null;
 let selectedUserId = null;
 let selectedCategoryId = null;
 let providerChannelsCache = [];
+let categorySortable = null;
+let channelSortable = null;
 
 // === User Management ===
 async function loadUsers() {
@@ -114,21 +116,31 @@ async function loadUserCategories() {
   cats.forEach(c => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
+    li.dataset.id = c.id;
     
     // Adult-Kennzeichnung
     if (c.is_adult) {
       li.style.borderLeft = '4px solid #dc3545';
     }
     
+    // Drag Handle
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮⋮';
+    dragHandle.title = 'Ziehen zum Sortieren';
+    li.appendChild(dragHandle);
+    
     const span = document.createElement('span');
     span.textContent = c.is_adult ? `🔞 ${c.name}` : c.name;
     span.style.cursor = 'pointer';
+    span.style.flex = '1';
     span.onclick = () => {
       [...list.children].forEach(el => el.classList.remove('active'));
       li.classList.add('active');
       selectedCategoryId = c.id;
       loadUserCategoryChannels();
     };
+    li.appendChild(span);
     
     const btnGroup = document.createElement('div');
     
@@ -173,10 +185,45 @@ async function loadUserCategories() {
     
     btnGroup.appendChild(editBtn);
     btnGroup.appendChild(delBtn);
-    
-    li.appendChild(span);
     li.appendChild(btnGroup);
+    
     list.appendChild(li);
+  });
+  
+  // Sortable initialisieren
+  initCategorySortable();
+}
+
+function initCategorySortable() {
+  if (categorySortable) {
+    categorySortable.destroy();
+  }
+  
+  const list = document.getElementById('category-list');
+  if (!list || list.children.length === 0) return;
+  
+  categorySortable = Sortable.create(list, {
+    animation: 150,
+    handle: '.drag-handle',
+    ghostClass: 'sortable-ghost',
+    dragClass: 'sortable-drag',
+    onEnd: async function(evt) {
+      // Neue Reihenfolge speichern
+      const categoryIds = Array.from(list.children).map(li => Number(li.dataset.id));
+      
+      try {
+        await fetchJSON(`/api/users/${selectedUserId}/categories/reorder`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({category_ids: categoryIds})
+        });
+        console.log('✅ Kategorien-Reihenfolge gespeichert');
+      } catch (e) {
+        console.error('❌ Fehler beim Speichern:', e);
+        alert('❌ Fehler beim Speichern der Reihenfolge');
+        loadUserCategories(); // Reload bei Fehler
+      }
+    }
   });
 }
 
@@ -238,7 +285,6 @@ function renderProviderCategories() {
     const li = document.createElement('li');
     li.className = 'list-group-item';
     
-    // Adult-Kennzeichnung
     if (cat.is_adult) {
       li.style.borderLeft = '4px solid #dc3545';
     }
@@ -438,15 +484,28 @@ async function loadUserCategoryChannels() {
   
   if (chans.length === 0) {
     list.innerHTML = '<li class="list-group-item text-muted">Keine Kanäle zugeordnet</li>';
+    if (channelSortable) {
+      channelSortable.destroy();
+      channelSortable = null;
+    }
     return;
   }
   
   chans.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
+    li.dataset.id = ch.user_channel_id;
+    
+    // Drag Handle
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'drag-handle';
+    dragHandle.innerHTML = '⋮⋮';
+    dragHandle.title = 'Ziehen zum Sortieren';
+    li.appendChild(dragHandle);
     
     const nameSpan = document.createElement('span');
     nameSpan.textContent = ch.name;
+    nameSpan.style.flex = '1';
     li.appendChild(nameSpan);
     
     if (ch.logo) {
@@ -469,6 +528,42 @@ async function loadUserCategoryChannels() {
     
     li.appendChild(delBtn);
     list.appendChild(li);
+  });
+  
+  // Sortable initialisieren
+  initChannelSortable();
+}
+
+function initChannelSortable() {
+  if (channelSortable) {
+    channelSortable.destroy();
+  }
+  
+  const list = document.getElementById('user-channel-list');
+  if (!list || list.children.length === 0) return;
+  
+  channelSortable = Sortable.create(list, {
+    animation: 150,
+    handle: '.drag-handle',
+    ghostClass: 'sortable-ghost',
+    dragClass: 'sortable-drag',
+    onEnd: async function(evt) {
+      // Neue Reihenfolge speichern
+      const channelIds = Array.from(list.children).map(li => Number(li.dataset.id));
+      
+      try {
+        await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels/reorder`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({channel_ids: channelIds})
+        });
+        console.log('✅ Kanal-Reihenfolge gespeichert');
+      } catch (e) {
+        console.error('❌ Fehler beim Speichern:', e);
+        alert('❌ Fehler beim Speichern der Reihenfolge');
+        loadUserCategoryChannels(); // Reload bei Fehler
+      }
+    }
   });
 }
 
@@ -546,13 +641,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('xtream-pass').textContent = '<Passwort wie angelegt>';
   document.getElementById('epg-url').textContent = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
   
-  // Import-Button Event
   const importBtn = document.getElementById('import-categories-btn');
   if (importBtn) {
     importBtn.addEventListener('click', loadProviderCategories);
   }
   
-  // Kategorie-Suche
   const catSearch = document.getElementById('category-import-search');
   if (catSearch) {
     catSearch.addEventListener('input', renderProviderCategories);
@@ -561,5 +654,5 @@ document.addEventListener('DOMContentLoaded', () => {
   loadUsers();
   loadProviders();
   
-  console.log('✅ IPTV Manager loaded');
+  console.log('✅ IPTV Manager loaded with Drag & Drop');
 });
