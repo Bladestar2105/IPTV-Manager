@@ -187,6 +187,196 @@ const translations = {
     // Loading states
     loading: 'Lädt...',
     saving: 'Speichert...'
+  },
+
+  fr: {
+    // Title & Headers
+    title: 'Panneau Meta IPTV',
+    userManagement: 'Gestion des Utilisateurs',
+    providerManagement: 'Gestion des Fournisseurs',
+    categoriesChannels: 'Catégories et Chaînes Utilisateur',
+    xtreamLogin: 'Connexion Xtream Codes',
+    
+    // User Section
+    username: "Nom d'utilisateur",
+    password: 'Mot de passe',
+    addUser: 'Ajouter Utilisateur',
+    deleteUserConfirm: 'Supprimer vraiment l\'utilisateur "{name}" ?',
+    userCreated: '✅ Utilisateur créé',
+    
+    // Provider Section
+    providerName: 'Nom',
+    providerUrl: 'URL du Fournisseur',
+    providerUsername: "Nom d'utilisateur",
+    providerPassword: 'Mot de passe',
+    epgUrl: 'URL EPG (optionnel)',
+    addProvider: 'Ajouter Fournisseur',
+    sync: 'Synchro',
+    syncing: 'Synchronisation...',
+    syncSuccess: '✅ {count} chaînes synchronisées',
+    deleteProviderConfirm: 'Supprimer vraiment le fournisseur "{name}" ?',
+    providerCreated: '✅ Fournisseur créé',
+    
+    // Category Section
+    selectedUser: 'Utilisateur Sélectionné',
+    noUserSelected: 'Aucun utilisateur sélectionné',
+    importCategories: '📥 Importer Catégories Fournisseur',
+    categoryName: 'Nom de la Catégorie',
+    addCategory: 'Ajouter Catégorie',
+    dragToSort: '🖐️ Glisser-déposer pour trier',
+    editCategory: 'Modifier Catégorie',
+    newName: 'Nouveau nom :',
+    deleteCategoryConfirm: 'Supprimer vraiment la catégorie "{name}" ?',
+    categoryCreated: '✅ Catégorie créée',
+    markedAsAdult: 'Marqué comme Adulte',
+    markAsAdult: 'Marquer comme Adulte',
+    
+    // Channel Section
+    channelAssignment: 'Attribution des Chaînes',
+    selectProvider: 'Sélectionner Fournisseur',
+    selectProviderPlaceholder: '-- Sélectionner Fournisseur --',
+    searchChannels: '🔍 Rechercher chaînes...',
+    searchChannelsHint: 'Sélectionner fournisseur, puis rechercher chaînes',
+    providerChannels: 'Chaînes Fournisseur',
+    userChannels: 'Chaînes Utilisateur',
+    dragToSortChannels: '🖐️ Glisser-déposer',
+    noChannels: 'Aucune chaîne attribuée',
+    pleaseSelectProvider: 'Veuillez sélectionner un fournisseur',
+    noChannelsAvailable: 'Aucune chaîne disponible',
+    loadingChannels: '⏳ Chargement des chaînes...',
+    loadingError: '❌ Erreur de chargement',
+    noResults: '🔍 Aucun résultat pour "{search}"',
+    moreChannels: '... et {count} de plus (affiner la recherche)',
+    selectUserAndCategory: '⚠️ Veuillez sélectionner utilisateur et catégorie',
+    
+    // Import Modal
+    importCategoriesTitle: 'Importer Catégories Fournisseur',
+    searchCategories: '🔍 Rechercher catégories...',
+    loadingCategories: 'Chargement des catégories...',
+    noCategoriesFound: 'Aucune catégorie trouvée',
+    channels: 'chaînes',
+    importCategoryOnly: '📥 Catégorie Seule',
+    importWithChannels: '📥 Avec Chaînes',
+    close: 'Fermer',
+    categoryImportedOnly: '✅ Catégorie "{name}" créée (sans chaînes)',
+    categoryImportedWithChannels: '✅ Catégorie "{name}" importée avec {count} chaînes',
+    markedAsAdultContent: '🔞 Marqué comme Contenu Adulte',
+    
+    // Xtream Info
+    url: 'URL',
+    epgUrlLabel: 'URL EPG',
+    passwordPlaceholder: '<Votre Mot de Passe>',
+    
+    // Alerts & Errors
+    pleaseSelectUserFirst: '⚠️ Veuillez d\'abord sélectionner un utilisateur',
+    pleaseSelectProvider: '⚠️ Veuillez sélectionner un fournisseur',
+    error: '❌ Erreur',
+    errorPrefix: '❌ Erreur :',
+    
+    // Buttons
+    delete: '🗑',
+    edit: '✏️',
+    adult: '🔞',
+    add: '+',
+    
+    // Loading states
+    loading: 'Chargement...',
+    saving: 'Enregistrement...'
+  },
+
+  el: {
+    // Title & Headers
+    title: 'Πίνακας Meta IPTV',
+    userManagement: 'Διαχείριση Χρηστών',
+    providerManagement: 'Διαχείριση Παρόχων',
+    categoriesChannels: 'Κατηγορίες & Κανάλια Χρήστη',
+    xtreamLogin: 'Σύνδεση Xtream Codes',
+    
+    // User Section
+    username: 'Όνομα χρήστη',
+    password: 'Κωδικός πρόσβασης',
+    addUser: 'Προσθήκη Χρήστη',
+    deleteUserConfirm: 'Διαγραφή χρήστη "{name}";',
+    userCreated: '✅ Χρήστης δημιουργήθηκε',
+    
+    // Provider Section
+    providerName: 'Όνομα',
+    providerUrl: 'URL Παρόχου',
+    providerUsername: 'Όνομα χρήστη',
+    providerPassword: 'Κωδικός πρόσβασης',
+    epgUrl: 'URL EPG (προαιρετικό)',
+    addProvider: 'Προσθήκη Παρόχου',
+    sync: 'Συγχρονισμός',
+    syncing: 'Συγχρονισμός...',
+    syncSuccess: '✅ {count} κανάλια συγχρονίστηκαν',
+    deleteProviderConfirm: 'Διαγραφή παρόχου "{name}";',
+    providerCreated: '✅ Πάροχος δημιουργήθηκε',
+    
+    // Category Section
+    selectedUser: 'Επιλεγμένος Χρήστης',
+    noUserSelected: 'Δεν επιλέχθηκε χρήστης',
+    importCategories: '📥 Εισαγωγή Κατηγοριών Παρόχου',
+    categoryName: 'Όνομα Κατηγορίας',
+    addCategory: 'Προσθήκη Κατηγορίας',
+    dragToSort: '🖐️ Σύρετε & Αποθέστε για ταξινόμηση',
+    editCategory: 'Επεξεργασία Κατηγορίας',
+    newName: 'Νέο όνομα:',
+    deleteCategoryConfirm: 'Διαγραφή κατηγορίας "{name}";',
+    categoryCreated: '✅ Κατηγορία δημιουργήθηκε',
+    markedAsAdult: 'Σημειώθηκε ως Ενήλικων',
+    markAsAdult: 'Σημείωση ως Ενήλικων',
+    
+    // Channel Section
+    channelAssignment: 'Ανάθεση Καναλιών',
+    selectProvider: 'Επιλογή Παρόχου',
+    selectProviderPlaceholder: '-- Επιλέξτε Πάροχο --',
+    searchChannels: '🔍 Αναζήτηση καναλιών...',
+    searchChannelsHint: 'Επιλέξτε πάροχο και αναζητήστε κανάλια',
+    providerChannels: 'Κανάλια Παρόχου',
+    userChannels: 'Κανάλια Χρήστη',
+    dragToSortChannels: '🖐️ Σύρετε & Αποθέστε',
+    noChannels: 'Δεν υπάρχουν κανάλια',
+    pleaseSelectProvider: 'Παρακαλώ επιλέξτε πάροχο',
+    noChannelsAvailable: 'Δεν υπάρχουν διαθέσιμα κανάλια',
+    loadingChannels: '⏳ Φόρτωση καναλιών...',
+    loadingError: '❌ Σφάλμα φόρτωσης',
+    noResults: '🔍 Δεν βρέθηκαν αποτελέσματα για "{search}"',
+    moreChannels: '... και {count} ακόμα (βελτιώστε την αναζήτηση)',
+    selectUserAndCategory: '⚠️ Επιλέξτε χρήστη και κατηγορία',
+    
+    // Import Modal
+    importCategoriesTitle: 'Εισαγωγή Κατηγοριών Παρόχου',
+    searchCategories: '🔍 Αναζήτηση κατηγοριών...',
+    loadingCategories: 'Φόρτωση κατηγοριών...',
+    noCategoriesFound: 'Δεν βρέθηκαν κατηγορίες',
+    channels: 'κανάλια',
+    importCategoryOnly: '📥 Μόνο Κατηγορία',
+    importWithChannels: '📥 Με Κανάλια',
+    close: 'Κλείσιμο',
+    categoryImportedOnly: '✅ Κατηγορία "{name}" δημιουργήθηκε (χωρίς κανάλια)',
+    categoryImportedWithChannels: '✅ Κατηγορία "{name}" εισήχθη με {count} κανάλια',
+    markedAsAdultContent: '🔞 Σημειώθηκε ως Περιεχόμενο Ενηλίκων',
+    
+    // Xtream Info
+    url: 'URL',
+    epgUrlLabel: 'URL EPG',
+    passwordPlaceholder: '<Ο Κωδικός σας>',
+    
+    // Alerts & Errors
+    pleaseSelectUserFirst: '⚠️ Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
+    pleaseSelectProvider: '⚠️ Παρακαλώ επιλέξτε πάροχο',
+    error: '❌ Σφάλμα',
+    errorPrefix: '❌ Σφάλμα:',
+    
+    // Buttons
+    delete: '🗑',
+    edit: '✏️',
+    adult: '🔞',
+    add: '+',
+    
+    // Loading states
+    loading: 'Φόρτωση...',
+    saving: 'Αποθήκευση...'
   }
 };
 
