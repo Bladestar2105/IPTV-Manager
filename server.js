@@ -182,6 +182,104 @@ app.get('/api/providers/:id/channels', (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
+// Provider-Kategorien abrufen
+app.get('/api/providers/:id/categories', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
+    if (!provider) return res.status(404).json({error: 'Provider not found'});
+
+    const xtream = createXtreamClient(provider);
+    let categories = [];
+    
+    try {
+      // Direkt vom Provider abrufen
+      const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_categories`;
+      const resp = await fetch(apiUrl);
+      if (resp.ok) {
+        categories = await resp.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch categories:', e);
+    }
+
+    // Zusätzlich: Kategorien aus bereits synchronisierten Kanälen
+    const localCats = db.prepare(`
+      SELECT DISTINCT original_category_id, 
+             GROUP_CONCAT(name) as sample_channels,
+             COUNT(*) as channel_count
+      FROM provider_channels 
+      WHERE provider_id = ? AND original_category_id > 0
+      GROUP BY original_category_id
+      ORDER BY channel_count DESC
+    `).all(id);
+
+    // Merge: API-Kategorien mit lokalen Channel-Counts
+    const merged = categories.map(cat => {
+      const local = localCats.find(l => Number(l.original_category_id) === Number(cat.category_id));
+      return {
+        category_id: cat.category_id,
+        category_name: cat.category_name,
+        channel_count: local ? local.channel_count : 0
+      };
+    });
+
+    res.json(merged);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Provider-Kategorie importieren
+app.post('/api/providers/:providerId/import-category', async (req, res) => {
+  try {
+    const providerId = Number(req.params.providerId);
+    const { user_id, category_id, category_name, import_channels } = req.body;
+    
+    if (!user_id || !category_id || !category_name) {
+      return res.status(400).json({error: 'Missing required fields'});
+    }
+
+    // 1. User-Kategorie erstellen
+    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name) VALUES (?, ?)').run(user_id, category_name);
+    const newCategoryId = catInfo.lastInsertRowid;
+
+    // 2. Optional: Kanäle automatisch zuordnen
+    if (import_channels) {
+      const channels = db.prepare(`
+        SELECT id FROM provider_channels 
+        WHERE provider_id = ? AND original_category_id = ?
+        ORDER BY name
+      `).all(providerId, Number(category_id));
+
+      const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+      
+      db.transaction(() => {
+        channels.forEach((ch, idx) => {
+          insertChannel.run(newCategoryId, ch.id, idx);
+        });
+      })();
+
+      res.json({
+        success: true, 
+        category_id: newCategoryId,
+        channels_imported: channels.length
+      });
+    } else {
+      res.json({
+        success: true, 
+        category_id: newCategoryId,
+        channels_imported: 0
+      });
+    }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+
 // === API: User Categories ===
 app.get('/api/users/:userId/categories', (req, res) => {
   try {
