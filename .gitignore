@@ -1,9 +1,3 @@
-
-***
-
-## 📄 **.gitignore**
-
-```gitignore
 # Database
 db.sqlite
 db.sqlite-wal
