@@ -11,6 +11,49 @@ let providerChannelsCache = [];
 let categorySortable = null;
 let channelSortable = null;
 
+// i18n: Seite übersetzen
+function translatePage() {
+  // Texte übersetzen
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    el.textContent = t(key);
+  });
+  
+  // Platzhalter übersetzen
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    el.placeholder = t(key);
+  });
+  
+  // HTML title
+  document.title = t('title');
+  
+  // HTML lang Attribut
+  document.documentElement.lang = currentLang;
+  
+  console.log(`🌍 Page translated to: ${currentLang}`);
+}
+
+// Language Switcher
+document.addEventListener('DOMContentLoaded', () => {
+  const langSelector = document.getElementById('language-selector');
+  if (langSelector) {
+    langSelector.value = currentLang;
+    langSelector.addEventListener('change', (e) => {
+      if (setLanguage(e.target.value)) {
+        translatePage();
+        // Listen neu laden
+        if (selectedUserId) {
+          loadUserCategories();
+          if (selectedCategoryId) {
+            loadUserCategoryChannels();
+          }
+        }
+      }
+    });
+  }
+});
+
 // === User Management ===
 async function loadUsers() {
   const users = await fetchJSON('/api/users');
@@ -27,17 +70,17 @@ async function loadUsers() {
     span.onclick = () => {
       selectedUser = u;
       selectedUserId = u.id;
-      document.getElementById('selected-user-label').textContent = `User: ${u.username} (id=${u.id})`;
+      document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${u.username} (id=${u.id})`;
       document.getElementById('xtream-user').textContent = u.username;
-      document.getElementById('xtream-pass').textContent = '<dein Passwort>';
+      document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
       loadUserCategories();
     };
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = '🗑';
+    delBtn.textContent = t('delete');
     delBtn.onclick = async () => {
-      if (!confirm(`User "${u.username}" wirklich löschen?`)) return;
+      if (!confirm(t('deleteUserConfirm', {name: u.username}))) return;
       await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
       loadUsers();
     };
@@ -54,7 +97,7 @@ async function loadProviders() {
   const list = document.getElementById('provider-list');
   const select = document.getElementById('channel-provider-select');
   list.innerHTML = '';
-  select.innerHTML = '<option value="">-- Provider wählen --</option>';
+  select.innerHTML = `<option value="">${t('selectProviderPlaceholder')}</option>`;
 
   providers.forEach(p => {
     const li = document.createElement('li');
@@ -68,26 +111,26 @@ async function loadProviders() {
     
     const syncBtn = document.createElement('button');
     syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
-    syncBtn.textContent = 'Sync';
+    syncBtn.textContent = t('sync');
     syncBtn.onclick = async () => {
       syncBtn.disabled = true;
-      syncBtn.textContent = 'Sync...';
+      syncBtn.textContent = t('syncing');
       try {
         const res = await fetchJSON(`/api/providers/${p.id}/sync`, {method: 'POST'});
-        alert(`✅ ${res.synced} Kanäle synchronisiert`);
+        alert(t('syncSuccess', {count: res.synced}));
       } catch (e) {
-        alert('❌ Fehler: ' + e.message);
+        alert(t('errorPrefix') + ' ' + e.message);
       } finally {
         syncBtn.disabled = false;
-        syncBtn.textContent = 'Sync';
+        syncBtn.textContent = t('sync');
       }
     };
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = '🗑';
+    delBtn.textContent = t('delete');
     delBtn.onclick = async () => {
-      if (!confirm(`Provider "${p.name}" wirklich löschen?`)) return;
+      if (!confirm(t('deleteProviderConfirm', {name: p.name}))) return;
       await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
       loadProviders();
     };
@@ -127,7 +170,7 @@ async function loadUserCategories() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'drag-handle';
     dragHandle.innerHTML = '⋮⋮';
-    dragHandle.title = 'Ziehen zum Sortieren';
+    dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
     
     const span = document.createElement('span');
@@ -147,8 +190,8 @@ async function loadUserCategories() {
     // Adult-Toggle Button
     const adultBtn = document.createElement('button');
     adultBtn.className = c.is_adult ? 'btn btn-sm btn-danger me-1' : 'btn btn-sm btn-outline-secondary me-1';
-    adultBtn.textContent = '🔞';
-    adultBtn.title = c.is_adult ? 'Als Adult markiert' : 'Als Adult markieren';
+    adultBtn.textContent = t('adult');
+    adultBtn.title = c.is_adult ? t('markedAsAdult') : t('markAsAdult');
     adultBtn.onclick = async () => {
       const newState = c.is_adult ? 0 : 1;
       await fetchJSON(`/api/user-categories/${c.id}/adult`, {
@@ -162,9 +205,9 @@ async function loadUserCategories() {
     
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    editBtn.textContent = '✏️';
+    editBtn.textContent = t('edit');
     editBtn.onclick = async () => {
-      const newName = prompt('Neuer Name:', c.name);
+      const newName = prompt(t('newName'), c.name);
       if (!newName) return;
       await fetchJSON(`/api/user-categories/${c.id}`, {
         method: 'PUT',
@@ -176,9 +219,9 @@ async function loadUserCategories() {
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = '🗑';
+    delBtn.textContent = t('delete');
     delBtn.onclick = async () => {
-      if (!confirm(`Kategorie "${c.name}" wirklich löschen?`)) return;
+      if (!confirm(t('deleteCategoryConfirm', {name: c.name}))) return;
       await fetchJSON(`/api/user-categories/${c.id}`, {method: 'DELETE'});
       loadUserCategories();
     };
@@ -208,7 +251,6 @@ function initCategorySortable() {
     ghostClass: 'sortable-ghost',
     dragClass: 'sortable-drag',
     onEnd: async function(evt) {
-      // Neue Reihenfolge speichern
       const categoryIds = Array.from(list.children).map(li => Number(li.dataset.id));
       
       try {
@@ -217,11 +259,11 @@ function initCategorySortable() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({category_ids: categoryIds})
         });
-        console.log('✅ Kategorien-Reihenfolge gespeichert');
+        console.log('✅ Category order saved');
       } catch (e) {
-        console.error('❌ Fehler beim Speichern:', e);
-        alert('❌ Fehler beim Speichern der Reihenfolge');
-        loadUserCategories(); // Reload bei Fehler
+        console.error('❌ Save error:', e);
+        alert(t('errorPrefix') + ' ' + e.message);
+        loadUserCategories();
       }
     }
   });
@@ -232,7 +274,7 @@ let providerCategories = [];
 
 async function loadProviderCategories() {
   if (!selectedUserId) {
-    alert('⚠️ Bitte zuerst einen User auswählen');
+    alert(t('pleaseSelectUserFirst'));
     return;
   }
 
@@ -240,13 +282,13 @@ async function loadProviderCategories() {
   const providerId = select.value;
   
   if (!providerId) {
-    alert('⚠️ Bitte Provider auswählen');
+    alert(t('pleaseSelectProvider'));
     return;
   }
 
   const modalEl = document.getElementById('importCategoryModal');
   const list = document.getElementById('provider-categories-list');
-  list.innerHTML = '<li class="list-group-item text-muted">⏳ Lade Kategorien...</li>';
+  list.innerHTML = `<li class="list-group-item text-muted">${t('loadingCategories')}</li>`;
   
   const modal = new bootstrap.Modal(modalEl);
   modal.show();
@@ -255,8 +297,8 @@ async function loadProviderCategories() {
     providerCategories = await fetchJSON(`/api/providers/${providerId}/categories`);
     renderProviderCategories();
   } catch (e) {
-    console.error('❌ Fehler:', e);
-    list.innerHTML = '<li class="list-group-item text-danger">❌ Fehler beim Laden</li>';
+    console.error('❌ Error:', e);
+    list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
   }
 }
 
@@ -268,7 +310,7 @@ function renderProviderCategories() {
   list.innerHTML = '';
   
   if (!providerCategories || providerCategories.length === 0) {
-    list.innerHTML = '<li class="list-group-item text-muted">Keine Kategorien gefunden</li>';
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noCategoriesFound')}</li>`;
     return;
   }
 
@@ -277,7 +319,7 @@ function renderProviderCategories() {
     : providerCategories;
 
   if (filtered.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">🔍 Keine Treffer für "${search}"</li>`;
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: search})}</li>`;
     return;
   }
 
@@ -296,7 +338,7 @@ function renderProviderCategories() {
     const catNameDisplay = cat.is_adult ? `🔞 ${cat.category_name}` : cat.category_name;
     info.innerHTML = `
       <strong>${catNameDisplay}</strong><br>
-      <small class="text-muted">${cat.channel_count} Kanäle</small>
+      <small class="text-muted">${cat.channel_count} ${t('channels')}</small>
     `;
     row.appendChild(info);
     
@@ -304,14 +346,14 @@ function renderProviderCategories() {
     
     const importBtn = document.createElement('button');
     importBtn.className = 'btn btn-sm btn-primary me-1';
-    importBtn.textContent = '📥 Nur Kategorie';
+    importBtn.textContent = t('importCategoryOnly');
     importBtn.onclick = async () => {
       await importCategory(cat, false);
     };
     
     const importWithChannelsBtn = document.createElement('button');
     importWithChannelsBtn.className = 'btn btn-sm btn-success';
-    importWithChannelsBtn.textContent = '📥 Mit Kanälen';
+    importWithChannelsBtn.textContent = t('importWithChannels');
     importWithChannelsBtn.onclick = async () => {
       await importCategory(cat, true);
     };
@@ -327,7 +369,7 @@ function renderProviderCategories() {
 
 async function importCategory(cat, withChannels) {
   if (!selectedUserId) {
-    alert('⚠️ Kein User ausgewählt');
+    alert(t('pleaseSelectUserFirst'));
     return;
   }
 
@@ -347,11 +389,11 @@ async function importCategory(cat, withChannels) {
     });
 
     let msg = withChannels 
-      ? `✅ Kategorie "${cat.category_name}" mit ${result.channels_imported} Kanälen importiert`
-      : `✅ Kategorie "${cat.category_name}" erstellt (ohne Kanäle)`;
+      ? t('categoryImportedWithChannels', {name: cat.category_name, count: result.channels_imported})
+      : t('categoryImportedOnly', {name: cat.category_name});
     
     if (result.is_adult) {
-      msg += '\n🔞 Als Adult-Content markiert';
+      msg += '\n' + t('markedAsAdultContent');
     }
     
     alert(msg);
@@ -364,8 +406,8 @@ async function importCategory(cat, withChannels) {
       modalInstance.hide();
     }
   } catch (e) {
-    console.error('❌ Import-Fehler:', e);
-    alert('❌ Fehler: ' + e.message);
+    console.error('❌ Import error:', e);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 }
 
@@ -377,14 +419,14 @@ async function loadProviderChannels() {
   const list = document.getElementById('provider-channel-list');
   
   if (!providerId) {
-    list.innerHTML = '<li class="list-group-item text-muted">Bitte Provider auswählen</li>';
+    list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
     searchInput.disabled = true;
     searchInput.value = '';
     providerChannelsCache = [];
     return;
   }
   
-  list.innerHTML = '<li class="list-group-item text-muted">⏳ Lade Kanäle...</li>';
+  list.innerHTML = `<li class="list-group-item text-muted">${t('loadingChannels')}</li>`;
   searchInput.disabled = true;
   
   try {
@@ -394,7 +436,7 @@ async function loadProviderChannels() {
     searchInput.value = '';
     renderProviderChannels();
   } catch (e) {
-    list.innerHTML = '<li class="list-group-item text-danger">❌ Fehler beim Laden</li>';
+    list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
     console.error('Channel load error:', e);
   }
 }
@@ -407,7 +449,7 @@ function renderProviderChannels() {
   list.innerHTML = '';
   
   if (!providerChannelsCache || providerChannelsCache.length === 0) {
-    list.innerHTML = '<li class="list-group-item text-muted">Keine Kanäle vorhanden</li>';
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noChannelsAvailable')}</li>`;
     return;
   }
   
@@ -416,7 +458,7 @@ function renderProviderChannels() {
     : providerChannelsCache;
   
   if (filtered.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">🔍 Keine Treffer für "${search}"</li>`;
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: search})}</li>`;
     return;
   }
   
@@ -446,10 +488,10 @@ function renderProviderChannels() {
     
     const btn = document.createElement('button');
     btn.className = 'btn btn-sm btn-success ms-2';
-    btn.textContent = '+';
+    btn.textContent = t('add');
     btn.onclick = async () => {
       if (!selectedUserId || !selectedCategoryId) {
-        alert('⚠️ Bitte User und Kategorie wählen');
+        alert(t('selectUserAndCategory'));
         return;
       }
       try {
@@ -460,7 +502,7 @@ function renderProviderChannels() {
         });
         loadUserCategoryChannels();
       } catch (e) {
-        alert('❌ Fehler: ' + e.message);
+        alert(t('errorPrefix') + ' ' + e.message);
       }
     };
     
@@ -471,7 +513,7 @@ function renderProviderChannels() {
   if (filtered.length > 100) {
     const li = document.createElement('li');
     li.className = 'list-group-item text-muted text-center';
-    li.textContent = `... und ${filtered.length - 100} weitere (Suche verfeinern)`;
+    li.textContent = t('moreChannels', {count: filtered.length - 100});
     list.appendChild(li);
   }
 }
@@ -483,7 +525,7 @@ async function loadUserCategoryChannels() {
   list.innerHTML = '';
   
   if (chans.length === 0) {
-    list.innerHTML = '<li class="list-group-item text-muted">Keine Kanäle zugeordnet</li>';
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noChannels')}</li>`;
     if (channelSortable) {
       channelSortable.destroy();
       channelSortable = null;
@@ -500,7 +542,7 @@ async function loadUserCategoryChannels() {
     const dragHandle = document.createElement('span');
     dragHandle.className = 'drag-handle';
     dragHandle.innerHTML = '⋮⋮';
-    dragHandle.title = 'Ziehen zum Sortieren';
+    dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
     
     const nameSpan = document.createElement('span');
@@ -520,7 +562,7 @@ async function loadUserCategoryChannels() {
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger ms-2';
-    delBtn.textContent = '🗑';
+    delBtn.textContent = t('delete');
     delBtn.onclick = async () => {
       await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
       loadUserCategoryChannels();
@@ -548,7 +590,6 @@ function initChannelSortable() {
     ghostClass: 'sortable-ghost',
     dragClass: 'sortable-drag',
     onEnd: async function(evt) {
-      // Neue Reihenfolge speichern
       const channelIds = Array.from(list.children).map(li => Number(li.dataset.id));
       
       try {
@@ -557,11 +598,11 @@ function initChannelSortable() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({channel_ids: channelIds})
         });
-        console.log('✅ Kanal-Reihenfolge gespeichert');
+        console.log('✅ Channel order saved');
       } catch (e) {
-        console.error('❌ Fehler beim Speichern:', e);
-        alert('❌ Fehler beim Speichern der Reihenfolge');
-        loadUserCategoryChannels(); // Reload bei Fehler
+        console.error('❌ Save error:', e);
+        alert(t('errorPrefix') + ' ' + e.message);
+        loadUserCategoryChannels();
       }
     }
   });
@@ -579,9 +620,9 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     });
     f.reset();
     loadUsers();
-    alert('✅ User angelegt');
+    alert(t('userCreated'));
   } catch (e) {
-    alert('❌ Fehler: ' + e.message);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 });
 
@@ -602,16 +643,16 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     });
     f.reset();
     loadProviders();
-    alert('✅ Provider angelegt');
+    alert(t('providerCreated'));
   } catch (e) {
-    alert('❌ Fehler: ' + e.message);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 });
 
 document.getElementById('category-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (!selectedUserId) {
-    alert('⚠️ Bitte zuerst einen User auswählen');
+    alert(t('pleaseSelectUserFirst'));
     return;
   }
   const f = e.target;
@@ -623,9 +664,9 @@ document.getElementById('category-form').addEventListener('submit', async e => {
     });
     f.reset();
     loadUserCategories();
-    alert('✅ Kategorie angelegt');
+    alert(t('categoryCreated'));
   } catch (e) {
-    alert('❌ Fehler: ' + e.message);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 });
 
@@ -637,8 +678,11 @@ document.getElementById('channel-search').addEventListener('input', () => {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
+  // Seite übersetzen
+  translatePage();
+  
   document.getElementById('xtream-url').textContent = window.location.origin;
-  document.getElementById('xtream-pass').textContent = '<Passwort wie angelegt>';
+  document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
   document.getElementById('epg-url').textContent = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
   
   const importBtn = document.getElementById('import-categories-btn');
@@ -654,5 +698,5 @@ document.addEventListener('DOMContentLoaded', () => {
   loadUsers();
   loadProviders();
   
-  console.log('✅ IPTV Manager loaded with Drag & Drop');
+  console.log('✅ IPTV Manager loaded with i18n & local assets');
 });
