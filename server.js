@@ -399,6 +399,99 @@ app.get('/xmltv.php', async (req, res) => {
   }
 });
 
+// === DELETE APIs ===
+
+// Provider löschen
+app.delete('/api/providers/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    // Erst alle Kanäle des Providers löschen
+    db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+    // Dann Provider selbst
+    db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Kategorie löschen
+app.delete('/api/user-categories/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    // Erst alle Kanäle in der Kategorie löschen
+    db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
+    // Dann Kategorie
+    db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Kanal aus Kategorie entfernen
+app.delete('/api/user-channels/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// User löschen
+app.delete('/api/users/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    // Alle User-Daten löschen
+    const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);
+    for (const cat of cats) {
+      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
+    }
+    db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// === UPDATE APIs ===
+
+// Kategorie umbenennen
+app.put('/api/user-categories/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name } = req.body;
+    if (!name) return res.status(400).json({error: 'name required'});
+    db.prepare('UPDATE user_categories SET name = ? WHERE id = ?').run(name.trim(), id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Provider bearbeiten
+app.put('/api/providers/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, url, username, password, epg_url } = req.body;
+    if (!name || !url || !username || !password) {
+      return res.status(400).json({error: 'missing fields'});
+    }
+    db.prepare(`
+      UPDATE providers 
+      SET name = ?, url = ?, username = ?, password = ?, epg_url = ? 
+      WHERE id = ?
+    `).run(name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim(), id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+
 // Start
 app.listen(PORT, () => {
   console.log(`✅ IPTV Meta Panel: http://localhost:${PORT}`);
