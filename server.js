@@ -220,7 +220,6 @@ app.get('/api/providers/:id/categories', async (req, res) => {
       console.error('Failed to fetch categories:', e);
     }
 
-    // Zusätzlich: Kategorien aus bereits synchronisierten Kanälen
     const localCats = db.prepare(`
       SELECT DISTINCT original_category_id, 
              COUNT(*) as channel_count
@@ -230,7 +229,6 @@ app.get('/api/providers/:id/categories', async (req, res) => {
       ORDER BY channel_count DESC
     `).all(id);
 
-    // Merge: API-Kategorien mit lokalen Channel-Counts
     const merged = categories.map(cat => {
       const local = localCats.find(l => Number(l.original_category_id) === Number(cat.category_id));
       const isAdult = isAdultCategory(cat.category_name);
@@ -260,14 +258,15 @@ app.post('/api/providers/:providerId/import-category', async (req, res) => {
       return res.status(400).json({error: 'Missing required fields'});
     }
 
-    // Adult-Check
     const isAdult = isAdultCategory(category_name) ? 1 : 0;
 
-    // 1. User-Kategorie erstellen
-    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult) VALUES (?, ?, ?)').run(user_id, category_name, isAdult);
+    // Höchste sort_order finden
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(user_id);
+    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+
+    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder);
     const newCategoryId = catInfo.lastInsertRowid;
 
-    // 2. Optional: Kanäle automatisch zuordnen
     if (import_channels) {
       const channels = db.prepare(`
         SELECT id FROM provider_channels 
@@ -315,10 +314,36 @@ app.post('/api/users/:userId/categories', (req, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
     
+    const userId = Number(req.params.userId);
     const isAdult = isAdultCategory(name) ? 1 : 0;
-    const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult) VALUES (?, ?, ?)').run(Number(req.params.userId), name.trim(), isAdult);
+    
+    // Höchste sort_order finden
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
+    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    
+    const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder);
     res.json({id: info.lastInsertRowid, is_adult: isAdult});
   } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// Kategorien neu sortieren
+app.put('/api/users/:userId/categories/reorder', (req, res) => {
+  try {
+    const { category_ids } = req.body; // Array von IDs in neuer Reihenfolge
+    if (!Array.isArray(category_ids)) return res.status(400).json({error: 'category_ids must be array'});
+    
+    const update = db.prepare('UPDATE user_categories SET sort_order = ? WHERE id = ?');
+    
+    db.transaction(() => {
+      category_ids.forEach((catId, index) => {
+        update.run(index, catId);
+      });
+    })();
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
 });
 
 app.get('/api/user-categories/:catId/channels', (req, res) => {
@@ -336,11 +361,37 @@ app.get('/api/user-categories/:catId/channels', (req, res) => {
 
 app.post('/api/user-categories/:catId/channels', (req, res) => {
   try {
+    const catId = Number(req.params.catId);
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
-    const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id) VALUES (?, ?)').run(Number(req.params.catId), Number(provider_channel_id));
+    
+    // Höchste sort_order finden
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
+    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    
+    const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// Kanäle neu sortieren
+app.put('/api/user-categories/:catId/channels/reorder', (req, res) => {
+  try {
+    const { channel_ids } = req.body; // Array von user_channel IDs in neuer Reihenfolge
+    if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
+    
+    const update = db.prepare('UPDATE user_channels SET sort_order = ? WHERE id = ?');
+    
+    db.transaction(() => {
+      channel_ids.forEach((chId, index) => {
+        update.run(index, chId);
+      });
+    })();
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
 });
 
 // === Xtream API ===
@@ -357,7 +408,6 @@ app.get('/player_api.php', (req, res) => {
 
     const now = Math.floor(Date.now() / 1000);
     
-    // KEIN ACTION = Server Info
     if (!action || action === '') {
       return res.json({
         user_info: {
@@ -387,7 +437,6 @@ app.get('/player_api.php', (req, res) => {
       });
     }
 
-    // get_live_categories
     if (action === 'get_live_categories') {
       const cats = db.prepare('SELECT * FROM user_categories WHERE user_id = ? ORDER BY sort_order').all(user.id);
       const result = cats.map(c => ({
@@ -398,7 +447,6 @@ app.get('/player_api.php', (req, res) => {
       return res.json(result);
     }
 
-    // get_live_streams
     if (action === 'get_live_streams') {
       const rows = db.prepare(`
         SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
@@ -428,7 +476,6 @@ app.get('/player_api.php', (req, res) => {
       return res.json(result);
     }
 
-    // VOD/Series = leere Arrays
     if (['get_vod_categories', 'get_series_categories', 'get_vod_streams', 'get_series'].includes(action)) {
       return res.json([]);
     }
@@ -599,7 +646,6 @@ app.put('/api/providers/:id', (req, res) => {
   }
 });
 
-// Adult-Flag manuell setzen
 app.put('/api/user-categories/:id/adult', (req, res) => {
   try {
     const id = Number(req.params.id);
