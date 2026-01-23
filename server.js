@@ -10,7 +10,6 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const app = express();
 const PORT = 3000;
 
@@ -34,7 +33,7 @@ try {
       password TEXT NOT NULL,
       epg_url TEXT
     );
-
+    
     CREATE TABLE IF NOT EXISTS provider_channels (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_id INTEGER NOT NULL,
@@ -46,21 +45,22 @@ try {
       epg_channel_id TEXT DEFAULT '',
       UNIQUE(provider_id, remote_stream_id)
     );
-
+    
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       is_active INTEGER DEFAULT 1
     );
-
+    
     CREATE TABLE IF NOT EXISTS user_categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       name TEXT NOT NULL,
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      is_adult INTEGER DEFAULT 0
     );
-
+    
     CREATE TABLE IF NOT EXISTS user_channels (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_category_id INTEGER NOT NULL,
@@ -72,6 +72,25 @@ try {
 } catch (e) {
   console.error("❌ DB Error:", e.message);
   process.exit(1);
+}
+
+// Migration: is_adult Spalte hinzufügen falls nicht vorhanden
+try {
+  db.exec('ALTER TABLE user_categories ADD COLUMN is_adult INTEGER DEFAULT 0');
+  console.log('✅ DB Migration: is_adult column added');
+} catch (e) {
+  // Spalte existiert bereits
+}
+
+// Adult Content Detection
+function isAdultCategory(name) {
+  const adultKeywords = [
+    '18+', 'adult', 'xxx', 'porn', 'erotic', 'sex', 'nsfw',
+    'for adults', 'erwachsene', '+18', '18 plus', 'mature',
+    'xxx', 'sexy', 'hot'
+  ];
+  const nameLower = name.toLowerCase();
+  return adultKeywords.some(kw => nameLower.includes(kw));
 }
 
 // Xtream Client
@@ -146,11 +165,11 @@ app.post('/api/providers/:id/sync', async (req, res) => {
     }
 
     const insert = db.prepare(`
-      INSERT OR REPLACE INTO provider_channels 
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id) 
+      INSERT OR REPLACE INTO provider_channels
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-
+    
     db.transaction(() => {
       for (const ch of (channels || [])) {
         const sid = Number(ch.stream_id || ch.id || 0);
@@ -167,7 +186,7 @@ app.post('/api/providers/:id/sync', async (req, res) => {
         }
       }
     })();
-
+    
     res.json({synced: channels.length});
   } catch (e) {
     console.error(e);
@@ -182,6 +201,107 @@ app.get('/api/providers/:id/channels', (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
+// Provider-Kategorien abrufen
+app.get('/api/providers/:id/categories', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
+    if (!provider) return res.status(404).json({error: 'Provider not found'});
+
+    let categories = [];
+    
+    try {
+      const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_categories`;
+      const resp = await fetch(apiUrl);
+      if (resp.ok) {
+        categories = await resp.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch categories:', e);
+    }
+
+    const localCats = db.prepare(`
+      SELECT DISTINCT original_category_id, 
+             COUNT(*) as channel_count
+      FROM provider_channels 
+      WHERE provider_id = ? AND original_category_id > 0
+      GROUP BY original_category_id
+      ORDER BY channel_count DESC
+    `).all(id);
+
+    const merged = categories.map(cat => {
+      const local = localCats.find(l => Number(l.original_category_id) === Number(cat.category_id));
+      const isAdult = isAdultCategory(cat.category_name);
+      
+      return {
+        category_id: cat.category_id,
+        category_name: cat.category_name,
+        channel_count: local ? local.channel_count : 0,
+        is_adult: isAdult
+      };
+    });
+
+    res.json(merged);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Provider-Kategorie importieren
+app.post('/api/providers/:providerId/import-category', async (req, res) => {
+  try {
+    const providerId = Number(req.params.providerId);
+    const { user_id, category_id, category_name, import_channels } = req.body;
+    
+    if (!user_id || !category_id || !category_name) {
+      return res.status(400).json({error: 'Missing required fields'});
+    }
+
+    const isAdult = isAdultCategory(category_name) ? 1 : 0;
+
+    // Höchste sort_order finden
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(user_id);
+    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+
+    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder);
+    const newCategoryId = catInfo.lastInsertRowid;
+
+    if (import_channels) {
+      const channels = db.prepare(`
+        SELECT id FROM provider_channels 
+        WHERE provider_id = ? AND original_category_id = ?
+        ORDER BY name
+      `).all(providerId, Number(category_id));
+
+      const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+      
+      db.transaction(() => {
+        channels.forEach((ch, idx) => {
+          insertChannel.run(newCategoryId, ch.id, idx);
+        });
+      })();
+
+      res.json({
+        success: true, 
+        category_id: newCategoryId,
+        channels_imported: channels.length,
+        is_adult: isAdult
+      });
+    } else {
+      res.json({
+        success: true, 
+        category_id: newCategoryId,
+        channels_imported: 0,
+        is_adult: isAdult
+      });
+    }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({error: e.message});
+  }
+});
+
 // === API: User Categories ===
 app.get('/api/users/:userId/categories', (req, res) => {
   try {
@@ -193,9 +313,37 @@ app.post('/api/users/:userId/categories', (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
-    const info = db.prepare('INSERT INTO user_categories (user_id, name) VALUES (?, ?)').run(Number(req.params.userId), name.trim());
-    res.json({id: info.lastInsertRowid});
+    
+    const userId = Number(req.params.userId);
+    const isAdult = isAdultCategory(name) ? 1 : 0;
+    
+    // Höchste sort_order finden
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
+    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    
+    const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder);
+    res.json({id: info.lastInsertRowid, is_adult: isAdult});
   } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// Kategorien neu sortieren
+app.put('/api/users/:userId/categories/reorder', (req, res) => {
+  try {
+    const { category_ids } = req.body; // Array von IDs in neuer Reihenfolge
+    if (!Array.isArray(category_ids)) return res.status(400).json({error: 'category_ids must be array'});
+    
+    const update = db.prepare('UPDATE user_categories SET sort_order = ? WHERE id = ?');
+    
+    db.transaction(() => {
+      category_ids.forEach((catId, index) => {
+        update.run(index, catId);
+      });
+    })();
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
 });
 
 app.get('/api/user-categories/:catId/channels', (req, res) => {
@@ -213,11 +361,37 @@ app.get('/api/user-categories/:catId/channels', (req, res) => {
 
 app.post('/api/user-categories/:catId/channels', (req, res) => {
   try {
+    const catId = Number(req.params.catId);
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
-    const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id) VALUES (?, ?)').run(Number(req.params.catId), Number(provider_channel_id));
+    
+    // Höchste sort_order finden
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
+    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    
+    const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// Kanäle neu sortieren
+app.put('/api/user-categories/:catId/channels/reorder', (req, res) => {
+  try {
+    const { channel_ids } = req.body; // Array von user_channel IDs in neuer Reihenfolge
+    if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
+    
+    const update = db.prepare('UPDATE user_channels SET sort_order = ? WHERE id = ?');
+    
+    db.transaction(() => {
+      channel_ids.forEach((chId, index) => {
+        update.run(index, chId);
+      });
+    })();
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
 });
 
 // === Xtream API ===
@@ -226,16 +400,14 @@ app.get('/player_api.php', (req, res) => {
     const username = (req.query.username || '').trim();
     const password = (req.query.password || '').trim();
     const action = (req.query.action || '').trim();
-
+    
     const user = authUser(username, password);
     if (!user) {
-      // Auth failed
       return res.json({user_info: {auth: 0, message: 'Invalid credentials'}});
     }
 
     const now = Math.floor(Date.now() / 1000);
-
-    // KEIN ACTION = Server Info
+    
     if (!action || action === '') {
       return res.json({
         user_info: {
@@ -265,7 +437,6 @@ app.get('/player_api.php', (req, res) => {
       });
     }
 
-    // get_live_categories = DIREKTES ARRAY (kein wrapper!)
     if (action === 'get_live_categories') {
       const cats = db.prepare('SELECT * FROM user_categories WHERE user_id = ? ORDER BY sort_order').all(user.id);
       const result = cats.map(c => ({
@@ -273,13 +444,12 @@ app.get('/player_api.php', (req, res) => {
         category_name: c.name,
         parent_id: 0
       }));
-      return res.json(result);  // ← Direktes Array!
+      return res.json(result);
     }
 
-    // get_live_streams = DIREKTES ARRAY (kein wrapper!)
     if (action === 'get_live_streams') {
       const rows = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -295,45 +465,42 @@ app.get('/player_api.php', (req, res) => {
         stream_icon: ch.logo || '',
         epg_channel_id: ch.epg_channel_id || '',
         added: now.toString(),
-        is_adult: 0,
+        is_adult: ch.category_is_adult || 0,
         category_id: String(ch.user_category_id),
-        category_ids: [Number(ch.user_category_id)],  // ← Zusätzlich als Array!
+        category_ids: [Number(ch.user_category_id)],
         custom_sid: null,
         tv_archive: 0,
         direct_source: '',
         tv_archive_duration: 0
       }));
-      return res.json(result);  // ← Direktes Array!
+      return res.json(result);
     }
 
-    // VOD/Series = leere Arrays
     if (['get_vod_categories', 'get_series_categories', 'get_vod_streams', 'get_series'].includes(action)) {
-      return res.json([]);  // ← Direktes leeres Array!
+      return res.json([]);
     }
 
-    // Unbekannte Action
     res.status(400).json([]);
-
   } catch (e) {
     console.error('player_api error:', e);
     res.status(500).json([]);
   }
 });
 
-// === Stream Proxy (CRASH-FIX) ===
+// === Stream Proxy ===
 app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
   try {
     const username = (req.params.username || '').trim();
     const password = (req.params.password || '').trim();
     const streamId = Number(req.params.stream_id || 0);
-
+    
     if (!streamId) return res.sendStatus(404);
-
+    
     const user = authUser(username, password);
     if (!user) return res.sendStatus(401);
 
     const channel = db.prepare(`
-      SELECT 
+      SELECT
         uc.id as user_channel_id,
         pc.remote_stream_id,
         pc.name,
@@ -351,23 +518,22 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.ts`;
-
+    
     console.log('Proxy:', remoteUrl);
-
+    
     const upstream = await fetch(remoteUrl);
     if (!upstream.ok || !upstream.body) return res.sendStatus(502);
 
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Connection', 'keep-alive');
     upstream.body.pipe(res);
-
   } catch (e) {
     console.error('Stream proxy error:', e);
     res.sendStatus(500);
   }
 });
 
-// === XMLTV (CRASH-FIX) ===
+// === XMLTV ===
 app.get('/xmltv.php', async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
@@ -376,15 +542,14 @@ app.get('/xmltv.php', async (req, res) => {
     const user = authUser(username, password);
     if (!user) return res.sendStatus(401);
 
-    // FIX: Sichere Abfrage mit COALESCE
     const provider = db.prepare(`
-      SELECT * FROM providers 
-      WHERE COALESCE(epg_url, '') != '' 
+      SELECT * FROM providers
+      WHERE COALESCE(epg_url, '') != ''
       LIMIT 1
     `).get();
 
     if (!provider || !provider.epg_url) {
-      return res.status(404).send('<!-- No EPG configured -->');
+      return res.status(404).send('');
     }
 
     const upstream = await fetch(provider.epg_url);
@@ -392,10 +557,103 @@ app.get('/xmltv.php', async (req, res) => {
 
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     upstream.body.pipe(res);
-    
   } catch (e) {
     console.error('xmltv error:', e.message);
-    res.status(500).send('<!-- EPG error -->');
+    res.status(500).send('');
+  }
+});
+
+// === DELETE APIs ===
+app.delete('/api/providers/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+    db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/user-categories/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
+    db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/user-channels/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/users/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);
+    for (const cat of cats) {
+      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
+    }
+    db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// === UPDATE APIs ===
+app.put('/api/user-categories/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name } = req.body;
+    if (!name) return res.status(400).json({error: 'name required'});
+    
+    const isAdult = isAdultCategory(name) ? 1 : 0;
+    db.prepare('UPDATE user_categories SET name = ?, is_adult = ? WHERE id = ?').run(name.trim(), isAdult, id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.put('/api/providers/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, url, username, password, epg_url } = req.body;
+    if (!name || !url || !username || !password) {
+      return res.status(400).json({error: 'missing fields'});
+    }
+
+    db.prepare(`
+      UPDATE providers
+      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?
+      WHERE id = ?
+    `).run(name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim(), id);
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.put('/api/user-categories/:id/adult', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { is_adult } = req.body;
+    db.prepare('UPDATE user_categories SET is_adult = ? WHERE id = ?').run(is_adult ? 1 : 0, id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
   }
 });
 
