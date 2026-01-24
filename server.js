@@ -1112,7 +1112,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager/3.0.0',
+        'User-Agent': 'IPTV-Manager/2.5.1',
         'Connection': 'keep-alive'
       },
       // Don't follow redirects automatically for better control

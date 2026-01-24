@@ -1,6 +1,6 @@
 {
   "name": "iptv-manager",
-  "version": "1.0.0",
+  "version": "2.5.1",
   "type": "module",
   "scripts": {
     "start": "node server.js",

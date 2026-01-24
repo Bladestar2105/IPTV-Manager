@@ -18,6 +18,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.1] - 2024-01-24
+
+### Fixed
+- **Stream Proxy Timeout**: Removed 30-second timeout that was causing AbortError in logs
+  - Streams can now run indefinitely without timeout
+  - Improved error logging to ignore normal client disconnects
+  - Only real errors are logged now
+- **Category Auto-Creation**: Fixed logic that was creating categories on every sync
+  - Categories are now only auto-created when provider adds NEW categories
+  - Existing mappings with NULL user_category_id are left alone
+  - User must manually import categories as intended
+- **Category Deletion**: Fixed 500 error when deleting categories
+  - Properly handles category_mappings foreign key constraints
+  - Updates mappings to NULL instead of causing constraint errors
+  - Preserves mappings for future use
+
+### Changed
+- Updated User-Agent to IPTV-Manager/2.5.1
+- Improved error handling and logging throughout
+
+---
+
 ## [2.5.0] - 2024-01-24
 
 ### Added
@@ -102,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Version History
 
 - **v3.0.0** (Planned) - Enhanced features and performance
+- **v2.5.1** (2024-01-24) - Bug fixes for stream proxy and category management
 - **v2.5.0** (2024-01-24) - Security and stability release
 - **v2.0.0** (2024-01-20) - Automatic synchronization
 - **v1.0.0** (2024-01-15) - Initial release

@@ -1,4 +1,4 @@
-# IPTV-Manager v2.5.0
+# IPTV-Manager v2.5.1
 
 A comprehensive IPTV management system with automatic provider synchronization, intelligent category mapping, and multi-user support.
 
@@ -27,7 +27,12 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **Category Import**: Import provider categories with or without channels
 - **Adult Content Filtering**: Automatic detection and marking of adult content
 
-### v2.5.0 Security Features (NEW!)
+### v2.5.1 Bug Fixes (LATEST!)
+- **Stream Proxy**: Fixed timeout issues causing AbortError in logs
+- **Category Sync**: Fixed auto-creation logic to only create new categories
+- **Category Deletion**: Fixed foreign key constraint errors
+
+### v2.5.0 Security Features
 - **🔐 Password Hashing**: Bcrypt-based password hashing (BCRYPT_ROUNDS=10)
 - **🎫 JWT Authentication**: Token-based authentication with configurable expiration
 - **🛡️ Rate Limiting**: Protection against brute force attacks
@@ -64,8 +69,8 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 git clone https://github.com/YOUR_USERNAME/IPTV-Manager.git
 cd IPTV-Manager
 
-# Checkout v2.5.0 branch (recommended)
-git checkout v2.5.0
+# Checkout latest stable version (recommended)
+git checkout main
 
 # Install dependencies
 npm install
