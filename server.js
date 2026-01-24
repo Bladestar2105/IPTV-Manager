@@ -491,70 +491,78 @@ function startEpgUpdateScheduler() {
     clearInterval(epgUpdateInterval);
   }
   
+  // Run immediately on startup
+  setTimeout(() => runEpgUpdateCycle(), 1000);
+  
   epgUpdateInterval = setInterval(async () => {
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      let updatedCount = 0;
-      
-      // Update Provider EPGs (every 24 hours by default)
-      const providers = db.prepare(`
-        SELECT * FROM providers 
-        WHERE epg_url IS NOT NULL 
-        AND TRIM(epg_url) != ''
-      `).all();
-      
-      for (const provider of providers) {
-        const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-        let needsUpdate = !fs.existsSync(cacheFile);
-        
-        if (fs.existsSync(cacheFile)) {
-          const fileTime = fs.statSync(cacheFile).mtimeMs / 1000;
-          needsUpdate = fileTime + (24 * 3600) < now;
-        }
-        
-        if (needsUpdate) {
-          try {
-            await updateProviderEpg(provider.id);
-            updatedCount++;
-          } catch (e) {
-            console.error(`❌ Failed to update Provider EPG ${provider.id}:`, e.message);
-          }
-        }
-      }
-      
-      // Get all enabled EPG sources that need update
-      const sources = db.prepare(`
-        SELECT * FROM epg_sources 
-        WHERE enabled = 1 
-        AND is_updating = 0
-        AND (
-          last_update IS NULL 
-          OR last_update + update_interval * 3600 <= ?
-        )
-      `).all(now);
-      
-      if (sources.length > 0) {
-        console.log(`📡 Updating ${sources.length} EPG source(s)...`);
-        
-        for (const source of sources) {
-          try {
-            await updateEpgSource(source.id);
-            updatedCount++;
-          } catch (e) {
-            console.error(`❌ Failed to update EPG source ${source.id}:`, e.message);
-          }
-        }
-        
-        console.log(`✅ EPG update cycle completed (${updatedCount} source(s) updated)`);
-      } else if (updatedCount > 0) {
-        console.log(`✅ EPG update cycle completed (${updatedCount} provider EPG(s) updated)`);
-      }
-    } catch (e) {
-      console.error('❌ EPG scheduler error:', e.message);
-    }
+    await runEpgUpdateCycle();
   }, checkInterval);
   
   console.log('📅 EPG update scheduler started (check every 5 minutes)');
+}
+
+// EPG Update Cycle (separate function for immediate execution)
+async function runEpgUpdateCycle() {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    let updatedCount = 0;
+    
+    // Update Provider EPGs (every 24 hours by default)
+    const providers = db.prepare(`
+      SELECT * FROM providers 
+      WHERE epg_url IS NOT NULL 
+      AND TRIM(epg_url) != ''
+    `).all();
+    
+    for (const provider of providers) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+      let needsUpdate = !fs.existsSync(cacheFile);
+      
+      if (fs.existsSync(cacheFile)) {
+        const fileTime = fs.statSync(cacheFile).mtimeMs / 1000;
+        needsUpdate = fileTime + (24 * 3600) < now;
+      }
+      
+      if (needsUpdate) {
+        try {
+          await updateProviderEpg(provider.id);
+          updatedCount++;
+        } catch (e) {
+          console.error(`❌ Failed to update Provider EPG ${provider.id}:`, e.message);
+        }
+      }
+    }
+    
+    // Get all enabled EPG sources that need update
+    const sources = db.prepare(`
+      SELECT * FROM epg_sources 
+      WHERE enabled = 1 
+      AND is_updating = 0
+      AND (
+        last_update IS NULL 
+        OR last_update + update_interval * 3600 <= ?
+      )
+    `).all(now);
+    
+    if (sources.length > 0) {
+      console.log(`📡 Updating ${sources.length} EPG source(s)...`);
+      
+      for (const source of sources) {
+        try {
+          await updateEpgSource(source.id);
+          updatedCount++;
+        } catch (e) {
+          console.error(`❌ Failed to update EPG source ${source.id}:`, e.message);
+        }
+      }
+      
+      console.log(`✅ EPG update cycle completed (${updatedCount} source(s) updated)`);
+    } else if (updatedCount > 0) {
+      console.log(`✅ EPG update cycle completed (${updatedCount} provider EPG(s) updated)`);
+    }
+  } catch (e) {
+    console.error('❌ EPG scheduler error:', e.message);
+  }
 }
 
 // Start schedulers on startup
