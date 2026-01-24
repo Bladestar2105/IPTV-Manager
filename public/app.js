@@ -113,11 +113,23 @@ async function loadProviders() {
     syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
     syncBtn.textContent = t('sync');
     syncBtn.onclick = async () => {
+      if (!selectedUserId) {
+        alert(t('pleaseSelectUserFirst'));
+        return;
+      }
       syncBtn.disabled = true;
       syncBtn.textContent = t('syncing');
       try {
-        const res = await fetchJSON(`/api/providers/${p.id}/sync`, {method: 'POST'});
-        alert(t('syncSuccess', {count: res.synced}));
+        const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({user_id: selectedUserId})
+        });
+        alert(t('syncSuccess', {
+          added: res.channels_added,
+          updated: res.channels_updated,
+          categories: res.categories_added
+        }));
       } catch (e) {
         alert(t('errorPrefix') + ' ' + e.message);
       } finally {
@@ -125,6 +137,18 @@ async function loadProviders() {
         syncBtn.textContent = t('sync');
       }
     };
+    
+    const configBtn = document.createElement('button');
+    configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+    configBtn.innerHTML = '⚙️';
+    configBtn.title = t('syncConfig');
+    configBtn.onclick = () => showSyncConfigModal(p.id);
+    
+    const logsBtn = document.createElement('button');
+    logsBtn.className = 'btn btn-sm btn-outline-info me-1';
+    logsBtn.innerHTML = '📊';
+    logsBtn.title = t('syncLogs');
+    logsBtn.onclick = () => showSyncLogs(p.id);
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
@@ -136,6 +160,8 @@ async function loadProviders() {
     };
     
     btnGroup.appendChild(syncBtn);
+    btnGroup.appendChild(configBtn);
+    btnGroup.appendChild(logsBtn);
     btnGroup.appendChild(delBtn);
     row.appendChild(btnGroup);
     li.appendChild(row);
@@ -676,6 +702,375 @@ document.getElementById('channel-search').addEventListener('input', () => {
   renderProviderChannels();
 });
 
+// === Sync Configuration Management ===
+let currentSyncConfig = null;
+
+async function loadSyncConfig(providerId, userId) {
+  try {
+    const config = await fetchJSON(`/api/sync-configs/${providerId}/${userId}`);
+    currentSyncConfig = config;
+    return config;
+  } catch (e) {
+    console.error('Failed to load sync config:', e);
+    return null;
+  }
+}
+
+async function showSyncConfigModal(providerId) {
+  if (!selectedUserId) {
+    alert(t('pleaseSelectUserFirst'));
+    return;
+  }
+  
+  const config = await loadSyncConfig(providerId, selectedUserId);
+  
+  const modal = document.getElementById('sync-config-modal');
+  const form = document.getElementById('sync-config-form');
+  
+  // Set form values
+  document.getElementById('sync-provider-id').value = providerId;
+  document.getElementById('sync-user-id').value = selectedUserId;
+  document.getElementById('sync-enabled').checked = config ? config.enabled : true;
+  document.getElementById('sync-interval').value = config ? config.sync_interval : 'daily';
+  document.getElementById('sync-auto-categories').checked = config ? config.auto_add_categories : true;
+  document.getElementById('sync-auto-channels').checked = config ? config.auto_add_channels : true;
+  
+  // Show last sync info if available
+  const lastSyncInfo = document.getElementById('last-sync-info');
+  if (config && config.last_sync) {
+    const date = new Date(config.last_sync * 1000);
+    lastSyncInfo.textContent = `${t('lastSync')}: ${date.toLocaleString()}`;
+    lastSyncInfo.style.display = 'block';
+  } else {
+    lastSyncInfo.style.display = 'none';
+  }
+  
+  const bsModal = new bootstrap.Modal(modal);
+  bsModal.show();
+}
+
+async function saveSyncConfig(e) {
+  e.preventDefault();
+  const form = e.target;
+  
+  const providerId = Number(form['sync-provider-id'].value);
+  const userId = Number(form['sync-user-id'].value);
+  const enabled = form['sync-enabled'].checked;
+  const syncInterval = form['sync-interval'].value;
+  const autoCategories = form['sync-auto-categories'].checked;
+  const autoChannels = form['sync-auto-channels'].checked;
+  
+  try {
+    const config = await loadSyncConfig(providerId, userId);
+    
+    if (config) {
+      // Update existing
+      await fetchJSON(`/api/sync-configs/${config.id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          enabled,
+          sync_interval: syncInterval,
+          auto_add_categories: autoCategories,
+          auto_add_channels: autoChannels
+        })
+      });
+    } else {
+      // Create new
+      await fetchJSON('/api/sync-configs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          provider_id: providerId,
+          user_id: userId,
+          enabled,
+          sync_interval: syncInterval,
+          auto_add_categories: autoCategories,
+          auto_add_channels: autoChannels
+        })
+      });
+    }
+    
+    alert(t('syncConfigSaved'));
+    bootstrap.Modal.getInstance(document.getElementById('sync-config-modal')).hide();
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  }
+}
+
+async function showSyncLogs(providerId) {
+  if (!selectedUserId) {
+    alert(t('pleaseSelectUserFirst'));
+    return;
+  }
+  
+  try {
+    const logs = await fetchJSON(`/api/sync-logs?provider_id=${providerId}&user_id=${selectedUserId}&limit=20`);
+    
+    const tbody = document.getElementById('sync-logs-tbody');
+    tbody.innerHTML = '';
+    
+    if (logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center">' + t('noSyncLogs') + '</td></tr>';
+    } else {
+      logs.forEach(log => {
+        const tr = document.createElement('tr');
+        const date = new Date(log.sync_time * 1000);
+        const statusClass = log.status === 'success' ? 'success' : 'danger';
+        
+        tr.innerHTML = `
+          <td>${date.toLocaleString()}</td>
+          <td><span class="badge bg-${statusClass}">${log.status}</span></td>
+          <td>${log.channels_added || 0}</td>
+          <td>${log.channels_updated || 0}</td>
+          <td>${log.categories_added || 0}</td>
+          <td>${log.error_message || '-'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+    
+    const modal = new bootstrap.Modal(document.getElementById('sync-logs-modal'));
+    modal.show();
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  }
+}
+
+// === EPG Sources Management ===
+let availableEpgSources = [];
+
+async function loadEpgSources() {
+  try {
+    const sources = await fetchJSON('/api/epg-sources');
+    const list = document.getElementById('epg-sources-list');
+    list.innerHTML = '';
+    
+    if (sources.length === 0) {
+      list.innerHTML = '<li class="list-group-item text-muted">No EPG sources configured</li>';
+      return;
+    }
+    
+    sources.forEach(source => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex justify-content-between align-items-center';
+      
+      const isProvider = typeof source.id === 'string' && source.id.startsWith('provider_');
+      const lastUpdate = source.last_update ? new Date(source.last_update * 1000).toLocaleString() : 'Never';
+      const isUpdating = source.is_updating ? '🔄 Updating...' : '';
+      
+      const info = document.createElement('div');
+      info.innerHTML = `
+        <strong>${source.name}</strong>
+        <br><small class="text-muted">${source.url}</small>
+        <br><small>${source.enabled ? '✅ Enabled' : '❌ Disabled'} | Update: ${source.update_interval / 3600}h | Last: ${lastUpdate} ${isUpdating}</small>
+      `;
+      
+      const btnGroup = document.createElement('div');
+      btnGroup.className = 'd-flex gap-1';
+      
+      // Update button
+      const updateBtn = document.createElement('button');
+      updateBtn.className = 'btn btn-sm btn-outline-info';
+      updateBtn.innerHTML = '🔄';
+      updateBtn.title = 'Update Now';
+      updateBtn.disabled = source.is_updating;
+      updateBtn.onclick = async () => {
+        updateBtn.disabled = true;
+        updateBtn.innerHTML = '⏳';
+        try {
+          await fetchJSON(`/api/epg-sources/${source.id}/update`, {method: 'POST'});
+          alert('✅ EPG updated successfully');
+          loadEpgSources();
+        } catch (e) {
+          alert('❌ Error: ' + e.message);
+        } finally {
+          updateBtn.disabled = false;
+          updateBtn.innerHTML = '🔄';
+        }
+      };
+      
+      btnGroup.appendChild(updateBtn);
+      
+      // Only show edit/toggle/delete for non-provider sources
+      if (!isProvider) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-sm btn-outline-secondary';
+        editBtn.innerHTML = '✏️';
+        editBtn.title = 'Edit';
+        editBtn.onclick = () => showEditEpgSourceModal(source);
+        
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = `btn btn-sm ${source.enabled ? 'btn-warning' : 'btn-success'}`;
+        toggleBtn.textContent = source.enabled ? 'Disable' : 'Enable';
+        toggleBtn.onclick = async () => {
+          await fetchJSON(`/api/epg-sources/${source.id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: !source.enabled})
+          });
+          loadEpgSources();
+        };
+        
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-sm btn-danger';
+        delBtn.textContent = '🗑';
+        delBtn.onclick = async () => {
+          if (!confirm(`Delete EPG source "${source.name}"?`)) return;
+          await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
+          loadEpgSources();
+        };
+        
+        btnGroup.appendChild(editBtn);
+        btnGroup.appendChild(toggleBtn);
+        btnGroup.appendChild(delBtn);
+      }
+      
+      li.appendChild(info);
+      li.appendChild(btnGroup);
+      list.appendChild(li);
+    });
+  } catch (e) {
+    console.error('Failed to load EPG sources:', e);
+  }
+}
+
+async function showEditEpgSourceModal(source) {
+  const modal = new bootstrap.Modal(document.getElementById('edit-epg-source-modal'));
+  document.getElementById('edit-epg-source-id').value = source.id;
+  document.getElementById('edit-epg-source-name').value = source.name;
+  document.getElementById('edit-epg-source-url').value = source.url;
+  document.getElementById('edit-epg-update-interval').value = source.update_interval;
+  document.getElementById('edit-epg-source-enabled').checked = source.enabled;
+  modal.show();
+}
+
+async function editEpgSource(e) {
+  e.preventDefault();
+  const form = e.target;
+  const id = form['edit-epg-source-id'].value;
+  
+  try {
+    await fetchJSON(`/api/epg-sources/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: form['edit-epg-source-name'].value,
+        url: form['edit-epg-source-url'].value,
+        enabled: form['edit-epg-source-enabled'].checked,
+        update_interval: Number(form['edit-epg-update-interval'].value)
+      })
+    });
+    
+    bootstrap.Modal.getInstance(document.getElementById('edit-epg-source-modal')).hide();
+    loadEpgSources();
+    alert('✅ EPG source updated');
+  } catch (e) {
+    alert('❌ Error: ' + e.message);
+  }
+}
+
+async function showAddEpgSourceModal() {
+  const modal = new bootstrap.Modal(document.getElementById('add-epg-source-modal'));
+  document.getElementById('add-epg-source-form').reset();
+  modal.show();
+}
+
+async function addEpgSource(e) {
+  e.preventDefault();
+  const form = e.target;
+  
+  try {
+    await fetchJSON('/api/epg-sources', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: form['epg-source-name'].value,
+        url: form['epg-source-url'].value,
+        enabled: form['epg-source-enabled'].checked,
+        update_interval: Number(form['epg-update-interval'].value),
+        source_type: 'custom'
+      })
+    });
+    
+    bootstrap.Modal.getInstance(document.getElementById('add-epg-source-modal')).hide();
+    loadEpgSources();
+    alert('✅ EPG source added');
+  } catch (e) {
+    alert('❌ Error: ' + e.message);
+  }
+}
+
+async function showBrowseEpgSourcesModal() {
+  const modal = new bootstrap.Modal(document.getElementById('browse-epg-sources-modal'));
+  modal.show();
+  
+  const list = document.getElementById('available-epg-sources-list');
+  list.innerHTML = '<li class="list-group-item text-muted">Loading...</li>';
+  
+  try {
+    availableEpgSources = await fetchJSON('/api/epg-sources/available');
+    renderAvailableEpgSources();
+  } catch (e) {
+    list.innerHTML = '<li class="list-group-item text-danger">Failed to load sources</li>';
+  }
+}
+
+function renderAvailableEpgSources() {
+  const list = document.getElementById('available-epg-sources-list');
+  const search = document.getElementById('epg-browse-search').value.toLowerCase();
+  
+  const filtered = availableEpgSources.filter(s => 
+    s.name.toLowerCase().includes(search)
+  );
+  
+  list.innerHTML = '';
+  
+  if (filtered.length === 0) {
+    list.innerHTML = '<li class="list-group-item text-muted">No sources found</li>';
+    return;
+  }
+  
+  filtered.forEach(source => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item d-flex justify-content-between align-items-center';
+    
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <strong>${source.name}</strong>
+      <br><small class="text-muted">${(source.size / 1024 / 1024).toFixed(2)} MB</small>
+    `;
+    
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-sm btn-primary';
+    addBtn.textContent = '➕ Add';
+    addBtn.onclick = async () => {
+      try {
+        await fetchJSON('/api/epg-sources', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            name: source.name,
+            url: source.url,
+            enabled: true,
+            update_interval: 86400,
+            source_type: 'globetv'
+          })
+        });
+        
+        alert('✅ EPG source added: ' + source.name);
+        loadEpgSources();
+      } catch (e) {
+        alert('❌ Error: ' + e.message);
+      }
+    };
+    
+    li.appendChild(info);
+    li.appendChild(addBtn);
+    list.appendChild(li);
+  });
+}
+
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
   // Seite übersetzen
@@ -695,8 +1090,60 @@ document.addEventListener('DOMContentLoaded', () => {
     catSearch.addEventListener('input', renderProviderCategories);
   }
   
+  const syncConfigForm = document.getElementById('sync-config-form');
+  if (syncConfigForm) {
+    syncConfigForm.addEventListener('submit', saveSyncConfig);
+  }
+  
+  const addEpgSourceBtn = document.getElementById('add-epg-source-btn');
+  if (addEpgSourceBtn) {
+    addEpgSourceBtn.addEventListener('click', showAddEpgSourceModal);
+  }
+  
+  const browseEpgSourcesBtn = document.getElementById('browse-epg-sources-btn');
+  if (browseEpgSourcesBtn) {
+    browseEpgSourcesBtn.addEventListener('click', showBrowseEpgSourcesModal);
+  }
+  
+  const updateAllEpgBtn = document.getElementById('update-all-epg-btn');
+  if (updateAllEpgBtn) {
+    updateAllEpgBtn.addEventListener('click', async () => {
+      if (!confirm('Update all EPG sources? This may take several minutes.')) return;
+      updateAllEpgBtn.disabled = true;
+      updateAllEpgBtn.innerHTML = '⏳ Updating...';
+      try {
+        const result = await fetchJSON('/api/epg-sources/update-all', {method: 'POST'});
+        const success = result.results.filter(r => r.success).length;
+        const failed = result.results.filter(r => !r.success).length;
+        alert(`✅ EPG update complete!\nSuccess: ${success}\nFailed: ${failed}`);
+        loadEpgSources();
+      } catch (e) {
+        alert('❌ Error: ' + e.message);
+      } finally {
+        updateAllEpgBtn.disabled = false;
+        updateAllEpgBtn.innerHTML = '🔄 Update All EPG';
+      }
+    });
+  }
+  
+  const addEpgSourceForm = document.getElementById('add-epg-source-form');
+  if (addEpgSourceForm) {
+    addEpgSourceForm.addEventListener('submit', addEpgSource);
+  }
+  
+  const editEpgSourceForm = document.getElementById('edit-epg-source-form');
+  if (editEpgSourceForm) {
+    editEpgSourceForm.addEventListener('submit', editEpgSource);
+  }
+  
+  const epgBrowseSearch = document.getElementById('epg-browse-search');
+  if (epgBrowseSearch) {
+    epgBrowseSearch.addEventListener('input', renderAvailableEpgSources);
+  }
+  
   loadUsers();
   loadProviders();
+  loadEpgSources();
   
-  console.log('✅ IPTV Manager loaded with i18n & local assets');
+  console.log('✅ IPTV-Manager loaded with i18n & local assets');
 });

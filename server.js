@@ -7,17 +7,29 @@ import { Xtream } from '@iptv/xtream-api';
 import fetch from 'node-fetch';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
+import { createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3000;
 
+// Create cache directories
+const CACHE_DIR = path.join(__dirname, 'cache');
+const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
+// Picon caching removed - using direct URLs for better performance
+
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
+
 // Middleware
 app.use(bodyParser.json());
 app.use(cors());
 app.use(morgan('dev'));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/cache', express.static(path.join(__dirname, 'cache')));
 
 // DB
 const db = new Database(path.join(__dirname, 'db.sqlite'));
@@ -67,6 +79,72 @@ try {
       provider_channel_id INTEGER NOT NULL,
       sort_order INTEGER DEFAULT 0
     );
+    
+    CREATE TABLE IF NOT EXISTS sync_configs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      sync_interval TEXT DEFAULT 'daily',
+      last_sync INTEGER DEFAULT 0,
+      next_sync INTEGER DEFAULT 0,
+      auto_add_categories INTEGER DEFAULT 1,
+      auto_add_channels INTEGER DEFAULT 1,
+      FOREIGN KEY (provider_id) REFERENCES providers(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+    
+    CREATE TABLE IF NOT EXISTS sync_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      sync_time INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      channels_added INTEGER DEFAULT 0,
+      channels_updated INTEGER DEFAULT 0,
+      categories_added INTEGER DEFAULT 0,
+      error_message TEXT,
+      FOREIGN KEY (provider_id) REFERENCES providers(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+    
+    CREATE TABLE IF NOT EXISTS category_mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      provider_category_id INTEGER NOT NULL,
+      provider_category_name TEXT NOT NULL,
+      user_category_id INTEGER,
+      auto_created INTEGER DEFAULT 0,
+      UNIQUE(provider_id, user_id, provider_category_id),
+      FOREIGN KEY (provider_id) REFERENCES providers(id),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (user_category_id) REFERENCES user_categories(id)
+    );
+    
+    CREATE TABLE IF NOT EXISTS epg_sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      last_update INTEGER DEFAULT 0,
+      update_interval INTEGER DEFAULT 86400,
+      source_type TEXT DEFAULT 'custom',
+      is_updating INTEGER DEFAULT 0,
+      UNIQUE(url)
+    );
+    
+    CREATE TABLE IF NOT EXISTS epg_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      epg_source_id INTEGER,
+      channel_id TEXT NOT NULL,
+      channel_name TEXT,
+      programme_data TEXT,
+      last_update INTEGER DEFAULT 0,
+      FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id)
+    );
+    
+    -- Picon cache table removed - using direct URLs for better performance
   `);
   console.log("✅ Database OK");
 } catch (e) {
@@ -81,6 +159,253 @@ try {
 } catch (e) {
   // Spalte existiert bereits
 }
+
+// Sync Scheduler
+let syncIntervals = new Map();
+
+function calculateNextSync(interval) {
+  const now = Math.floor(Date.now() / 1000);
+  switch (interval) {
+    case 'hourly': return now + 3600;
+    case 'every_6_hours': return now + 21600;
+    case 'every_12_hours': return now + 43200;
+    case 'daily': return now + 86400;
+    case 'weekly': return now + 604800;
+    default: return now + 86400;
+  }
+}
+
+async function performSync(providerId, userId, isManual = false) {
+  const startTime = Math.floor(Date.now() / 1000);
+  let channelsAdded = 0;
+  let channelsUpdated = 0;
+  let categoriesAdded = 0;
+  let errorMessage = null;
+  
+  try {
+    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+    if (!provider) throw new Error('Provider not found');
+    
+    const config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
+    if (!config && !isManual) return;
+    
+    console.log(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
+    
+    // Fetch channels from provider
+    const xtream = createXtreamClient(provider);
+    let channels = [];
+    
+    try { 
+      channels = await xtream.getChannels(); 
+    } catch {
+      try { 
+        channels = await xtream.getLiveStreams(); 
+      } catch {
+        const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_streams`;
+        const resp = await fetch(apiUrl);
+        channels = resp.ok ? await resp.json() : [];
+      }
+    }
+    
+    // Fetch categories from provider
+    let providerCategories = [];
+    try {
+      const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_categories`;
+      const resp = await fetch(apiUrl);
+      if (resp.ok) {
+        providerCategories = await resp.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch categories:', e);
+    }
+    
+    // Process categories and create mappings
+    const categoryMap = new Map();
+    
+    // Check if this is the first sync (no existing mappings)
+    const existingMappingsCount = db.prepare(`
+      SELECT COUNT(*) as count FROM category_mappings 
+      WHERE provider_id = ? AND user_id = ?
+    `).get(providerId, userId);
+    
+    const isFirstSync = existingMappingsCount.count === 0;
+    
+    for (const provCat of providerCategories) {
+      const catId = Number(provCat.category_id);
+      const catName = provCat.category_name;
+      
+      // Check if mapping exists
+      let mapping = db.prepare(`
+        SELECT * FROM category_mappings 
+        WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
+      `).get(providerId, userId, catId);
+      
+      // Only auto-create categories if NOT first sync and auto_add_categories is enabled
+      if (!mapping && config && config.auto_add_categories && !isFirstSync) {
+        // Create new user category
+        const isAdult = isAdultCategory(catName) ? 1 : 0;
+        const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
+        const newSortOrder = (maxSort?.max_sort || -1) + 1;
+        
+        const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder);
+        const newCategoryId = catInfo.lastInsertRowid;
+        
+        // Create mapping
+        db.prepare(`
+          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+          VALUES (?, ?, ?, ?, ?, 1)
+        `).run(providerId, userId, catId, catName, newCategoryId);
+        
+        categoryMap.set(catId, newCategoryId);
+        categoriesAdded++;
+        console.log(`  ✅ Created category: ${catName} (id=${newCategoryId})`);
+      } else if (!mapping && isFirstSync) {
+        // First sync: Create mapping without user category (user will create/import manually)
+        db.prepare(`
+          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+          VALUES (?, ?, ?, ?, NULL, 0)
+        `).run(providerId, userId, catId, catName);
+        console.log(`  📋 Registered category: ${catName} (no auto-create on first sync)`);
+      } else if (mapping && mapping.user_category_id) {
+        categoryMap.set(catId, mapping.user_category_id);
+      }
+    }
+    
+    // Load all existing mappings into categoryMap
+    const existingMappings = db.prepare(`
+      SELECT provider_category_id, user_category_id 
+      FROM category_mappings 
+      WHERE provider_id = ? AND user_id = ? AND user_category_id IS NOT NULL
+    `).all(providerId, userId);
+    
+    for (const mapping of existingMappings) {
+      categoryMap.set(Number(mapping.provider_category_id), mapping.user_category_id);
+    }
+    
+    // Process channels
+    const insertChannel = db.prepare(`
+      INSERT OR IGNORE INTO provider_channels
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const updateChannel = db.prepare(`
+      UPDATE provider_channels 
+      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?
+      WHERE provider_id = ? AND remote_stream_id = ?
+    `);
+    
+    const checkExisting = db.prepare('SELECT id FROM provider_channels WHERE provider_id = ? AND remote_stream_id = ?');
+    
+    db.transaction(() => {
+      for (const ch of (channels || [])) {
+        const sid = Number(ch.stream_id || ch.id || 0);
+        if (sid > 0) {
+          const existing = checkExisting.get(providerId, sid);
+          
+          if (existing) {
+            // Update existing channel - preserves ID and user_channels relationships
+            updateChannel.run(
+              ch.name || 'Unknown',
+              Number(ch.category_id || 0),
+              ch.stream_icon || '',
+              ch.epg_channel_id || '',
+              providerId,
+              sid
+            );
+            channelsUpdated++;
+          } else {
+            // Insert new channel
+            insertChannel.run(
+              providerId,
+              sid,
+              ch.name || 'Unknown',
+              Number(ch.category_id || 0),
+              ch.stream_icon || '',
+              'live',
+              ch.epg_channel_id || ''
+            );
+            channelsAdded++;
+          }
+          
+          // Auto-add to user categories if enabled
+          if (config && config.auto_add_channels) {
+            const catId = Number(ch.category_id || 0);
+            const userCatId = categoryMap.get(catId);
+            
+            if (userCatId) {
+              const provChannelId = existing ? existing.id : db.prepare('SELECT id FROM provider_channels WHERE provider_id = ? AND remote_stream_id = ?').get(providerId, sid).id;
+              
+              // Check if already added
+              const existingUserChannel = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(userCatId, provChannelId);
+              
+              if (!existingUserChannel) {
+                const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(userCatId);
+                const newSortOrder = (maxSort?.max_sort || -1) + 1;
+                
+                db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(userCatId, provChannelId, newSortOrder);
+              }
+            }
+          }
+        }
+      }
+    })();
+    
+    // Update sync config
+    if (config) {
+      const nextSync = calculateNextSync(config.sync_interval);
+      db.prepare('UPDATE sync_configs SET last_sync = ?, next_sync = ? WHERE id = ?').run(startTime, nextSync, config.id);
+    }
+    
+    // Log success
+    db.prepare(`
+      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, channels_added, channels_updated, categories_added)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(providerId, userId, startTime, 'success', channelsAdded, channelsUpdated, categoriesAdded);
+    
+    console.log(`✅ Sync completed: ${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`);
+    
+  } catch (e) {
+    errorMessage = e.message;
+    console.error(`❌ Sync failed:`, e);
+    
+    // Log error
+    db.prepare(`
+      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, error_message)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(providerId, userId, startTime, 'error', errorMessage);
+  }
+  
+  return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+}
+
+function startSyncScheduler() {
+  // Clear existing intervals
+  syncIntervals.forEach(interval => clearInterval(interval));
+  syncIntervals.clear();
+  
+  // Load all enabled sync configs
+  const configs = db.prepare('SELECT * FROM sync_configs WHERE enabled = 1').all();
+  
+  for (const config of configs) {
+    const checkInterval = 60000; // Check every minute
+    
+    const interval = setInterval(async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const currentConfig = db.prepare('SELECT * FROM sync_configs WHERE id = ?').get(config.id);
+      
+      if (currentConfig && currentConfig.enabled && currentConfig.next_sync <= now) {
+        await performSync(currentConfig.provider_id, currentConfig.user_id, false);
+      }
+    }, checkInterval);
+    
+    syncIntervals.set(config.id, interval);
+    console.log(`📅 Scheduled sync for provider ${config.provider_id} (${config.sync_interval})`);
+  }
+}
+
+// Start scheduler on startup
+startSyncScheduler();
 
 // Adult Content Detection
 function isAdultCategory(name) {
@@ -150,44 +475,24 @@ app.post('/api/providers', (req, res) => {
 app.post('/api/providers/:id/sync', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
-    if (!provider) return res.status(404).json({error: 'not found'});
-
-    const xtream = createXtreamClient(provider);
-    let channels = [];
+    const { user_id } = req.body;
     
-    try { channels = await xtream.getChannels(); } catch {
-      try { channels = await xtream.getLiveStreams(); } catch {
-        const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_streams`;
-        const resp = await fetch(apiUrl);
-        channels = resp.ok ? await resp.json() : [];
-      }
+    if (!user_id) {
+      return res.status(400).json({error: 'user_id required'});
     }
-
-    const insert = db.prepare(`
-      INSERT OR REPLACE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
     
-    db.transaction(() => {
-      for (const ch of (channels || [])) {
-        const sid = Number(ch.stream_id || ch.id || 0);
-        if (sid > 0) {
-          insert.run(
-            provider.id,
-            sid,
-            ch.name || 'Unknown',
-            Number(ch.category_id || 0),
-            ch.stream_icon || '',
-            'live',
-            ch.epg_channel_id || ''
-          );
-        }
-      }
-    })();
+    const result = await performSync(id, user_id, true);
     
-    res.json({synced: channels.length});
+    if (result.errorMessage) {
+      return res.status(500).json({error: result.errorMessage});
+    }
+    
+    res.json({
+      success: true,
+      channels_added: result.channelsAdded,
+      channels_updated: result.channelsUpdated,
+      categories_added: result.categoriesAdded
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({error: e.message});
@@ -395,7 +700,7 @@ app.put('/api/user-categories/:catId/channels/reorder', (req, res) => {
 });
 
 // === Xtream API ===
-app.get('/player_api.php', (req, res) => {
+app.get('/player_api.php', async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
     const password = (req.query.password || '').trim();
@@ -457,21 +762,26 @@ app.get('/player_api.php', (req, res) => {
         ORDER BY uc.sort_order
       `).all(user.id);
 
-      const result = rows.map((ch, i) => ({
-        num: i + 1,
-        name: ch.name,
-        stream_type: 'live',
-        stream_id: Number(ch.user_channel_id),
-        stream_icon: ch.logo || '',
-        epg_channel_id: ch.epg_channel_id || '',
-        added: now.toString(),
-        is_adult: ch.category_is_adult || 0,
-        category_id: String(ch.user_category_id),
-        category_ids: [Number(ch.user_category_id)],
-        custom_sid: null,
-        tv_archive: 0,
-        direct_source: '',
-        tv_archive_duration: 0
+      const result = await Promise.all(rows.map(async (ch, i) => {
+        // Use direct picon URL - no caching needed
+        let iconUrl = ch.logo || '';
+        
+        return {
+          num: i + 1,
+          name: ch.name,
+          stream_type: 'live',
+          stream_id: Number(ch.user_channel_id),
+          stream_icon: iconUrl,
+          epg_channel_id: ch.epg_channel_id || '',
+          added: now.toString(),
+          is_adult: ch.category_is_adult || 0,
+          category_id: String(ch.user_category_id),
+          category_ids: [Number(ch.user_category_id)],
+          custom_sid: null,
+          tv_archive: 0,
+          direct_source: '',
+          tv_archive_duration: 0
+        };
       }));
       return res.json(result);
     }
@@ -486,6 +796,14 @@ app.get('/player_api.php', (req, res) => {
     res.status(500).json([]);
   }
 });
+
+// Picon caching function
+// Picon caching removed - using direct URLs for better performance and reliability
+// This avoids timeout issues and reduces server load
+async function cachePicon(originalUrl, channelName) {
+  // Simply return the original URL - no caching needed
+  return originalUrl || null;
+}
 
 // === Stream Proxy ===
 app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
@@ -542,24 +860,62 @@ app.get('/xmltv.php', async (req, res) => {
     const user = authUser(username, password);
     if (!user) return res.sendStatus(401);
 
-    const provider = db.prepare(`
-      SELECT * FROM providers
-      WHERE COALESCE(epg_url, '') != ''
-      LIMIT 1
-    `).get();
-
-    if (!provider || !provider.epg_url) {
-      return res.status(404).send('');
+    // Collect all EPG data from cache
+    const epgFiles = [];
+    
+    // Get provider EPG files
+    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    for (const provider of providers) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+      if (fs.existsSync(cacheFile)) {
+        epgFiles.push(cacheFile);
+      }
     }
-
-    const upstream = await fetch(provider.epg_url);
-    if (!upstream.ok || !upstream.body) return res.sendStatus(502);
-
+    
+    // Get EPG source files
+    const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
+    for (const source of sources) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
+      if (fs.existsSync(cacheFile)) {
+        epgFiles.push(cacheFile);
+      }
+    }
+    
+    if (epgFiles.length === 0) {
+      // Fallback to provider EPG URL if no cache
+      const provider = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' LIMIT 1").get();
+      if (provider && provider.epg_url) {
+        const upstream = await fetch(provider.epg_url);
+        if (upstream.ok && upstream.body) {
+          res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+          return upstream.body.pipe(res);
+        }
+      }
+      return res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
+    }
+    
+    // Merge all EPG files
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    upstream.body.pipe(res);
+    res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
+    
+    for (const file of epgFiles) {
+      try {
+        const content = fs.readFileSync(file, 'utf8');
+        // Extract content between <tv> tags
+        const match = content.match(/<tv[^>]*>([\s\S]*)<\/tv>/);
+        if (match && match[1]) {
+          res.write(match[1]);
+        }
+      } catch (e) {
+        console.error(`Error reading EPG file ${file}:`, e.message);
+      }
+    }
+    
+    res.write('</tv>');
+    res.end();
   } catch (e) {
     console.error('xmltv error:', e.message);
-    res.status(500).send('');
+    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
   }
 });
 
@@ -605,6 +961,177 @@ app.delete('/api/users/:id', (req, res) => {
     }
     db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// === Sync Config APIs ===
+app.get('/api/sync-configs', (req, res) => {
+  try {
+    const configs = db.prepare(`
+      SELECT sc.*, p.name as provider_name, u.username
+      FROM sync_configs sc
+      JOIN providers p ON p.id = sc.provider_id
+      JOIN users u ON u.id = sc.user_id
+      ORDER BY sc.id
+    `).all();
+    res.json(configs);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.get('/api/sync-configs/:providerId/:userId', (req, res) => {
+  try {
+    const config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?')
+      .get(Number(req.params.providerId), Number(req.params.userId));
+    res.json(config || null);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.post('/api/sync-configs', (req, res) => {
+  try {
+    const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
+    
+    if (!provider_id || !user_id) {
+      return res.status(400).json({error: 'provider_id and user_id required'});
+    }
+    
+    const nextSync = calculateNextSync(sync_interval || 'daily');
+    
+    const info = db.prepare(`
+      INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, next_sync, auto_add_categories, auto_add_channels)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      provider_id,
+      user_id,
+      enabled ? 1 : 0,
+      sync_interval || 'daily',
+      nextSync,
+      auto_add_categories ? 1 : 0,
+      auto_add_channels ? 1 : 0
+    );
+    
+    // Restart scheduler
+    startSyncScheduler();
+    
+    res.json({id: info.lastInsertRowid});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.put('/api/sync-configs/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
+    
+    const config = db.prepare('SELECT * FROM sync_configs WHERE id = ?').get(id);
+    if (!config) return res.status(404).json({error: 'not found'});
+    
+    const nextSync = calculateNextSync(sync_interval || config.sync_interval);
+    
+    db.prepare(`
+      UPDATE sync_configs
+      SET enabled = ?, sync_interval = ?, next_sync = ?, auto_add_categories = ?, auto_add_channels = ?
+      WHERE id = ?
+    `).run(
+      enabled !== undefined ? (enabled ? 1 : 0) : config.enabled,
+      sync_interval || config.sync_interval,
+      nextSync,
+      auto_add_categories !== undefined ? (auto_add_categories ? 1 : 0) : config.auto_add_categories,
+      auto_add_channels !== undefined ? (auto_add_channels ? 1 : 0) : config.auto_add_channels,
+      id
+    );
+    
+    // Restart scheduler
+    startSyncScheduler();
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/sync-configs/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM sync_configs WHERE id = ?').run(id);
+    
+    // Restart scheduler
+    startSyncScheduler();
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// === Sync Logs APIs ===
+app.get('/api/sync-logs', (req, res) => {
+  try {
+    const { provider_id, user_id, limit } = req.query;
+    let query = `
+      SELECT sl.*, p.name as provider_name, u.username
+      FROM sync_logs sl
+      JOIN providers p ON p.id = sl.provider_id
+      JOIN users u ON u.id = sl.user_id
+      WHERE 1=1
+    `;
+    const params = [];
+    
+    if (provider_id) {
+      query += ' AND sl.provider_id = ?';
+      params.push(Number(provider_id));
+    }
+    
+    if (user_id) {
+      query += ' AND sl.user_id = ?';
+      params.push(Number(user_id));
+    }
+    
+    query += ' ORDER BY sl.sync_time DESC';
+    
+    if (limit) {
+      query += ' LIMIT ?';
+      params.push(Number(limit));
+    }
+    
+    const logs = db.prepare(query).all(...params);
+    res.json(logs);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// === Category Mappings APIs ===
+app.get('/api/category-mappings/:providerId/:userId', (req, res) => {
+  try {
+    const mappings = db.prepare(`
+      SELECT cm.*, uc.name as user_category_name
+      FROM category_mappings cm
+      LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
+      WHERE cm.provider_id = ? AND cm.user_id = ?
+      ORDER BY cm.provider_category_name
+    `).all(Number(req.params.providerId), Number(req.params.userId));
+    res.json(mappings);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.put('/api/category-mappings/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { user_category_id } = req.body;
+    
+    db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
+      .run(user_category_id ? Number(user_category_id) : null, id);
+    
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -657,7 +1184,306 @@ app.put('/api/user-categories/:id/adult', (req, res) => {
   }
 });
 
+// EPG Update Function
+async function updateEpgSource(sourceId) {
+  const source = db.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
+  if (!source) throw new Error('EPG source not found');
+  
+  // Mark as updating
+  db.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
+  
+  try {
+    console.log(`📡 Fetching EPG from: ${source.name}`);
+    const response = await fetch(source.url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    
+    const epgData = await response.text();
+    const now = Math.floor(Date.now() / 1000);
+    
+    // Save to cache file
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${sourceId}.xml`);
+    fs.writeFileSync(cacheFile, epgData, 'utf8');
+    
+    // Update last_update timestamp
+    db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
+    
+    console.log(`✅ EPG updated: ${source.name} (${(epgData.length / 1024 / 1024).toFixed(2)} MB)`);
+    return { success: true, size: epgData.length };
+  } catch (e) {
+    console.error(`❌ EPG update failed: ${source.name}`, e.message);
+    db.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
+    throw e;
+  }
+}
+
+// === EPG Sources APIs ===
+app.get('/api/epg-sources', (req, res) => {
+  try {
+    const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
+    
+    // Add provider EPG sources
+    const providers = db.prepare("SELECT id, name, epg_url FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const allSources = [
+      ...providers.map(p => ({
+        id: `provider_${p.id}`,
+        name: `${p.name} (Provider EPG)`,
+        url: p.epg_url,
+        enabled: 1,
+        last_update: 0,
+        update_interval: 86400,
+        source_type: 'provider',
+        is_updating: 0
+      })),
+      ...sources
+    ];
+    
+    res.json(allSources);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.post('/api/epg-sources', (req, res) => {
+  try {
+    const { name, url, enabled, update_interval, source_type } = req.body;
+    if (!name || !url) return res.status(400).json({error: 'name and url required'});
+    
+    const info = db.prepare(`
+      INSERT INTO epg_sources (name, url, enabled, update_interval, source_type)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      name.trim(),
+      url.trim(),
+      enabled !== undefined ? (enabled ? 1 : 0) : 1,
+      update_interval || 86400,
+      source_type || 'custom'
+    );
+    
+    res.json({id: info.lastInsertRowid});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.put('/api/epg-sources/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, url, enabled, update_interval } = req.body;
+    
+    const updates = [];
+    const params = [];
+    
+    if (name !== undefined) {
+      updates.push('name = ?');
+      params.push(name.trim());
+    }
+    if (url !== undefined) {
+      updates.push('url = ?');
+      params.push(url.trim());
+    }
+    if (enabled !== undefined) {
+      updates.push('enabled = ?');
+      params.push(enabled ? 1 : 0);
+    }
+    if (update_interval !== undefined) {
+      updates.push('update_interval = ?');
+      params.push(update_interval);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({error: 'no fields to update'});
+    }
+    
+    params.push(id);
+    db.prepare(`UPDATE epg_sources SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/epg-sources/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    
+    // Delete cache file
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${id}.xml`);
+    if (fs.existsSync(cacheFile)) {
+      fs.unlinkSync(cacheFile);
+    }
+    
+    db.prepare('DELETE FROM epg_sources WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Update single EPG source
+app.post('/api/epg-sources/:id/update', async (req, res) => {
+  try {
+    const id = req.params.id;
+    
+    // Check if it's a provider EPG
+    if (id.startsWith('provider_')) {
+      const providerId = Number(id.replace('provider_', ''));
+      const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+      if (!provider || !provider.epg_url) {
+        return res.status(404).json({error: 'Provider EPG not found'});
+      }
+      
+      // Fetch and cache provider EPG
+      const response = await fetch(provider.epg_url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      
+      const epgData = await response.text();
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${providerId}.xml`);
+      fs.writeFileSync(cacheFile, epgData, 'utf8');
+      
+      return res.json({success: true, size: epgData.length});
+    }
+    
+    // Regular EPG source
+    const result = await updateEpgSource(Number(id));
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Update all EPG sources
+app.post('/api/epg-sources/update-all', async (req, res) => {
+  try {
+    const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
+    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    
+    const results = [];
+    
+    // Update provider EPGs
+    for (const provider of providers) {
+      try {
+        const p = db.prepare('SELECT * FROM providers WHERE id = ?').get(provider.id);
+        const response = await fetch(p.epg_url);
+        if (response.ok) {
+          const epgData = await response.text();
+          const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+          fs.writeFileSync(cacheFile, epgData, 'utf8');
+          results.push({id: `provider_${provider.id}`, success: true});
+        }
+      } catch (e) {
+        results.push({id: `provider_${provider.id}`, success: false, error: e.message});
+      }
+    }
+    
+    // Update regular EPG sources
+    for (const source of sources) {
+      try {
+        await updateEpgSource(source.id);
+        results.push({id: source.id, success: true});
+      } catch (e) {
+        results.push({id: source.id, success: false, error: e.message});
+      }
+    }
+    
+    res.json({success: true, results});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Cache for EPG sources
+let epgSourcesCache = null;
+let epgSourcesCacheTime = 0;
+const EPG_CACHE_DURATION = 3600000; // 1 hour
+
+// Get available EPG sources from globetvapp/epg
+app.get('/api/epg-sources/available', async (req, res) => {
+  try {
+    // Return cached data if available and fresh
+    const now = Date.now();
+    if (epgSourcesCache && (now - epgSourcesCacheTime) < EPG_CACHE_DURATION) {
+      return res.json(epgSourcesCache);
+    }
+    
+    const response = await fetch('https://api.github.com/repos/globetvapp/epg/contents/');
+    const data = await response.json();
+    
+    // Check for rate limit error
+    if (data.message && data.message.includes('rate limit')) {
+      console.warn('GitHub API rate limit reached, returning cached or empty data');
+      return res.json(epgSourcesCache || []);
+    }
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch EPG sources');
+    }
+    
+    const items = data;
+    const epgSources = [];
+    const seenUrls = new Set();
+    
+    // Process ALL directories (countries) - not just first 10
+    const directories = items.filter(i => i.type === 'dir');
+    console.log(`📡 Fetching EPG sources from ${directories.length} countries...`);
+    
+    // Process directories (countries) with delay to avoid rate limits
+    let processedCount = 0;
+    for (const item of directories) {
+      try {
+        const dirResponse = await fetch(item.url);
+        const dirData = await dirResponse.json();
+        
+        // Check for rate limit
+        if (dirData.message && dirData.message.includes('rate limit')) {
+          console.warn(`Rate limit reached after ${processedCount} countries`);
+          break;
+        }
+        
+        if (dirResponse.ok && Array.isArray(dirData)) {
+          // Only get .xml files (not .xml.gz to avoid duplicates)
+          const xmlFiles = dirData.filter(f => 
+            f.type === 'file' && f.name.endsWith('.xml') && !f.name.endsWith('.xml.gz')
+          );
+          
+          for (const file of xmlFiles) {
+            // Avoid duplicates
+            if (!seenUrls.has(file.download_url)) {
+              epgSources.push({
+                name: `${item.name} - ${file.name.replace(/\.xml$/, '')}`,
+                url: file.download_url,
+                size: file.size,
+                country: item.name
+              });
+              seenUrls.add(file.download_url);
+            }
+          }
+          processedCount++;
+        }
+        // Small delay to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 150));
+      } catch (e) {
+        console.error(`Failed to fetch ${item.name}:`, e.message);
+      }
+    }
+    
+    console.log(`✅ Found ${epgSources.length} EPG sources from ${processedCount} countries`);
+    
+    // Cache the results
+    if (epgSources.length > 0) {
+      epgSourcesCache = epgSources;
+      epgSourcesCacheTime = now;
+    }
+    
+    res.json(epgSources);
+  } catch (e) {
+    console.error('EPG sources error:', e.message);
+    // Return cached data if available, otherwise empty array
+    res.json(epgSourcesCache || []);
+  }
+});
+
 // Start
 app.listen(PORT, () => {
-  console.log(`✅ IPTV Meta Panel: http://localhost:${PORT}`);
+  console.log(`✅ IPTV-Manager: http://localhost:${PORT}`);
 });

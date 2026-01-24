@@ -1,7 +1,7 @@
 const translations = {
   en: {
     // Title & Headers
-    title: 'IPTV Meta Panel',
+    title: 'IPTV-Manager',
     userManagement: 'User Management',
     providerManagement: 'Provider Management',
     categoriesChannels: 'User Categories & Channels',
@@ -23,7 +23,12 @@ const translations = {
     addProvider: 'Add Provider',
     sync: 'Sync',
     syncing: 'Syncing...',
-    syncSuccess: '✅ {count} channels synchronized',
+    syncSuccess: '✅ {added} added, {updated} updated, {categories} categories',
+    syncConfig: 'Sync Config',
+    syncLogs: 'Sync Logs',
+    syncConfigSaved: '✅ Sync configuration saved',
+    noSyncLogs: 'No sync logs available',
+    lastSync: 'Last Sync',
     deleteProviderConfirm: 'Really delete provider "{name}"?',
     providerCreated: '✅ Provider created',
     
@@ -96,7 +101,7 @@ const translations = {
   
   de: {
     // Title & Headers
-    title: 'IPTV Meta Panel',
+    title: 'IPTV-Manager',
     userManagement: 'User-Verwaltung',
     providerManagement: 'Provider-Verwaltung',
     categoriesChannels: 'User-Kategorien & Kanäle',
@@ -118,7 +123,12 @@ const translations = {
     addProvider: 'Provider+',
     sync: 'Sync',
     syncing: 'Sync...',
-    syncSuccess: '✅ {count} Kanäle synchronisiert',
+    syncSuccess: '✅ {added} hinzugefügt, {updated} aktualisiert, {categories} Kategorien',
+    syncConfig: 'Sync-Konfiguration',
+    syncLogs: 'Sync-Protokolle',
+    syncConfigSaved: '✅ Sync-Konfiguration gespeichert',
+    noSyncLogs: 'Keine Sync-Protokolle verfügbar',
+    lastSync: 'Letzter Sync',
     deleteProviderConfirm: 'Provider "{name}" wirklich löschen?',
     providerCreated: '✅ Provider angelegt',
     
@@ -191,7 +201,7 @@ const translations = {
 
   fr: {
     // Title & Headers
-    title: 'Panneau Meta IPTV',
+    title: 'IPTV-Manager',
     userManagement: 'Gestion des Utilisateurs',
     providerManagement: 'Gestion des Fournisseurs',
     categoriesChannels: 'Catégories et Chaînes Utilisateur',
@@ -213,7 +223,12 @@ const translations = {
     addProvider: 'Ajouter Fournisseur',
     sync: 'Synchro',
     syncing: 'Synchronisation...',
-    syncSuccess: '✅ {count} chaînes synchronisées',
+    syncSuccess: '✅ {added} ajoutées, {updated} mises à jour, {categories} catégories',
+    syncConfig: 'Config Synchro',
+    syncLogs: 'Journaux Synchro',
+    syncConfigSaved: '✅ Configuration de synchronisation enregistrée',
+    noSyncLogs: 'Aucun journal de synchronisation disponible',
+    lastSync: 'Dernière Synchro',
     deleteProviderConfirm: 'Supprimer vraiment le fournisseur "{name}" ?',
     providerCreated: '✅ Fournisseur créé',
     
@@ -286,7 +301,7 @@ const translations = {
 
   el: {
     // Title & Headers
-    title: 'Πίνακας Meta IPTV',
+    title: 'IPTV-Manager',
     userManagement: 'Διαχείριση Χρηστών',
     providerManagement: 'Διαχείριση Παρόχων',
     categoriesChannels: 'Κατηγορίες & Κανάλια Χρήστη',
@@ -308,7 +323,12 @@ const translations = {
     addProvider: 'Προσθήκη Παρόχου',
     sync: 'Συγχρονισμός',
     syncing: 'Συγχρονισμός...',
-    syncSuccess: '✅ {count} κανάλια συγχρονίστηκαν',
+    syncSuccess: '✅ {added} προστέθηκαν, {updated} ενημερώθηκαν, {categories} κατηγορίες',
+    syncConfig: 'Ρυθμίσεις Συγχρονισμού',
+    syncLogs: 'Αρχεία Συγχρονισμού',
+    syncConfigSaved: '✅ Ρυθμίσεις συγχρονισμού αποθηκεύτηκαν',
+    noSyncLogs: 'Δεν υπάρχουν αρχεία συγχρονισμού',
+    lastSync: 'Τελευταίος Συγχρονισμός',
     deleteProviderConfirm: 'Διαγραφή παρόχου "{name}";',
     providerCreated: '✅ Πάροχος δημιουργήθηκε',
     

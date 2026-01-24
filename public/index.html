@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IPTV Meta Panel</title>
+  <title>IPTV-Manager</title>
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
   <style>
     .sortable-ghost {
       opacity: 0.4;
@@ -41,7 +42,7 @@
 </div>
 
   <div class="container py-4">
-    <h1 class="mb-4" data-i18n="title">IPTV Meta Panel</h1>
+    <h1 class="mb-4" data-i18n="title">IPTV-Manager</h1>
 
     <!-- 1. Users -->
     <h3 data-i18n="userManagement">1. User Management</h3>
@@ -87,7 +88,7 @@
           <div class="col-8"><input class="form-control" name="name" data-i18n-placeholder="categoryName" placeholder="Category Name" required /></div>
           <div class="col-4"><button class="btn btn-primary w-100" type="submit" data-i18n="addCategory">Add Category</button></div>
         </form>
-        <p class="small text-muted" data-i18n="dragToSort">🖐️ Drag & Drop to sort</p>
+        <p class="small text-secondary" data-i18n="dragToSort">🖐️ Drag & Drop to sort</p>
         <ul id="category-list" class="list-group"></ul>
       </div>
       
@@ -98,7 +99,7 @@
             <label class="form-label" data-i18n="selectProvider">Select Provider</label>
             <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
             <input type="text" id="channel-search" class="form-control form-control-sm" data-i18n-placeholder="searchChannels" placeholder="🔍 Search channels..." disabled />
-            <small class="text-muted" data-i18n="searchChannelsHint">Select provider, then search channels</small>
+            <small class="text-secondary" data-i18n="searchChannelsHint">Select provider, then search channels</small>
           </div>
         </div>
         
@@ -106,20 +107,40 @@
           <div class="col-md-6">
             <h6 data-i18n="providerChannels">Provider Channels</h6>
             <ul id="provider-channel-list" class="list-group small" style="max-height:400px; overflow:auto;">
-              <li class="list-group-item text-muted" data-i18n="pleaseSelectProvider">Please select provider</li>
+              <li class="list-group-item text-secondary" data-i18n="pleaseSelectProvider">Please select provider</li>
             </ul>
           </div>
           <div class="col-md-6">
-            <h6><span data-i18n="userChannels">User Channels</span> <small class="text-muted" data-i18n="dragToSortChannels">🖐️ Drag & Drop</small></h6>
+            <h6><span data-i18n="userChannels">User Channels</span> <small class="text-secondary" data-i18n="dragToSortChannels">🖐️ Drag & Drop</small></h6>
             <ul id="user-channel-list" class="list-group small" style="max-height:400px; overflow:auto;"></ul>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 4. Xtream Codes Info -->
+    <!-- 4. EPG Sources -->
     <hr class="my-4">
-    <h3 data-i18n="xtreamLogin">4. Xtream Codes Login</h3>
+    <h3>4. EPG Sources</h3>
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="d-flex gap-2 mb-3">
+          <button id="add-epg-source-btn" class="btn btn-outline-primary btn-sm">
+            ➕ Add EPG Source
+          </button>
+          <button id="browse-epg-sources-btn" class="btn btn-outline-secondary btn-sm">
+            📚 Browse Available Sources
+          </button>
+          <button id="update-all-epg-btn" class="btn btn-outline-info btn-sm">
+            🔄 Update All EPG
+          </button>
+        </div>
+        <ul id="epg-sources-list" class="list-group"></ul>
+      </div>
+    </div>
+
+    <!-- 5. Xtream Codes Info -->
+    <hr class="my-4">
+    <h3 data-i18n="xtreamLogin">5. Xtream Codes Login</h3>
     <p><strong data-i18n="url">URL</strong>: <code id="xtream-url"></code></p>
     <p><strong data-i18n="username">Username</strong>: <code id="xtream-user">-</code></p>
     <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
@@ -142,6 +163,214 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sync Config Modal -->
+  <div class="modal fade" id="sync-config-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="syncConfig">Sync Configuration</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="sync-config-form">
+          <div class="modal-body">
+            <input type="hidden" id="sync-provider-id" name="provider_id">
+            <input type="hidden" id="sync-user-id" name="user_id">
+            
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="sync-enabled" checked>
+                <label class="form-check-label" for="sync-enabled">Enable Automatic Sync</label>
+              </div>
+            </div>
+            
+            <div class="mb-3">
+              <label for="sync-interval" class="form-label">Sync Interval</label>
+              <select class="form-select" id="sync-interval" name="sync_interval">
+                <option value="hourly">Every Hour</option>
+                <option value="every_6_hours">Every 6 Hours</option>
+                <option value="every_12_hours">Every 12 Hours</option>
+                <option value="daily" selected>Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </div>
+            
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="sync-auto-categories" checked>
+                <label class="form-check-label" for="sync-auto-categories">
+                  Auto-add new categories
+                </label>
+              </div>
+            </div>
+            
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="sync-auto-channels" checked>
+                <label class="form-check-label" for="sync-auto-channels">
+                  Auto-add channels to categories
+                </label>
+              </div>
+            </div>
+            
+            <div id="last-sync-info" class="alert alert-info" style="display:none;"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+            <button type="submit" class="btn btn-primary">Save Configuration</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sync Logs Modal -->
+  <div class="modal fade" id="sync-logs-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="syncLogs">Sync Logs</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="table-responsive">
+            <table class="table table-sm table-striped">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Status</th>
+                  <th>Added</th>
+                  <th>Updated</th>
+                  <th>Categories</th>
+                  <th>Error</th>
+                </tr>
+              </thead>
+              <tbody id="sync-logs-tbody">
+                <tr><td colspan="6" class="text-center">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add EPG Source Modal -->
+  <div class="modal fade" id="add-epg-source-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Add EPG Source</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="add-epg-source-form">
+          <div class="modal-body">
+            <div class="mb-3">
+              <label for="epg-source-name" class="form-label">Name</label>
+              <input type="text" class="form-control" id="epg-source-name" required>
+            </div>
+            <div class="mb-3">
+              <label for="epg-source-url" class="form-label">URL</label>
+              <input type="url" class="form-control" id="epg-source-url" required>
+            </div>
+            <div class="mb-3">
+              <label for="epg-update-interval" class="form-label">Update Interval</label>
+              <select class="form-select" id="epg-update-interval">
+                <option value="3600">1 hour</option>
+                <option value="21600">6 hours</option>
+                <option value="43200">12 hours</option>
+                <option value="86400" selected>24 hours</option>
+                <option value="604800">7 days</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="epg-source-enabled" checked>
+                <label class="form-check-label" for="epg-source-enabled">
+                  Enabled
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="submit" class="btn btn-primary">Add Source</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit EPG Source Modal -->
+  <div class="modal fade" id="edit-epg-source-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit EPG Source</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="edit-epg-source-form">
+          <div class="modal-body">
+            <input type="hidden" id="edit-epg-source-id">
+            <div class="mb-3">
+              <label for="edit-epg-source-name" class="form-label">Name</label>
+              <input type="text" class="form-control" id="edit-epg-source-name" required>
+            </div>
+            <div class="mb-3">
+              <label for="edit-epg-source-url" class="form-label">URL</label>
+              <input type="url" class="form-control" id="edit-epg-source-url" required>
+            </div>
+            <div class="mb-3">
+              <label for="edit-epg-update-interval" class="form-label">Update Interval</label>
+              <select class="form-select" id="edit-epg-update-interval">
+                <option value="3600">1 hour</option>
+                <option value="21600">6 hours</option>
+                <option value="43200">12 hours</option>
+                <option value="86400">24 hours</option>
+                <option value="604800">7 days</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="edit-epg-source-enabled">
+                <label class="form-check-label" for="edit-epg-source-enabled">
+                  Enabled
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browse EPG Sources Modal -->
+  <div class="modal fade" id="browse-epg-sources-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Browse Available EPG Sources</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="text" id="epg-browse-search" class="form-control form-control-sm mb-3" placeholder="🔍 Search sources...">
+          <ul id="available-epg-sources-list" class="list-group" style="max-height:400px; overflow:auto;">
+            <li class="list-group-item text-muted">Loading...</li>
+          </ul>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
         </div>
       </div>
     </div>
