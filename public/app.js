@@ -405,6 +405,7 @@ function renderProviderCategories() {
   filtered.forEach(cat => {
     const li = document.createElement('li');
     li.className = 'list-group-item';
+    li.setAttribute('data-category-id', cat.category_id);
     
     if (cat.is_adult) {
       li.style.borderLeft = '4px solid #dc3545';
@@ -475,15 +476,26 @@ async function importCategory(cat, withChannels) {
       msg += '\n' + t('markedAsAdultContent');
     }
     
+    // Show success message
     alert(msg);
 
+    // Reload user categories to show the new import
     loadUserCategories();
     
-    const modalEl = document.getElementById('importCategoryModal');
-    const modalInstance = bootstrap.Modal.getInstance(modalEl);
-    if (modalInstance) {
-      modalInstance.hide();
+    // Mark the imported category in the list as imported
+    const categoryItem = document.querySelector(`[data-category-id="${cat.category_id}"]`);
+    if (categoryItem) {
+      categoryItem.classList.add('list-group-item-success');
+      const badge = categoryItem.querySelector('.badge');
+      if (badge) {
+        badge.textContent = '✓ ' + t('imported');
+        badge.classList.remove('bg-primary');
+        badge.classList.add('bg-success');
+      }
     }
+    
+    // Don't close modal - allow multiple imports
+    // User can close manually when done
   } catch (e) {
     console.error('❌ Import error:', e);
     alert(t('errorPrefix') + ' ' + e.message);

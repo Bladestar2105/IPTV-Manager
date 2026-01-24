@@ -74,6 +74,7 @@ const translations = {
     importWithChannels: '📥 With Channels',
     close: 'Close',
     categoryImportedOnly: '✅ Category "{name}" created (without channels)',
+    imported: 'Imported',
     categoryImportedWithChannels: '✅ Category "{name}" imported with {count} channels',
     markedAsAdultContent: '🔞 Marked as Adult Content',
     
@@ -198,6 +199,7 @@ const translations = {
     importWithChannels: '📥 Mit Kanälen',
     close: 'Schließen',
     categoryImportedOnly: '✅ Kategorie "{name}" erstellt (ohne Kanäle)',
+    imported: 'Importiert',
     categoryImportedWithChannels: '✅ Kategorie "{name}" mit {count} Kanälen importiert',
     markedAsAdultContent: '🔞 Als Adult-Content markiert',
     
@@ -322,6 +324,7 @@ const translations = {
     importWithChannels: '📥 Avec Chaînes',
     close: 'Fermer',
     categoryImportedOnly: '✅ Catégorie "{name}" créée (sans chaînes)',
+    imported: 'Importé',
     categoryImportedWithChannels: '✅ Catégorie "{name}" importée avec {count} chaînes',
     markedAsAdultContent: '🔞 Marqué comme Contenu Adulte',
     
@@ -446,6 +449,7 @@ const translations = {
     importWithChannels: '📥 Με Κανάλια',
     close: 'Κλείσιμο',
     categoryImportedOnly: '✅ Κατηγορία "{name}" δημιουργήθηκε (χωρίς κανάλια)',
+    imported: 'Εισήχθη',
     categoryImportedWithChannels: '✅ Κατηγορία "{name}" εισήχθη με {count} κανάλια',
     markedAsAdultContent: '🔞 Σημειώθηκε ως Περιεχόμενο Ενηλίκων',
     
