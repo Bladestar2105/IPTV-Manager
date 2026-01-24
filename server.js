@@ -294,11 +294,8 @@ async function performSync(providerId, userId, isManual = false) {
       
       // Auto-create categories if:
       // 1. No mapping exists AND not first sync AND auto_add enabled
-      // 2. Mapping exists but user_category_id is NULL AND auto_add enabled
-      const shouldAutoCreate = config && config.auto_add_categories && (
-        (!mapping && !isFirstSync) || 
-        (mapping && mapping.user_category_id === null)
-      );
+      // This means it's a NEW category from the provider
+      const shouldAutoCreate = config && config.auto_add_categories && !mapping && !isFirstSync;
       
       if (shouldAutoCreate) {
         // Create new user category
@@ -309,21 +306,11 @@ async function performSync(providerId, userId, isManual = false) {
         const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder);
         const newCategoryId = catInfo.lastInsertRowid;
         
-        // Create or update mapping
-        if (mapping && mapping.user_category_id === null) {
-          // Update existing mapping
-          db.prepare(`
-            UPDATE category_mappings 
-            SET user_category_id = ?, auto_created = 1
-            WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
-          `).run(newCategoryId, providerId, userId, catId);
-        } else {
-          // Create new mapping
-          db.prepare(`
-            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-            VALUES (?, ?, ?, ?, ?, 1)
-          `).run(providerId, userId, catId, catName, newCategoryId);
-        }
+        // Create new mapping (only for new categories)
+        db.prepare(`
+          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+          VALUES (?, ?, ?, ?, ?, 1)
+        `).run(providerId, userId, catId, catName, newCategoryId);
         
         categoryMap.set(catId, newCategoryId);
         categoriesAdded++;
@@ -1263,10 +1250,20 @@ app.delete('/api/providers/:id', (req, res) => {
 app.delete('/api/user-categories/:id', (req, res) => {
   try {
     const id = Number(req.params.id);
+    
+    // Delete in correct order to avoid foreign key constraints
+    // 1. Delete channels in this category
     db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
+    
+    // 2. Update category mappings (set user_category_id to NULL instead of deleting)
+    db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
+    
+    // 3. Delete the category itself
     db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
+    
     res.json({success: true});
   } catch (e) {
+    console.error('Delete category error:', e);
     res.status(500).json({error: e.message});
   }
 });
