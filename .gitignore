@@ -31,3 +31,13 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# Cache
+cache/
+
+# Credentials
+ADMIN_CREDENTIALS.txt
+
+# Internal
+todo.md
+server_output.log

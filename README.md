@@ -61,7 +61,7 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 
 ```bash
 # Clone the repository
-git clone https://github.com/Bladestar2105/IPTV-Manager.git
+git clone https://github.com/YOUR_USERNAME/IPTV-Manager.git
 cd IPTV-Manager
 
 # Checkout v2.5.0 branch (recommended)
