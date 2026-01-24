@@ -1125,13 +1125,12 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager/2.5.0',
+        'User-Agent': 'IPTV-Manager/3.0.0',
         'Connection': 'keep-alive'
       },
       // Don't follow redirects automatically for better control
-      redirect: 'follow',
-      // Increase timeout for large streams
-      signal: AbortSignal.timeout(30000)
+      redirect: 'follow'
+      // No timeout - streams can run indefinitely
     });
     
     if (!upstream.ok || !upstream.body) {
@@ -1155,17 +1154,20 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     // Stream the response with error handling
     upstream.body.pipe(res);
     
-    // Handle stream errors
+    // Handle stream errors (only log real errors, not normal disconnects)
     upstream.body.on('error', (err) => {
-      console.error('Stream error:', err);
+      // Only log if it's not a normal client disconnect
+      if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
+        console.error('Stream error:', err.message);
+      }
       if (!res.headersSent) {
         res.sendStatus(502);
       }
     });
     
-    // Handle client disconnect
+    // Handle client disconnect gracefully
     req.on('close', () => {
-      if (upstream.body) {
+      if (upstream.body && !upstream.body.destroyed) {
         upstream.body.destroy();
       }
     });
