@@ -1,6 +1,59 @@
+// JWT Token Management
+function getToken() {
+  return localStorage.getItem('jwt_token');
+}
+
+function setToken(token) {
+  localStorage.setItem('jwt_token', token);
+}
+
+function removeToken() {
+  localStorage.removeItem('jwt_token');
+}
+
+function isTokenExpired() {
+  const token = getToken();
+  if (!token) return true;
+  
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp * 1000 < Date.now();
+  } catch {
+    return true;
+  }
+}
+
 async function fetchJSON(url, options = {}) {
+  // Add JWT token to requests
+  const token = getToken();
+  if (token && !isTokenExpired()) {
+    options.headers = {
+      ...options.headers,
+      'Authorization': `Bearer ${token}`
+    };
+  }
+  
   const res = await fetch(url, options);
-  if (!res.ok) throw new Error('HTTP ' + res.status);
+  
+  // Handle token expiration
+  if (res.status === 401 || res.status === 403) {
+    removeToken();
+    showLoginModal();
+    throw new Error('Authentication required');
+  }
+  
+  if (!res.ok) {
+    // Try to parse error response
+    try {
+      const errorData = await res.json();
+      const error = new Error(errorData.message || 'HTTP ' + res.status);
+      error.response = errorData;
+      throw error;
+    } catch (e) {
+      if (e.response) throw e; // Re-throw if we successfully parsed the error
+      throw new Error('HTTP ' + res.status);
+    }
+  }
   return res.json();
 }
 
@@ -648,7 +701,10 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     loadUsers();
     alert(t('userCreated'));
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    // Show user-friendly error message
+    const errorData = e.response || {};
+    const errorMessage = errorData.message || e.message || 'Unknown error';
+    alert(t('errorPrefix') + ' ' + errorMessage);
   }
 });
 
@@ -1141,9 +1197,208 @@ document.addEventListener('DOMContentLoaded', () => {
     epgBrowseSearch.addEventListener('input', renderAvailableEpgSources);
   }
   
-  loadUsers();
-  loadProviders();
-  loadEpgSources();
+  // Check authentication on page load
+  checkAuthentication();
   
   console.log('✅ IPTV-Manager loaded with i18n & local assets');
 });
+
+// Authentication Functions
+function showLoginModal() {
+  const modal = document.getElementById('login-modal');
+  if (modal) {
+    const bsModal = new bootstrap.Modal(modal);
+    bsModal.show();
+  }
+}
+
+function hideLoginModal() {
+  const modal = document.getElementById('login-modal');
+  if (modal) {
+    const bsModal = bootstrap.Modal.getInstance(modal);
+    if (bsModal) bsModal.hide();
+  }
+}
+
+async function checkAuthentication() {
+  const token = getToken();
+  
+  if (!token || isTokenExpired()) {
+    showLoginModal();
+    return false;
+  }
+  
+  try {
+    await fetchJSON('/api/verify-token');
+    
+    // Show the main UI if token is valid
+    document.getElementById('main-content').style.display = 'block';
+    
+    loadUsers();
+    loadProviders();
+    loadEpgSources();
+    return true;
+  } catch {
+    removeToken();
+    showLoginModal();
+    return false;
+  }
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const loginBtn = document.getElementById('login-btn');
+  const errorDiv = document.getElementById('login-error');
+  
+  if (!username || !password) {
+    errorDiv.textContent = t('missing_credentials');
+    errorDiv.style.display = 'block';
+    return;
+  }
+  
+  loginBtn.disabled = true;
+  loginBtn.textContent = t('logging_in');
+  errorDiv.style.display = 'none';
+  
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'login_failed');
+    }
+    
+    const data = await response.json();
+    setToken(data.token);
+    
+    hideLoginModal();
+    
+    // Show the main UI after successful login
+    document.getElementById('main-content').style.display = 'block';
+    
+    loadUsers();
+    loadProviders();
+    loadEpgSources();
+    
+    // Clear form
+    document.getElementById('login-username').value = '';
+    document.getElementById('login-password').value = '';
+    
+  } catch (error) {
+    errorDiv.textContent = t(error.message) || t('login_failed');
+    errorDiv.style.display = 'block';
+  } finally {
+    loginBtn.disabled = false;
+    loginBtn.textContent = t('login');
+  }
+}
+
+function handleLogout() {
+  removeToken();
+  selectedUser = null;
+  selectedUserId = null;
+  selectedCategoryId = null;
+  
+  // Hide the main UI when logging out
+  document.getElementById('main-content').style.display = 'none';
+  
+  showLoginModal();
+}
+
+// Change Password Functions
+function showChangePasswordModal() {
+  const modal = document.getElementById('change-password-modal');
+  if (modal) {
+    // Clear form
+    document.getElementById('old-password').value = '';
+    document.getElementById('new-password').value = '';
+    document.getElementById('confirm-password').value = '';
+    document.getElementById('change-password-error').style.display = 'none';
+    document.getElementById('change-password-success').style.display = 'none';
+    
+    const bsModal = new bootstrap.Modal(modal);
+    bsModal.show();
+  }
+}
+
+async function handleChangePassword(event) {
+  event.preventDefault();
+  
+  const oldPassword = document.getElementById('old-password').value;
+  const newPassword = document.getElementById('new-password').value;
+  const confirmPassword = document.getElementById('confirm-password').value;
+  const changePasswordBtn = document.getElementById('change-password-btn');
+  const errorDiv = document.getElementById('change-password-error');
+  const successDiv = document.getElementById('change-password-success');
+  
+  // Hide previous messages
+  errorDiv.style.display = 'none';
+  successDiv.style.display = 'none';
+  
+  // Validate passwords match
+  if (newPassword !== confirmPassword) {
+    errorDiv.textContent = t('passwords_dont_match');
+    errorDiv.style.display = 'block';
+    return;
+  }
+  
+  // Validate password length
+  if (newPassword.length < 8) {
+    errorDiv.textContent = t('password_too_short');
+    errorDiv.style.display = 'block';
+    return;
+  }
+  
+  changePasswordBtn.disabled = true;
+  changePasswordBtn.textContent = t('changing_password');
+  
+  try {
+    const response = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify({
+        oldPassword,
+        newPassword,
+        confirmPassword
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'change_password_failed');
+    }
+    
+    // Success
+    successDiv.textContent = t('password_changed_successfully');
+    successDiv.style.display = 'block';
+    
+    // Clear form
+    document.getElementById('old-password').value = '';
+    document.getElementById('new-password').value = '';
+    document.getElementById('confirm-password').value = '';
+    
+    // Close modal after 2 seconds
+    setTimeout(() => {
+      const modal = bootstrap.Modal.getInstance(document.getElementById('change-password-modal'));
+      if (modal) modal.hide();
+    }, 2000);
+    
+  } catch (error) {
+    errorDiv.textContent = t(error.message) || t('change_password_failed');
+    errorDiv.style.display = 'block';
+  } finally {
+    changePasswordBtn.disabled = false;
+    changePasswordBtn.textContent = t('change_password');
+  }
+}

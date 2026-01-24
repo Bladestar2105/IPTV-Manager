@@ -1,38 +1,36 @@
-# IPTV-Manager v2.0.0 - Final Polish & Cleanup
+# IPTV-Manager v2.5.0 - Final Fixes & Release
 
-## UI Text Readability Fixes
-- [ ] Fix table headers in Sync-Protokolle modal
-- [ ] Fix hint text in Kanalzuordnung section
-- [ ] Improve all modal text visibility
-- [ ] Test all UI elements for readability
+## Previous Tasks ✅
+- [x] Admin/IPTV user separation
+- [x] Category transmission fix
+- [x] Stream proxy authentication fix
+- [x] Comprehensive documentation
 
-## Language Updates
-- [ ] Review all German translations
-- [ ] Ensure consistency across UI
-- [ ] Update i18n file if needed
+## Final Fixes ✅
+- [x] Better error handling for user creation (password too short)
+- [x] Hide WebUI background before login
+- [x] Optimize stream proxy performance
+- [x] Test basic functionality (T-Rex provider unreachable in sandbox)
+- [x] Comprehensive testing
 
-## Git Cleanup
-- [ ] Remove unnecessary documentation files
-- [ ] Keep only essential docs (README, LICENSE, etc.)
-- [ ] Clean up test files
-- [ ] Verify .gitignore is complete
+## Testing Results ✅
+- [x] Admin login works
+- [x] User creation with validation works
+- [x] Short password error handling works
+- [x] IPTV API authentication works
+- [x] Category retrieval works
+- [x] WebUI hidden before login (needs user testing)
+- [x] Stream proxy optimized with better headers and error handling
 
-## Security Review
-- [ ] Analyze complete codebase for security issues
-- [ ] Check for exposed credentials
-- [ ] Verify input validation
-- [ ] Check SQL injection prevention
-- [ ] Review authentication/authorization
+## WebUI Testing Required
+- URL: https://3000-723ada79-e46c-4e67-b78e-aab0d8a05509.sandbox-service.public.prod.myninja.ai
+- Admin credentials: admin / 2933424004ad3f4e
+- Test: WebUI should be hidden until login
 
-## README Update
-- [ ] Comprehensive code analysis
-- [ ] Update features section
-- [ ] Add security notes
-- [ ] Update installation instructions
-- [ ] Add usage examples
-
-## Final Steps
-- [ ] Commit all changes
-- [ ] Merge v2.0.0 into main
-- [ ] Tag release
-- [ ] Push to repository
+## Release Process
+- [ ] User confirms all fixes work
+- [ ] Commit and push final changes
+- [ ] Merge v2.5.0 into main
+- [ ] Delete v2.5.0 branch
+- [ ] Create v3.0.0 branch from main
+- [ ] Prepare for v3.0.0 development

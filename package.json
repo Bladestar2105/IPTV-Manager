@@ -8,13 +8,18 @@
   },
   "dependencies": {
     "@iptv/xtream-api": "^1.2.1",
+    "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.8.1",
     "body-parser": "^1.20.3",
+    "bootstrap": "^5.3.0",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.0",
     "node-fetch": "^3.3.2",
-    "bootstrap": "^5.3.0",
     "sortablejs": "^1.15.0"
   }
 }

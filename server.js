@@ -10,11 +10,24 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
+// Security configuration
+const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-key-in-production';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 10;
 
 // Create cache directories
 const CACHE_DIR = path.join(__dirname, 'cache');
@@ -24,10 +37,38 @@ const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
+// Security Middleware
+app.use(helmet({
+  contentSecurityPolicy: false, // Allow inline scripts for now
+  crossOriginEmbedderPolicy: false
+}));
+
+// Rate limiting for authentication endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts
+  message: { error: 'Too many authentication attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// General API rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // 100 requests per minute
+  message: { error: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Middleware
 app.use(bodyParser.json());
-app.use(cors());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS || '*',
+  credentials: true
+}));
 app.use(morgan('dev'));
+app.use('/api', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/cache', express.static(path.join(__dirname, 'cache')));
 
@@ -56,6 +97,14 @@ try {
       stream_type TEXT DEFAULT 'live',
       epg_channel_id TEXT DEFAULT '',
       UNIQUE(provider_id, remote_stream_id)
+    );
+    
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
     
     CREATE TABLE IF NOT EXISTS users (
@@ -147,6 +196,9 @@ try {
     -- Picon cache table removed - using direct URLs for better performance
   `);
   console.log("✅ Database OK");
+  
+  // Create default admin user if no users exist
+  await createDefaultAdmin();
 } catch (e) {
   console.error("❌ DB Error:", e.message);
   process.exit(1);
@@ -240,8 +292,15 @@ async function performSync(providerId, userId, isManual = false) {
         WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
       `).get(providerId, userId, catId);
       
-      // Only auto-create categories if NOT first sync and auto_add_categories is enabled
-      if (!mapping && config && config.auto_add_categories && !isFirstSync) {
+      // Auto-create categories if:
+      // 1. No mapping exists AND not first sync AND auto_add enabled
+      // 2. Mapping exists but user_category_id is NULL AND auto_add enabled
+      const shouldAutoCreate = config && config.auto_add_categories && (
+        (!mapping && !isFirstSync) || 
+        (mapping && mapping.user_category_id === null)
+      );
+      
+      if (shouldAutoCreate) {
         // Create new user category
         const isAdult = isAdultCategory(catName) ? 1 : 0;
         const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
@@ -250,11 +309,21 @@ async function performSync(providerId, userId, isManual = false) {
         const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder);
         const newCategoryId = catInfo.lastInsertRowid;
         
-        // Create mapping
-        db.prepare(`
-          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-          VALUES (?, ?, ?, ?, ?, 1)
-        `).run(providerId, userId, catId, catName, newCategoryId);
+        // Create or update mapping
+        if (mapping && mapping.user_category_id === null) {
+          // Update existing mapping
+          db.prepare(`
+            UPDATE category_mappings 
+            SET user_category_id = ?, auto_created = 1
+            WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
+          `).run(newCategoryId, providerId, userId, catId);
+        } else {
+          // Create new mapping
+          db.prepare(`
+            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+            VALUES (?, ?, ?, ?, ?, 1)
+          `).run(providerId, userId, catId, catName, newCategoryId);
+        }
         
         categoryMap.set(catId, newCategoryId);
         categoriesAdded++;
@@ -427,12 +496,91 @@ function createXtreamClient(provider) {
 }
 
 // Auth
-function authUser(username, password) {
+// JWT Authentication Middleware
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'No token provided' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+}
+
+// Generate JWT token
+function generateToken(user) {
+  return jwt.sign(
+    { 
+      id: user.id, 
+      username: user.username,
+      is_active: user.is_active 
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+}
+
+// Create default admin user on first start
+async function createDefaultAdmin() {
+  try {
+    const adminCount = db.prepare('SELECT COUNT(*) as count FROM admin_users').get();
+    
+    if (adminCount.count === 0) {
+      // Generate random password
+      const crypto = await import('crypto');
+      const randomPassword = crypto.randomBytes(8).toString('hex');
+      const username = 'admin';
+      
+      // Hash password
+      const hashedPassword = await bcrypt.hash(randomPassword, BCRYPT_ROUNDS);
+      
+      // Create admin user in admin_users table (NOT in users table)
+      db.prepare('INSERT INTO admin_users (username, password, is_active) VALUES (?, ?, 1)')
+        .run(username, hashedPassword);
+      
+      console.log('\\n' + '='.repeat(60));
+      console.log('🔐 DEFAULT ADMIN USER CREATED (WebGUI Only)');
+      console.log('='.repeat(60));
+      console.log(`Username: ${username}`);
+      console.log(`Password: ${randomPassword}`);
+      console.log('='.repeat(60));
+      console.log('⚠️  IMPORTANT: Please change this password after first login!');
+      console.log('ℹ️  NOTE: Admin user is for WebGUI only, not for IPTV streams!');
+      console.log('='.repeat(60) + '\\n');
+      
+      // Save credentials to file for reference
+      const fs = await import('fs');
+      const credentialsFile = path.join(__dirname, 'ADMIN_CREDENTIALS.txt');
+      const credentialsContent = `IPTV-Manager Default Admin Credentials\nGenerated: ${new Date().toISOString()}\n\nUsername: ${username}\nPassword: ${randomPassword}\n\n⚠️ IMPORTANT: \n- Change this password immediately after first login\n- Delete this file after noting the credentials\n- Keep these credentials secure\n- This admin user is for WebGUI management only\n- Create separate users for IPTV stream access\n`;
+      
+      fs.writeFileSync(credentialsFile, credentialsContent);
+      console.log(`📄 Credentials also saved to: ${credentialsFile}\\n`);
+    }
+  } catch (error) {
+    console.error('❌ Error creating default admin:', error);
+  }
+}
+
+// Authenticate user with bcrypt
+async function authUser(username, password) {
   try {
     const u = (username || '').trim();
     const p = (password || '').trim();
     if (!u || !p) return null;
-    return db.prepare('SELECT * FROM users WHERE username = ? AND password = ? AND is_active = 1').get(u, p);
+    
+    const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(u);
+    if (!user) return null;
+    
+    // Compare password with hashed password
+    const isValid = await bcrypt.compare(p, user.password);
+    return isValid ? user : null;
   } catch (e) {
     console.error('authUser error:', e);
     return null;
@@ -440,19 +588,156 @@ function authUser(username, password) {
 }
 
 // === API: Users ===
-app.get('/api/users', (req, res) => {
+app.get('/api/users', authenticateToken, (req, res) => {
   try {
     res.json(db.prepare('SELECT id, username, is_active FROM users ORDER BY id').all());
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/users', (req, res) => {
+app.post('/api/users', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({error: 'missing'});
-    const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username.trim(), password.trim());
-    res.json({id: info.lastInsertRowid});
-  } catch (e) { res.status(400).json({error: e.message}); }
+    
+    // Validation
+    if (!username || !password) {
+      return res.status(400).json({
+        error: 'missing_fields',
+        message: 'Username and password are required'
+      });
+    }
+    
+    const u = username.trim();
+    const p = password.trim();
+    
+    // Validate username
+    if (u.length < 3 || u.length > 50) {
+      return res.status(400).json({
+        error: 'invalid_username_length',
+        message: 'Username must be 3-50 characters'
+      });
+    }
+    
+    if (!/^[a-zA-Z0-9_]+$/.test(u)) {
+      return res.status(400).json({
+        error: 'invalid_username_format',
+        message: 'Username can only contain letters, numbers, and underscores'
+      });
+    }
+    
+    // Validate password
+    if (p.length < 8) {
+      return res.status(400).json({
+        error: 'password_too_short',
+        message: 'Password must be at least 8 characters'
+      });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
+    
+    // Insert user
+    const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(u, hashedPassword);
+    
+    res.json({
+      id: info.lastInsertRowid,
+      message: 'User created successfully'
+    });
+  } catch (e) { 
+    res.status(400).json({error: e.message}); 
+  }
+});
+
+// === API: Authentication ===
+app.post('/api/login', authLimiter, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({error: 'missing_credentials'});
+    }
+    
+    // Check admin_users table for WebGUI login
+    const admin = db.prepare('SELECT * FROM admin_users WHERE username = ? AND is_active = 1').get(username);
+    
+    if (admin) {
+      const isValid = await bcrypt.compare(password, admin.password);
+      if (isValid) {
+        const token = generateToken(admin);
+        return res.json({
+          token,
+          user: {
+            id: admin.id,
+            username: admin.username,
+            is_active: admin.is_active,
+            is_admin: true
+          },
+          expiresIn: JWT_EXPIRES_IN
+        });
+      }
+    }
+    
+    return res.status(401).json({error: 'invalid_credentials'});
+  } catch (e) {
+    console.error('Login error:', e);
+    res.status(500).json({error: 'server_error'});
+  }
+});
+
+// Verify token endpoint
+app.get('/api/verify-token', authenticateToken, (req, res) => {
+  res.json({
+    valid: true,
+    user: req.user
+  });
+});
+
+// Change password endpoint
+app.post('/api/change-password', authenticateToken, authLimiter, async (req, res) => {
+  try {
+    const { oldPassword, newPassword, confirmPassword } = req.body;
+    const userId = req.user.id;
+    
+    // Validation
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({error: 'missing_fields'});
+    }
+    
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({error: 'passwords_dont_match'});
+    }
+    
+    if (newPassword.length < 8) {
+      return res.status(400).json({error: 'password_too_short'});
+    }
+    
+    // Get admin user
+    const admin = db.prepare('SELECT * FROM admin_users WHERE id = ?').get(userId);
+    if (!admin) {
+      return res.status(404).json({error: 'user_not_found'});
+    }
+    
+    // Verify old password
+    const isValidOldPassword = await bcrypt.compare(oldPassword, admin.password);
+    if (!isValidOldPassword) {
+      return res.status(401).json({error: 'invalid_old_password'});
+    }
+    
+    // Hash new password
+    const hashedNewPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    
+    // Update password
+    db.prepare('UPDATE admin_users SET password = ? WHERE id = ?').run(hashedNewPassword, userId);
+    
+    console.log(`✅ Password changed for admin: ${admin.username}`);
+    
+    res.json({
+      success: true,
+      message: 'password_changed_successfully'
+    });
+  } catch (e) {
+    console.error('Change password error:', e);
+    res.status(500).json({error: 'server_error'});
+  }
 });
 
 // === API: Providers ===
@@ -706,7 +991,7 @@ app.get('/player_api.php', async (req, res) => {
     const password = (req.query.password || '').trim();
     const action = (req.query.action || '').trim();
     
-    const user = authUser(username, password);
+    const user = await authUser(username, password);
     if (!user) {
       return res.json({user_info: {auth: 0, message: 'Invalid credentials'}});
     }
@@ -814,7 +1099,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     
     if (!streamId) return res.sendStatus(404);
     
-    const user = authUser(username, password);
+    const user = await authUser(username, password);
     if (!user) return res.sendStatus(401);
 
     const channel = db.prepare(`
@@ -837,17 +1122,59 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.ts`;
     
-    console.log('Proxy:', remoteUrl);
+    // Fetch with optimized settings for streaming
+    const upstream = await fetch(remoteUrl, {
+      headers: {
+        'User-Agent': 'IPTV-Manager/2.5.0',
+        'Connection': 'keep-alive'
+      },
+      // Don't follow redirects automatically for better control
+      redirect: 'follow',
+      // Increase timeout for large streams
+      signal: AbortSignal.timeout(30000)
+    });
     
-    const upstream = await fetch(remoteUrl);
-    if (!upstream.ok || !upstream.body) return res.sendStatus(502);
+    if (!upstream.ok || !upstream.body) {
+      console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      return res.sendStatus(502);
+    }
 
+    // Set optimal headers for streaming
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    // Copy content-length if available
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+    
+    // Stream the response with error handling
     upstream.body.pipe(res);
+    
+    // Handle stream errors
+    upstream.body.on('error', (err) => {
+      console.error('Stream error:', err);
+      if (!res.headersSent) {
+        res.sendStatus(502);
+      }
+    });
+    
+    // Handle client disconnect
+    req.on('close', () => {
+      if (upstream.body) {
+        upstream.body.destroy();
+      }
+    });
+    
   } catch (e) {
-    console.error('Stream proxy error:', e);
-    res.sendStatus(500);
+    console.error('Stream proxy error:', e.message);
+    if (!res.headersSent) {
+      res.sendStatus(500);
+    }
   }
 });
 
@@ -857,7 +1184,7 @@ app.get('/xmltv.php', async (req, res) => {
     const username = (req.query.username || '').trim();
     const password = (req.query.password || '').trim();
     
-    const user = authUser(username, password);
+    const user = await authUser(username, password);
     if (!user) return res.sendStatus(401);
 
     // Collect all EPG data from cache
@@ -952,7 +1279,7 @@ app.delete('/api/user-channels/:id', (req, res) => {
   }
 });
 
-app.delete('/api/users/:id', (req, res) => {
+app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);

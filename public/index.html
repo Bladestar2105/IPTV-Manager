@@ -41,8 +41,14 @@
   </select>
 </div>
 
-  <div class="container py-4">
-    <h1 class="mb-4" data-i18n="title">IPTV-Manager</h1>
+  <div class="container py-4" id="main-content" style="display: none;">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h1 class="mb-0" data-i18n="title">IPTV-Manager</h1>
+      <div>
+        <button class="btn btn-outline-info btn-sm me-2" onclick="showChangePasswordModal()" data-i18n="change_password">Change Password</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="handleLogout()" data-i18n="logout">Logout</button>
+      </div>
+    </div>
 
     <!-- 1. Users -->
     <h3 data-i18n="userManagement">1. User Management</h3>
@@ -371,6 +377,63 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Login Modal -->
+  <div class="modal fade" id="login-modal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="login">Login</h5>
+        </div>
+        <div class="modal-body">
+          <form id="login-form" onsubmit="handleLogin(event)">
+            <div class="mb-3">
+              <label for="login-username" class="form-label" data-i18n="username">Username</label>
+              <input type="text" class="form-control" id="login-username" required>
+            </div>
+            <div class="mb-3">
+              <label for="login-password" class="form-label" data-i18n="password">Password</label>
+              <input type="password" class="form-control" id="login-password" required>
+            </div>
+            <div id="login-error" class="alert alert-danger" style="display: none;"></div>
+            <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change Password Modal -->
+  <div class="modal fade" id="change-password-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="change_password">Change Password</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="change-password-form" onsubmit="handleChangePassword(event)">
+            <div class="mb-3">
+              <label for="old-password" class="form-label" data-i18n="old_password">Old Password</label>
+              <input type="password" class="form-control" id="old-password" required>
+            </div>
+            <div class="mb-3">
+              <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
+              <input type="password" class="form-control" id="new-password" required minlength="8">
+              <small class="form-text text-secondary" data-i18n="password_min_length">Minimum 8 characters</small>
+            </div>
+            <div class="mb-3">
+              <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
+              <input type="password" class="form-control" id="confirm-password" required minlength="8">
+            </div>
+            <div id="change-password-error" class="alert alert-danger" style="display: none;"></div>
+            <div id="change-password-success" class="alert alert-success" style="display: none;"></div>
+            <button type="submit" class="btn btn-primary w-100" id="change-password-btn" data-i18n="change_password">Change Password</button>
+          </form>
         </div>
       </div>
     </div>

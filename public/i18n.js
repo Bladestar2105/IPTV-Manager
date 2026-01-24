@@ -96,7 +96,31 @@ const translations = {
     
     // Loading states
     loading: 'Loading...',
-    saving: 'Saving...'
+    saving: 'Saving...',
+    
+    // Authentication
+    login: 'Login',
+    logout: 'Logout',
+    logging_in: 'Logging in...',
+    missing_credentials: 'Please enter username and password',
+    invalid_credentials: 'Invalid username or password',
+    login_failed: 'Login failed. Please try again.',
+    token_expired: 'Your session has expired. Please login again.',
+    authentication_required: 'Authentication required',
+    
+    // Password Change
+    change_password: 'Change Password',
+    old_password: 'Old Password',
+    new_password: 'New Password',
+    confirm_password: 'Confirm Password',
+    password_min_length: 'Minimum 8 characters',
+    passwords_dont_match: 'Passwords do not match',
+    password_too_short: 'Password must be at least 8 characters',
+    invalid_old_password: 'Invalid old password',
+    password_changed_successfully: 'Password changed successfully!',
+    change_password_failed: 'Failed to change password',
+    changing_password: 'Changing password...',
+    missing_fields: 'Please fill in all fields'
   },
   
   de: {
@@ -196,7 +220,31 @@ const translations = {
     
     // Loading states
     loading: 'Lädt...',
-    saving: 'Speichert...'
+    saving: 'Speichert...',
+    
+    // Authentication
+    login: 'Anmelden',
+    logout: 'Abmelden',
+    logging_in: 'Anmeldung läuft...',
+    missing_credentials: 'Bitte Benutzername und Passwort eingeben',
+    invalid_credentials: 'Ungültiger Benutzername oder Passwort',
+    login_failed: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
+    token_expired: 'Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.',
+    authentication_required: 'Authentifizierung erforderlich',
+    
+    // Password Change
+    change_password: 'Passwort ändern',
+    old_password: 'Altes Passwort',
+    new_password: 'Neues Passwort',
+    confirm_password: 'Passwort bestätigen',
+    password_min_length: 'Mindestens 8 Zeichen',
+    passwords_dont_match: 'Passwörter stimmen nicht überein',
+    password_too_short: 'Passwort muss mindestens 8 Zeichen lang sein',
+    invalid_old_password: 'Ungültiges altes Passwort',
+    password_changed_successfully: 'Passwort erfolgreich geändert!',
+    change_password_failed: 'Passwortänderung fehlgeschlagen',
+    changing_password: 'Passwort wird geändert...',
+    missing_fields: 'Bitte alle Felder ausfüllen'
   },
 
   fr: {
@@ -296,7 +344,31 @@ const translations = {
     
     // Loading states
     loading: 'Chargement...',
-    saving: 'Enregistrement...'
+    saving: 'Enregistrement...',
+    
+    // Authentication
+    login: 'Connexion',
+    logout: 'Déconnexion',
+    logging_in: 'Connexion en cours...',
+    missing_credentials: 'Veuillez entrer nom d\'utilisateur et mot de passe',
+    invalid_credentials: 'Nom d\'utilisateur ou mot de passe invalide',
+    login_failed: 'Échec de la connexion. Veuillez réessayer.',
+    token_expired: 'Votre session a expiré. Veuillez vous reconnecter.',
+    authentication_required: 'Authentification requise',
+    
+    // Password Change
+    change_password: 'Changer le mot de passe',
+    old_password: 'Ancien mot de passe',
+    new_password: 'Nouveau mot de passe',
+    confirm_password: 'Confirmer le mot de passe',
+    password_min_length: 'Minimum 8 caractères',
+    passwords_dont_match: 'Les mots de passe ne correspondent pas',
+    password_too_short: 'Le mot de passe doit contenir au moins 8 caractères',
+    invalid_old_password: 'Ancien mot de passe invalide',
+    password_changed_successfully: 'Mot de passe changé avec succès!',
+    change_password_failed: 'Échec du changement de mot de passe',
+    changing_password: 'Changement du mot de passe...',
+    missing_fields: 'Veuillez remplir tous les champs'
   },
 
   el: {
