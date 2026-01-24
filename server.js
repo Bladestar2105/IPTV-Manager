@@ -22,7 +22,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Security configuration
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-key-in-production';
@@ -177,6 +177,7 @@ try {
       url TEXT NOT NULL,
       enabled INTEGER DEFAULT 1,
       last_update INTEGER DEFAULT 0,
+      next_update INTEGER DEFAULT 0,
       update_interval INTEGER DEFAULT 86400,
       source_type TEXT DEFAULT 'custom',
       is_updating INTEGER DEFAULT 0,
@@ -539,8 +540,8 @@ async function runEpgUpdateCycle() {
       WHERE enabled = 1 
       AND is_updating = 0
       AND (
-        last_update IS NULL 
-        OR last_update + update_interval * 3600 <= ?
+        next_update IS NULL 
+        OR next_update <= ?
       )
     `).all(now);
     
@@ -1636,10 +1637,13 @@ async function updateEpgSource(sourceId) {
     const cacheFile = path.join(EPG_CACHE_DIR, `epg_${sourceId}.xml`);
     fs.writeFileSync(cacheFile, epgData, 'utf8');
     
-    // Update last_update timestamp
-    db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
+    // Calculate next update time based on update_interval
+    const nextUpdate = now + (source.update_interval * 3600);
     
-    console.log(`✅ EPG updated: ${source.name} (${(epgData.length / 1024 / 1024).toFixed(2)} MB)`);
+    // Update last_update and next_update timestamps
+    db.prepare('UPDATE epg_sources SET last_update = ?, next_update = ?, is_updating = 0 WHERE id = ?').run(now, nextUpdate, sourceId);
+    
+    console.log(`✅ EPG updated: ${source.name} (${(epgData.length / 1024 / 1024).toFixed(2)} MB), next update in ${source.update_interval}h`);
     return { success: true, size: epgData.length };
   } catch (e) {
     console.error(`❌ EPG update failed: ${source.name}`, e.message);
