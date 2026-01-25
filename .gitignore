@@ -43,3 +43,5 @@ todo.md
 server_output.log
 TEST_CREDENTIALS.txt
 TEST_REPORT_v3.0.0.md
+FINAL_TEST_REPORT.md
+comprehensive_test.sh
