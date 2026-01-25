@@ -32,7 +32,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Security configuration
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-key-in-production';
@@ -73,13 +73,27 @@ const apiLimiter = rateLimit({
 
 // Middleware
 app.use(bodyParser.json());
+
+// CORS Headers für static files
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  next();
+});
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS || '*',
   credentials: true
 }));
 app.use(morgan('dev'));
 app.use('/api', apiLimiter);
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    // Cache-busting for JavaScript and CSS files
+    if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    }
+  }
+}));
 app.use('/cache', express.static(path.join(__dirname, 'cache')));
 
 // DB
