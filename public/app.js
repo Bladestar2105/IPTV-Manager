@@ -1141,9 +1141,10 @@ function renderAvailableEpgSources() {
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     
     const info = document.createElement('div');
+    const sizeDisplay = source.size ? `${(source.size / 1024 / 1024).toFixed(2)} MB` : 'Unknown size';
     info.innerHTML = `
       <strong>${source.name}</strong>
-      <br><small class="text-muted">${(source.size / 1024 / 1024).toFixed(2)} MB</small>
+      <br><small class="text-muted">${sizeDisplay}</small>
     `;
     
     const addBtn = document.createElement('button');

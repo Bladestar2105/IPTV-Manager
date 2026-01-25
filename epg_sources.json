@@ -8,13 +8,13 @@
     },
     {
       "name": "Albania",
-      "url": "https://www.open-epg.com/files/albanial.xml",
+      "url": "https://www.open-epg.com/files/albania2.xml",
       "country_code": "al",
       "description": "Albania EPG listings from open-epg.com"
     },
     {
       "name": "Argentina",
-      "url": "https://www.open-epg.com/files/argentinal.xml",
+      "url": "https://www.open-epg.com/files/argentina1.xml",
       "country_code": "ar",
       "description": "Argentina EPG listings from open-epg.com"
     },
@@ -38,13 +38,13 @@
     },
     {
       "name": "Argentina 5",
-      "url": "https://www.open-epg.com/files/argentinaS5.xml",
+      "url": "https://www.open-epg.com/files/argentina5.xml",
       "country_code": "ar",
       "description": "Argentina 5 EPG listings from open-epg.com"
     },
     {
       "name": "Argentina",
-      "url": "https://www.open-epg.com/files/argentinaS.xml",
+      "url": "https://www.open-epg.com/files/argentina8.xml",
       "country_code": "ar",
       "description": "Argentina EPG listings from open-epg.com"
     },
@@ -62,7 +62,7 @@
     },
     {
       "name": "Australia",
-      "url": "https://www.open-epg.com/files/australial.xml",
+      "url": "https://www.open-epg.com/files/australia1.xml",
       "country_code": "au",
       "description": "Australia EPG listings from open-epg.com"
     },
@@ -86,26 +86,26 @@
     },
     {
       "name": "Austria",
-      "url": "https://www.open-epg.com/files/austrial.xml",
-      "country_code": "au",
+      "url": "https://www.open-epg.com/files/austria1.xml",
+      "country_code": "at",
       "description": "Austria EPG listings from open-epg.com"
     },
     {
       "name": "Austria 2",
       "url": "https://www.open-epg.com/files/austria2.xml",
-      "country_code": "au",
+      "country_code": "at",
       "description": "Austria 2 EPG listings from open-epg.com"
     },
     {
       "name": "Austria 3",
       "url": "https://www.open-epg.com/files/austria3.xml",
-      "country_code": "au",
+      "country_code": "at",
       "description": "Austria 3 EPG listings from open-epg.com"
     },
     {
       "name": "Austria 4",
       "url": "https://www.open-epg.com/files/austria4.xml",
-      "country_code": "au",
+      "country_code": "at",
       "description": "Austria 4 EPG listings from open-epg.com"
     },
     {
