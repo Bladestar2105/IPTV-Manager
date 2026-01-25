@@ -83,6 +83,8 @@ const translations = {
     close: 'Close',
     categoryImportedOnly: '✅ Category "{name}" created (without channels)',
     imported: 'Imported',
+    selectUserFirst: 'Please select a user first',
+    noProvidersForUser: 'No providers for this user',
     categoryImportedWithChannels: '✅ Category "{name}" imported with {count} channels',
     markedAsAdultContent: '🔞 Marked as Adult Content',
     
@@ -208,6 +210,8 @@ const translations = {
     close: 'Schließen',
     categoryImportedOnly: '✅ Kategorie "{name}" erstellt (ohne Kanäle)',
     imported: 'Importiert',
+    selectUserFirst: 'Bitte wählen Sie zuerst einen Benutzer aus',
+    noProvidersForUser: 'Keine Provider für diesen Benutzer',
     categoryImportedWithChannels: '✅ Kategorie "{name}" mit {count} Kanälen importiert',
     markedAsAdultContent: '🔞 Als Adult-Content markiert',
     
@@ -333,6 +337,8 @@ const translations = {
     close: 'Fermer',
     categoryImportedOnly: '✅ Catégorie "{name}" créée (sans chaînes)',
     imported: 'Importé',
+    selectUserFirst: 'Veuillez d\'abord sélectionner un utilisateur',
+    noProvidersForUser: 'Aucun fournisseur pour cet utilisateur',
     categoryImportedWithChannels: '✅ Catégorie "{name}" importée avec {count} chaînes',
     markedAsAdultContent: '🔞 Marqué comme Contenu Adulte',
     
@@ -458,6 +464,8 @@ const translations = {
     close: 'Κλείσιμο',
     categoryImportedOnly: '✅ Κατηγορία "{name}" δημιουργήθηκε (χωρίς κανάλια)',
     imported: 'Εισήχθη',
+    selectUserFirst: 'Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
+    noProvidersForUser: 'Δεν υπάρχουν πάροχοι για αυτόν τον χρήστη',
     categoryImportedWithChannels: '✅ Κατηγορία "{name}" εισήχθη με {count} κανάλια',
     markedAsAdultContent: '🔞 Σημειώθηκε ως Περιεχόμενο Ενηλίκων',
     

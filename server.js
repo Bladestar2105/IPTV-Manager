@@ -883,17 +883,34 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
 // Get providers (only for authenticated admin users)
 app.get('/api/providers', authenticateToken, (req, res) => {
   try {
-    // Admin users see all providers, regular users see their own
-    const query = req.user.isAdmin 
-      ? 'SELECT * FROM providers'
-      : 'SELECT * FROM providers WHERE user_id = ?';
+    const requestedUserId = req.query.user_id ? parseInt(req.query.user_id) : null;
+    const currentUserId = req.user.userId || req.user.id;
     
-    const providers = req.user.isAdmin
-      ? db.prepare(query).all()
-      : db.prepare(query).all(req.user.userId);
+    console.log('Get providers request:', {
+      isAdmin: req.user.isAdmin,
+      currentUserId,
+      requestedUserId
+    });
     
+    let providers;
+    
+    if (req.user.isAdmin) {
+      if (requestedUserId) {
+        console.log(`Admin requesting providers for user ${requestedUserId}`);
+        providers = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(requestedUserId);
+      } else {
+        console.log('Admin requesting all providers');
+        providers = db.prepare('SELECT * FROM providers').all();
+      }
+    } else {
+      console.log(`Regular user requesting their own providers (user ${currentUserId})`);
+      providers = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(currentUserId);
+    }
+    
+    console.log(`Returning ${providers.length} provider(s)`);
     res.json(providers);
   } catch (e) { 
+    console.error('Get providers error:', e.message);
     res.status(500).json({error: e.message}); 
   }
 });

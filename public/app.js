@@ -135,6 +135,7 @@ async function loadUsers() {
       document.getElementById('xtream-user').textContent = u.username;
       document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
       loadUserCategories();
+      loadProviders();
     };
     
     const delBtn = document.createElement('button');
@@ -166,11 +167,25 @@ async function loadProviderUserSelect() {
 
 // === Provider Management ===
 async function loadProviders() {
-  const providers = await fetchJSON('/api/providers');
   const list = document.getElementById('provider-list');
   const select = document.getElementById('channel-provider-select');
+  
+  // Only load providers if a user is selected
+  if (!selectedUserId) {
+    list.innerHTML = '<li class="list-group-item text-muted">' + t('selectUserFirst') + '</li>';
+    select.innerHTML = `<option value="">${t('selectProviderPlaceholder')}</option>`;
+    return;
+  }
+  
+  // Fetch providers for the selected user
+  const providers = await fetchJSON(`/api/providers?user_id=${selectedUserId}`);
   list.innerHTML = '';
   select.innerHTML = `<option value="">${t('selectProviderPlaceholder')}</option>`;
+  
+  if (providers.length === 0) {
+    list.innerHTML = '<li class="list-group-item text-muted">' + t('noProvidersForUser') + '</li>';
+    return;
+  }
 
   providers.forEach(p => {
     const li = document.createElement('li');
