@@ -116,7 +116,7 @@
     },
     {
       "name": "Bolivia",
-      "url": "https://www.open-epg.com/files/bolivial.xml",
+      "url": "https://www.open-epg.com/files/bolivia1.xml",
       "country_code": "bo",
       "description": "Bolivia EPG listings from open-epg.com"
     },
@@ -170,7 +170,7 @@
     },
     {
       "name": "Bulgaria",
-      "url": "https://www.open-epg.com/files/bulgarial.xml",
+      "url": "https://www.open-epg.com/files/bulgaria1.xml",
       "country_code": "bu",
       "description": "Bulgaria EPG listings from open-epg.com"
     },
@@ -188,7 +188,7 @@
     },
     {
       "name": "Canada",
-      "url": "https://www.open-epg.com/files/canadal.xml",
+      "url": "https://www.open-epg.com/files/canada1.xml",
       "country_code": "ca",
       "description": "Canada EPG listings from open-epg.com"
     },
@@ -236,7 +236,7 @@
     },
     {
       "name": "Chile",
-      "url": "https://www.open-epg.com/files/chilel.xml",
+      "url": "https://www.open-epg.com/files/chile1.xml",
       "country_code": "ch",
       "description": "Chile EPG listings from open-epg.com"
     },
@@ -248,7 +248,7 @@
     },
     {
       "name": "China",
-      "url": "https://www.open-epg.com/files/chinal.xml",
+      "url": "https://www.open-epg.com/files/china1.xml",
       "country_code": "ch",
       "description": "China EPG listings from open-epg.com"
     },
@@ -260,7 +260,7 @@
     },
     {
       "name": "Colombia",
-      "url": "https://www.open-epg.com/files/colombial.xml",
+      "url": "https://www.open-epg.com/files/colombia1.xml",
       "country_code": "co",
       "description": "Colombia EPG listings from open-epg.com"
     },
@@ -278,13 +278,13 @@
     },
     {
       "name": "Costa Rica",
-      "url": "https://www.open-epg.com/files/costarical.xml",
+      "url": "https://www.open-epg.com/files/costarica1.xml",
       "country_code": "co",
       "description": "Costa Rica EPG listings from open-epg.com"
     },
     {
       "name": "Croatia",
-      "url": "https://www.open-epg.com/files/croatial.xml",
+      "url": "https://www.open-epg.com/files/croatia1.xml",
       "country_code": "cr",
       "description": "Croatia EPG listings from open-epg.com"
     },
@@ -422,7 +422,7 @@
     },
     {
       "name": "Ecuador",
-      "url": "https://www.open-epg.com/files/ecuadorl.xml",
+      "url": "https://www.open-epg.com/files/ecuador1.xml",
       "country_code": "ec",
       "description": "Ecuador EPG listings from open-epg.com"
     },
@@ -452,7 +452,7 @@
     },
     {
       "name": "Estonia",
-      "url": "https://www.open-epg.com/files/estonial.xml",
+      "url": "https://www.open-epg.com/files/estonia1.xml",
       "country_code": "es",
       "description": "Estonia EPG listings from open-epg.com"
     },
@@ -488,7 +488,7 @@
     },
     {
       "name": "France",
-      "url": "https://www.open-epg.com/files/francel.xml",
+      "url": "https://www.open-epg.com/files/france1.xml",
       "country_code": "fr",
       "description": "France EPG listings from open-epg.com"
     },
@@ -506,7 +506,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/georgial.xml",
+      "url": "https://www.open-epg.com/files/georgia1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -518,7 +518,7 @@
     },
     {
       "name": "Germany",
-      "url": "https://www.open-epg.com/files/germanyl.xml",
+      "url": "https://www.open-epg.com/files/germany1.xml",
       "country_code": "ge",
       "description": "Germany EPG listings from open-epg.com"
     },
@@ -560,7 +560,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/ghanal.xml",
+      "url": "https://www.open-epg.com/files/ghana1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -590,13 +590,13 @@
     },
     {
       "name": "Guatemala",
-      "url": "https://www.open-epg.com/files/guatemalal.xml",
+      "url": "https://www.open-epg.com/files/guatemala1.xml",
       "country_code": "gu",
       "description": "Guatemala EPG listings from open-epg.com"
     },
     {
       "name": "Honduras",
-      "url": "https://www.open-epg.com/files/hondurasl.xml",
+      "url": "https://www.open-epg.com/files/honduras1.xml",
       "country_code": "ho",
       "description": "Honduras EPG listings from open-epg.com"
     },
@@ -668,7 +668,7 @@
     },
     {
       "name": "India",
-      "url": "https://www.open-epg.com/files/indial.xml",
+      "url": "https://www.open-epg.com/files/india1.xml",
       "country_code": "in",
       "description": "India EPG listings from open-epg.com"
     },
@@ -704,7 +704,7 @@
     },
     {
       "name": "Indonesia",
-      "url": "https://www.open-epg.com/files/indonesial.xml",
+      "url": "https://www.open-epg.com/files/indonesia1.xml",
       "country_code": "in",
       "description": "Indonesia EPG listings from open-epg.com"
     },
@@ -818,7 +818,7 @@
     },
     {
       "name": "Jamaica",
-      "url": "https://www.open-epg.com/files/jamaical.xml",
+      "url": "https://www.open-epg.com/files/jamaica1.xml",
       "country_code": "ja",
       "description": "Jamaica EPG listings from open-epg.com"
     },
@@ -830,7 +830,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/japanl.xml",
+      "url": "https://www.open-epg.com/files/japan1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -848,7 +848,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/kenyal.xml",
+      "url": "https://www.open-epg.com/files/kenya1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -860,13 +860,13 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/koreal.xml",
+      "url": "https://www.open-epg.com/files/korea1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
     {
       "name": "Latvia",
-      "url": "https://www.open-epg.com/files/latvial.xml",
+      "url": "https://www.open-epg.com/files/latvia1.xml",
       "country_code": "la",
       "description": "Latvia EPG listings from open-epg.com"
     },
@@ -878,7 +878,7 @@
     },
     {
       "name": "Lithuania",
-      "url": "https://www.open-epg.com/files/lithuanial.xml",
+      "url": "https://www.open-epg.com/files/lithuania1.xml",
       "country_code": "li",
       "description": "Lithuania EPG listings from open-epg.com"
     },
@@ -902,7 +902,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/macaul.xml",
+      "url": "https://www.open-epg.com/files/macau1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -914,7 +914,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/macedonial.xml",
+      "url": "https://www.open-epg.com/files/macedonia1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -926,7 +926,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/malawil.xml",
+      "url": "https://www.open-epg.com/files/malawi1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -938,7 +938,7 @@
     },
     {
       "name": "Malaysia",
-      "url": "https://www.open-epg.com/files/malaysial.xml",
+      "url": "https://www.open-epg.com/files/malaysia1.xml",
       "country_code": "ma",
       "description": "Malaysia EPG listings from open-epg.com"
     },
@@ -962,7 +962,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/maltal.xml",
+      "url": "https://www.open-epg.com/files/malta1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -986,7 +986,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/mongolial.xml",
+      "url": "https://www.open-epg.com/files/mongolia1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1004,7 +1004,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/moroccol.xml",
+      "url": "https://www.open-epg.com/files/morocco1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1022,7 +1022,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/namibial.xml",
+      "url": "https://www.open-epg.com/files/namibia1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1040,7 +1040,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/newcaledonial.xml",
+      "url": "https://www.open-epg.com/files/newcaledonia1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1064,7 +1064,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/nigerial.xml",
+      "url": "https://www.open-epg.com/files/nigeria1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1094,7 +1094,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/palestinel.xml",
+      "url": "https://www.open-epg.com/files/palestine1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1106,13 +1106,13 @@
     },
     {
       "name": "Panama",
-      "url": "https://www.open-epg.com/files/panamal.xml",
+      "url": "https://www.open-epg.com/files/panama1.xml",
       "country_code": "pa",
       "description": "Panama EPG listings from open-epg.com"
     },
     {
       "name": "Paraguay",
-      "url": "https://www.open-epg.com/files/paraguayl.xml",
+      "url": "https://www.open-epg.com/files/paraguay1.xml",
       "country_code": "pa",
       "description": "Paraguay EPG listings from open-epg.com"
     },
@@ -1136,7 +1136,7 @@
     },
     {
       "name": "Peru",
-      "url": "https://www.open-epg.com/files/perul.xml",
+      "url": "https://www.open-epg.com/files/peru1.xml",
       "country_code": "pe",
       "description": "Peru EPG listings from open-epg.com"
     },
@@ -1178,7 +1178,7 @@
     },
     {
       "name": "Portugal",
-      "url": "https://www.open-epg.com/files/portugall.xml",
+      "url": "https://www.open-epg.com/files/portugal1.xml",
       "country_code": "po",
       "description": "Portugal EPG listings from open-epg.com"
     },
@@ -1196,7 +1196,7 @@
     },
     {
       "name": "Puerto Rico",
-      "url": "https://www.open-epg.com/files/puertoricol.xml",
+      "url": "https://www.open-epg.com/files/puertorico1.xml",
       "country_code": "pu",
       "description": "Puerto Rico EPG listings from open-epg.com"
     },
@@ -1232,7 +1232,7 @@
     },
     {
       "name": "Romania",
-      "url": "https://www.open-epg.com/files/romanial.xml",
+      "url": "https://www.open-epg.com/files/romania1.xml",
       "country_code": "ro",
       "description": "Romania EPG listings from open-epg.com"
     },
@@ -1250,7 +1250,7 @@
     },
     {
       "name": "Russia",
-      "url": "https://www.open-epg.com/files/russial.xml",
+      "url": "https://www.open-epg.com/files/russia1.xml",
       "country_code": "ru",
       "description": "Russia EPG listings from open-epg.com"
     },
@@ -1268,7 +1268,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/saudiarabial.xml",
+      "url": "https://www.open-epg.com/files/saudiarabia1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1322,7 +1322,7 @@
     },
     {
       "name": "Serbia",
-      "url": "https://www.open-epg.com/files/serbial.xml",
+      "url": "https://www.open-epg.com/files/serbia1.xml",
       "country_code": "se",
       "description": "Serbia EPG listings from open-epg.com"
     },
@@ -1346,7 +1346,7 @@
     },
     {
       "name": "Singapore",
-      "url": "https://www.open-epg.com/files/singaporel.xml",
+      "url": "https://www.open-epg.com/files/singapore1.xml",
       "country_code": "si",
       "description": "Singapore EPG listings from open-epg.com"
     },
@@ -1370,7 +1370,7 @@
     },
     {
       "name": "Slovakia",
-      "url": "https://www.open-epg.com/files/slovakial.xml",
+      "url": "https://www.open-epg.com/files/slovakia1.xml",
       "country_code": "sl",
       "description": "Slovakia EPG listings from open-epg.com"
     },
@@ -1388,7 +1388,7 @@
     },
     {
       "name": "Slovenia",
-      "url": "https://www.open-epg.com/files/slovenial.xml",
+      "url": "https://www.open-epg.com/files/slovenia1.xml",
       "country_code": "sl",
       "description": "Slovenia EPG listings from open-epg.com"
     },
@@ -1406,7 +1406,7 @@
     },
     {
       "name": "South Africa",
-      "url": "https://www.open-epg.com/files/southafrical.xml",
+      "url": "https://www.open-epg.com/files/southafrica1.xml",
       "country_code": "so",
       "description": "South Africa EPG listings from open-epg.com"
     },
@@ -1532,7 +1532,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/tanzanial.xml",
+      "url": "https://www.open-epg.com/files/tanzania1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1592,7 +1592,7 @@
     },
     {
       "name": "Unknown",
-      "url": "https://www.open-epg.com/files/ugandal.xml",
+      "url": "https://www.open-epg.com/files/uganda1.xml",
       "country_code": "xx",
       "description": "Unknown EPG listings from open-epg.com"
     },
@@ -1604,7 +1604,7 @@
     },
     {
       "name": "Ukraine",
-      "url": "https://www.open-epg.com/files/ukrainel.xml",
+      "url": "https://www.open-epg.com/files/ukraine1.xml",
       "country_code": "uk",
       "description": "Ukraine EPG listings from open-epg.com"
     },
@@ -1700,7 +1700,7 @@
     },
     {
       "name": "Uruguay",
-      "url": "https://www.open-epg.com/files/uruguayl.xml",
+      "url": "https://www.open-epg.com/files/uruguay1.xml",
       "country_code": "ur",
       "description": "Uruguay EPG listings from open-epg.com"
     },
@@ -1724,7 +1724,7 @@
     },
     {
       "name": "Venezuela",
-      "url": "https://www.open-epg.com/files/venezuelal.xml",
+      "url": "https://www.open-epg.com/files/venezuela1.xml",
       "country_code": "ve",
       "description": "Venezuela EPG listings from open-epg.com"
     },
