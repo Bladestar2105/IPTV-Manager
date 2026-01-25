@@ -1,4 +1,10 @@
-/* IPTV-Manager - TV-Inspired Design */
+/**
+ * IPTV-Manager - TV-Inspired Design
+ * 
+ * @author Bladestar2105
+ * @description This project is created for educational purposes only.
+ * @version 3.0.0
+ */
 
 :root {
   --tv-dark: #0a0e27;
@@ -476,4 +482,36 @@ span {
 
 .card-text {
   color: var(--tv-text-primary);
+}
+
+/* Scrollable lists for long content */
+.scrollable-list {
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar styling */
+.scrollable-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollable-list::-webkit-scrollbar-track {
+  background: rgba(31, 41, 55, 0.5);
+  border-radius: 4px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb {
+  background: var(--tv-blue);
+  border-radius: 4px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb:hover {
+  background: var(--tv-blue-light);
+}
+
+/* Firefox scrollbar */
+.scrollable-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--tv-blue) rgba(31, 41, 55, 0.5);
 }

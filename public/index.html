@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="author" content="Bladestar2105">
+  <meta name="description" content="IPTV-Manager - Educational purposes only">
   <title>IPTV-Manager</title>
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
@@ -59,7 +61,7 @@
           <div class="col-4"><input class="form-control" name="password" type="password" data-i18n-placeholder="password" placeholder="Password" required /></div>
           <div class="col-4"><button class="btn btn-primary w-100" type="submit" data-i18n="addUser">Add User</button></div>
         </form>
-        <ul id="user-list" class="list-group"></ul>
+        <ul id="user-list" class="list-group scrollable-list"></ul>
       </div>
     </div>
 
@@ -75,7 +77,7 @@
           <div class="col-md-2"><input class="form-control" name="epg_url" data-i18n-placeholder="epgUrl" placeholder="EPG URL (optional)" /></div>
           <div class="col-md-1"><button class="btn btn-primary w-100" type="submit" data-i18n="addProvider">Add Provider</button></div>
         </form>
-        <ul id="provider-list" class="list-group"></ul>
+        <ul id="provider-list" class="list-group scrollable-list"></ul>
       </div>
     </div>
 
@@ -95,7 +97,7 @@
           <div class="col-4"><button class="btn btn-primary w-100" type="submit" data-i18n="addCategory">Add Category</button></div>
         </form>
         <p class="small text-secondary" data-i18n="dragToSort">🖐️ Drag & Drop to sort</p>
-        <ul id="category-list" class="list-group"></ul>
+        <ul id="category-list" class="list-group scrollable-list"></ul>
       </div>
       
       <div class="col-md-8">
@@ -140,7 +142,7 @@
             🔄 Update All EPG
           </button>
         </div>
-        <ul id="epg-sources-list" class="list-group"></ul>
+        <ul id="epg-sources-list" class="list-group scrollable-list"></ul>
       </div>
     </div>
 

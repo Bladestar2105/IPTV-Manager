@@ -1,3 +1,11 @@
+/**
+ * IPTV-Manager - Internationalization (i18n)
+ * 
+ * @author Bladestar2105
+ * @description This project is created for educational purposes only.
+ * @version 3.0.0
+ */
+
 const translations = {
   en: {
     // Title & Headers

@@ -1,3 +1,13 @@
+/**
+ * IPTV-Manager - Advanced IPTV Management System
+ * 
+ * @author Bladestar2105
+ * @license MIT
+ * @description This project is created for educational purposes only.
+ *              Use at your own risk and ensure compliance with local laws.
+ * @version 3.0.0
+ */
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -80,11 +90,13 @@ try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS providers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       url TEXT NOT NULL,
       username TEXT NOT NULL,
       password TEXT NOT NULL,
-      epg_url TEXT
+      epg_url TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     
     CREATE TABLE IF NOT EXISTS provider_channels (
@@ -196,6 +208,21 @@ try {
     
     -- Picon cache table removed - using direct URLs for better performance
   `);
+  // Migration: Add user_id to existing providers (if any exist without user_id)
+  try {
+    const providersWithoutUser = db.prepare('SELECT COUNT(*) as count FROM providers WHERE user_id IS NULL').get();
+    if (providersWithoutUser &amp;&amp; providersWithoutUser.count > 0) {
+      console.log(`⚠️  Found ${providersWithoutUser.count} providers without user_id, assigning to first admin user...`);
+      const firstAdmin = db.prepare('SELECT id FROM admin_users LIMIT 1').get();
+      if (firstAdmin) {
+        db.prepare('UPDATE providers SET user_id = ? WHERE user_id IS NULL').run(firstAdmin.id);
+        console.log(`✅ Migrated ${providersWithoutUser.count} providers to admin user ${firstAdmin.id}`);
+      }
+    }
+  } catch (e) {
+    // Column might not exist yet, ignore
+  }
+  
   console.log("✅ Database OK");
   
   // Create default admin user if no users exist
@@ -609,12 +636,13 @@ function authenticateToken(req, res, next) {
 }
 
 // Generate JWT token
-function generateToken(user) {
+function generateToken(user, isAdmin = false) {
   return jwt.sign(
     { 
-      id: user.id, 
+      userId: user.id,
       username: user.username,
-      is_active: user.is_active 
+      is_active: user.is_active,
+      isAdmin: isAdmin
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
@@ -756,7 +784,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     if (admin) {
       const isValid = await bcrypt.compare(password, admin.password);
       if (isValid) {
-        const token = generateToken(admin);
+        const token = generateToken(admin, true); // isAdmin = true
         return res.json({
           token,
           user: {
@@ -835,18 +863,35 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
 });
 
 // === API: Providers ===
-app.get('/api/providers', (req, res) => {
+// Get providers (only for authenticated admin users)
+app.get('/api/providers', authenticateToken, (req, res) => {
   try {
-    res.json(db.prepare('SELECT * FROM providers').all());
-  } catch (e) { res.status(500).json({error: e.message}); }
+    // Admin users see all providers, regular users see their own
+    const query = req.user.isAdmin 
+      ? 'SELECT * FROM providers'
+      : 'SELECT * FROM providers WHERE user_id = ?';
+    
+    const providers = req.user.isAdmin
+      ? db.prepare(query).all()
+      : db.prepare(query).all(req.user.userId);
+    
+    res.json(providers);
+  } catch (e) { 
+    res.status(500).json({error: e.message}); 
+  }
 });
 
-app.post('/api/providers', (req, res) => {
+// Create provider (authenticated admin users only)
+app.post('/api/providers', authenticateToken, (req, res) => {
   try {
-    const { name, url, username, password, epg_url } = req.body;
+    const { name, url, username, password, epg_url, user_id } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
-    const info = db.prepare('INSERT INTO providers (name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?)')
-      .run(name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
+    
+    // Admin can create providers for any user, regular users create for themselves
+    const targetUserId = req.user.isAdmin && user_id ? user_id : req.user.userId;
+    
+    const info = db.prepare('INSERT INTO providers (user_id, name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(targetUserId, name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -1343,9 +1388,22 @@ app.get('/xmltv.php', async (req, res) => {
 });
 
 // === DELETE APIs ===
-app.delete('/api/providers/:id', (req, res) => {
+// Delete provider (authenticated users only, can only delete their own)
+app.delete('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    
+    // Check ownership
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
+    if (!provider) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+    
+    // Admin can delete any provider, regular users only their own
+    if (!req.user.isAdmin && provider.user_id !== req.user.userId) {
+      return res.status(403).json({error: 'Not authorized to delete this provider'});
+    }
+    
     db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
     db.prepare('DELETE FROM providers WHERE id = ?').run(id);
     res.json({success: true});
@@ -1586,12 +1644,24 @@ app.put('/api/user-categories/:id', (req, res) => {
   }
 });
 
-app.put('/api/providers/:id', (req, res) => {
+// Update provider (authenticated users only, can only update their own)
+app.put('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, url, username, password, epg_url } = req.body;
     if (!name || !url || !username || !password) {
       return res.status(400).json({error: 'missing fields'});
+    }
+
+    // Check ownership
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
+    if (!provider) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+    
+    // Admin can update any provider, regular users only their own
+    if (!req.user.isAdmin && provider.user_id !== req.user.userId) {
+      return res.status(403).json({error: 'Not authorized to update this provider'});
     }
 
     db.prepare(`
@@ -1831,7 +1901,7 @@ app.post('/api/epg-sources/update-all', async (req, res) => {
 // Cache for EPG sources
 let epgSourcesCache = null;
 let epgSourcesCacheTime = 0;
-const EPG_CACHE_DURATION = 3600000; // 1 hour
+const EPG_CACHE_DURATION = 86400000; // 24 hours (increased from 1 hour)
 
 // Get available EPG sources from globetvapp/epg
 app.get('/api/epg-sources/available', async (req, res) => {
@@ -1864,15 +1934,21 @@ app.get('/api/epg-sources/available', async (req, res) => {
     console.log(`📡 Fetching EPG sources from ${directories.length} countries...`);
     
     // Process directories (countries) with delay to avoid rate limits
+    // Use batch processing: process 10 countries, then wait longer
     let processedCount = 0;
-    for (const item of directories) {
+    const batchSize = 10;
+    
+    for (let i = 0; i < directories.length; i++) {
+      const item = directories[i];
+      
       try {
         const dirResponse = await fetch(item.url);
         const dirData = await dirResponse.json();
         
         // Check for rate limit
         if (dirData.message && dirData.message.includes('rate limit')) {
-          console.warn(`Rate limit reached after ${processedCount} countries`);
+          console.warn(`⚠️ Rate limit reached after ${processedCount} countries`);
+          console.log(`✅ Returning ${epgSources.length} EPG sources from ${processedCount} countries`);
           break;
         }
         
@@ -1896,8 +1972,16 @@ app.get('/api/epg-sources/available', async (req, res) => {
           }
           processedCount++;
         }
-        // Small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 150));
+        
+        // Adaptive delay: longer delay every batch to avoid rate limits
+        if ((i + 1) % batchSize === 0) {
+          // After each batch of 10, wait 2 seconds
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log(`📊 Processed ${processedCount}/${directories.length} countries...`);
+        } else {
+          // Between requests in a batch, wait 300ms (increased from 150ms)
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
       } catch (e) {
         console.error(`Failed to fetch ${item.name}:`, e.message);
       }

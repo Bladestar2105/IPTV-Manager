@@ -1,3 +1,11 @@
+/**
+ * IPTV-Manager - Frontend Application
+ * 
+ * @author Bladestar2105
+ * @description This project is created for educational purposes only.
+ * @version 3.0.0
+ */
+
 // JWT Token Management
 function getToken() {
   return localStorage.getItem('jwt_token');
