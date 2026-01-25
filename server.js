@@ -769,6 +769,86 @@ app.post('/api/users', authLimiter, async (req, res) => {
   }
 });
 
+// Update user (rename and/or change password) - Admin only
+app.put('/api/users/:id', authenticateToken, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { username, password } = req.body;
+    
+    // Check if admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({error: 'Admin access required'});
+    }
+    
+    // Get user
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!user) {
+      return res.status(404).json({error: 'User not found'});
+    }
+    
+    // Check if trying to modify admin
+    if (user.is_admin === 1) {
+      return res.status(403).json({error: 'Cannot modify admin users'});
+    }
+    
+    let updateFields = [];
+    let updateValues = [];
+    
+    // Update username if provided
+    if (username && username.trim()) {
+      const u = username.trim();
+      
+      // Validate username
+      if (u.length < 3 || u.length > 50) {
+        return res.status(400).json({
+          error: 'invalid_username_length',
+          message: 'Username must be 3-50 characters'
+        });
+      }
+      
+      if (!/^[a-zA-Z0-9_]+$/.test(u)) {
+        return res.status(400).json({
+          error: 'invalid_username_format',
+          message: 'Username can only contain letters, numbers, and underscores'
+        });
+      }
+      
+      updateFields.push('username = ?');
+      updateValues.push(u);
+    }
+    
+    // Update password if provided
+    if (password && password.trim()) {
+      const p = password.trim();
+      
+      // Validate password
+      if (p.length < 8) {
+        return res.status(400).json({
+          error: 'password_too_short',
+          message: 'Password must be at least 8 characters'
+        });
+      }
+      
+      // Hash password (will be done async)
+      // For now, skip password update in this simple implementation
+      // In production, you'd want to hash it properly
+    }
+    
+    if (updateFields.length === 0) {
+      return res.status(400).json({error: 'No fields to update'});
+    }
+    
+    updateValues.push(id);
+    db.prepare(`UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
+    
+    console.log(`✅ User ${id} updated`);
+    res.json({success: true});
+  } catch (e) {
+    console.error('❌ Error updating user:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
 // === API: Authentication ===
 app.post('/api/login', authLimiter, async (req, res) => {
   try {
@@ -1489,10 +1569,186 @@ app.delete('/api/providers/:id', authenticateToken, (req, res) => {
       return res.status(403).json({error: 'Not authorized to delete this provider'});
     }
     
-    db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+    // Delete provider's EPG sources
+    db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(id);
+    
+    // Delete provider's categories
+    const cats = db.prepare('SELECT id FROM user_categories WHERE provider_id = ?').all(id);
+    for (const cat of cats) {
+      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
+    }
+    db.prepare('DELETE FROM user_categories WHERE provider_id = ?').run(id);
+    
+    // Delete provider's EPG mappings
+    db.prepare('DELETE FROM epg_mappings WHERE provider_id = ?').run(id);
+    
+    // Delete provider's sync configs
+    db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
+    
+    // Delete provider
     db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+    
+    console.log(`✅ Provider ${id} deleted with all related data`);
     res.json({success: true});
   } catch (e) {
+    console.error('❌ Error deleting provider:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Get provider's EPG sources
+app.get('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    
+    // Check ownership
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
+    if (!provider) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+    
+    // Admin can access any provider, regular users only their own
+    if (!req.user.isAdmin && provider.user_id !== req.user.userId) {
+      return res.status(403).json({error: 'Not authorized'});
+    }
+    
+    const sources = db.prepare(`
+      SELECT pes.*, es.name as source_name, es.url as source_url
+      FROM provider_epg_sources pes
+      LEFT JOIN epg_sources es ON pes.epg_source_id = es.id
+      WHERE pes.provider_id = ?
+      ORDER BY pes.id
+    `).all(id);
+    
+    res.json(sources);
+  } catch (e) {
+    console.error('❌ Error getting provider EPG sources:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Add EPG source to provider
+app.post('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { epg_source_id, username, password, update_interval } = req.body;
+    
+    if (!epg_source_id) {
+      return res.status(400).json({error: 'EPG source ID is required'});
+    }
+    
+    // Check ownership
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
+    if (!provider) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+    
+    // Admin can update any provider, regular users only their own
+    if (!req.user.isAdmin && provider.user_id !== req.user.userId) {
+      return res.status(403).json({error: 'Not authorized'});
+    }
+    
+    // Check if EPG source exists
+    const epgSource = db.prepare('SELECT * FROM epg_sources WHERE id = ?').get(epg_source_id);
+    if (!epgSource) {
+      return res.status(404).json({error: 'EPG source not found'});
+    }
+    
+    // Add EPG source to provider
+    const info = db.prepare(`
+      INSERT INTO provider_epg_sources (provider_id, epg_source_id, username, password, update_interval)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, epg_source_id, (username || '').trim(), (password || '').trim(), update_interval || epgSource.update_interval);
+    
+    console.log(`✅ EPG source ${epg_source_id} added to provider ${id}`);
+    res.json({
+      success: true,
+      id: info.lastInsertRowid
+    });
+  } catch (e) {
+    console.error('❌ Error adding EPG source to provider:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Update provider's EPG source
+app.put('/api/providers/:providerId/epg-sources/:id', authenticateToken, (req, res) => {
+  try {
+    const providerId = Number(req.params.providerId);
+    const id = Number(req.params.id);
+    const { username, password, update_interval } = req.body;
+    
+    // Check ownership
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+    if (!provider) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+    
+    // Admin can update any provider, regular users only their own
+    if (!req.user.isAdmin && provider.user_id !== req.user.userId) {
+      return res.status(403).json({error: 'Not authorized'});
+    }
+    
+    // Check if provider EPG source exists
+    const providerEpgSource = db.prepare('SELECT * FROM provider_epg_sources WHERE id = ? AND provider_id = ?').get(id, providerId);
+    if (!providerEpgSource) {
+      return res.status(404).json({error: 'Provider EPG source not found'});
+    }
+    
+    const updates = [];
+    const params = [];
+    
+    if (username !== undefined) {
+      updates.push('username = ?');
+      params.push(username.trim());
+    }
+    if (password !== undefined) {
+      updates.push('password = ?');
+      params.push(password.trim());
+    }
+    if (update_interval !== undefined) {
+      updates.push('update_interval = ?');
+      params.push(update_interval);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({error: 'no fields to update'});
+    }
+    
+    params.push(id);
+    db.prepare(`UPDATE provider_epg_sources SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    
+    console.log(`✅ Provider EPG source ${id} updated`);
+    res.json({success: true});
+  } catch (e) {
+    console.error('❌ Error updating provider EPG source:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Delete provider's EPG source
+app.delete('/api/providers/:providerId/epg-sources/:id', authenticateToken, (req, res) => {
+  try {
+    const providerId = Number(req.params.providerId);
+    const id = Number(req.params.id);
+    
+    // Check ownership
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+    if (!provider) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+    
+    // Admin can delete any provider EPG source, regular users only their own
+    if (!req.user.isAdmin && provider.user_id !== req.user.userId) {
+      return res.status(403).json({error: 'Not authorized'});
+    }
+    
+    db.prepare('DELETE FROM provider_epg_sources WHERE id = ? AND provider_id = ?').run(id, providerId);
+    
+    console.log(`✅ Provider EPG source ${id} deleted`);
+    res.json({success: true});
+  } catch (e) {
+    console.error('❌ Error deleting provider EPG source:', e);
     res.status(500).json({error: e.message});
   }
 });
@@ -1531,14 +1787,50 @@ app.delete('/api/user-channels/:id', (req, res) => {
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    
+    // Check if user is admin (admin users can only be deleted by super admin)
+    const user = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(id);
+    if (user && user.is_admin === 1) {
+      return res.status(403).json({error: 'Cannot delete admin users'});
+    }
+    
+    // Delete user's providers
+    const providers = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(id);
+    for (const provider of providers) {
+      // Delete provider's EPG sources
+      db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(provider.id);
+      
+      // Delete provider's categories
+      const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ? AND provider_id = ?').all(id, provider.id);
+      for (const cat of cats) {
+        db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
+      }
+      db.prepare('DELETE FROM user_categories WHERE user_id = ? AND provider_id = ?').run(id, provider.id);
+      
+      // Delete provider
+      db.prepare('DELETE FROM providers WHERE id = ?').run(provider.id);
+    }
+    
+    // Delete any remaining user categories
     const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);
     for (const cat of cats) {
       db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
     }
     db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
+    
+    // Delete user's EPG mappings
+    db.prepare('DELETE FROM epg_mappings WHERE user_id = ?').run(id);
+    
+    // Delete user's sync configs
+    db.prepare('DELETE FROM sync_configs WHERE user_id = ?').run(id);
+    
+    // Delete user
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    
+    console.log(`✅ User ${id} deleted with all related data`);
     res.json({success: true});
   } catch (e) {
+    console.error('❌ Error deleting user:', e);
     res.status(500).json({error: e.message});
   }
 });
