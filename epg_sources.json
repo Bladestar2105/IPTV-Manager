@@ -1,0 +1,396 @@
+{
+  "epg_sources": [
+    {
+      "name": "United Kingdom",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/gb/epg.xml",
+      "country_code": "gb",
+      "description": "UK EPG listings"
+    },
+    {
+      "name": "Germany",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/de/epg.xml",
+      "country_code": "de",
+      "description": "German EPG listings"
+    },
+    {
+      "name": "France",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/fr/epg.xml",
+      "country_code": "fr",
+      "description": "French EPG listings"
+    },
+    {
+      "name": "Italy",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/it/epg.xml",
+      "country_code": "it",
+      "description": "Italian EPG listings"
+    },
+    {
+      "name": "Spain",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/es/epg.xml",
+      "country_code": "es",
+      "description": "Spanish EPG listings"
+    },
+    {
+      "name": "Portugal",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/pt/epg.xml",
+      "country_code": "pt",
+      "description": "Portuguese EPG listings"
+    },
+    {
+      "name": "Netherlands",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/nl/epg.xml",
+      "country_code": "nl",
+      "description": "Dutch EPG listings"
+    },
+    {
+      "name": "Belgium",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/be/epg.xml",
+      "country_code": "be",
+      "description": "Belgian EPG listings"
+    },
+    {
+      "name": "Switzerland",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ch/epg.xml",
+      "country_code": "ch",
+      "description": "Swiss EPG listings"
+    },
+    {
+      "name": "Austria",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/at/epg.xml",
+      "country_code": "at",
+      "description": "Austrian EPG listings"
+    },
+    {
+      "name": "Poland",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/pl/epg.xml",
+      "country_code": "pl",
+      "description": "Polish EPG listings"
+    },
+    {
+      "name": "Czech Republic",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/cz/epg.xml",
+      "country_code": "cz",
+      "description": "Czech EPG listings"
+    },
+    {
+      "name": "Romania",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ro/epg.xml",
+      "country_code": "ro",
+      "description": "Romanian EPG listings"
+    },
+    {
+      "name": "Hungary",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/hu/epg.xml",
+      "country_code": "hu",
+      "description": "Hungarian EPG listings"
+    },
+    {
+      "name": "Greece",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/gr/epg.xml",
+      "country_code": "gr",
+      "description": "Greek EPG listings"
+    },
+    {
+      "name": "Turkey",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/tr/epg.xml",
+      "country_code": "tr",
+      "description": "Turkish EPG listings"
+    },
+    {
+      "name": "Russia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ru/epg.xml",
+      "country_code": "ru",
+      "description": "Russian EPG listings"
+    },
+    {
+      "name": "Ukraine",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ua/epg.xml",
+      "country_code": "ua",
+      "description": "Ukrainian EPG listings"
+    },
+    {
+      "name": "Sweden",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/se/epg.xml",
+      "country_code": "se",
+      "description": "Swedish EPG listings"
+    },
+    {
+      "name": "Norway",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/no/epg.xml",
+      "country_code": "no",
+      "description": "Norwegian EPG listings"
+    },
+    {
+      "name": "Denmark",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/dk/epg.xml",
+      "country_code": "dk",
+      "description": "Danish EPG listings"
+    },
+    {
+      "name": "Finland",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/fi/epg.xml",
+      "country_code": "fi",
+      "description": "Finnish EPG listings"
+    },
+    {
+      "name": "Bulgaria",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/bg/epg.xml",
+      "country_code": "bg",
+      "description": "Bulgarian EPG listings"
+    },
+    {
+      "name": "Croatia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/hr/epg.xml",
+      "country_code": "hr",
+      "description": "Croatian EPG listings"
+    },
+    {
+      "name": "Serbia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/rs/epg.xml",
+      "country_code": "rs",
+      "description": "Serbian EPG listings"
+    },
+    {
+      "name": "Slovenia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/si/epg.xml",
+      "country_code": "si",
+      "description": "Slovenian EPG listings"
+    },
+    {
+      "name": "Slovakia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/sk/epg.xml",
+      "country_code": "sk",
+      "description": "Slovakian EPG listings"
+    },
+    {
+      "name": "Estonia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ee/epg.xml",
+      "country_code": "ee",
+      "description": "Estonian EPG listings"
+    },
+    {
+      "name": "Latvia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/lv/epg.xml",
+      "country_code": "lv",
+      "description": "Latvian EPG listings"
+    },
+    {
+      "name": "Lithuania",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/lt/epg.xml",
+      "country_code": "lt",
+      "description": "Lithuanian EPG listings"
+    },
+    {
+      "name": "Iceland",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/is/epg.xml",
+      "country_code": "is",
+      "description": "Icelandic EPG listings"
+    },
+    {
+      "name": "Ireland",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ie/epg.xml",
+      "country_code": "ie",
+      "description": "Irish EPG listings"
+    },
+    {
+      "name": "United States",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/us/epg.xml",
+      "country_code": "us",
+      "description": "US EPG listings"
+    },
+    {
+      "name": "Canada",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ca/epg.xml",
+      "country_code": "ca",
+      "description": "Canadian EPG listings"
+    },
+    {
+      "name": "Australia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/au/epg.xml",
+      "country_code": "au",
+      "description": "Australian EPG listings"
+    },
+    {
+      "name": "New Zealand",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/nz/epg.xml",
+      "country_code": "nz",
+      "description": "New Zealand EPG listings"
+    },
+    {
+      "name": "India",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/in/epg.xml",
+      "country_code": "in",
+      "description": "Indian EPG listings"
+    },
+    {
+      "name": "Brazil",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/br/epg.xml",
+      "country_code": "br",
+      "description": "Brazilian EPG listings"
+    },
+    {
+      "name": "Argentina",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ar/epg.xml",
+      "country_code": "ar",
+      "description": "Argentinian EPG listings"
+    },
+    {
+      "name": "Mexico",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/mx/epg.xml",
+      "country_code": "mx",
+      "description": "Mexican EPG listings"
+    },
+    {
+      "name": "Colombia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/co/epg.xml",
+      "country_code": "co",
+      "description": "Colombian EPG listings"
+    },
+    {
+      "name": "Chile",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/cl/epg.xml",
+      "country_code": "cl",
+      "description": "Chilean EPG listings"
+    },
+    {
+      "name": "Peru",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/pe/epg.xml",
+      "country_code": "pe",
+      "description": "Peruvian EPG listings"
+    },
+    {
+      "name": "South Africa",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/za/epg.xml",
+      "country_code": "za",
+      "description": "South African EPG listings"
+    },
+    {
+      "name": "Israel",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/il/epg.xml",
+      "country_code": "il",
+      "description": "Israeli EPG listings"
+    },
+    {
+      "name": "United Arab Emirates",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ae/epg.xml",
+      "country_code": "ae",
+      "description": "UAE EPG listings"
+    },
+    {
+      "name": "Saudi Arabia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/sa/epg.xml",
+      "country_code": "sa",
+      "description": "Saudi Arabian EPG listings"
+    },
+    {
+      "name": "Egypt",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/eg/epg.xml",
+      "country_code": "eg",
+      "description": "Egyptian EPG listings"
+    },
+    {
+      "name": "Morocco",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ma/epg.xml",
+      "country_code": "ma",
+      "description": "Moroccan EPG listings"
+    },
+    {
+      "name": "Tunisia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/tn/epg.xml",
+      "country_code": "tn",
+      "description": "Tunisian EPG listings"
+    },
+    {
+      "name": "Algeria",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/dz/epg.xml",
+      "country_code": "dz",
+      "description": "Algerian EPG listings"
+    },
+    {
+      "name": "Pakistan",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/pk/epg.xml",
+      "country_code": "pk",
+      "description": "Pakistani EPG listings"
+    },
+    {
+      "name": "Bangladesh",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/bd/epg.xml",
+      "country_code": "bd",
+      "description": "Bangladeshi EPG listings"
+    },
+    {
+      "name": "Indonesia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/id/epg.xml",
+      "country_code": "id",
+      "description": "Indonesian EPG listings"
+    },
+    {
+      "name": "Malaysia",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/my/epg.xml",
+      "country_code": "my",
+      "description": "Malaysian EPG listings"
+    },
+    {
+      "name": "Philippines",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/ph/epg.xml",
+      "country_code": "ph",
+      "description": "Philippine EPG listings"
+    },
+    {
+      "name": "Singapore",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/sg/epg.xml",
+      "country_code": "sg",
+      "description": "Singaporean EPG listings"
+    },
+    {
+      "name": "Thailand",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/th/epg.xml",
+      "country_code": "th",
+      "description": "Thai EPG listings"
+    },
+    {
+      "name": "Vietnam",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/vn/epg.xml",
+      "country_code": "vn",
+      "description": "Vietnamese EPG listings"
+    },
+    {
+      "name": "Japan",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/jp/epg.xml",
+      "country_code": "jp",
+      "description": "Japanese EPG listings"
+    },
+    {
+      "name": "South Korea",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/kr/epg.xml",
+      "country_code": "kr",
+      "description": "South Korean EPG listings"
+    },
+    {
+      "name": "China",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/cn/epg.xml",
+      "country_code": "cn",
+      "description": "Chinese EPG listings"
+    },
+    {
+      "name": "Hong Kong",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/hk/epg.xml",
+      "country_code": "hk",
+      "description": "Hong Kong EPG listings"
+    },
+    {
+      "name": "Taiwan",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/tw/epg.xml",
+      "country_code": "tw",
+      "description": "Taiwanese EPG listings"
+    },
+    {
+      "name": "Global (International)",
+      "url": "https://raw.githubusercontent.com/globetvapp/epg/master/int/epg.xml",
+      "country_code": "int",
+      "description": "International EPG listings"
+    }
+  ],
+  "last_updated": "2025-01-25",
+  "version": "1.0"
+}
