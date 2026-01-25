@@ -888,12 +888,26 @@ app.post('/api/providers', authenticateToken, (req, res) => {
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
     
     // Admin can create providers for any user, regular users create for themselves
-    const targetUserId = req.user.isAdmin && user_id ? user_id : req.user.userId;
+    // If user_id is provided and valid, use it; otherwise use the current user's ID
+    let targetUserId;
+    if (req.user.isAdmin && user_id && user_id !== '' && user_id !== 'null' && user_id !== 'undefined') {
+      targetUserId = parseInt(user_id);
+      // Verify the user exists
+      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+      if (!user) {
+        return res.status(400).json({error: 'Invalid user_id'});
+      }
+    } else {
+      targetUserId = req.user.userId;
+    }
     
     const info = db.prepare('INSERT INTO providers (user_id, name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?, ?)')
       .run(targetUserId, name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
     res.json({id: info.lastInsertRowid});
-  } catch (e) { res.status(500).json({error: e.message}); }
+  } catch (e) { 
+    console.error('Provider creation error:', e.message);
+    res.status(500).json({error: e.message}); 
+  }
 });
 
 app.post('/api/providers/:id/sync', async (req, res) => {
@@ -1899,123 +1913,27 @@ app.post('/api/epg-sources/update-all', async (req, res) => {
 });
 
 // Cache for EPG sources
-let epgSourcesCache = null;
-let epgSourcesCacheTime = 0;
-const EPG_CACHE_DURATION = 86400000; // 24 hours (increased from 1 hour)
 
-// Get available EPG sources from globetvapp/epg
-app.get('/api/epg-sources/available', async (req, res) => {
+// Get available EPG sources from static JSON file
+app.get('/api/epg-sources/available', (req, res) => {
   try {
-    // Return cached data if available and fresh
-    const now = Date.now();
-    if (epgSourcesCache && (now - epgSourcesCacheTime) < EPG_CACHE_DURATION) {
-      console.log(`📦 Returning cached EPG sources (${epgSourcesCache.length} sources)`);
-      return res.json(epgSourcesCache);
+    const epgSourcesPath = path.join(__dirname, 'epg_sources.json');
+    
+    // Check if the file exists
+    if (!fs.existsSync(epgSourcesPath)) {
+      console.warn('⚠️  epg_sources.json not found, returning empty array');
+      return res.json([]);
     }
     
-    console.log('🔍 Fetching EPG sources from GitHub API...');
-    const response = await fetch('https://api.github.com/repos/globetvapp/epg/contents/', {
-      headers: {
-        'User-Agent': 'IPTV-Manager/3.0.0'
-      }
-    });
-    const data = await response.json();
+    // Read and parse the file
+    const data = fs.readFileSync(epgSourcesPath, 'utf8');
+    const epgData = JSON.parse(data);
     
-    // Check for rate limit error
-    if (data.message && data.message.includes('rate limit')) {
-      console.warn('⚠️  GitHub API rate limit reached');
-      if (epgSourcesCache && epgSourcesCache.length > 0) {
-        console.log(`📦 Returning cached EPG sources (${epgSourcesCache.length} sources)`);
-        return res.json(epgSourcesCache);
-      } else {
-        console.warn('⚠️  No cached data available, returning empty array');
-        return res.json([]);
-      }
-    }
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch EPG sources');
-    }
-    
-    const items = data;
-    const epgSources = [];
-    const seenUrls = new Set();
-    
-    // Process ALL directories (countries) - not just first 10
-    const directories = items.filter(i => i.type === 'dir');
-    console.log(`📡 Fetching EPG sources from ${directories.length} countries...`);
-    
-    // Process directories (countries) with delay to avoid rate limits
-    // Use batch processing: process 10 countries, then wait longer
-    let processedCount = 0;
-    const batchSize = 10;
-    
-    for (let i = 0; i < directories.length; i++) {
-      const item = directories[i];
-      
-      try {
-        const dirResponse = await fetch(item.url);
-        const dirData = await dirResponse.json();
-        
-        // Check for rate limit
-        if (dirData.message && dirData.message.includes('rate limit')) {
-          console.warn(`⚠️ Rate limit reached after ${processedCount} countries`);
-          console.log(`✅ Returning ${epgSources.length} EPG sources from ${processedCount} countries`);
-          break;
-        }
-        
-        if (dirResponse.ok && Array.isArray(dirData)) {
-          // Only get .xml files (not .xml.gz to avoid duplicates)
-          const xmlFiles = dirData.filter(f => 
-            f.type === 'file' && f.name.endsWith('.xml') && !f.name.endsWith('.xml.gz')
-          );
-          
-          for (const file of xmlFiles) {
-            // Avoid duplicates
-            if (!seenUrls.has(file.download_url)) {
-              epgSources.push({
-                name: `${item.name} - ${file.name.replace(/\.xml$/, '')}`,
-                url: file.download_url,
-                size: file.size,
-                country: item.name
-              });
-              seenUrls.add(file.download_url);
-            }
-          }
-          processedCount++;
-        }
-        
-        // Adaptive delay: longer delay every batch to avoid rate limits
-        if ((i + 1) % batchSize === 0) {
-          // After each batch of 10, wait 2 seconds
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          console.log(`📊 Processed ${processedCount}/${directories.length} countries...`);
-        } else {
-          // Between requests in a batch, wait 300ms (increased from 150ms)
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      } catch (e) {
-        console.error(`Failed to fetch ${item.name}:`, e.message);
-      }
-    }
-    
-    console.log(`✅ Found ${epgSources.length} EPG sources from ${processedCount} countries`);
-    
-    // Cache the results
-    if (epgSources.length > 0) {
-      epgSourcesCache = epgSources;
-      epgSourcesCacheTime = now;
-    }
-    
-    res.json(epgSources);
+    console.log(`📦 Returning ${epgData.epg_sources.length} EPG sources from static file`);
+    res.json(epgData.epg_sources);
   } catch (e) {
     console.error('EPG sources error:', e.message);
-    // Return cached data if available, otherwise empty array
-    res.json(epgSourcesCache || []);
+    res.json([]);
   }
 });
 
-// Start
-app.listen(PORT, () => {
-  console.log(`✅ IPTV-Manager: http://localhost:${PORT}`);
-});

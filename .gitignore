@@ -37,6 +37,7 @@ cache/
 
 # Credentials
 ADMIN_CREDENTIALS.txt
+epg_sources.json
 
 # Internal
 todo.md
