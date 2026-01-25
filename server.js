@@ -211,7 +211,7 @@ try {
   // Migration: Add user_id to existing providers (if any exist without user_id)
   try {
     const providersWithoutUser = db.prepare('SELECT COUNT(*) as count FROM providers WHERE user_id IS NULL').get();
-    if (providersWithoutUser &amp;&amp; providersWithoutUser.count > 0) {
+    if (providersWithoutUser && providersWithoutUser.count > 0) {
       console.log(`⚠️  Found ${providersWithoutUser.count} providers without user_id, assigning to first admin user...`);
       const firstAdmin = db.prepare('SELECT id FROM admin_users LIMIT 1').get();
       if (firstAdmin) {
