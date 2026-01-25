@@ -817,32 +817,49 @@ app.get('/api/verify-token', authenticateToken, (req, res) => {
 app.post('/api/change-password', authenticateToken, authLimiter, async (req, res) => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body;
-    const userId = req.user.id;
+    
+    // Support both 'id' (old token format) and 'userId' (new token format)
+    const userId = req.user.userId || req.user.id;
+    
+    console.log('Change password request:', {
+      userId,
+      isAdmin: req.user.isAdmin,
+      username: req.user.username
+    });
     
     // Validation
     if (!oldPassword || !newPassword || !confirmPassword) {
+      console.error('Missing fields in change password request');
       return res.status(400).json({error: 'missing_fields'});
     }
     
     if (newPassword !== confirmPassword) {
+      console.error('Passwords do not match');
       return res.status(400).json({error: 'passwords_dont_match'});
     }
     
     if (newPassword.length < 8) {
+      console.error('Password too short');
       return res.status(400).json({error: 'password_too_short'});
     }
     
-    // Get admin user
+    // Get admin user - Admins are in admin_users table, NOT users table!
     const admin = db.prepare('SELECT * FROM admin_users WHERE id = ?').get(userId);
     if (!admin) {
+      console.error(`Admin user not found with id: ${userId}`);
       return res.status(404).json({error: 'user_not_found'});
     }
+    
+    console.log(`Found admin user: ${admin.username}`);
     
     // Verify old password
     const isValidOldPassword = await bcrypt.compare(oldPassword, admin.password);
     if (!isValidOldPassword) {
+      console.error('Invalid old password');
       return res.status(401).json({error: 'invalid_old_password'});
     }
+    
+    console.log('Old password verified, updating...');
     
     // Hash new password
     const hashedNewPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
@@ -912,18 +929,25 @@ app.post('/api/providers', authenticateToken, (req, res) => {
     const currentUserId = req.user.userId || req.user.id;
     
     // Admin can create providers for any user, regular users create for themselves
-    // If user_id is provided and valid, use it; otherwise use the current user's ID
+    // Admins CANNOT create providers for themselves - they must select a user!
+    // Admins are for WebGUI management only, NOT for IPTV streams!
     let targetUserId;
-    if (req.user.isAdmin && user_id && user_id !== '' && user_id !== 'null' && user_id !== 'undefined') {
+    if (req.user.isAdmin) {
+      // Admin must select a user - admins cannot have providers
+      if (!user_id || user_id === '' || user_id === 'null' || user_id === 'undefined') {
+        console.error('Admin attempted to create provider without selecting a user');
+        return res.status(400).json({error: 'Admin must select a user to create provider'});
+      }
       targetUserId = parseInt(user_id);
       console.log(`Admin creating provider for user ${targetUserId}`);
-      // Verify the user exists
+      // Verify the user exists in users table (NOT admin_users!)
       const user = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
       if (!user) {
-        console.error(`Invalid user_id: ${targetUserId}`);
+        console.error(`Invalid user_id: ${targetUserId} - user not found in users table`);
         return res.status(400).json({error: 'Invalid user_id'});
       }
     } else {
+      // Regular user creates provider for themselves
       targetUserId = currentUserId;
       console.log(`Creating provider for current user ${targetUserId}`);
     }
