@@ -206,6 +206,19 @@ try {
       FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id)
     );
     
+    CREATE TABLE IF NOT EXISTS provider_epg_sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL,
+      epg_source_id INTEGER NOT NULL,
+      username TEXT DEFAULT '',
+      password TEXT DEFAULT '',
+      update_interval INTEGER DEFAULT 86400,
+      last_update INTEGER DEFAULT 0,
+      FOREIGN KEY (provider_id) REFERENCES providers(id),
+      FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id),
+      UNIQUE(provider_id, epg_source_id)
+    );
+    
     -- Picon cache table removed - using direct URLs for better performance
   `);
   // Migration: Add user_id to existing providers (if any exist without user_id)
@@ -784,11 +797,6 @@ app.put('/api/users/:id', authenticateToken, (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!user) {
       return res.status(404).json({error: 'User not found'});
-    }
-    
-    // Check if trying to modify admin
-    if (user.is_admin === 1) {
-      return res.status(403).json({error: 'Cannot modify admin users'});
     }
     
     let updateFields = [];
@@ -1569,23 +1577,23 @@ app.delete('/api/providers/:id', authenticateToken, (req, res) => {
       return res.status(403).json({error: 'Not authorized to delete this provider'});
     }
     
-    // Delete provider's EPG sources
-    db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(id);
-    
-    // Delete provider's categories
-    const cats = db.prepare('SELECT id FROM user_categories WHERE provider_id = ?').all(id);
-    for (const cat of cats) {
-      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
+    // Delete provider's EPG sources (if table exists)
+    try {
+      db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(id);
+    } catch (e) {
+      // Table might not exist in older databases
+      console.log('Note: provider_epg_sources table does not exist yet');
     }
-    db.prepare('DELETE FROM user_categories WHERE provider_id = ?').run(id);
     
-    // Delete provider's EPG mappings
-    db.prepare('DELETE FROM epg_mappings WHERE provider_id = ?').run(id);
+    // Delete provider's channels
+    try {
+      db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+    } catch (e) {
+      // Table might not exist
+      console.log('Note: provider_channels table does not exist');
+    }
     
-    // Delete provider's sync configs
-    db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
-    
-    // Delete provider
+    // Delete provider (categories and user_channels are managed separately)
     db.prepare('DELETE FROM providers WHERE id = ?').run(id);
     
     console.log(`✅ Provider ${id} deleted with all related data`);
@@ -1788,26 +1796,34 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     
-    // Check if user is admin (admin users can only be deleted by super admin)
-    const user = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(id);
-    if (user && user.is_admin === 1) {
-      return res.status(403).json({error: 'Cannot delete admin users'});
+    // Check if user exists
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!user) {
+      return res.status(404).json({error: 'User not found'});
     }
+    
+    // IPTV users (not admin users) can be deleted by admin
     
     // Delete user's providers
     const providers = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(id);
     for (const provider of providers) {
-      // Delete provider's EPG sources
-      db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(provider.id);
-      
-      // Delete provider's categories
-      const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ? AND provider_id = ?').all(id, provider.id);
-      for (const cat of cats) {
-        db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
+      // Delete provider's EPG sources (if table exists)
+      try {
+        db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(provider.id);
+      } catch (e) {
+        // Table might not exist in older databases
+        console.log('Note: provider_epg_sources table does not exist yet');
       }
-      db.prepare('DELETE FROM user_categories WHERE user_id = ? AND provider_id = ?').run(id, provider.id);
       
-      // Delete provider
+      // Delete provider's channels (if table exists)
+      try {
+        db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(provider.id);
+      } catch (e) {
+        // Table might not exist
+        console.log('Note: provider_channels table does not exist');
+      }
+      
+      // Delete provider (categories and user_channels are managed separately)
       db.prepare('DELETE FROM providers WHERE id = ?').run(provider.id);
     }
     
@@ -1817,12 +1833,6 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
       db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
     }
     db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
-    
-    // Delete user's EPG mappings
-    db.prepare('DELETE FROM epg_mappings WHERE user_id = ?').run(id);
-    
-    // Delete user's sync configs
-    db.prepare('DELETE FROM sync_configs WHERE user_id = ?').run(id);
     
     // Delete user
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
