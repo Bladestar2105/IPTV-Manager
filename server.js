@@ -1937,3 +1937,8 @@ app.get('/api/epg-sources/available', (req, res) => {
   }
 });
 
+// Start server
+app.listen(PORT, () => {
+  console.log(`✅ IPTV-Manager: http://localhost:${PORT}`);
+});
+
