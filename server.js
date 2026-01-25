@@ -885,27 +885,54 @@ app.get('/api/providers', authenticateToken, (req, res) => {
 app.post('/api/providers', authenticateToken, (req, res) => {
   try {
     const { name, url, username, password, epg_url, user_id } = req.body;
-    if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
+    
+    // Debug logging
+    console.log('Provider creation request:', {
+      name,
+      url,
+      username: username ? '***' : null,
+      password: password ? '***' : null,
+      epg_url,
+      user_id,
+      reqUser: req.user,
+      reqUserUserId: req.user?.userId
+    });
+    
+    if (!name || !url || !username || !password) {
+      console.error('Missing required fields');
+      return res.status(400).json({error: 'missing'});
+    }
+    
+    if (!req.user || !req.user.userId) {
+      console.error('User not authenticated or userId missing');
+      return res.status(401).json({error: 'User not authenticated'});
+    }
     
     // Admin can create providers for any user, regular users create for themselves
     // If user_id is provided and valid, use it; otherwise use the current user's ID
     let targetUserId;
     if (req.user.isAdmin && user_id && user_id !== '' && user_id !== 'null' && user_id !== 'undefined') {
       targetUserId = parseInt(user_id);
+      console.log(`Admin creating provider for user ${targetUserId}`);
       // Verify the user exists
       const user = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
       if (!user) {
+        console.error(`Invalid user_id: ${targetUserId}`);
         return res.status(400).json({error: 'Invalid user_id'});
       }
     } else {
       targetUserId = req.user.userId;
+      console.log(`Creating provider for current user ${targetUserId}`);
     }
     
+    console.log(`Inserting provider with user_id: ${targetUserId}`);
     const info = db.prepare('INSERT INTO providers (user_id, name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?, ?)')
       .run(targetUserId, name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
+    console.log(`Provider created with ID: ${info.lastInsertRowid}`);
     res.json({id: info.lastInsertRowid});
   } catch (e) { 
     console.error('Provider creation error:', e.message);
+    console.error('Error stack:', e.stack);
     res.status(500).json({error: e.message}); 
   }
 });
