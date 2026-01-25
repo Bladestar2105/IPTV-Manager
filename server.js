@@ -903,10 +903,13 @@ app.post('/api/providers', authenticateToken, (req, res) => {
       return res.status(400).json({error: 'missing'});
     }
     
-    if (!req.user || !req.user.userId) {
+    if (!req.user || (!req.user.userId && !req.user.id)) {
       console.error('User not authenticated or userId missing');
       return res.status(401).json({error: 'User not authenticated'});
     }
+    
+    // Support both 'id' (old token format) and 'userId' (new token format)
+    const currentUserId = req.user.userId || req.user.id;
     
     // Admin can create providers for any user, regular users create for themselves
     // If user_id is provided and valid, use it; otherwise use the current user's ID
@@ -921,11 +924,11 @@ app.post('/api/providers', authenticateToken, (req, res) => {
         return res.status(400).json({error: 'Invalid user_id'});
       }
     } else {
-      targetUserId = req.user.userId;
+      targetUserId = currentUserId;
       console.log(`Creating provider for current user ${targetUserId}`);
     }
     
-    console.log(`Inserting provider with user_id: ${targetUserId}`);
+    console.log(`Inserting provider with user_id: ${targetUserId} (token format: ${req.user.userId ? 'new' : 'old'})`);
     const info = db.prepare('INSERT INTO providers (user_id, name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?, ?)')
       .run(targetUserId, name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
     console.log(`Provider created with ID: ${info.lastInsertRowid}`);
