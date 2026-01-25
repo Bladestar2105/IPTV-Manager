@@ -1010,7 +1010,7 @@ app.post('/api/providers/:id/sync', async (req, res) => {
 
 app.get('/api/providers/:id/channels', (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ? ORDER BY name').all(Number(req.params.id));
+    const rows = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ? ORDER BY id').all(Number(req.params.id));
     res.json(rows);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -1085,7 +1085,7 @@ app.post('/api/providers/:providerId/import-category', async (req, res) => {
       const channels = db.prepare(`
         SELECT id FROM provider_channels 
         WHERE provider_id = ? AND original_category_id = ?
-        ORDER BY name
+        ORDER BY id
       `).all(providerId, Number(category_id));
 
       const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
