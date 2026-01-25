@@ -150,6 +150,18 @@ async function loadUsers() {
     li.appendChild(delBtn);
     list.appendChild(li);
   });
+  
+  // Also update provider user select
+  loadProviderUserSelect();
+}
+
+async function loadProviderUserSelect() {
+  const users = await fetchJSON('/api/users');
+  const select = document.getElementById('provider-user-select');
+  if (select) {
+    select.innerHTML = '<option value="">Select IPTV User</option>' + 
+      users.map(u => `<option value="${u.id}">${u.username}</option>`).join('');
+  }
 }
 
 // === Provider Management ===
@@ -736,6 +748,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
+        user_id: Number(f.user_id.value),
         name: f.name.value,
         url: f.url.value,
         username: f.username.value,
@@ -745,6 +758,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     });
     f.reset();
     loadProviders();
+    loadProviderUserSelect(); // Reload user select
     alert(t('providerCreated'));
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);

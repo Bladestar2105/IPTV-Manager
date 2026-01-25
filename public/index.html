@@ -70,10 +70,15 @@
     <div class="row mb-4">
       <div class="col-md-12">
         <form id="provider-form" class="row g-2 mb-3">
+          <div class="col-md-2">
+            <select class="form-select" name="user_id" id="provider-user-select" required>
+              <option value="">Select IPTV User</option>
+            </select>
+          </div>
           <div class="col-md-2"><input class="form-control" name="name" data-i18n-placeholder="providerName" placeholder="Name" required /></div>
-          <div class="col-md-3"><input class="form-control" name="url" placeholder="http://provider.com" required /></div>
+          <div class="col-md-2"><input class="form-control" name="url" placeholder="http://provider.com" required /></div>
           <div class="col-md-2"><input class="form-control" name="username" data-i18n-placeholder="providerUsername" placeholder="Username" required /></div>
-          <div class="col-md-2"><input class="form-control" name="password" data-i18n-placeholder="providerPassword" placeholder="Password" required /></div>
+          <div class="col-md-1"><input class="form-control" name="password" data-i18n-placeholder="providerPassword" placeholder="Password" required /></div>
           <div class="col-md-2"><input class="form-control" name="epg_url" data-i18n-placeholder="epgUrl" placeholder="EPG URL (optional)" /></div>
           <div class="col-md-1"><button class="btn btn-primary w-100" type="submit" data-i18n="addProvider">Add Provider</button></div>
         </form>

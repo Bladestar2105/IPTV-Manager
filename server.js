@@ -1909,16 +1909,28 @@ app.get('/api/epg-sources/available', async (req, res) => {
     // Return cached data if available and fresh
     const now = Date.now();
     if (epgSourcesCache && (now - epgSourcesCacheTime) < EPG_CACHE_DURATION) {
+      console.log(`📦 Returning cached EPG sources (${epgSourcesCache.length} sources)`);
       return res.json(epgSourcesCache);
     }
     
-    const response = await fetch('https://api.github.com/repos/globetvapp/epg/contents/');
+    console.log('🔍 Fetching EPG sources from GitHub API...');
+    const response = await fetch('https://api.github.com/repos/globetvapp/epg/contents/', {
+      headers: {
+        'User-Agent': 'IPTV-Manager/3.0.0'
+      }
+    });
     const data = await response.json();
     
     // Check for rate limit error
     if (data.message && data.message.includes('rate limit')) {
-      console.warn('GitHub API rate limit reached, returning cached or empty data');
-      return res.json(epgSourcesCache || []);
+      console.warn('⚠️  GitHub API rate limit reached');
+      if (epgSourcesCache && epgSourcesCache.length > 0) {
+        console.log(`📦 Returning cached EPG sources (${epgSourcesCache.length} sources)`);
+        return res.json(epgSourcesCache);
+      } else {
+        console.warn('⚠️  No cached data available, returning empty array');
+        return res.json([]);
+      }
     }
     
     if (!response.ok) {
