@@ -138,16 +138,18 @@ async function loadUsers() {
       loadProviders();
     };
     
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-primary me-1';
+    editBtn.textContent = t('edit');
+    editBtn.onclick = () => editUser(u.id);
+    
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
-    delBtn.onclick = async () => {
-      if (!confirm(t('deleteUserConfirm', {name: u.username}))) return;
-      await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
-      loadUsers();
-    };
+    delBtn.onclick = () => deleteUser(u.id);
     
     li.appendChild(span);
+    li.appendChild(editBtn);
     li.appendChild(delBtn);
     list.appendChild(li);
   });
@@ -238,6 +240,12 @@ async function loadProviders() {
     logsBtn.title = t('syncLogs');
     logsBtn.onclick = () => showSyncLogs(p.id);
     
+    const epgBtn = document.createElement('button');
+    epgBtn.className = 'btn btn-sm btn-outline-success me-1';
+    epgBtn.innerHTML = '📏';
+    epgBtn.title = t('manageEpgSources');
+    epgBtn.onclick = () => openProviderEpgSources(p.id);
+    
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
@@ -250,6 +258,7 @@ async function loadProviders() {
     btnGroup.appendChild(syncBtn);
     btnGroup.appendChild(configBtn);
     btnGroup.appendChild(logsBtn);
+    btnGroup.appendChild(epgBtn);
     btnGroup.appendChild(delBtn);
     row.appendChild(btnGroup);
     li.appendChild(row);
@@ -1450,5 +1459,368 @@ async function handleChangePassword(event) {
   } finally {
     changePasswordBtn.disabled = false;
     changePasswordBtn.textContent = t('change_password');
+  }
+}
+
+// ==================== USER EDIT & DELETE ====================
+
+function editUser(userId) {
+  const user = users.find(u => u.id === userId);
+  if (!user) return;
+  
+  document.getElementById('edit-user-id').value = userId;
+  document.getElementById('edit-username').value = user.username;
+  document.getElementById('edit-user-password').value = '';
+  
+  document.getElementById('edit-user-error').style.display = 'none';
+  document.getElementById('edit-user-success').style.display = 'none';
+  
+  const modal = new bootstrap.Modal(document.getElementById('edit-user-modal'));
+  modal.show();
+}
+
+async function handleEditUser(event) {
+  event.preventDefault();
+  
+  const userId = document.getElementById('edit-user-id').value;
+  const username = document.getElementById('edit-username').value;
+  const password = document.getElementById('edit-user-password').value;
+  
+  const errorDiv = document.getElementById('edit-user-error');
+  const successDiv = document.getElementById('edit-user-success');
+  
+  errorDiv.style.display = 'none';
+  successDiv.style.display = 'none';
+  
+  const payload = { username };
+  if (password) {
+    payload.password = password;
+  }
+  
+  try {
+    const response = await fetch(`/api/users/${userId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to update user');
+    }
+    
+    successDiv.textContent = t('userUpdated');
+    successDiv.style.display = 'block';
+    
+    // Update user in local array
+    const userIndex = users.findIndex(u => u.id === userId);
+    if (userIndex !== -1) {
+      users[userIndex].username = username;
+      loadUsers();
+    }
+    
+    // Close modal after 2 seconds
+    setTimeout(() => {
+      const modal = bootstrap.Modal.getInstance(document.getElementById('edit-user-modal'));
+      if (modal) modal.hide();
+    }, 1500);
+    
+  } catch (error) {
+    errorDiv.textContent = error.message;
+    errorDiv.style.display = 'block';
+  }
+}
+
+function deleteUser(userId) {
+  const user = users.find(u => u.id === userId);
+  if (!user) return;
+  
+  document.getElementById('delete-user-name').textContent = user.username;
+  document.getElementById('delete-user-error').style.display = 'none';
+  
+  // Store userId for confirmation
+  document.getElementById('confirm-delete-user-btn').onclick = async () => {
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${getToken()}`
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to delete user');
+      }
+      
+      // Remove from local array
+      users = users.filter(u => u.id !== userId);
+      loadUsers();
+      
+      // Close modal
+      const modal = bootstrap.Modal.getInstance(document.getElementById('delete-user-modal'));
+      if (modal) modal.hide();
+      
+      // Show success message
+      alert(t('userDeleted'));
+      
+    } catch (error) {
+      document.getElementById('delete-user-error').textContent = error.message;
+      document.getElementById('delete-user-error').style.display = 'block';
+    }
+  };
+  
+  const modal = new bootstrap.Modal(document.getElementById('delete-user-modal'));
+  modal.show();
+}
+
+// ==================== PROVIDER EPG SOURCES ====================
+
+let currentProviderEpgProviderId = null;
+
+function openProviderEpgSources(providerId) {
+  currentProviderEpgProviderId = providerId;
+  
+  document.getElementById('add-provider-epg-source-form').style.display = 'none';
+  loadProviderEpgSources(providerId);
+  
+  const modal = new bootstrap.Modal(document.getElementById('provider-epg-sources-modal'));
+  modal.show();
+}
+
+async function loadProviderEpgSources(providerId) {
+  const listContainer = document.querySelector('#provider-epg-sources-list ul');
+  listContainer.innerHTML = '<li class="list-group-item text-muted">' + t('loading') + '</li>';
+  
+  try {
+    const response = await fetch(`/api/providers/${providerId}/epg-sources`, {
+      headers: {
+        'Authorization': `Bearer ${getToken()}`
+      }
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to load EPG sources');
+    }
+    
+    if (data.length === 0) {
+      listContainer.innerHTML = '<li class="list-group-item text-muted">' + t('noEpgSources') + '</li>';
+      return;
+    }
+    
+    listContainer.innerHTML = '';
+    
+    data.forEach(epg => {
+      const lastUpdate = epg.last_update ? new Date(epg.last_update * 1000).toLocaleString() : t('never');
+      
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex justify-content-between align-items-center';
+      li.innerHTML = `
+        <div>
+          <strong>${epg.name}</strong><br>
+          <small class="text-muted">${t('lastUpdate')}: ${lastUpdate}</small>
+        </div>
+        <div>
+          <button class="btn btn-sm btn-outline-primary me-1" onclick="editProviderEpgSource(${epg.id})">
+            ${t('edit')}
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteProviderEpgSource(${epg.id})">
+            ${t('delete')}
+          </button>
+        </div>
+      `;
+      listContainer.appendChild(li);
+    });
+    
+  } catch (error) {
+    listContainer.innerHTML = '<li class="list-group-item text-danger">' + error.message + '</li>';
+  }
+}
+
+function showAddProviderEpgSource() {
+  document.getElementById('provider-epg-provider-id').value = currentProviderEpgProviderId;
+  document.getElementById('provider-epg-source-select').innerHTML = '<option>Loading...</option>';
+  document.getElementById('add-provider-epg-source-form').style.display = 'block';
+  
+  // Load available EPG sources
+  loadAvailableEpgSourcesForProvider();
+}
+
+async function loadAvailableEpgSourcesForProvider() {
+  try {
+    const response = await fetch('/api/epg-sources/available');
+    const sources = await response.json();
+    
+    if (!sources || sources.length === 0) {
+      document.getElementById('provider-epg-source-select').innerHTML = '<option>No EPG sources available</option>';
+      return;
+    }
+    
+    let html = '<option value="">Select EPG Source</option>';
+    sources.forEach((source, index) => {
+      html += `<option value="${index}" data-url="${source.url}" data-name="${source.name}">${source.name}</option>`;
+    });
+    
+    document.getElementById('provider-epg-source-select').innerHTML = html;
+    
+  } catch (error) {
+    document.getElementById('provider-epg-source-select').innerHTML = '<option>Error loading sources</option>';
+  }
+}
+
+function hideAddProviderEpgSource() {
+  document.getElementById('add-provider-epg-source-form').style.display = 'none';
+}
+
+async function handleAddProviderEpgSource(event) {
+  event.preventDefault();
+  
+  const providerId = document.getElementById('provider-epg-provider-id').value;
+  const epgSourceSelect = document.getElementById('provider-epg-source-select');
+  const selectedOption = epgSourceSelect.options[epgSourceSelect.selectedIndex];
+  const username = document.getElementById('provider-epg-username').value;
+  const password = document.getElementById('provider-epg-password').value;
+  const updateInterval = document.getElementById('provider-epg-update-interval').value;
+  
+  if (!selectedOption || !selectedOption.value) {
+    alert(t('selectEpgSource'));
+    return;
+  }
+  
+  // Get URL and name from data attributes
+  const epgUrl = selectedOption.getAttribute('data-url');
+  const epgName = selectedOption.getAttribute('data-name');
+  
+  if (!epgUrl) {
+    alert('Invalid EPG source');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`/api/providers/${providerId}/epg-sources`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify({
+        epg_url: epgUrl,
+        epg_name: epgName,
+        username,
+        password,
+        update_interval: parseInt(updateInterval)
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to add EPG source');
+    }
+    
+    alert(t('epgSourceAdded'));
+    hideAddProviderEpgSource();
+    loadProviderEpgSources(providerId);
+    
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function editProviderEpgSource(epgId) {
+  // Get current provider EPG data
+  fetch(`/api/providers/${currentProviderEpgProviderId}/epg-sources`)
+    .then(res => res.json())
+    .then(data => {
+      const epg = data.find(e => e.id === epgId);
+      if (!epg) return;
+      
+      document.getElementById('edit-provider-epg-id').value = epgId;
+      document.getElementById('edit-provider-epg-provider-id').value = currentProviderEpgProviderId;
+      document.getElementById('edit-provider-epg-username').value = epg.username || '';
+      document.getElementById('edit-provider-epg-password').value = '';
+      document.getElementById('edit-provider-epg-update-interval').value = epg.update_interval || 86400;
+      
+      const modal = new bootstrap.Modal(document.getElementById('edit-provider-epg-modal'));
+      modal.show();
+    })
+    .catch(error => alert(error.message));
+}
+
+async function handleEditProviderEpg(event) {
+  event.preventDefault();
+  
+  const epgId = document.getElementById('edit-provider-epg-id').value;
+  const providerId = document.getElementById('edit-provider-epg-provider-id').value;
+  const username = document.getElementById('edit-provider-epg-username').value;
+  const password = document.getElementById('edit-provider-epg-password').value;
+  const updateInterval = document.getElementById('edit-provider-epg-update-interval').value;
+  
+  const payload = {
+    username,
+    update_interval: parseInt(updateInterval)
+  };
+  
+  if (password) {
+    payload.password = password;
+  }
+  
+  try {
+    const response = await fetch(`/api/providers/${providerId}/epg-sources/${epgId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to update EPG source');
+    }
+    
+    alert(t('epgSourceUpdated'));
+    
+    const modal = bootstrap.Modal.getInstance(document.getElementById('edit-provider-epg-modal'));
+    if (modal) modal.hide();
+    
+    loadProviderEpgSources(providerId);
+    
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function deleteProviderEpgSource(epgId) {
+  if (!confirm(t('delete') + '?')) return;
+  
+  try {
+    const response = await fetch(`/api/providers/${currentProviderEpgProviderId}/epg-sources/${epgId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`
+      }
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to delete EPG source');
+    }
+    
+    alert(t('epgSourceDeleted'));
+    loadProviderEpgSources(currentProviderEpgProviderId);
+    
+  } catch (error) {
+    alert(error.message);
   }
 }

@@ -108,6 +108,26 @@ const translations = {
     // Loading states
     loading: 'Loading...',
     saving: 'Saving...',
+    edit: 'Edit',
+    editUser: 'Edit User',
+    save: 'Save',
+    cancel: 'Cancel',
+    deleteUser: 'Delete User',
+    deleteUserConfirm: 'Are you sure you want to delete this user? This will also delete all associated providers, channels, and categories.',
+    usernameHint: '3-50 characters, letters, numbers, underscore only',
+    userUpdated: 'User updated successfully',
+    userDeleted: 'User deleted successfully',
+    providerEpgSources: 'Provider EPG Sources',
+    manageEpgSources: 'Manage EPG Sources',
+    selectEpgSource: 'Select EPG Source',
+    updateInterval: 'Update Interval',
+    lastUpdate: 'Last Update',
+    never: 'Never',
+    editProviderEpg: 'Edit Provider EPG Source',
+    epgSourceAdded: 'EPG Source added successfully',
+    epgSourceUpdated: 'EPG Source updated successfully',
+    epgSourceDeleted: 'EPG Source deleted successfully',
+    noEpgSources: 'No EPG Sources configured'
     
     // Authentication
     login: 'Login',
@@ -235,6 +255,26 @@ const translations = {
     // Loading states
     loading: 'Lädt...',
     saving: 'Speichert...',
+    edit: 'Bearbeiten',
+    editUser: 'Benutzer bearbeiten',
+    save: 'Speichern',
+    cancel: 'Abbrechen',
+    deleteUser: 'Benutzer löschen',
+    deleteUserConfirm: 'Möchten Sie diesen Benutzer wirklich löschen? Dies löscht auch alle zugehörigen Provider, Kanäle und Kategorien.',
+    usernameHint: '3-50 Zeichen, nur Buchstaben, Zahlen, Unterstrich',
+    userUpdated: 'Benutzer erfolgreich aktualisiert',
+    userDeleted: 'Benutzer erfolgreich gelöscht',
+    providerEpgSources: 'Provider EPG-Quellen',
+    manageEpgSources: 'EPG-Quellen verwalten',
+    selectEpgSource: 'EPG-Quelle auswählen',
+    updateInterval: 'Aktualisierungsintervall',
+    lastUpdate: 'Letztes Update',
+    never: 'Nie',
+    editProviderEpg: 'Provider EPG-Quelle bearbeiten',
+    epgSourceAdded: 'EPG-Quelle erfolgreich hinzugefügt',
+    epgSourceUpdated: 'EPG-Quelle erfolgreich aktualisiert',
+    epgSourceDeleted: 'EPG-Quelle erfolgreich gelöscht',
+    noEpgSources: 'Keine EPG-Quellen konfiguriert'
     
     // Authentication
     login: 'Anmelden',
@@ -362,6 +402,26 @@ const translations = {
     // Loading states
     loading: 'Chargement...',
     saving: 'Enregistrement...',
+    edit: 'Modifier',
+    editUser: "Modifier l'utilisateur",
+    save: 'Enregistrer',
+    cancel: 'Annuler',
+    deleteUser: "Supprimer l'utilisateur",
+    deleteUserConfirm: 'Êtes-vous sûr de vouloir supprimer cet utilisateur ? Cela supprimera également tous les fournisseurs, chaînes et catégories associés.',
+    usernameHint: '3-50 caractères, lettres, chiffres, trait de soulignement uniquement',
+    userUpdated: 'Utilisateur mis à jour avec succès',
+    userDeleted: 'Utilisateur supprimé avec succès',
+    providerEpgSources: 'Sources EPG du fournisseur',
+    manageEpgSources: 'Gérer les sources EPG',
+    selectEpgSource: 'Sélectionner la source EPG',
+    updateInterval: 'Intervalle de mise à jour',
+    lastUpdate: 'Dernière mise à jour',
+    never: 'Jamais',
+    editProviderEpg: 'Modifier la source EPG du fournisseur',
+    epgSourceAdded: 'Source EPG ajoutée avec succès',
+    epgSourceUpdated: 'Source EPG mise à jour avec succès',
+    epgSourceDeleted: 'Source EPG supprimée avec succès',
+    noEpgSources: 'Aucune source EPG configurée'
     
     // Authentication
     login: 'Connexion',
@@ -488,7 +548,27 @@ const translations = {
     
     // Loading states
     loading: 'Φόρτωση...',
-    saving: 'Αποθήκευση...'
+    saving: 'Αποθήκευση...',
+    edit: 'Επεξεργασία',
+    editUser: 'Επεξεργασία Χρήστη',
+    save: 'Αποθήκευση',
+    cancel: 'Ακύρωση',
+    deleteUser: 'Διαγραφή Χρήστη',
+    deleteUserConfirm: 'Είστε βέβαιοι ότι θέλετε να διαγράψετε αυτόν τον χρήστη; Αυτό θα διαγράψει επίσης όλους τους παρόχους, τα κανάλια και τις κατηγορίες.',
+    usernameHint: '3-50 χαρακτήρες, μόνο γράμματα, αριθμοί, κάτω παύλα',
+    userUpdated: 'Ο χρήστης ενημερώθηκε επιτυχώς',
+    userDeleted: 'Ο χρήστης διαγράφηκε επιτυχώς',
+    providerEpgSources: 'Πηγές EPG Παρόχου',
+    manageEpgSources: 'Διαχείριση Πηγών EPG',
+    selectEpgSource: 'Επιλογή Πηγής EPG',
+    updateInterval: 'Διάστημα Ενημέρωσης',
+    lastUpdate: 'Τελευταία Ενημέρωση',
+    never: 'Ποτέ',
+    editProviderEpg: 'Επεξεργασία Πηγής EPG Παρόχου',
+    epgSourceAdded: 'Η πηγή EPG προστέθηκε επιτυχώς',
+    epgSourceUpdated: 'Η πηγή EPG ενημερώθηκε επιτυχώς',
+    epgSourceDeleted: 'Η πηγή EPG διαγράφηκε επιτυχώς',
+    noEpgSources: 'Δεν έχουν ρυθμιστεί πηγές EPG'
   }
 };
 

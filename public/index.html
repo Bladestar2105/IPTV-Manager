@@ -446,6 +446,148 @@
     </div>
   </div>
 
+  <!-- Edit User Modal -->
+  <div class="modal fade" id="edit-user-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="editUser">Edit User</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="edit-user-form" onsubmit="handleEditUser(event)">
+            <input type="hidden" id="edit-user-id">
+            <div class="mb-3">
+              <label for="edit-username" class="form-label" data-i18n="username">Username</label>
+              <input type="text" class="form-control" id="edit-username" required>
+              <small class="form-text text-secondary" data-i18n="usernameHint">3-50 characters, letters, numbers, underscore only</small>
+            </div>
+            <div class="mb-3">
+              <label for="edit-user-password" class="form-label" data-i18n="password">New Password (leave empty to keep current)</label>
+              <input type="password" class="form-control" id="edit-user-password" minlength="8">
+              <small class="form-text text-secondary" data-i18n="password_min_length">Minimum 8 characters if provided</small>
+            </div>
+            <div id="edit-user-error" class="alert alert-danger" style="display: none;"></div>
+            <div id="edit-user-success" class="alert alert-success" style="display: none;"></div>
+            <button type="submit" class="btn btn-primary w-100" data-i18n="save">Save</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete User Confirmation Modal -->
+  <div class="modal fade" id="delete-user-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="deleteUser">Delete User</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p data-i18n="deleteUserConfirm">Are you sure you want to delete this user? This will also delete all associated providers, channels, and categories.</p>
+          <p><strong id="delete-user-name" class="text-danger"></strong></p>
+          <div id="delete-user-error" class="alert alert-danger" style="display: none;"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="cancel">Cancel</button>
+          <button type="button" class="btn btn-danger" id="confirm-delete-user-btn" data-i18n="delete">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provider EPG Sources Modal -->
+  <div class="modal fade" id="provider-epg-sources-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="providerEpgSources">Provider EPG Sources</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <button class="btn btn-outline-primary btn-sm" onclick="showAddProviderEpgSource()">
+              <span data-i18n="addEpgSource">Add EPG Source</span>
+            </button>
+          </div>
+          <div id="provider-epg-sources-list">
+            <ul class="list-group" style="max-height:400px; overflow:auto;">
+              <li class="list-group-item text-muted" data-i18n="loading">Loading...</li>
+            </ul>
+          </div>
+          <div id="add-provider-epg-source-form" style="display:none;" class="mt-3">
+            <h6 data-i18n="addEpgSource">Add EPG Source</h6>
+            <form onsubmit="handleAddProviderEpgSource(event)">
+              <input type="hidden" id="provider-epg-provider-id">
+              <div class="mb-2">
+                <label class="form-label" data-i18n="selectEpgSource">Select EPG Source</label>
+                <select class="form-select form-select-sm" id="provider-epg-source-select" required></select>
+              </div>
+              <div class="mb-2">
+                <label class="form-label" data-i18n="username">Username (if required)</label>
+                <input type="text" class="form-control form-control-sm" id="provider-epg-username">
+              </div>
+              <div class="mb-2">
+                <label class="form-label" data-i18n="password">Password (if required)</label>
+                <input type="password" class="form-control form-control-sm" id="provider-epg-password">
+              </div>
+              <div class="mb-2">
+                <label class="form-label" data-i18n="updateInterval">Update Interval</label>
+                <select class="form-select form-select-sm" id="provider-epg-update-interval">
+                  <option value="3600">1 hour</option>
+                  <option value="21600">6 hours</option>
+                  <option value="43200">12 hours</option>
+                  <option value="86400" selected>24 hours</option>
+                  <option value="604800">7 days</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-primary btn-sm" data-i18n="add">Add</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="hideAddProviderEpgSource()" data-i18n="cancel">Cancel</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Provider EPG Source Modal -->
+  <div class="modal fade" id="edit-provider-epg-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="editProviderEpg">Edit Provider EPG Source</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="edit-provider-epg-form" onsubmit="handleEditProviderEpg(event)">
+            <input type="hidden" id="edit-provider-epg-id">
+            <input type="hidden" id="edit-provider-epg-provider-id">
+            <div class="mb-3">
+              <label class="form-label" data-i18n="username">Username</label>
+              <input type="text" class="form-control" id="edit-provider-epg-username">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" data-i18n="password">Password</label>
+              <input type="password" class="form-control" id="edit-provider-epg-password">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" data-i18n="updateInterval">Update Interval</label>
+              <select class="form-select" id="edit-provider-epg-update-interval">
+                <option value="3600">1 hour</option>
+                <option value="21600">6 hours</option>
+                <option value="43200">12 hours</option>
+                <option value="86400">24 hours</option>
+                <option value="604800">7 days</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary" data-i18n="save">Save</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="vendor/bootstrap.bundle.min.js"></script>
   <script src="vendor/sortable.min.js"></script>
   <script src="i18n.js"></script>

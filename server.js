@@ -1639,10 +1639,23 @@ app.get('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
 app.post('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { epg_source_id, username, password, update_interval } = req.body;
+    const { epg_source_id, epg_url, epg_name, username, password, update_interval } = req.body;
     
-    if (!epg_source_id) {
-      return res.status(400).json({error: 'EPG source ID is required'});
+    // Support both: existing EPG source by ID or new EPG source by URL
+    let epgSource;
+    
+    if (epg_source_id) {
+      // Use existing EPG source from database
+      epgSource = db.prepare('SELECT * FROM epg_sources WHERE id = ?').get(epg_source_id);
+      if (!epgSource) {
+        return res.status(404).json({error: 'EPG source not found'});
+      }
+    } else if (epg_url) {
+      // Create new EPG source from URL
+      epgSource = db.prepare('INSERT INTO epg_sources (name, url, enabled, update_interval) VALUES (?, ?, 1, ?) RETURNING *')
+        .get(epg_name || 'Custom EPG', epg_url, update_interval || 86400);
+    } else {
+      return res.status(400).json({error: 'EPG source ID or URL is required'});
     }
     
     // Check ownership
@@ -1656,19 +1669,13 @@ app.post('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
       return res.status(403).json({error: 'Not authorized'});
     }
     
-    // Check if EPG source exists
-    const epgSource = db.prepare('SELECT * FROM epg_sources WHERE id = ?').get(epg_source_id);
-    if (!epgSource) {
-      return res.status(404).json({error: 'EPG source not found'});
-    }
-    
     // Add EPG source to provider
     const info = db.prepare(`
       INSERT INTO provider_epg_sources (provider_id, epg_source_id, username, password, update_interval)
       VALUES (?, ?, ?, ?, ?)
-    `).run(id, epg_source_id, (username || '').trim(), (password || '').trim(), update_interval || epgSource.update_interval);
+    `).run(id, epgSource.id, (username || '').trim(), (password || '').trim(), update_interval || epgSource.update_interval);
     
-    console.log(`✅ EPG source ${epg_source_id} added to provider ${id}`);
+    console.log(`✅ EPG source ${epgSource.id} added to provider ${id}`);
     res.json({
       success: true,
       id: info.lastInsertRowid
