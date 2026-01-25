@@ -37,6 +37,10 @@ cache/
 
 # Credentials
 ADMIN_CREDENTIALS.txt
+TEST_CREDENTIALS.txt
+*.credentials.txt
+*test*.txt
+*_test_*.txt
 
 # Internal
 todo.md
