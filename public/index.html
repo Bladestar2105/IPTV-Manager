@@ -151,9 +151,34 @@
       </div>
     </div>
 
-    <!-- 5. Xtream Codes Info -->
+    <!-- 5. EPG Mapping -->
     <hr class="my-4">
-    <h3 data-i18n="xtreamLogin">5. Xtream Codes Login</h3>
+    <h3 data-i18n="epgMapping">5. EPG Mapping</h3>
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="alert alert-info">
+          <strong data-i18n="mappingInfo">Map your channels to EPG data for program information.</strong>
+        </div>
+        <div class="mb-3">
+          <button class="btn btn-success" onclick="autoMapEpgChannels()" data-i18n="autoMap">Auto-Map Channels</button>
+          <button class="btn btn-primary" onclick="loadUnmappedChannels()" data-i18n="loadUnmapped">Load Unmapped Channels</button>
+        </div>
+        <div class="row">
+          <div class="col-md-6">
+            <h5 data-i18n="unmappedChannels">Unmapped Channels</h5>
+            <ul id="unmapped-channels-list" class="list-group scrollable-list" style="max-height: 400px; overflow-y: auto;"></ul>
+          </div>
+          <div class="col-md-6">
+            <h5 data-i18n="mappedChannels">Mapped Channels</h5>
+            <ul id="mapped-channels-list" class="list-group scrollable-list" style="max-height: 400px; overflow-y: auto;"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Xtream Codes Info -->
+    <hr class="my-4">
+    <h3 data-i18n="xtreamLogin">6. Xtream Codes Login</h3>
     <p><strong data-i18n="url">URL</strong>: <code id="xtream-url"></code></p>
     <p><strong data-i18n="username">Username</strong>: <code id="xtream-user">-</code></p>
     <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
@@ -441,6 +466,34 @@
             <div id="change-password-success" class="alert alert-success" style="display: none;"></div>
             <button type="submit" class="btn btn-primary w-100" id="change-password-btn" data-i18n="change_password">Change Password</button>
           </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual EPG Mapping Modal -->
+  <div class="modal fade" id="manual-mapping-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="manualMapping">Manual EPG Mapping</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info">
+            <strong data-i18n="channelToMap">Channel to Map:</strong> <span id="mapping-channel-name"></span>
+          </div>
+          <div class="mb-3">
+            <input type="hidden" id="mapping-user-channel-id">
+            <label class="form-label" data-i18n="searchEpgChannel">Search EPG Channel</label>
+            <input type="text" class="form-control" id="epg-channel-search" placeholder="Search EPG channels...">
+          </div>
+          <div id="epg-channels-dropdown" class="list-group scrollable-list" style="max-height: 300px; overflow-y: auto; display: none;"></div>
+          <div id="mapping-status" class="mt-3"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+          <button type="button" class="btn btn-primary" onclick="saveManualMapping()" data-i18n="saveMapping">Save Mapping</button>
         </div>
       </div>
     </div>

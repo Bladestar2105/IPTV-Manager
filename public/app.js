@@ -264,8 +264,16 @@ async function loadProviders() {
 
 // === Category Management ===
 async function loadUserCategories() {
-  if (!selectedUserId) return;
+  console.log('📂 Loading user categories for user:', selectedUserId);
+  
+  if (!selectedUserId) {
+    console.warn('⚠️ No user selected, skipping category load');
+    return;
+  }
+  
   const cats = await fetchJSON(`/api/users/${selectedUserId}/categories`);
+  console.log('📊 Categories loaded:', cats.length, 'categories');
+  
   const list = document.getElementById('category-list');
   list.innerHTML = '';
   selectedCategoryId = null;
@@ -347,25 +355,43 @@ async function loadUserCategories() {
     list.appendChild(li);
   });
   
+  console.log('📋 Category list populated, calling initCategorySortable');
   // Sortable initialisieren
   initCategorySortable();
 }
 
 function initCategorySortable() {
+  console.log('🔧 initCategorySortable called');
+  
   if (categorySortable) {
     categorySortable.destroy();
+    console.log('🔄 Destroyed previous categorySortable');
   }
   
   const list = document.getElementById('category-list');
-  if (!list || list.children.length === 0) return;
+  console.log('📋 Category list element:', list);
+  console.log('📊 Category list children count:', list ? list.children.length : 'N/A');
   
+  if (!list) {
+    console.error('❌ Category list element not found!');
+    return;
+  }
+  
+  if (list.children.length === 0) {
+    console.warn('⚠️ Category list is empty, skipping Sortable init');
+    return;
+  }
+  
+  console.log('✅ Initializing Sortable for categories');
   categorySortable = Sortable.create(list, {
     animation: 150,
     handle: '.drag-handle',
     ghostClass: 'sortable-ghost',
     dragClass: 'sortable-drag',
     onEnd: async function(evt) {
+      console.log('🎯 Category drag ended');
       const categoryIds = Array.from(list.children).map(li => Number(li.dataset.id));
+      console.log('📝 New category order:', categoryIds);
       
       try {
         await fetchJSON(`/api/users/${selectedUserId}/categories/reorder`, {
@@ -381,6 +407,7 @@ function initCategorySortable() {
       }
     }
   });
+  console.log('✅ Sortable for categories initialized successfully');
 }
 
 // === Provider Category Import ===
@@ -1450,5 +1477,218 @@ async function handleChangePassword(event) {
   } finally {
     changePasswordBtn.disabled = false;
     changePasswordBtn.textContent = t('change_password');
+  }
+}
+
+// === EPG Mapping Functions ===
+
+async function loadUnmappedChannels() {
+  if (!selectedUserId) {
+    alert(t('selectUserFirst'));
+    return;
+  }
+
+  try {
+    // Load unmapped channels
+    const unmapped = await fetchJSON(`/api/users/${selectedUserId}/epg-mappings/unmapped`);
+    const unmappedList = document.getElementById('unmapped-channels-list');
+    unmappedList.innerHTML = '';
+
+    if (unmapped.length === 0) {
+      unmappedList.innerHTML = `<li class="list-group-item text-muted text-center">${t('allChannelsMapped')}</li>`;
+    } else {
+      unmapped.forEach(ch => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+        
+        const div = document.createElement('div');
+        div.className = 'd-flex align-items-center';
+        
+        if (ch.channel_logo) {
+          const img = document.createElement('img');
+          img.src = ch.channel_logo;
+          img.style.width = '30px';
+          img.style.height = '30px';
+          img.style.marginRight = '10px';
+          img.onerror = () => img.style.display = 'none';
+          div.appendChild(img);
+        }
+        
+        const span = document.createElement('span');
+        span.textContent = ch.channel_name;
+        div.appendChild(span);
+        
+        li.appendChild(div);
+        
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-primary';
+        btn.textContent = t('map');
+        btn.onclick = () => openManualMappingModal(ch);
+        li.appendChild(btn);
+        
+        unmappedList.appendChild(li);
+      });
+    }
+
+    // Load mapped channels
+    const mapped = await fetchJSON(`/api/users/${selectedUserId}/epg-mappings`);
+    const mappedList = document.getElementById('mapped-channels-list');
+    mappedList.innerHTML = '';
+
+    if (mapped.length === 0) {
+      mappedList.innerHTML = `<li class="list-group-item text-muted text-center">${t('noMappedChannels')}</li>`;
+    } else {
+      mapped.forEach(m => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+        
+        const div = document.createElement('div');
+        div.className = 'd-flex align-items-center';
+        
+        if (m.channel_logo) {
+          const img = document.createElement('img');
+          img.src = m.channel_logo;
+          img.style.width = '30px';
+          img.style.height = '30px';
+          img.style.marginRight = '10px';
+          img.onerror = () => img.style.display = 'none';
+          div.appendChild(img);
+        }
+        
+        const span = document.createElement('span');
+        span.textContent = `${m.channel_name} → ${m.epg_channel_id}`;
+        span.className = 'flex-grow-1';
+        div.appendChild(span);
+        
+        const badge = document.createElement('span');
+        badge.className = `badge ${m.mapping_type === 'auto' ? 'bg-success' : 'bg-primary'} me-2`;
+        badge.textContent = m.mapping_type;
+        div.appendChild(badge);
+        
+        li.appendChild(div);
+        
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-danger';
+        btn.textContent = t('delete');
+        btn.onclick = async () => {
+          if (!confirm(t('confirmDeleteMapping'))) return;
+          await fetchJSON(`/api/epg-mappings/${m.id}`, {method: 'DELETE'});
+          loadUnmappedChannels();
+        };
+        li.appendChild(btn);
+        
+        mappedList.appendChild(li);
+      });
+    }
+  } catch (e) {
+    console.error('Error loading EPG mappings:', e);
+    alert(t('errorPrefix') + ' ' + e.message);
+  }
+}
+
+async function autoMapEpgChannels() {
+  if (!selectedUserId) {
+    alert(t('selectUserFirst'));
+    return;
+  }
+
+  if (!confirm(t('confirmAutoMap'))) return;
+
+  try {
+    const result = await fetchJSON(`/api/users/${selectedUserId}/epg-mappings/auto-map`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({strict: false})
+    });
+
+    alert(t('autoMapComplete', {mapped: result.mapped_count, total: result.total_channels}));
+    loadUnmappedChannels();
+  } catch (e) {
+    console.error('Error auto-mapping EPG channels:', e);
+    alert(t('errorPrefix') + ' ' + e.message);
+  }
+}
+
+function openManualMappingModal(channel) {
+  document.getElementById('mapping-channel-name').textContent = channel.channel_name;
+  document.getElementById('mapping-user-channel-id').value = channel.user_channel_id;
+  document.getElementById('epg-channel-search').value = '';
+  document.getElementById('epg-channels-dropdown').style.display = 'none';
+  document.getElementById('mapping-status').innerHTML = '';
+  
+  const modal = new bootstrap.Modal(document.getElementById('manual-mapping-modal'));
+  modal.show();
+}
+
+let epgSearchTimeout;
+document.getElementById('epg-channel-search')?.addEventListener('input', function(e) {
+  clearTimeout(epgSearchTimeout);
+  const searchTerm = e.target.value.trim();
+  
+  if (searchTerm.length < 2) {
+    document.getElementById('epg-channels-dropdown').style.display = 'none';
+    return;
+  }
+  
+  epgSearchTimeout = setTimeout(async () => {
+    try {
+      const channels = await fetchJSON(`/api/epg-mappings/available-channels?search=${encodeURIComponent(searchTerm)}`);
+      const dropdown = document.getElementById('epg-channels-dropdown');
+      dropdown.innerHTML = '';
+      
+      if (channels.length === 0) {
+        dropdown.innerHTML = `<li class="list-group-item text-muted">${t('noEpgChannelsFound')}</li>`;
+      } else {
+        channels.forEach(ch => {
+          const li = document.createElement('li');
+          li.className = 'list-group-item list-group-item-action';
+          li.style.cursor = 'pointer';
+          li.innerHTML = `<strong>${ch.name}</strong><br><small class="text-muted">${ch.id}</small>`;
+          li.onclick = () => {
+            document.getElementById('epg-channel-search').value = ch.name;
+            document.getElementById('epg-channel-search').dataset.selectedId = ch.id;
+            dropdown.style.display = 'none';
+          };
+          dropdown.appendChild(li);
+        });
+      }
+      
+      dropdown.style.display = 'block';
+    } catch (e) {
+      console.error('Error searching EPG channels:', e);
+    }
+  }, 300);
+});
+
+async function saveManualMapping() {
+  const userChannelId = Number(document.getElementById('mapping-user-channel-id').value);
+  const epgChannelId = document.getElementById('epg-channel-search').dataset.selectedId;
+  
+  if (!epgChannelId) {
+    alert(t('selectEpgChannel'));
+    return;
+  }
+  
+  try {
+    await fetchJSON('/api/epg-mappings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        user_channel_id: userChannelId,
+        epg_channel_id: epgChannelId
+      })
+    });
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('manual-mapping-modal'));
+    if (modal) modal.hide();
+    
+    // Reload lists
+    loadUnmappedChannels();
+    
+    alert(t('mappingSaved'));
+  } catch (e) {
+    console.error('Error saving mapping:', e);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 }

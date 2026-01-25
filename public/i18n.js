@@ -109,6 +109,27 @@ const translations = {
     loading: 'Loading...',
     saving: 'Saving...',
     
+    // EPG Mapping
+    epgMapping: '5. EPG Mapping',
+    mappingInfo: 'Map your channels to EPG data for program information.',
+    autoMap: 'Auto-Map Channels',
+    loadUnmapped: 'Load Unmapped Channels',
+    unmappedChannels: 'Unmapped Channels',
+    mappedChannels: 'Mapped Channels',
+    allChannelsMapped: 'All channels are mapped!',
+    noMappedChannels: 'No mapped channels',
+    map: 'Map',
+    manualMapping: 'Manual EPG Mapping',
+    channelToMap: 'Channel to Map:',
+    searchEpgChannel: 'Search EPG Channel',
+    noEpgChannelsFound: 'No EPG channels found',
+    selectEpgChannel: 'Please select an EPG channel',
+    saveMapping: 'Save Mapping',
+    confirmAutoMap: 'Do you really want to try to auto-map all channels?',
+    autoMapComplete: 'Auto-mapping complete: {mapped} of {total} channels mapped.',
+    confirmDeleteMapping: 'Do you really want to delete this mapping?',
+    mappingSaved: 'Mapping saved successfully!',
+    
     // Authentication
     login: 'Login',
     logout: 'Logout',
@@ -258,7 +279,28 @@ const translations = {
     password_changed_successfully: 'Passwort erfolgreich geändert!',
     change_password_failed: 'Passwortänderung fehlgeschlagen',
     changing_password: 'Passwort wird geändert...',
-    missing_fields: 'Bitte alle Felder ausfüllen'
+    missing_fields: 'Bitte alle Felder ausfüllen',
+    
+    // EPG Mapping
+    epgMapping: '5. EPG Mapping',
+    mappingInfo: 'Ordne deine Kanäle den EPG-Daten zu, um Programminformationen zu erhalten.',
+    autoMap: 'Automatisch mappen',
+    loadUnmapped: 'Unmapped Kanäle laden',
+    unmappedChannels: 'Nicht zugeordnete Kanäle',
+    mappedChannels: 'Zugeordnete Kanäle',
+    allChannelsMapped: 'Alle Kanäle sind zugeordnet!',
+    noMappedChannels: 'Keine zugeordneten Kanäle',
+    map: 'Mappen',
+    manualMapping: 'Manuelles EPG-Mapping',
+    channelToMap: 'Kanal zum Mappen:',
+    searchEpgChannel: 'EPG-Kanal suchen',
+    noEpgChannelsFound: 'Keine EPG-Kanäle gefunden',
+    selectEpgChannel: 'Bitte wähle einen EPG-Kanal aus',
+    saveMapping: 'Mapping speichern',
+    confirmAutoMap: 'Möchtest du wirklich versuchen, alle Kanäle automatisch zuzuordnen?',
+    autoMapComplete: 'Auto-Mapping abgeschlossen: {mapped} von {total} Kanälen zugeordnet.',
+    confirmDeleteMapping: 'Möchtest du dieses Mapping wirklich löschen?',
+    mappingSaved: 'Mapping erfolgreich gespeichert!'
   },
 
   fr: {
@@ -385,8 +427,30 @@ const translations = {
     password_changed_successfully: 'Mot de passe changé avec succès!',
     change_password_failed: 'Échec du changement de mot de passe',
     changing_password: 'Changement du mot de passe...',
-    missing_fields: 'Veuillez remplir tous les champs'
+    missing_fields: 'Veuillez remplir tous les champs',
+    
+    // EPG Mapping
+    epgMapping: '5. EPG Mapping',
+    mappingInfo: 'Mappez vos chaînes aux données EPG pour les informations de programme.',
+    autoMap: 'Mapper automatiquement',
+    loadUnmapped: 'Charger les chaînes non mappées',
+    unmappedChannels: 'Chaînes non mappées',
+    mappedChannels: 'Chaînes mappées',
+    allChannelsMapped: 'Toutes les chaînes sont mappées!',
+    noMappedChannels: 'Aucune chaîne mappée',
+    map: 'Mapper',
+    manualMapping: 'Mapping EPG manuel',
+    channelToMap: 'Chaîne à mapper:',
+    searchEpgChannel: 'Rechercher une chaîne EPG',
+    noEpgChannelsFound: 'Aucune chaîne EPG trouvée',
+    selectEpgChannel: 'Veuillez sélectionner une chaîne EPG',
+    saveMapping: 'Enregistrer le mapping',
+    confirmAutoMap: 'Voulez-vous vraiment essayer de mapper automatiquement toutes les chaînes?',
+    autoMapComplete: 'Auto-mapping terminé: {mapped} sur {total} chaînes mappées.',
+    confirmDeleteMapping: 'Voulez-vous vraiment supprimer ce mapping?',
+    mappingSaved: 'Mapping enregistré avec succès!'
   },
+};
 
   el: {
     // Title & Headers
@@ -488,7 +552,28 @@ const translations = {
     
     // Loading states
     loading: 'Φόρτωση...',
-    saving: 'Αποθήκευση...'
+    saving: 'Αποθήκευση...',
+    
+    // EPG Mapping
+    epgMapping: '5. EPG Mapping',
+    mappingInfo: 'Ordne deine Kanäle den EPG-Daten zu, um Programminformationen zu erhalten.',
+    autoMap: 'Automatisch mappen',
+    loadUnmapped: 'Unmapped Kanäle laden',
+    unmappedChannels: 'Nicht zugeordnete Kanäle',
+    mappedChannels: 'Zugeordnete Kanäle',
+    allChannelsMapped: 'Alle Kanäle sind zugeordnet!',
+    noMappedChannels: 'Keine zugeordneten Kanäle',
+    map: 'Mappen',
+    manualMapping: 'Manuelles EPG-Mapping',
+    channelToMap: 'Kanal zum Mappen:',
+    searchEpgChannel: 'EPG-Kanal suchen',
+    noEpgChannelsFound: 'Keine EPG-Kanäle gefunden',
+    selectEpgChannel: 'Bitte wähle einen EPG-Kanal aus',
+    saveMapping: 'Mapping speichern',
+    confirmAutoMap: 'Möchtest du wirklich versuchen, alle Kanäle automatisch zuzuordnen?',
+    autoMapComplete: 'Auto-Mapping abgeschlossen: {mapped} von {total} Kanälen zugeordnet.',
+    confirmDeleteMapping: 'Möchtest du dieses Mapping wirklich löschen?',
+    mappingSaved: 'Mapping erfolgreich gespeichert!'
   }
 };
 

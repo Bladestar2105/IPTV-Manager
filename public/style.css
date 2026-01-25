@@ -18,6 +18,30 @@
   --tv-yellow: #fbbf24;
   --tv-gray: #4b5563;
   --tv-gray-light: #9ca3af;
+}
+
+/* Drag Handle Styles */
+.drag-handle {
+  cursor: grab;
+  padding: 0 8px;
+  margin-right: 8px;
+  font-size: 16px;
+  color: var(--tv-gray-light);
+  user-select: none;
+  transition: color 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drag-handle:hover {
+  color: var(--tv-cyan);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+  color: var(--tv-blue-light);
+}
   --tv-text-primary: #f9fafb;
   --tv-text-secondary: #e5e7eb;
   --tv-text-muted: #d1d5db;

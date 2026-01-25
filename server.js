@@ -2009,6 +2009,260 @@ app.get('/api/epg-sources/available', (req, res) => {
 });
 
 // Start server
+// === EPG Mapping API ===
+
+// Get all EPG mappings for a user
+app.get('/api/users/:userId/epg-mappings', authenticateToken, (req, res) => {
+  try {
+    const userId = Number(req.params.userId);
+    const rows = db.prepare(`
+      SELECT 
+        em.id,
+        em.user_channel_id,
+        em.epg_channel_id,
+        em.mapping_type,
+        em.created_at,
+        em.updated_at,
+        uc.user_category_id,
+        pc.name as channel_name,
+        pc.logo as channel_logo
+      FROM epg_mappings em
+      JOIN user_channels uc ON uc.id = em.user_channel_id
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE cat.user_id = ?
+    `).all(userId);
+    
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Get unmapped channels for a user
+app.get('/api/users/:userId/epg-mappings/unmapped', authenticateToken, (req, res) => {
+  try {
+    const userId = Number(req.params.userId);
+    const rows = db.prepare(`
+      SELECT 
+        uc.id as user_channel_id,
+        pc.name as channel_name,
+        pc.logo as channel_logo,
+        uc.user_category_id,
+        cat.name as category_name
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE cat.user_id = ?
+      AND uc.id NOT IN (SELECT user_channel_id FROM epg_mappings)
+    `).all(userId);
+    
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Get available EPG channels from cached EPG data
+app.get('/api/epg-mappings/available-channels', authenticateToken, (req, res) => {
+  try {
+    const { search } = req.query;
+    
+    // Read all EPG XML files from cache
+    const cacheDir = path.join(__dirname, 'cache', 'epg');
+    
+    if (!fs.existsSync(cacheDir)) {
+      return res.json([]);
+    }
+    
+    const epgChannels = new Map();
+    
+    // Iterate through all cached EPG files
+    const files = fs.readdirSync(cacheDir).filter(f => f.endsWith('.xml'));
+    
+    files.forEach(file => {
+      const filePath = path.join(cacheDir, file);
+      const content = fs.readFileSync(filePath, 'utf8');
+      
+      // Simple XML parsing to extract channel IDs and names
+      const channelRegex = /<channel[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>/g;
+      let match;
+      
+      while ((match = channelRegex.exec(content)) !== null) {
+        const channelId = match[1];
+        const channelContent = match[2];
+        
+        // Extract display-name
+        const nameRegex = /<display-name[^>]*>([^<]+)<\/display-name>/;
+        const nameMatch = nameRegex.exec(channelContent);
+        const channelName = nameMatch ? nameMatch[1] : channelId;
+        
+        // Store channel info
+        if (!epgChannels.has(channelId)) {
+          epgChannels.set(channelId, {
+            id: channelId,
+            name: channelName
+          });
+        }
+      }
+    });
+    
+    // Convert to array and filter by search term if provided
+    let channels = Array.from(epgChannels.values());
+    
+    if (search) {
+      const searchLower = search.toLowerCase();
+      channels = channels.filter(ch => 
+        ch.name.toLowerCase().includes(searchLower) ||
+        ch.id.toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Limit results to avoid overwhelming the UI
+    res.json(channels.slice(0, 100));
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Perform automatic EPG mapping
+app.post('/api/users/:userId/epg-mappings/auto-map', authenticateToken, async (req, res) => {
+  try {
+    const userId = Number(req.params.userId);
+    const { strict = false } = req.body;
+    
+    // Get unmapped channels
+    const unmappedChannels = db.prepare(`
+      SELECT 
+        uc.id as user_channel_id,
+        pc.name as channel_name
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE cat.user_id = ?
+      AND uc.id NOT IN (SELECT user_channel_id FROM epg_mappings)
+    `).all(userId);
+    
+    // Get available EPG channels
+    const epgChannels = new Map();
+    const cacheDir = path.join(__dirname, 'cache', 'epg');
+    
+    if (fs.existsSync(cacheDir)) {
+      const files = fs.readdirSync(cacheDir).filter(f => f.endsWith('.xml'));
+      
+      files.forEach(file => {
+        const filePath = path.join(cacheDir, file);
+        const content = fs.readFileSync(filePath, 'utf8');
+        
+        const channelRegex = /<channel[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>/g;
+        let match;
+        
+        while ((match = channelRegex.exec(content)) !== null) {
+          const channelId = match[1];
+          const channelContent = match[2];
+          const nameRegex = /<display-name[^>]*>([^<]+)<\/display-name>/;
+          const nameMatch = nameRegex.exec(channelContent);
+          const channelName = nameMatch ? nameMatch[1] : channelId;
+          
+          if (!epgChannels.has(channelName.toLowerCase())) {
+            epgChannels.set(channelName.toLowerCase(), channelId);
+          }
+        }
+      });
+    }
+    
+    // Perform matching
+    let mappedCount = 0;
+    const insertMapping = db.prepare(`
+      INSERT INTO epg_mappings (user_channel_id, epg_channel_id, mapping_type)
+      VALUES (?, ?, 'auto')
+    `);
+    
+    unmappedChannels.forEach(channel => {
+      const channelNameLower = channel.channel_name.toLowerCase();
+      
+      // Direct match
+      if (epgChannels.has(channelNameLower)) {
+        insertMapping.run(channel.user_channel_id, epgChannels.get(channelNameLower));
+        mappedCount++;
+        return;
+      }
+      
+      // Fuzzy match if not strict mode
+      if (!strict) {
+        // Remove common variations
+        const cleanedName = channelNameLower
+          .replace(/\s*hd\s*$/i, '')
+          .replace(/\s*4k\s*$/i, '')
+          .replace(/\s*fhd\s*$/i, '')
+          .replace(/\s*sd\s*$/i, '')
+          .replace(/[^a-z0-9]/g, '');
+        
+        for (const [epgName, epgId] of epgChannels.entries()) {
+          const cleanedEpgName = epgName
+            .replace(/\s*hd\s*$/i, '')
+            .replace(/\s*4k\s*$/i, '')
+            .replace(/\s*fhd\s*$/i, '')
+            .replace(/\s*sd\s*$/i, '')
+            .replace(/[^a-z0-9]/g, '');
+          
+          if (cleanedName === cleanedEpgName) {
+            insertMapping.run(channel.user_channel_id, epgId);
+            mappedCount++;
+            break;
+          }
+        }
+      }
+    });
+    
+    res.json({
+      success: true,
+      mapped_count: mappedCount,
+      total_channels: unmappedChannels.length
+    });
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Create manual EPG mapping
+app.post('/api/epg-mappings', authenticateToken, (req, res) => {
+  try {
+    const { user_channel_id, epg_channel_id } = req.body;
+    
+    if (!user_channel_id || !epg_channel_id) {
+      return res.status(400).json({error: 'user_channel_id and epg_channel_id required'});
+    }
+    
+    const result = db.prepare(`
+      INSERT INTO epg_mappings (user_channel_id, epg_channel_id, mapping_type)
+      VALUES (?, ?, 'manual')
+    `).run(user_channel_id, epg_channel_id);
+    
+    res.json({
+      id: result.lastInsertRowid,
+      user_channel_id,
+      epg_channel_id
+    });
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) {
+      return res.status(400).json({error: 'Mapping already exists'});
+    }
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Delete EPG mapping
+app.delete('/api/epg-mappings/:id', authenticateToken, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM epg_mappings WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`✅ IPTV-Manager: http://localhost:${PORT}`);
 });
