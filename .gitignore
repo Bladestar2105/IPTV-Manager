@@ -37,11 +37,20 @@ cache/
 
 # Credentials
 ADMIN_CREDENTIALS.txt
+TEST_CREDENTIALS.txt
+*.credentials.txt
+*test*.txt
+*_test_*.txt
 
 # Internal
 todo.md
 server_output.log
-TEST_CREDENTIALS.txt
 TEST_REPORT_v3.0.0.md
 FINAL_TEST_REPORT.md
 comprehensive_test.sh
+test_setup.sh
+
+# Test data (never commit test credentials or test data)
+*test*.sh
+*_test.*
+test_*.*
