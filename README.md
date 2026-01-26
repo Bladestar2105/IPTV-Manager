@@ -1,25 +1,10 @@
-# IPTV-Manager v3.0.0
+# IPTV-Manager v2.5.1
 
 A comprehensive IPTV management system with automatic provider synchronization, intelligent category mapping, and multi-user support.
-
-**Author:** Bladestar2105  
-**License:** MIT
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)](https://nodejs.org/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-blue.svg)](https://www.sqlite.org/)
-
----
-
-## ⚠️ IMPORTANT LEGAL DISCLAIMER
-
-**This project is created for EDUCATIONAL PURPOSES ONLY.**
-
-- This software is intended for learning and educational purposes
-- Users are responsible for ensuring compliance with all applicable laws and regulations
-- The author (Bladestar2105) assumes no liability for misuse of this software
-- Use at your own risk and ensure you have proper authorization for any IPTV services
-- Respect copyright laws and content provider terms of service
 
 ---
 
