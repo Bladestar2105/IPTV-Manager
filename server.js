@@ -1058,7 +1058,7 @@ app.get('/player_api.php', async (req, res) => {
         ORDER BY uc.sort_order
       `).all(user.id);
 
-      const result = await Promise.all(rows.map(async (ch, i) => {
+      const result = rows.map((ch, i) => {
         // Use direct picon URL - no caching needed
         let iconUrl = ch.logo || '';
         
@@ -1078,7 +1078,7 @@ app.get('/player_api.php', async (req, res) => {
           direct_source: '',
           tv_archive_duration: 0
         };
-      }));
+      });
       return res.json(result);
     }
 
