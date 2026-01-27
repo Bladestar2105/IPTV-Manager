@@ -126,17 +126,17 @@
 
     <!-- 4. EPG Sources -->
     <hr class="my-4">
-    <h3>4. EPG Sources</h3>
+    <h3 data-i18n="epgSources">4. EPG Sources</h3>
     <div class="row mb-4">
       <div class="col-md-12">
         <div class="d-flex gap-2 mb-3">
-          <button id="add-epg-source-btn" class="btn btn-outline-primary btn-sm">
+          <button id="add-epg-source-btn" class="btn btn-outline-primary btn-sm" data-i18n="addEpgSource">
             ➕ Add EPG Source
           </button>
-          <button id="browse-epg-sources-btn" class="btn btn-outline-secondary btn-sm">
+          <button id="browse-epg-sources-btn" class="btn btn-outline-secondary btn-sm" data-i18n="browseEpgSources">
             📚 Browse Available Sources
           </button>
-          <button id="update-all-epg-btn" class="btn btn-outline-info btn-sm">
+          <button id="update-all-epg-btn" class="btn btn-outline-info btn-sm" data-i18n="updateAllEpg">
             🔄 Update All EPG
           </button>
         </div>
@@ -273,41 +273,41 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Add EPG Source</h5>
+          <h5 class="modal-title" data-i18n="addEpgSourceTitle">Add EPG Source</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <form id="add-epg-source-form">
           <div class="modal-body">
             <div class="mb-3">
-              <label for="epg-source-name" class="form-label">Name</label>
+              <label for="epg-source-name" class="form-label" data-i18n="name">Name</label>
               <input type="text" class="form-control" id="epg-source-name" required>
             </div>
             <div class="mb-3">
-              <label for="epg-source-url" class="form-label">URL</label>
+              <label for="epg-source-url" class="form-label" data-i18n="url">URL</label>
               <input type="url" class="form-control" id="epg-source-url" required>
             </div>
             <div class="mb-3">
-              <label for="epg-update-interval" class="form-label">Update Interval</label>
+              <label for="epg-update-interval" class="form-label" data-i18n="updateInterval">Update Interval</label>
               <select class="form-select" id="epg-update-interval">
-                <option value="3600">1 hour</option>
-                <option value="21600">6 hours</option>
-                <option value="43200">12 hours</option>
-                <option value="86400" selected>24 hours</option>
-                <option value="604800">7 days</option>
+                <option value="3600" data-i18n="interval_1h">1 hour</option>
+                <option value="21600" data-i18n="interval_6h">6 hours</option>
+                <option value="43200" data-i18n="interval_12h">12 hours</option>
+                <option value="86400" selected data-i18n="interval_24h">24 hours</option>
+                <option value="604800" data-i18n="interval_7d">7 days</option>
               </select>
             </div>
             <div class="mb-3">
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="epg-source-enabled" checked>
-                <label class="form-check-label" for="epg-source-enabled">
+                <label class="form-check-label" for="epg-source-enabled" data-i18n="enabled">
                   Enabled
                 </label>
               </div>
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            <button type="submit" class="btn btn-primary">Add Source</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+            <button type="submit" class="btn btn-primary" data-i18n="addSource">Add Source</button>
           </div>
         </form>
       </div>
@@ -319,42 +319,42 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Edit EPG Source</h5>
+          <h5 class="modal-title" data-i18n="editEpgSourceTitle">Edit EPG Source</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <form id="edit-epg-source-form">
           <div class="modal-body">
             <input type="hidden" id="edit-epg-source-id">
             <div class="mb-3">
-              <label for="edit-epg-source-name" class="form-label">Name</label>
+              <label for="edit-epg-source-name" class="form-label" data-i18n="name">Name</label>
               <input type="text" class="form-control" id="edit-epg-source-name" required>
             </div>
             <div class="mb-3">
-              <label for="edit-epg-source-url" class="form-label">URL</label>
+              <label for="edit-epg-source-url" class="form-label" data-i18n="url">URL</label>
               <input type="url" class="form-control" id="edit-epg-source-url" required>
             </div>
             <div class="mb-3">
-              <label for="edit-epg-update-interval" class="form-label">Update Interval</label>
+              <label for="edit-epg-update-interval" class="form-label" data-i18n="updateInterval">Update Interval</label>
               <select class="form-select" id="edit-epg-update-interval">
-                <option value="3600">1 hour</option>
-                <option value="21600">6 hours</option>
-                <option value="43200">12 hours</option>
-                <option value="86400">24 hours</option>
-                <option value="604800">7 days</option>
+                <option value="3600" data-i18n="interval_1h">1 hour</option>
+                <option value="21600" data-i18n="interval_6h">6 hours</option>
+                <option value="43200" data-i18n="interval_12h">12 hours</option>
+                <option value="86400" data-i18n="interval_24h">24 hours</option>
+                <option value="604800" data-i18n="interval_7d">7 days</option>
               </select>
             </div>
             <div class="mb-3">
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="edit-epg-source-enabled">
-                <label class="form-check-label" for="edit-epg-source-enabled">
+                <label class="form-check-label" for="edit-epg-source-enabled" data-i18n="enabled">
                   Enabled
                 </label>
               </div>
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+            <button type="submit" class="btn btn-primary" data-i18n="saveChanges">Save Changes</button>
           </div>
         </form>
       </div>
@@ -366,17 +366,17 @@
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Browse Available EPG Sources</h5>
+          <h5 class="modal-title" data-i18n="browseEpgSourcesTitle">Browse Available EPG Sources</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="text" id="epg-browse-search" class="form-control form-control-sm mb-3" placeholder="🔍 Search sources...">
+          <input type="text" id="epg-browse-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
           <ul id="available-epg-sources-list" class="list-group" style="max-height:400px; overflow:auto;">
-            <li class="list-group-item text-muted">Loading...</li>
+            <li class="list-group-item text-muted" data-i18n="loading">Loading...</li>
           </ul>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
         </div>
       </div>
     </div>
