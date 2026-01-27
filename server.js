@@ -70,10 +70,14 @@ app.use(cors({
 app.use(morgan('dev'));
 app.use('/api', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/cache', express.static(path.join(__dirname, 'cache')));
+// Cache folder should not be publicly accessible via static route
+// EPG content is served via /xmltv.php which handles authentication
+// app.use('/cache', express.static(path.join(__dirname, 'cache')));
 
 // DB
 const db = new Database(path.join(__dirname, 'db.sqlite'));
+// Enable foreign keys
+db.pragma('foreign_keys = ON');
 
 // DB Init
 try {
@@ -762,6 +766,16 @@ app.post('/api/providers', authenticateToken, (req, res) => {
   try {
     const { name, url, username, password, epg_url } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
+
+    // Validate URL
+    if (!/^https?:\/\//i.test(url.trim())) {
+      return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
+    }
+
+    if (epg_url && !/^https?:\/\//i.test(epg_url.trim())) {
+      return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
+    }
+
     const info = db.prepare('INSERT INTO providers (name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?)')
       .run(name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
     res.json({id: info.lastInsertRowid});
@@ -1259,8 +1273,16 @@ app.get('/xmltv.php', async (req, res) => {
 app.delete('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
-    db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+
+    db.transaction(() => {
+      // Delete related data first to satisfy FK constraints and prevent orphans
+      db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+      db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
+      db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(id);
+      db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(id);
+      db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+    })();
+
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -1301,9 +1323,24 @@ app.delete('/api/user-channels/:id', authenticateToken, (req, res) => {
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);
-    db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+
+    db.transaction(() => {
+      // Delete related data first
+      db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);
+
+      // Update mappings to remove user_category_id reference before deleting categories
+      db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_id = ?').run(id);
+
+      db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
+
+      // Delete sync data
+      db.prepare('DELETE FROM sync_configs WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM sync_logs WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM category_mappings WHERE user_id = ?').run(id);
+
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    })();
+
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -1502,6 +1539,15 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
     const { name, url, username, password, epg_url } = req.body;
     if (!name || !url || !username || !password) {
       return res.status(400).json({error: 'missing fields'});
+    }
+
+    // Validate URL
+    if (!/^https?:\/\//i.test(url.trim())) {
+      return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
+    }
+
+    if (epg_url && !/^https?:\/\//i.test(epg_url.trim())) {
+      return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
     }
 
     db.prepare(`
