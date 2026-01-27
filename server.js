@@ -1591,7 +1591,7 @@ async function updateEpgSource(sourceId) {
     
     // Save to cache file
     const cacheFile = path.join(EPG_CACHE_DIR, `epg_${sourceId}.xml`);
-    fs.writeFileSync(cacheFile, epgData, 'utf8');
+    await fs.promises.writeFile(cacheFile, epgData, 'utf8');
     
     // Update last_update timestamp
     db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
