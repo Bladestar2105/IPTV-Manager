@@ -1,3 +1,7 @@
+/**
+ * Author: Bladestar2105
+ * License: MIT
+ */
 import http from 'http';
 
 const PORT = 4000;

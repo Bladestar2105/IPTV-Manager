@@ -1,4 +1,8 @@
 
+/**
+ * Author: Bladestar2105
+ * License: MIT
+ */
 import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';

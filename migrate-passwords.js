@@ -1,3 +1,7 @@
+/**
+ * Author: Bladestar2105
+ * License: MIT
+ */
 import Database from 'better-sqlite3';
 import bcrypt from 'bcrypt';
 import path from 'path';

@@ -1,3 +1,7 @@
+/**
+ * Author: Bladestar2105
+ * License: MIT
+ */
 const translations = {
   en: {
     // Title & Headers
