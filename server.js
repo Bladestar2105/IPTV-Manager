@@ -1281,10 +1281,7 @@ app.delete('/api/user-channels/:id', (req, res) => {
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);
-    for (const cat of cats) {
-      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
-    }
+    db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);
     db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
     res.json({success: true});
