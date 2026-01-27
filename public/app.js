@@ -903,7 +903,7 @@ async function loadEpgSources() {
     list.innerHTML = '';
     
     if (sources.length === 0) {
-      list.innerHTML = '<li class="list-group-item text-muted">No EPG sources configured</li>';
+      list.innerHTML = `<li class="list-group-item text-muted">${t('noEpgSourcesConfigured')}</li>`;
       return;
     }
     
@@ -912,14 +912,15 @@ async function loadEpgSources() {
       li.className = 'list-group-item d-flex justify-content-between align-items-center';
       
       const isProvider = typeof source.id === 'string' && source.id.startsWith('provider_');
-      const lastUpdate = source.last_update ? new Date(source.last_update * 1000).toLocaleString() : 'Never';
-      const isUpdating = source.is_updating ? '🔄 Updating...' : '';
+      const lastUpdate = source.last_update ? new Date(source.last_update * 1000).toLocaleString() : t('never');
+      const isUpdating = source.is_updating ? `🔄 ${t('updating')}` : '';
+      const enabledStatus = source.enabled ? `✅ ${t('enabled')}` : `❌ ${t('disable')}`;
       
       const info = document.createElement('div');
       info.innerHTML = `
         <strong>${source.name}</strong>
         <br><small class="text-muted">${source.url}</small>
-        <br><small>${source.enabled ? '✅ Enabled' : '❌ Disabled'} | Update: ${source.update_interval / 3600}h | Last: ${lastUpdate} ${isUpdating}</small>
+        <br><small>${enabledStatus} | Update: ${source.update_interval / 3600}h | Last: ${lastUpdate} ${isUpdating}</small>
       `;
       
       const btnGroup = document.createElement('div');
@@ -929,17 +930,17 @@ async function loadEpgSources() {
       const updateBtn = document.createElement('button');
       updateBtn.className = 'btn btn-sm btn-outline-info';
       updateBtn.innerHTML = '🔄';
-      updateBtn.title = 'Update Now';
+      updateBtn.title = t('updateNow');
       updateBtn.disabled = source.is_updating;
       updateBtn.onclick = async () => {
         updateBtn.disabled = true;
         updateBtn.innerHTML = '⏳';
         try {
           await fetchJSON(`/api/epg-sources/${source.id}/update`, {method: 'POST'});
-          alert('✅ EPG updated successfully');
+          alert(t('epgUpdateSuccess'));
           loadEpgSources();
         } catch (e) {
-          alert('❌ Error: ' + e.message);
+          alert(t('errorPrefix') + ' ' + e.message);
         } finally {
           updateBtn.disabled = false;
           updateBtn.innerHTML = '🔄';
@@ -953,12 +954,12 @@ async function loadEpgSources() {
         const editBtn = document.createElement('button');
         editBtn.className = 'btn btn-sm btn-outline-secondary';
         editBtn.innerHTML = '✏️';
-        editBtn.title = 'Edit';
+        editBtn.title = t('edit');
         editBtn.onclick = () => showEditEpgSourceModal(source);
         
         const toggleBtn = document.createElement('button');
         toggleBtn.className = `btn btn-sm ${source.enabled ? 'btn-warning' : 'btn-success'}`;
-        toggleBtn.textContent = source.enabled ? 'Disable' : 'Enable';
+        toggleBtn.textContent = source.enabled ? t('disable') : t('enable');
         toggleBtn.onclick = async () => {
           await fetchJSON(`/api/epg-sources/${source.id}`, {
             method: 'PUT',
@@ -972,7 +973,7 @@ async function loadEpgSources() {
         delBtn.className = 'btn btn-sm btn-danger';
         delBtn.textContent = '🗑';
         delBtn.onclick = async () => {
-          if (!confirm(`Delete EPG source "${source.name}"?`)) return;
+          if (!confirm(t('confirmDeleteEpgSource', {name: source.name}))) return;
           await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
           loadEpgSources();
         };
@@ -1020,9 +1021,9 @@ async function editEpgSource(e) {
     
     bootstrap.Modal.getInstance(document.getElementById('edit-epg-source-modal')).hide();
     loadEpgSources();
-    alert('✅ EPG source updated');
+    alert(t('epgSourceUpdated'));
   } catch (e) {
-    alert('❌ Error: ' + e.message);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 }
 
@@ -1051,9 +1052,9 @@ async function addEpgSource(e) {
     
     bootstrap.Modal.getInstance(document.getElementById('add-epg-source-modal')).hide();
     loadEpgSources();
-    alert('✅ EPG source added');
+    alert(t('epgSourceAdded'));
   } catch (e) {
-    alert('❌ Error: ' + e.message);
+    alert(t('errorPrefix') + ' ' + e.message);
   }
 }
 
@@ -1062,13 +1063,13 @@ async function showBrowseEpgSourcesModal() {
   modal.show();
   
   const list = document.getElementById('available-epg-sources-list');
-  list.innerHTML = '<li class="list-group-item text-muted">Loading...</li>';
+  list.innerHTML = `<li class="list-group-item text-muted">${t('loading')}</li>`;
   
   try {
     availableEpgSources = await fetchJSON('/api/epg-sources/available');
     renderAvailableEpgSources();
   } catch (e) {
-    list.innerHTML = '<li class="list-group-item text-danger">Failed to load sources</li>';
+    list.innerHTML = `<li class="list-group-item text-danger">${t('failedToLoadSources')}</li>`;
   }
 }
 
@@ -1083,7 +1084,7 @@ function renderAvailableEpgSources() {
   list.innerHTML = '';
   
   if (filtered.length === 0) {
-    list.innerHTML = '<li class="list-group-item text-muted">No sources found</li>';
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noSourcesFound')}</li>`;
     return;
   }
   
@@ -1099,7 +1100,7 @@ function renderAvailableEpgSources() {
     
     const addBtn = document.createElement('button');
     addBtn.className = 'btn btn-sm btn-primary';
-    addBtn.textContent = '➕ Add';
+    addBtn.textContent = t('add');
     addBtn.onclick = async () => {
       try {
         await fetchJSON('/api/epg-sources', {
@@ -1114,10 +1115,10 @@ function renderAvailableEpgSources() {
           })
         });
         
-        alert('✅ EPG source added: ' + source.name);
+        alert(t('epgSourceAddedName', {name: source.name}));
         loadEpgSources();
       } catch (e) {
-        alert('❌ Error: ' + e.message);
+        alert(t('errorPrefix') + ' ' + e.message);
       }
     };
     
@@ -1164,20 +1165,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const updateAllEpgBtn = document.getElementById('update-all-epg-btn');
   if (updateAllEpgBtn) {
     updateAllEpgBtn.addEventListener('click', async () => {
-      if (!confirm('Update all EPG sources? This may take several minutes.')) return;
+      if (!confirm(t('epgUpdateAllConfirm'))) return;
       updateAllEpgBtn.disabled = true;
-      updateAllEpgBtn.innerHTML = '⏳ Updating...';
+      updateAllEpgBtn.innerHTML = `⏳ ${t('updating')}`;
       try {
         const result = await fetchJSON('/api/epg-sources/update-all', {method: 'POST'});
         const success = result.results.filter(r => r.success).length;
         const failed = result.results.filter(r => !r.success).length;
-        alert(`✅ EPG update complete!\nSuccess: ${success}\nFailed: ${failed}`);
+        alert(t('epgUpdateAllSuccess', {success: success, failed: failed}));
         loadEpgSources();
       } catch (e) {
-        alert('❌ Error: ' + e.message);
+        alert(t('errorPrefix') + ' ' + e.message);
       } finally {
         updateAllEpgBtn.disabled = false;
-        updateAllEpgBtn.innerHTML = '🔄 Update All EPG';
+        updateAllEpgBtn.innerHTML = t('updateAllEpg');
       }
     });
   }
