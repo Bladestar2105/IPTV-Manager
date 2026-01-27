@@ -605,7 +605,7 @@ app.get('/api/users', authenticateToken, (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/users', authLimiter, async (req, res) => {
+app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
   try {
     const { username, password } = req.body;
     
@@ -752,13 +752,13 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
 });
 
 // === API: Providers ===
-app.get('/api/providers', (req, res) => {
+app.get('/api/providers', authenticateToken, (req, res) => {
   try {
     res.json(db.prepare('SELECT * FROM providers').all());
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/providers', (req, res) => {
+app.post('/api/providers', authenticateToken, (req, res) => {
   try {
     const { name, url, username, password, epg_url } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
@@ -768,7 +768,7 @@ app.post('/api/providers', (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/providers/:id/sync', async (req, res) => {
+app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { user_id } = req.body;
@@ -795,7 +795,7 @@ app.post('/api/providers/:id/sync', async (req, res) => {
   }
 });
 
-app.get('/api/providers/:id/channels', (req, res) => {
+app.get('/api/providers/:id/channels', authenticateToken, (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ? ORDER BY name').all(Number(req.params.id));
     res.json(rows);
@@ -803,7 +803,7 @@ app.get('/api/providers/:id/channels', (req, res) => {
 });
 
 // Provider-Kategorien abrufen
-app.get('/api/providers/:id/categories', async (req, res) => {
+app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
@@ -855,7 +855,7 @@ app.get('/api/providers/:id/categories', async (req, res) => {
 });
 
 // Provider-Kategorie importieren
-app.post('/api/providers/:providerId/import-category', async (req, res) => {
+app.post('/api/providers/:providerId/import-category', authenticateToken, async (req, res) => {
   try {
     const providerId = Number(req.params.providerId);
     const { user_id, category_id, category_name, import_channels } = req.body;
@@ -909,13 +909,13 @@ app.post('/api/providers/:providerId/import-category', async (req, res) => {
 });
 
 // === API: User Categories ===
-app.get('/api/users/:userId/categories', (req, res) => {
+app.get('/api/users/:userId/categories', authenticateToken, (req, res) => {
   try {
     res.json(db.prepare('SELECT * FROM user_categories WHERE user_id = ? ORDER BY sort_order').all(Number(req.params.userId)));
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/users/:userId/categories', (req, res) => {
+app.post('/api/users/:userId/categories', authenticateToken, (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
@@ -933,7 +933,7 @@ app.post('/api/users/:userId/categories', (req, res) => {
 });
 
 // Kategorien neu sortieren
-app.put('/api/users/:userId/categories/reorder', (req, res) => {
+app.put('/api/users/:userId/categories/reorder', authenticateToken, (req, res) => {
   try {
     const { category_ids } = req.body; // Array von IDs in neuer Reihenfolge
     if (!Array.isArray(category_ids)) return res.status(400).json({error: 'category_ids must be array'});
@@ -952,7 +952,7 @@ app.put('/api/users/:userId/categories/reorder', (req, res) => {
   }
 });
 
-app.get('/api/user-categories/:catId/channels', (req, res) => {
+app.get('/api/user-categories/:catId/channels', authenticateToken, (req, res) => {
   try {
     const rows = db.prepare(`
       SELECT uc.id as user_channel_id, pc.*
@@ -965,7 +965,7 @@ app.get('/api/user-categories/:catId/channels', (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/user-categories/:catId/channels', (req, res) => {
+app.post('/api/user-categories/:catId/channels', authenticateToken, (req, res) => {
   try {
     const catId = Number(req.params.catId);
     const { provider_channel_id } = req.body;
@@ -981,7 +981,7 @@ app.post('/api/user-categories/:catId/channels', (req, res) => {
 });
 
 // Kanäle neu sortieren
-app.put('/api/user-categories/:catId/channels/reorder', (req, res) => {
+app.put('/api/user-categories/:catId/channels/reorder', authenticateToken, (req, res) => {
   try {
     const { channel_ids } = req.body; // Array von user_channel IDs in neuer Reihenfolge
     if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
@@ -1256,7 +1256,7 @@ app.get('/xmltv.php', async (req, res) => {
 });
 
 // === DELETE APIs ===
-app.delete('/api/providers/:id', (req, res) => {
+app.delete('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
@@ -1267,7 +1267,7 @@ app.delete('/api/providers/:id', (req, res) => {
   }
 });
 
-app.delete('/api/user-categories/:id', (req, res) => {
+app.delete('/api/user-categories/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     
@@ -1288,7 +1288,7 @@ app.delete('/api/user-categories/:id', (req, res) => {
   }
 });
 
-app.delete('/api/user-channels/:id', (req, res) => {
+app.delete('/api/user-channels/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
@@ -1311,7 +1311,7 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
 });
 
 // === Sync Config APIs ===
-app.get('/api/sync-configs', (req, res) => {
+app.get('/api/sync-configs', authenticateToken, (req, res) => {
   try {
     const configs = db.prepare(`
       SELECT sc.*, p.name as provider_name, u.username
@@ -1326,7 +1326,7 @@ app.get('/api/sync-configs', (req, res) => {
   }
 });
 
-app.get('/api/sync-configs/:providerId/:userId', (req, res) => {
+app.get('/api/sync-configs/:providerId/:userId', authenticateToken, (req, res) => {
   try {
     const config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?')
       .get(Number(req.params.providerId), Number(req.params.userId));
@@ -1336,7 +1336,7 @@ app.get('/api/sync-configs/:providerId/:userId', (req, res) => {
   }
 });
 
-app.post('/api/sync-configs', (req, res) => {
+app.post('/api/sync-configs', authenticateToken, (req, res) => {
   try {
     const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
     
@@ -1368,7 +1368,7 @@ app.post('/api/sync-configs', (req, res) => {
   }
 });
 
-app.put('/api/sync-configs/:id', (req, res) => {
+app.put('/api/sync-configs/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
@@ -1400,7 +1400,7 @@ app.put('/api/sync-configs/:id', (req, res) => {
   }
 });
 
-app.delete('/api/sync-configs/:id', (req, res) => {
+app.delete('/api/sync-configs/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     db.prepare('DELETE FROM sync_configs WHERE id = ?').run(id);
@@ -1415,7 +1415,7 @@ app.delete('/api/sync-configs/:id', (req, res) => {
 });
 
 // === Sync Logs APIs ===
-app.get('/api/sync-logs', (req, res) => {
+app.get('/api/sync-logs', authenticateToken, (req, res) => {
   try {
     const { provider_id, user_id, limit } = req.query;
     let query = `
@@ -1452,7 +1452,7 @@ app.get('/api/sync-logs', (req, res) => {
 });
 
 // === Category Mappings APIs ===
-app.get('/api/category-mappings/:providerId/:userId', (req, res) => {
+app.get('/api/category-mappings/:providerId/:userId', authenticateToken, (req, res) => {
   try {
     const mappings = db.prepare(`
       SELECT cm.*, uc.name as user_category_name
@@ -1467,7 +1467,7 @@ app.get('/api/category-mappings/:providerId/:userId', (req, res) => {
   }
 });
 
-app.put('/api/category-mappings/:id', (req, res) => {
+app.put('/api/category-mappings/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { user_category_id } = req.body;
@@ -1482,7 +1482,7 @@ app.put('/api/category-mappings/:id', (req, res) => {
 });
 
 // === UPDATE APIs ===
-app.put('/api/user-categories/:id', (req, res) => {
+app.put('/api/user-categories/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name } = req.body;
@@ -1496,7 +1496,7 @@ app.put('/api/user-categories/:id', (req, res) => {
   }
 });
 
-app.put('/api/providers/:id', (req, res) => {
+app.put('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, url, username, password, epg_url } = req.body;
@@ -1516,7 +1516,7 @@ app.put('/api/providers/:id', (req, res) => {
   }
 });
 
-app.put('/api/user-categories/:id/adult', (req, res) => {
+app.put('/api/user-categories/:id/adult', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { is_adult } = req.body;
@@ -1560,7 +1560,7 @@ async function updateEpgSource(sourceId) {
 }
 
 // === EPG Sources APIs ===
-app.get('/api/epg-sources', (req, res) => {
+app.get('/api/epg-sources', authenticateToken, (req, res) => {
   try {
     const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
     
@@ -1586,7 +1586,7 @@ app.get('/api/epg-sources', (req, res) => {
   }
 });
 
-app.post('/api/epg-sources', (req, res) => {
+app.post('/api/epg-sources', authenticateToken, (req, res) => {
   try {
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
@@ -1608,7 +1608,7 @@ app.post('/api/epg-sources', (req, res) => {
   }
 });
 
-app.put('/api/epg-sources/:id', (req, res) => {
+app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, url, enabled, update_interval } = req.body;
@@ -1646,7 +1646,7 @@ app.put('/api/epg-sources/:id', (req, res) => {
   }
 });
 
-app.delete('/api/epg-sources/:id', (req, res) => {
+app.delete('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     
@@ -1664,7 +1664,7 @@ app.delete('/api/epg-sources/:id', (req, res) => {
 });
 
 // Update single EPG source
-app.post('/api/epg-sources/:id/update', async (req, res) => {
+app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
     
@@ -1696,12 +1696,10 @@ app.post('/api/epg-sources/:id/update', async (req, res) => {
 });
 
 // Update all EPG sources
-app.post('/api/epg-sources/update-all', async (req, res) => {
+app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
   try {
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
     const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
-    
-    const results = [];
     
     // Update provider EPGs in parallel
     const providerPromises = providers.map(async (provider) => {
@@ -1744,7 +1742,7 @@ let epgSourcesCacheTime = 0;
 const EPG_CACHE_DURATION = 3600000; // 1 hour
 
 // Get available EPG sources from globetvapp/epg
-app.get('/api/epg-sources/available', async (req, res) => {
+app.get('/api/epg-sources/available', authenticateToken, async (req, res) => {
   try {
     // Return cached data if available and fresh
     const now = Date.now();
