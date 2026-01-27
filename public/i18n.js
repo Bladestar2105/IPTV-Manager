@@ -579,7 +579,58 @@ const translations = {
     
     // Loading states
     loading: 'Φόρτωση...',
-    saving: 'Αποθήκευση...'
+    saving: 'Αποθήκευση...',
+
+    // EPG Section
+    epgSources: '4. Πηγές EPG',
+    addEpgSource: '➕ Προσθήκη Πηγής EPG',
+    browseEpgSources: '📚 Περιήγηση Πηγών',
+    updateAllEpg: '🔄 Ενημέρωση Όλων',
+    addEpgSourceTitle: 'Προσθήκη Πηγής EPG',
+    editEpgSourceTitle: 'Επεξεργασία Πηγής EPG',
+    browseEpgSourcesTitle: 'Περιήγηση Διαθέσιμων Πηγών EPG',
+    name: 'Όνομα',
+    updateInterval: 'Διάστημα Ενημέρωσης',
+    enabled: 'Ενεργοποιημένο',
+    addSource: 'Προσθήκη Πηγής',
+    saveChanges: 'Αποθήκευση Αλλαγών',
+    searchEpgSources: '🔍 Αναζήτηση πηγών...',
+    noEpgSourcesConfigured: 'Δεν έχουν ρυθμιστεί πηγές EPG',
+    epgUpdateSuccess: '✅ Το EPG ενημερώθηκε επιτυχώς',
+    epgUpdateAllConfirm: 'Ενημέρωση όλων των πηγών EPG; Αυτό μπορεί να διαρκέσει μερικά λεπτά.',
+    epgUpdateAllSuccess: '✅ Η ενημέρωση EPG ολοκληρώθηκε!\nΕπιτυχία: {success}\nΑποτυχία: {failed}',
+    epgSourceAdded: '✅ Η πηγή EPG προστέθηκε',
+    epgSourceUpdated: '✅ Η πηγή EPG ενημερώθηκε',
+    epgSourceAddedName: '✅ Η πηγή EPG προστέθηκε: {name}',
+    failedToLoadSources: 'Αποτυχία φόρτωσης πηγών',
+    noSourcesFound: 'Δεν βρέθηκαν πηγές',
+    confirmDeleteEpgSource: 'Διαγραφή πηγής EPG "{name}";',
+    disable: 'Απενεργοποίηση',
+    enable: 'Ενεργοποίηση',
+    updateNow: 'Ενημέρωση Τώρα',
+    never: 'Ποτέ',
+    updating: 'Ενημέρωση...',
+
+    // Intervals
+    interval_1h: '1 ώρα',
+    interval_6h: '6 ώρες',
+    interval_12h: '12 ώρες',
+    interval_24h: '24 ώρες',
+    interval_7d: '7 ημέρες',
+
+    // Password Change
+    change_password: 'Αλλαγή κωδικού',
+    old_password: 'Παλιός κωδικός',
+    new_password: 'Νέος κωδικός',
+    confirm_password: 'Επιβεβαίωση κωδικού',
+    password_min_length: 'Τουλάχιστον 8 χαρακτήρες',
+    passwords_dont_match: 'Οι κωδικοί δεν ταιριάζουν',
+    password_too_short: 'Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες',
+    invalid_old_password: 'Λάθος παλιός κωδικός',
+    password_changed_successfully: 'Ο κωδικός άλλαξε επιτυχώς!',
+    change_password_failed: 'Αποτυχία αλλαγής κωδικού',
+    changing_password: 'Αλλαγή κωδικού...',
+    missing_fields: 'Παρακαλώ συμπληρώστε όλα τα πεδία'
   }
 };
 
