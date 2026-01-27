@@ -274,23 +274,30 @@ async function performSync(providerId, userId, isManual = false) {
     // Process categories and create mappings
     const categoryMap = new Map();
     
-    // Check if this is the first sync (no existing mappings)
-    const existingMappingsCount = db.prepare(`
-      SELECT COUNT(*) as count FROM category_mappings 
+    // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
+    const allMappings = db.prepare(`
+      SELECT * FROM category_mappings
       WHERE provider_id = ? AND user_id = ?
-    `).get(providerId, userId);
+    `).all(providerId, userId);
+
+    const isFirstSync = allMappings.length === 0;
     
-    const isFirstSync = existingMappingsCount.count === 0;
+    // Create lookup map and populate initial categoryMap
+    const mappingLookup = new Map();
+    for (const m of allMappings) {
+      const pCatId = Number(m.provider_category_id);
+      mappingLookup.set(pCatId, m);
+      if (m.user_category_id) {
+        categoryMap.set(pCatId, m.user_category_id);
+      }
+    }
     
     for (const provCat of providerCategories) {
       const catId = Number(provCat.category_id);
       const catName = provCat.category_name;
       
-      // Check if mapping exists
-      let mapping = db.prepare(`
-        SELECT * FROM category_mappings 
-        WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
-      `).get(providerId, userId, catId);
+      // Check if mapping exists using lookup
+      let mapping = mappingLookup.get(catId);
       
       // Auto-create categories if:
       // 1. No mapping exists AND not first sync AND auto_add enabled
@@ -313,6 +320,17 @@ async function performSync(providerId, userId, isManual = false) {
         `).run(providerId, userId, catId, catName, newCategoryId);
         
         categoryMap.set(catId, newCategoryId);
+
+        // Update lookup to prevent duplicates in current run
+        mappingLookup.set(catId, {
+          provider_id: providerId,
+          user_id: userId,
+          provider_category_id: catId,
+          provider_category_name: catName,
+          user_category_id: newCategoryId,
+          auto_created: 1
+        });
+
         categoriesAdded++;
         console.log(`  ✅ Created category: ${catName} (id=${newCategoryId})`);
       } else if (!mapping && isFirstSync) {
@@ -321,21 +339,21 @@ async function performSync(providerId, userId, isManual = false) {
           INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
           VALUES (?, ?, ?, ?, NULL, 0)
         `).run(providerId, userId, catId, catName);
+
+        // Update lookup to prevent duplicates in current run
+        mappingLookup.set(catId, {
+          provider_id: providerId,
+          user_id: userId,
+          provider_category_id: catId,
+          provider_category_name: catName,
+          user_category_id: null,
+          auto_created: 0
+        });
+
         console.log(`  📋 Registered category: ${catName} (no auto-create on first sync)`);
       } else if (mapping && mapping.user_category_id) {
-        categoryMap.set(catId, mapping.user_category_id);
+        // Already handled by initial population of categoryMap
       }
-    }
-    
-    // Load all existing mappings into categoryMap
-    const existingMappings = db.prepare(`
-      SELECT provider_category_id, user_category_id 
-      FROM category_mappings 
-      WHERE provider_id = ? AND user_id = ? AND user_category_id IS NOT NULL
-    `).all(providerId, userId);
-    
-    for (const mapping of existingMappings) {
-      categoryMap.set(Number(mapping.provider_category_id), mapping.user_category_id);
     }
     
     // Process channels
@@ -351,15 +369,21 @@ async function performSync(providerId, userId, isManual = false) {
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
     
-    const checkExisting = db.prepare('SELECT id FROM provider_channels WHERE provider_id = ? AND remote_stream_id = ?');
+    // Optimized: Pre-fetch all channels to avoid N+1 query
+    const existingChannels = db.prepare('SELECT remote_stream_id, id FROM provider_channels WHERE provider_id = ?').all(providerId);
+    const existingMap = new Map();
+    for (const row of existingChannels) {
+      existingMap.set(row.remote_stream_id, row.id);
+    }
     
     db.transaction(() => {
       for (const ch of (channels || [])) {
         const sid = Number(ch.stream_id || ch.id || 0);
         if (sid > 0) {
-          const existing = checkExisting.get(providerId, sid);
+          const existingId = existingMap.get(sid);
+          let provChannelId;
           
-          if (existing) {
+          if (existingId) {
             // Update existing channel - preserves ID and user_channels relationships
             updateChannel.run(
               ch.name || 'Unknown',
@@ -370,9 +394,10 @@ async function performSync(providerId, userId, isManual = false) {
               sid
             );
             channelsUpdated++;
+            provChannelId = existingId;
           } else {
             // Insert new channel
-            insertChannel.run(
+            const info = insertChannel.run(
               providerId,
               sid,
               ch.name || 'Unknown',
@@ -382,6 +407,7 @@ async function performSync(providerId, userId, isManual = false) {
               ch.epg_channel_id || ''
             );
             channelsAdded++;
+            provChannelId = info.lastInsertRowid;
           }
           
           // Auto-add to user categories if enabled
@@ -390,8 +416,6 @@ async function performSync(providerId, userId, isManual = false) {
             const userCatId = categoryMap.get(catId);
             
             if (userCatId) {
-              const provChannelId = existing ? existing.id : db.prepare('SELECT id FROM provider_channels WHERE provider_id = ? AND remote_stream_id = ?').get(providerId, sid).id;
-              
               // Check if already added
               const existingUserChannel = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(userCatId, provChannelId);
               
@@ -806,8 +830,13 @@ app.get('/api/providers/:id/categories', async (req, res) => {
       ORDER BY channel_count DESC
     `).all(id);
 
+    const localCatsMap = new Map();
+    for (const l of localCats) {
+      localCatsMap.set(Number(l.original_category_id), l);
+    }
+
     const merged = categories.map(cat => {
-      const local = localCats.find(l => Number(l.original_category_id) === Number(cat.category_id));
+      const local = localCatsMap.get(Number(cat.category_id));
       const isAdult = isAdultCategory(cat.category_name);
       
       return {
@@ -1034,7 +1063,7 @@ app.get('/player_api.php', async (req, res) => {
         ORDER BY uc.sort_order
       `).all(user.id);
 
-      const result = await Promise.all(rows.map(async (ch, i) => {
+      const result = rows.map((ch, i) => {
         // Use direct picon URL - no caching needed
         let iconUrl = ch.logo || '';
         
@@ -1054,7 +1083,7 @@ app.get('/player_api.php', async (req, res) => {
           direct_source: '',
           tv_archive_duration: 0
         };
-      }));
+      });
       return res.json(result);
     }
 
@@ -1215,16 +1244,7 @@ app.get('/xmltv.php', async (req, res) => {
     res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
     
     for (const file of epgFiles) {
-      try {
-        const content = fs.readFileSync(file, 'utf8');
-        // Extract content between <tv> tags
-        const match = content.match(/<tv[^>]*>([\s\S]*)<\/tv>/);
-        if (match && match[1]) {
-          res.write(match[1]);
-        }
-      } catch (e) {
-        console.error(`Error reading EPG file ${file}:`, e.message);
-      }
+      await streamEpgContent(file, res);
     }
     
     res.write('</tv>');
@@ -1281,10 +1301,7 @@ app.delete('/api/user-channels/:id', (req, res) => {
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);
-    for (const cat of cats) {
-      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
-    }
+    db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);
     db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
     res.json({success: true});
@@ -1686,31 +1703,34 @@ app.post('/api/epg-sources/update-all', async (req, res) => {
     
     const results = [];
     
-    // Update provider EPGs
-    for (const provider of providers) {
+    // Update provider EPGs in parallel
+    const providerPromises = providers.map(async (provider) => {
       try {
         // Fetch provider EPG using URL directly from the provider object
         const response = await fetch(provider.epg_url);
         if (response.ok) {
           const epgData = await response.text();
           const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-          fs.writeFileSync(cacheFile, epgData, 'utf8');
-          results.push({id: `provider_${provider.id}`, success: true});
+          await fs.promises.writeFile(cacheFile, epgData, 'utf8');
+          return {id: `provider_${provider.id}`, success: true};
         }
+        throw new Error(`HTTP ${response.status}`);
       } catch (e) {
-        results.push({id: `provider_${provider.id}`, success: false, error: e.message});
+        return {id: `provider_${provider.id}`, success: false, error: e.message};
       }
-    }
+    });
     
-    // Update regular EPG sources
-    for (const source of sources) {
+    // Update regular EPG sources in parallel
+    const sourcePromises = sources.map(async (source) => {
       try {
         await updateEpgSource(source.id);
-        results.push({id: source.id, success: true});
+        return {id: source.id, success: true};
       } catch (e) {
-        results.push({id: source.id, success: false, error: e.message});
+        return {id: source.id, success: false, error: e.message};
       }
-    }
+    });
+
+    const results = await Promise.all([...providerPromises, ...sourcePromises]);
     
     res.json({success: true, results});
   } catch (e) {
@@ -1732,68 +1752,61 @@ app.get('/api/epg-sources/available', async (req, res) => {
       return res.json(epgSourcesCache);
     }
     
-    const response = await fetch('https://api.github.com/repos/globetvapp/epg/contents/');
-    const data = await response.json();
+    console.log('📡 Fetching EPG sources via GitHub Tree API...');
+
+    // 1. Get default branch
+    const repoResponse = await fetch('https://api.github.com/repos/globetvapp/epg');
+    const repoData = await repoResponse.json();
     
-    // Check for rate limit error
-    if (data.message && data.message.includes('rate limit')) {
-      console.warn('GitHub API rate limit reached, returning cached or empty data');
+    if (repoData.message && repoData.message.includes('rate limit')) {
+      console.warn('GitHub API rate limit reached (repo info), returning cached or empty data');
       return res.json(epgSourcesCache || []);
     }
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch EPG sources');
+
+    if (!repoResponse.ok) {
+       throw new Error('Failed to fetch repo info');
     }
-    
-    const items = data;
+
+    const defaultBranch = repoData.default_branch || 'main';
+
+    // 2. Fetch tree recursively
+    const treeResponse = await fetch(`https://api.github.com/repos/globetvapp/epg/git/trees/${defaultBranch}?recursive=1`);
+    const treeData = await treeResponse.json();
+
+    if (treeData.message && treeData.message.includes('rate limit')) {
+      console.warn('GitHub API rate limit reached (tree), returning cached or empty data');
+      return res.json(epgSourcesCache || []);
+    }
+
+    if (!treeResponse.ok) {
+      throw new Error('Failed to fetch tree');
+    }
+
     const epgSources = [];
-    const seenUrls = new Set();
-    
-    // Process ALL directories (countries) - not just first 10
-    const directories = items.filter(i => i.type === 'dir');
-    console.log(`📡 Fetching EPG sources from ${directories.length} countries...`);
-    
-    // Process directories (countries) with delay to avoid rate limits
-    let processedCount = 0;
-    for (const item of directories) {
-      try {
-        const dirResponse = await fetch(item.url);
-        const dirData = await dirResponse.json();
-        
-        // Check for rate limit
-        if (dirData.message && dirData.message.includes('rate limit')) {
-          console.warn(`Rate limit reached after ${processedCount} countries`);
-          break;
+    const tree = treeData.tree || [];
+
+    for (const item of tree) {
+      // Filter for files, .xml, not .gz
+      if (item.type === 'blob' && item.path.endsWith('.xml') && !item.path.endsWith('.xml.gz')) {
+        const parts = item.path.split('/');
+        // Ensure structure is Country/File.xml (depth 2)
+        if (parts.length === 2) {
+          const country = parts[0];
+          const filename = parts[1];
+          // Construct raw URL
+          const downloadUrl = `https://raw.githubusercontent.com/globetvapp/epg/${defaultBranch}/${encodeURI(item.path)}`;
+
+          epgSources.push({
+            name: `${country} - ${filename.replace(/\.xml$/, '')}`,
+            url: downloadUrl,
+            size: item.size,
+            country: country
+          });
         }
-        
-        if (dirResponse.ok && Array.isArray(dirData)) {
-          // Only get .xml files (not .xml.gz to avoid duplicates)
-          const xmlFiles = dirData.filter(f => 
-            f.type === 'file' && f.name.endsWith('.xml') && !f.name.endsWith('.xml.gz')
-          );
-          
-          for (const file of xmlFiles) {
-            // Avoid duplicates
-            if (!seenUrls.has(file.download_url)) {
-              epgSources.push({
-                name: `${item.name} - ${file.name.replace(/\.xml$/, '')}`,
-                url: file.download_url,
-                size: file.size,
-                country: item.name
-              });
-              seenUrls.add(file.download_url);
-            }
-          }
-          processedCount++;
-        }
-        // Small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 150));
-      } catch (e) {
-        console.error(`Failed to fetch ${item.name}:`, e.message);
       }
     }
     
-    console.log(`✅ Found ${epgSources.length} EPG sources from ${processedCount} countries`);
+    console.log(`✅ Found ${epgSources.length} EPG sources via Tree API`);
     
     // Cache the results
     if (epgSources.length > 0) {
@@ -1813,3 +1826,58 @@ app.get('/api/epg-sources/available', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ IPTV-Manager: http://localhost:${PORT}`);
 });
+
+// Helper function to stream EPG content efficiently
+function streamEpgContent(file, res) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+    let buffer = '';
+    let foundStart = false;
+
+    stream.on('data', (chunk) => {
+      let currentChunk = buffer + chunk;
+      buffer = '';
+
+      if (!foundStart) {
+        const startMatch = currentChunk.match(/<tv[^>]*>/);
+        if (startMatch) {
+          foundStart = true;
+          const startIndex = startMatch.index + startMatch[0].length;
+          currentChunk = currentChunk.substring(startIndex);
+        } else {
+          // Keep the last part of chunk to handle split tags
+          const lastLt = currentChunk.lastIndexOf('<');
+          if (lastLt !== -1) {
+            buffer = currentChunk.substring(lastLt);
+          }
+          return;
+        }
+      }
+
+      if (foundStart) {
+        const endMatch = currentChunk.indexOf('</tv>');
+        if (endMatch !== -1) {
+          res.write(currentChunk.substring(0, endMatch));
+          stream.destroy();
+          resolve();
+          return;
+        } else {
+          if (currentChunk.length >= 5) {
+             const toWrite = currentChunk.substring(0, currentChunk.length - 4);
+             res.write(toWrite);
+             buffer = currentChunk.substring(currentChunk.length - 4);
+          } else {
+             buffer = currentChunk;
+          }
+        }
+      }
+    });
+
+    stream.on('end', resolve);
+    stream.on('error', (err) => {
+      console.error(`Error streaming EPG file ${file}:`, err.message);
+      resolve(); // Continue even on error
+    });
+    stream.on('close', resolve);
+  });
+}
