@@ -830,8 +830,13 @@ app.get('/api/providers/:id/categories', async (req, res) => {
       ORDER BY channel_count DESC
     `).all(id);
 
+    const localCatsMap = new Map();
+    for (const l of localCats) {
+      localCatsMap.set(Number(l.original_category_id), l);
+    }
+
     const merged = categories.map(cat => {
-      const local = localCats.find(l => Number(l.original_category_id) === Number(cat.category_id));
+      const local = localCatsMap.get(Number(cat.category_id));
       const isAdult = isAdultCategory(cat.category_name);
       
       return {
