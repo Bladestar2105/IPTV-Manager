@@ -1682,35 +1682,36 @@ app.post('/api/epg-sources/:id/update', async (req, res) => {
 app.post('/api/epg-sources/update-all', async (req, res) => {
   try {
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
-    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const providers = db.prepare("SELECT id, epg_url FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
     
-    const results = [];
-    
-    // Update provider EPGs
-    for (const provider of providers) {
+    // Update provider EPGs in parallel
+    const providerPromises = providers.map(async (provider) => {
       try {
-        const p = db.prepare('SELECT * FROM providers WHERE id = ?').get(provider.id);
-        const response = await fetch(p.epg_url);
+        // No need to query DB again, we have epg_url
+        const response = await fetch(provider.epg_url);
         if (response.ok) {
           const epgData = await response.text();
           const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-          fs.writeFileSync(cacheFile, epgData, 'utf8');
-          results.push({id: `provider_${provider.id}`, success: true});
+          await fs.promises.writeFile(cacheFile, epgData, 'utf8');
+          return {id: `provider_${provider.id}`, success: true};
         }
+        throw new Error(`HTTP ${response.status}`);
       } catch (e) {
-        results.push({id: `provider_${provider.id}`, success: false, error: e.message});
+        return {id: `provider_${provider.id}`, success: false, error: e.message};
       }
-    }
+    });
     
-    // Update regular EPG sources
-    for (const source of sources) {
+    // Update regular EPG sources in parallel
+    const sourcePromises = sources.map(async (source) => {
       try {
         await updateEpgSource(source.id);
-        results.push({id: source.id, success: true});
+        return {id: source.id, success: true};
       } catch (e) {
-        results.push({id: source.id, success: false, error: e.message});
+        return {id: source.id, success: false, error: e.message};
       }
-    }
+    });
+
+    const results = await Promise.all([...providerPromises, ...sourcePromises]);
     
     res.json({success: true, results});
   } catch (e) {
