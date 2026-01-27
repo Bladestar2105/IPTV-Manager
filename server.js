@@ -296,71 +296,7 @@ async function performSync(providerId, userId, isManual = false) {
       }
     }
     
-    for (const provCat of providerCategories) {
-      const catId = Number(provCat.category_id);
-      const catName = provCat.category_name;
-      
-      // Check if mapping exists using lookup
-      let mapping = mappingLookup.get(catId);
-      
-      // Auto-create categories if:
-      // 1. No mapping exists AND not first sync AND auto_add enabled
-      // This means it's a NEW category from the provider
-      const shouldAutoCreate = config && config.auto_add_categories && !mapping && !isFirstSync;
-      
-      if (shouldAutoCreate) {
-        // Create new user category
-        const isAdult = isAdultCategory(catName) ? 1 : 0;
-        const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-        const newSortOrder = (maxSort?.max_sort || -1) + 1;
-        
-        const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder);
-        const newCategoryId = catInfo.lastInsertRowid;
-        
-        // Create new mapping (only for new categories)
-        db.prepare(`
-          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-          VALUES (?, ?, ?, ?, ?, 1)
-        `).run(providerId, userId, catId, catName, newCategoryId);
-        
-        categoryMap.set(catId, newCategoryId);
-
-        // Update lookup to prevent duplicates in current run
-        mappingLookup.set(catId, {
-          provider_id: providerId,
-          user_id: userId,
-          provider_category_id: catId,
-          provider_category_name: catName,
-          user_category_id: newCategoryId,
-          auto_created: 1
-        });
-
-        categoriesAdded++;
-        console.log(`  ✅ Created category: ${catName} (id=${newCategoryId})`);
-      } else if (!mapping && isFirstSync) {
-        // First sync: Create mapping without user category (user will create/import manually)
-        db.prepare(`
-          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-          VALUES (?, ?, ?, ?, NULL, 0)
-        `).run(providerId, userId, catId, catName);
-
-        // Update lookup to prevent duplicates in current run
-        mappingLookup.set(catId, {
-          provider_id: providerId,
-          user_id: userId,
-          provider_category_id: catId,
-          provider_category_name: catName,
-          user_category_id: null,
-          auto_created: 0
-        });
-
-        console.log(`  📋 Registered category: ${catName} (no auto-create on first sync)`);
-      } else if (mapping && mapping.user_category_id) {
-        // Already handled by initial population of categoryMap
-      }
-    }
-    
-    // Process channels
+    // Prepare channel statements
     const insertChannel = db.prepare(`
       INSERT OR IGNORE INTO provider_channels
       (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id)
@@ -380,7 +316,74 @@ async function performSync(providerId, userId, isManual = false) {
       existingMap.set(row.remote_stream_id, row.id);
     }
     
+    // Execute all DB operations in a single transaction
     db.transaction(() => {
+      // 1. Process Categories
+      for (const provCat of providerCategories) {
+        const catId = Number(provCat.category_id);
+        const catName = provCat.category_name;
+
+        // Check if mapping exists using lookup
+        let mapping = mappingLookup.get(catId);
+
+        // Auto-create categories if:
+        // 1. No mapping exists AND not first sync AND auto_add enabled
+        // This means it's a NEW category from the provider
+        const shouldAutoCreate = config && config.auto_add_categories && !mapping && !isFirstSync;
+
+        if (shouldAutoCreate) {
+          // Create new user category
+          const isAdult = isAdultCategory(catName) ? 1 : 0;
+          const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
+          const newSortOrder = (maxSort?.max_sort || -1) + 1;
+
+          const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder);
+          const newCategoryId = catInfo.lastInsertRowid;
+
+          // Create new mapping (only for new categories)
+          db.prepare(`
+            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+            VALUES (?, ?, ?, ?, ?, 1)
+          `).run(providerId, userId, catId, catName, newCategoryId);
+
+          categoryMap.set(catId, newCategoryId);
+
+          // Update lookup to prevent duplicates in current run
+          mappingLookup.set(catId, {
+            provider_id: providerId,
+            user_id: userId,
+            provider_category_id: catId,
+            provider_category_name: catName,
+            user_category_id: newCategoryId,
+            auto_created: 1
+          });
+
+          categoriesAdded++;
+          console.log(`  ✅ Created category: ${catName} (id=${newCategoryId})`);
+        } else if (!mapping && isFirstSync) {
+          // First sync: Create mapping without user category (user will create/import manually)
+          db.prepare(`
+            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+            VALUES (?, ?, ?, ?, NULL, 0)
+          `).run(providerId, userId, catId, catName);
+
+          // Update lookup to prevent duplicates in current run
+          mappingLookup.set(catId, {
+            provider_id: providerId,
+            user_id: userId,
+            provider_category_id: catId,
+            provider_category_name: catName,
+            user_category_id: null,
+            auto_created: 0
+          });
+
+          console.log(`  📋 Registered category: ${catName} (no auto-create on first sync)`);
+        } else if (mapping && mapping.user_category_id) {
+          // Already handled by initial population of categoryMap
+        }
+      }
+
+      // 2. Process Channels
       for (const ch of (channels || [])) {
         const sid = Number(ch.stream_id || ch.id || 0);
         if (sid > 0) {
@@ -1917,7 +1920,12 @@ function streamEpgContent(file, res) {
       }
     });
 
-    stream.on('end', resolve);
+    stream.on('end', () => {
+      if (buffer && buffer.length > 0) {
+        res.write(buffer);
+      }
+      resolve();
+    });
     stream.on('error', (err) => {
       console.error(`Error streaming EPG file ${file}:`, err.message);
       resolve(); // Continue even on error
