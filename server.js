@@ -1732,68 +1732,61 @@ app.get('/api/epg-sources/available', async (req, res) => {
       return res.json(epgSourcesCache);
     }
     
-    const response = await fetch('https://api.github.com/repos/globetvapp/epg/contents/');
-    const data = await response.json();
+    console.log('📡 Fetching EPG sources via GitHub Tree API...');
+
+    // 1. Get default branch
+    const repoResponse = await fetch('https://api.github.com/repos/globetvapp/epg');
+    const repoData = await repoResponse.json();
     
-    // Check for rate limit error
-    if (data.message && data.message.includes('rate limit')) {
-      console.warn('GitHub API rate limit reached, returning cached or empty data');
+    if (repoData.message && repoData.message.includes('rate limit')) {
+      console.warn('GitHub API rate limit reached (repo info), returning cached or empty data');
       return res.json(epgSourcesCache || []);
     }
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch EPG sources');
+
+    if (!repoResponse.ok) {
+       throw new Error('Failed to fetch repo info');
     }
-    
-    const items = data;
+
+    const defaultBranch = repoData.default_branch || 'main';
+
+    // 2. Fetch tree recursively
+    const treeResponse = await fetch(`https://api.github.com/repos/globetvapp/epg/git/trees/${defaultBranch}?recursive=1`);
+    const treeData = await treeResponse.json();
+
+    if (treeData.message && treeData.message.includes('rate limit')) {
+      console.warn('GitHub API rate limit reached (tree), returning cached or empty data');
+      return res.json(epgSourcesCache || []);
+    }
+
+    if (!treeResponse.ok) {
+      throw new Error('Failed to fetch tree');
+    }
+
     const epgSources = [];
-    const seenUrls = new Set();
-    
-    // Process ALL directories (countries) - not just first 10
-    const directories = items.filter(i => i.type === 'dir');
-    console.log(`📡 Fetching EPG sources from ${directories.length} countries...`);
-    
-    // Process directories (countries) with delay to avoid rate limits
-    let processedCount = 0;
-    for (const item of directories) {
-      try {
-        const dirResponse = await fetch(item.url);
-        const dirData = await dirResponse.json();
-        
-        // Check for rate limit
-        if (dirData.message && dirData.message.includes('rate limit')) {
-          console.warn(`Rate limit reached after ${processedCount} countries`);
-          break;
+    const tree = treeData.tree || [];
+
+    for (const item of tree) {
+      // Filter for files, .xml, not .gz
+      if (item.type === 'blob' && item.path.endsWith('.xml') && !item.path.endsWith('.xml.gz')) {
+        const parts = item.path.split('/');
+        // Ensure structure is Country/File.xml (depth 2)
+        if (parts.length === 2) {
+          const country = parts[0];
+          const filename = parts[1];
+          // Construct raw URL
+          const downloadUrl = `https://raw.githubusercontent.com/globetvapp/epg/${defaultBranch}/${encodeURI(item.path)}`;
+
+          epgSources.push({
+            name: `${country} - ${filename.replace(/\.xml$/, '')}`,
+            url: downloadUrl,
+            size: item.size,
+            country: country
+          });
         }
-        
-        if (dirResponse.ok && Array.isArray(dirData)) {
-          // Only get .xml files (not .xml.gz to avoid duplicates)
-          const xmlFiles = dirData.filter(f => 
-            f.type === 'file' && f.name.endsWith('.xml') && !f.name.endsWith('.xml.gz')
-          );
-          
-          for (const file of xmlFiles) {
-            // Avoid duplicates
-            if (!seenUrls.has(file.download_url)) {
-              epgSources.push({
-                name: `${item.name} - ${file.name.replace(/\.xml$/, '')}`,
-                url: file.download_url,
-                size: file.size,
-                country: item.name
-              });
-              seenUrls.add(file.download_url);
-            }
-          }
-          processedCount++;
-        }
-        // Small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 150));
-      } catch (e) {
-        console.error(`Failed to fetch ${item.name}:`, e.message);
       }
     }
     
-    console.log(`✅ Found ${epgSources.length} EPG sources from ${processedCount} countries`);
+    console.log(`✅ Found ${epgSources.length} EPG sources via Tree API`);
     
     // Cache the results
     if (epgSources.length > 0) {
