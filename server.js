@@ -1215,16 +1215,7 @@ app.get('/xmltv.php', async (req, res) => {
     res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
     
     for (const file of epgFiles) {
-      try {
-        const content = fs.readFileSync(file, 'utf8');
-        // Extract content between <tv> tags
-        const match = content.match(/<tv[^>]*>([\s\S]*)<\/tv>/);
-        if (match && match[1]) {
-          res.write(match[1]);
-        }
-      } catch (e) {
-        console.error(`Error reading EPG file ${file}:`, e.message);
-      }
+      await streamEpgContent(file, res);
     }
     
     res.write('</tv>');
@@ -1813,3 +1804,58 @@ app.get('/api/epg-sources/available', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ IPTV-Manager: http://localhost:${PORT}`);
 });
+
+// Helper function to stream EPG content efficiently
+function streamEpgContent(file, res) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+    let buffer = '';
+    let foundStart = false;
+
+    stream.on('data', (chunk) => {
+      let currentChunk = buffer + chunk;
+      buffer = '';
+
+      if (!foundStart) {
+        const startMatch = currentChunk.match(/<tv[^>]*>/);
+        if (startMatch) {
+          foundStart = true;
+          const startIndex = startMatch.index + startMatch[0].length;
+          currentChunk = currentChunk.substring(startIndex);
+        } else {
+          // Keep the last part of chunk to handle split tags
+          const lastLt = currentChunk.lastIndexOf('<');
+          if (lastLt !== -1) {
+            buffer = currentChunk.substring(lastLt);
+          }
+          return;
+        }
+      }
+
+      if (foundStart) {
+        const endMatch = currentChunk.indexOf('</tv>');
+        if (endMatch !== -1) {
+          res.write(currentChunk.substring(0, endMatch));
+          stream.destroy();
+          resolve();
+          return;
+        } else {
+          if (currentChunk.length >= 5) {
+             const toWrite = currentChunk.substring(0, currentChunk.length - 4);
+             res.write(toWrite);
+             buffer = currentChunk.substring(currentChunk.length - 4);
+          } else {
+             buffer = currentChunk;
+          }
+        }
+      }
+    });
+
+    stream.on('end', resolve);
+    stream.on('error', (err) => {
+      console.error(`Error streaming EPG file ${file}:`, err.message);
+      resolve(); // Continue even on error
+    });
+    stream.on('close', resolve);
+  });
+}
