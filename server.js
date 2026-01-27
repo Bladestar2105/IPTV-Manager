@@ -802,7 +802,7 @@ app.put('/api/users/:id', authenticateToken, (req, res) => {
     const id = Number(req.params.id);
     const { username, password } = req.body;
     
-    // Check if admin
+    // Authorization: Only admin can update users
     if (!req.user.isAdmin) {
       return res.status(403).json({error: 'Admin access required'});
     }
@@ -1083,7 +1083,7 @@ app.post('/api/providers', authenticateToken, (req, res) => {
   }
 });
 
-app.post('/api/providers/:id/sync', async (req, res) => {
+app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { user_id } = req.body;
@@ -1165,7 +1165,7 @@ app.get('/api/providers/:id/categories', async (req, res) => {
 });
 
 // Provider-Kategorie importieren
-app.post('/api/providers/:providerId/import-category', async (req, res) => {
+app.post('/api/providers/:providerId/import-category', authenticateToken, async (req, res) => {
   try {
     const providerId = Number(req.params.providerId);
     const { user_id, category_id, category_name, import_channels } = req.body;
@@ -1225,12 +1225,17 @@ app.get('/api/users/:userId/categories', (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/users/:userId/categories', (req, res) => {
+app.post('/api/users/:userId/categories', authenticateToken, (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
     
     const userId = Number(req.params.userId);
+
+    // Authorization: Check if the user is creating a category for themselves or is an admin
+    if (!req.user.isAdmin && req.user.userId !== userId) {
+      return res.status(403).json({ error: 'Not authorized to create categories for this user' });
+    }
     const isAdult = isAdultCategory(name) ? 1 : 0;
     
     // Höchste sort_order finden
@@ -1243,10 +1248,21 @@ app.post('/api/users/:userId/categories', (req, res) => {
 });
 
 // Kategorien neu sortieren
-app.put('/api/users/:userId/categories/reorder', (req, res) => {
+app.put('/api/users/:userId/categories/reorder', authenticateToken, (req, res) => {
   try {
     const { category_ids } = req.body; // Array von IDs in neuer Reihenfolge
-    if (!Array.isArray(category_ids)) return res.status(400).json({error: 'category_ids must be array'});
+    if (!Array.isArray(category_ids) || category_ids.length === 0) {
+      return res.status(400).json({error: 'category_ids must be a non-empty array'});
+    }
+
+    // Authorization: Check ownership of the first category
+    const firstCategory = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(category_ids[0]);
+    if (!firstCategory) {
+      return res.status(404).json({ error: 'One or more categories not found' });
+    }
+    if (!req.user.isAdmin && firstCategory.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not authorized to reorder these categories' });
+    }
     
     const update = db.prepare('UPDATE user_categories SET sort_order = ? WHERE id = ?');
     
@@ -1275,11 +1291,20 @@ app.get('/api/user-categories/:catId/channels', (req, res) => {
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/user-categories/:catId/channels', (req, res) => {
+app.post('/api/user-categories/:catId/channels', authenticateToken, (req, res) => {
   try {
     const catId = Number(req.params.catId);
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
+
+    // Authorization: Check ownership of the category
+    const category = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    if (!req.user.isAdmin && category.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not authorized to add channels to this category' });
+    }
     
     // Höchste sort_order finden
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
@@ -1291,10 +1316,22 @@ app.post('/api/user-categories/:catId/channels', (req, res) => {
 });
 
 // Kanäle neu sortieren
-app.put('/api/user-categories/:catId/channels/reorder', (req, res) => {
+app.put('/api/user-categories/:catId/channels/reorder', authenticateToken, (req, res) => {
   try {
+    const catId = Number(req.params.catId);
     const { channel_ids } = req.body; // Array von user_channel IDs in neuer Reihenfolge
-    if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
+    if (!Array.isArray(channel_ids) || channel_ids.length === 0) {
+      return res.status(400).json({error: 'channel_ids must be a non-empty array'});
+    }
+
+    // Authorization: Check ownership of the category
+    const category = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    if (!req.user.isAdmin && category.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not authorized to reorder channels in this category' });
+    }
     
     const update = db.prepare('UPDATE user_channels SET sort_order = ? WHERE id = ?');
     
@@ -1580,7 +1617,7 @@ app.delete('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     
-    // Check ownership
+    // Authorization: Check ownership
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
     if (!provider) {
       return res.status(404).json({error: 'Provider not found'});
@@ -1623,7 +1660,7 @@ app.get('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     
-    // Check ownership
+    // Authorization: Check ownership
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
     if (!provider) {
       return res.status(404).json({error: 'Provider not found'});
@@ -1672,7 +1709,7 @@ app.post('/api/providers/:id/epg-sources', authenticateToken, (req, res) => {
       return res.status(400).json({error: 'EPG source ID or URL is required'});
     }
     
-    // Check ownership
+    // Authorization: Check ownership
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
     if (!provider) {
       return res.status(404).json({error: 'Provider not found'});
@@ -1707,7 +1744,7 @@ app.put('/api/providers/:providerId/epg-sources/:id', authenticateToken, (req, r
     const id = Number(req.params.id);
     const { username, password, update_interval } = req.body;
     
-    // Check ownership
+    // Authorization: Check ownership
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
     if (!provider) {
       return res.status(404).json({error: 'Provider not found'});
@@ -1761,7 +1798,7 @@ app.delete('/api/providers/:providerId/epg-sources/:id', authenticateToken, (req
     const providerId = Number(req.params.providerId);
     const id = Number(req.params.id);
     
-    // Check ownership
+    // Authorization: Check ownership
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
     if (!provider) {
       return res.status(404).json({error: 'Provider not found'});
@@ -1782,9 +1819,18 @@ app.delete('/api/providers/:providerId/epg-sources/:id', authenticateToken, (req
   }
 });
 
-app.delete('/api/user-categories/:id', (req, res) => {
+app.delete('/api/user-categories/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+
+    // Authorization: Check ownership
+    const category = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    if (!req.user.isAdmin && category.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not authorized to delete this category' });
+    }
     
     // Delete in correct order to avoid foreign key constraints
     // 1. Delete channels in this category
@@ -1803,9 +1849,25 @@ app.delete('/api/user-categories/:id', (req, res) => {
   }
 });
 
-app.delete('/api/user-channels/:id', (req, res) => {
+app.delete('/api/user-channels/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+
+    // Authorization: Check ownership
+    const channel = db.prepare(`
+      SELECT uc.user_id
+      FROM user_channels AS ch
+      JOIN user_categories AS uc ON ch.user_category_id = uc.id
+      WHERE ch.id = ?
+    `).get(id);
+
+    if (!channel) {
+      return res.status(404).json({ error: 'Channel not found' });
+    }
+    if (!req.user.isAdmin && channel.user_id !== req.user.userId) {
+      return res.status(403).json({ error: 'Not authorized to delete this channel' });
+    }
+
     db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
     res.json({success: true});
   } catch (e) {
@@ -1816,53 +1878,60 @@ app.delete('/api/user-channels/:id', (req, res) => {
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    
-    // Check if user exists
+
+    // Authorization: Only admin can delete users
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!user) {
-      return res.status(404).json({error: 'User not found'});
+      return res.status(404).json({ error: 'User not found' });
     }
-    
-    // IPTV users (not admin users) can be deleted by admin
-    
-    // Delete user's providers
-    const providers = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(id);
-    for (const provider of providers) {
-      // Delete provider's EPG sources (if table exists)
-      try {
-        db.prepare('DELETE FROM provider_epg_sources WHERE provider_id = ?').run(provider.id);
-      } catch (e) {
-        // Table might not exist in older databases
-        console.log('Note: provider_epg_sources table does not exist yet');
+
+    // Use a transaction to ensure all or nothing is deleted
+    const deleteUserTransaction = db.transaction((userId) => {
+      // Get all providers for the user
+      const providers = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(userId);
+      const providerIds = providers.map(p => p.id);
+
+      if (providerIds.length > 0) {
+        const providerIdPlaceholders = providerIds.map(() => '?').join(',');
+
+        // Delete related data from other tables
+        db.prepare(`DELETE FROM provider_epg_sources WHERE provider_id IN (${providerIdPlaceholders})`).run(...providerIds);
+        db.prepare(`DELETE FROM provider_channels WHERE provider_id IN (${providerIdPlaceholders})`).run(...providerIds);
+        db.prepare(`DELETE FROM sync_configs WHERE provider_id IN (${providerIdPlaceholders})`).run(...providerIds);
+        db.prepare(`DELETE FROM category_mappings WHERE provider_id IN (${providerIdPlaceholders})`).run(...providerIds);
+        db.prepare(`DELETE FROM providers WHERE id IN (${providerIdPlaceholders})`).run(...providerIds);
       }
-      
-      // Delete provider's channels (if table exists)
-      try {
-        db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(provider.id);
-      } catch (e) {
-        // Table might not exist
-        console.log('Note: provider_channels table does not exist');
+
+      // Get all categories for the user
+      const categories = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(userId);
+      const categoryIds = categories.map(c => c.id);
+
+      if (categoryIds.length > 0) {
+        const categoryIdPlaceholders = categoryIds.map(() => '?').join(',');
+
+        // Delete channels linked to those categories
+        db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${categoryIdPlaceholders})`).run(...categoryIds);
       }
-      
-      // Delete provider (categories and user_channels are managed separately)
-      db.prepare('DELETE FROM providers WHERE id = ?').run(provider.id);
-    }
-    
-    // Delete any remaining user categories
-    const cats = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(id);
-    for (const cat of cats) {
-      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(cat.id);
-    }
-    db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(id);
-    
-    // Delete user
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    
+
+      // Delete user's categories
+      db.prepare('DELETE FROM user_categories WHERE user_id = ?').run(userId);
+
+      // Finally, delete the user
+      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    });
+
+    // Execute the transaction
+    deleteUserTransaction(id);
+
     console.log(`✅ User ${id} deleted with all related data`);
-    res.json({success: true});
+    res.json({ success: true });
   } catch (e) {
     console.error('❌ Error deleting user:', e);
-    res.status(500).json({error: e.message});
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1892,12 +1961,17 @@ app.get('/api/sync-configs/:providerId/:userId', (req, res) => {
   }
 });
 
-app.post('/api/sync-configs', (req, res) => {
+app.post('/api/sync-configs', authenticateToken, (req, res) => {
   try {
     const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
     
     if (!provider_id || !user_id) {
       return res.status(400).json({error: 'provider_id and user_id required'});
+    }
+
+    // Authorization: Check ownership
+    if (!req.user.isAdmin && req.user.userId !== user_id) {
+      return res.status(403).json({ error: 'Not authorized to create sync config for this user' });
     }
     
     const nextSync = calculateNextSync(sync_interval || 'daily');
@@ -1924,13 +1998,18 @@ app.post('/api/sync-configs', (req, res) => {
   }
 });
 
-app.put('/api/sync-configs/:id', (req, res) => {
+app.put('/api/sync-configs/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
     
     const config = db.prepare('SELECT * FROM sync_configs WHERE id = ?').get(id);
     if (!config) return res.status(404).json({error: 'not found'});
+
+    // Authorization: Check ownership
+    if (!req.user.isAdmin && req.user.userId !== config.user_id) {
+      return res.status(403).json({ error: 'Not authorized to update this sync config' });
+    }
     
     const nextSync = calculateNextSync(sync_interval || config.sync_interval);
     
@@ -1956,9 +2035,16 @@ app.put('/api/sync-configs/:id', (req, res) => {
   }
 });
 
-app.delete('/api/sync-configs/:id', (req, res) => {
+app.delete('/api/sync-configs/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+
+    // Authorization: Check ownership
+    const config = db.prepare('SELECT user_id FROM sync_configs WHERE id = ?').get(id);
+    if (config && !req.user.isAdmin && req.user.userId !== config.user_id) {
+      return res.status(403).json({ error: 'Not authorized to delete this sync config' });
+    }
+
     db.prepare('DELETE FROM sync_configs WHERE id = ?').run(id);
     
     // Restart scheduler
@@ -2023,10 +2109,16 @@ app.get('/api/category-mappings/:providerId/:userId', (req, res) => {
   }
 });
 
-app.put('/api/category-mappings/:id', (req, res) => {
+app.put('/api/category-mappings/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { user_category_id } = req.body;
+
+    // Authorization: Check ownership
+    const mapping = db.prepare('SELECT user_id FROM category_mappings WHERE id = ?').get(id);
+    if (mapping && !req.user.isAdmin && req.user.userId !== mapping.user_id) {
+      return res.status(403).json({ error: 'Not authorized to update this mapping' });
+    }
     
     db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
       .run(user_category_id ? Number(user_category_id) : null, id);
@@ -2038,11 +2130,17 @@ app.put('/api/category-mappings/:id', (req, res) => {
 });
 
 // === UPDATE APIs ===
-app.put('/api/user-categories/:id', (req, res) => {
+app.put('/api/user-categories/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
+
+    // Authorization: Check ownership
+    const category = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+    if (category && !req.user.isAdmin && req.user.userId !== category.user_id) {
+      return res.status(403).json({ error: 'Not authorized to update this category' });
+    }
     
     const isAdult = isAdultCategory(name) ? 1 : 0;
     db.prepare('UPDATE user_categories SET name = ?, is_adult = ? WHERE id = ?').run(name.trim(), isAdult, id);
@@ -2061,7 +2159,7 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
       return res.status(400).json({error: 'missing fields'});
     }
 
-    // Check ownership
+    // Authorization: Check ownership
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
     if (!provider) {
       return res.status(404).json({error: 'Provider not found'});
@@ -2084,10 +2182,17 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
   }
 });
 
-app.put('/api/user-categories/:id/adult', (req, res) => {
+app.put('/api/user-categories/:id/adult', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
     const { is_adult } = req.body;
+
+    // Authorization: Check ownership
+    const category = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+    if (category && !req.user.isAdmin && req.user.userId !== category.user_id) {
+      return res.status(403).json({ error: 'Not authorized to update this category' });
+    }
+
     db.prepare('UPDATE user_categories SET is_adult = ? WHERE id = ?').run(is_adult ? 1 : 0, id);
     res.json({success: true});
   } catch (e) {
@@ -2157,8 +2262,12 @@ app.get('/api/epg-sources', (req, res) => {
   }
 });
 
-app.post('/api/epg-sources', (req, res) => {
+app.post('/api/epg-sources', authenticateToken, (req, res) => {
   try {
+    // Authorization: Only admin can create EPG sources
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
     
@@ -2179,8 +2288,12 @@ app.post('/api/epg-sources', (req, res) => {
   }
 });
 
-app.put('/api/epg-sources/:id', (req, res) => {
+app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
+    // Authorization: Only admin can update EPG sources
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const id = Number(req.params.id);
     const { name, url, enabled, update_interval } = req.body;
     
@@ -2217,8 +2330,12 @@ app.put('/api/epg-sources/:id', (req, res) => {
   }
 });
 
-app.delete('/api/epg-sources/:id', (req, res) => {
+app.delete('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
+    // Authorization: Only admin can delete EPG sources
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const id = Number(req.params.id);
     
     // Delete cache file
@@ -2235,8 +2352,12 @@ app.delete('/api/epg-sources/:id', (req, res) => {
 });
 
 // Update single EPG source
-app.post('/api/epg-sources/:id/update', async (req, res) => {
+app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
   try {
+    // Authorization: Only admin can update EPG sources
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const id = req.params.id;
     
     // Check if it's a provider EPG
@@ -2267,8 +2388,12 @@ app.post('/api/epg-sources/:id/update', async (req, res) => {
 });
 
 // Update all EPG sources
-app.post('/api/epg-sources/update-all', async (req, res) => {
+app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
   try {
+    // Authorization: Only admin can update all EPG sources
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
     const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
     
