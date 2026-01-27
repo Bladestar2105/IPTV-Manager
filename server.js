@@ -351,15 +351,21 @@ async function performSync(providerId, userId, isManual = false) {
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
     
-    const checkExisting = db.prepare('SELECT id FROM provider_channels WHERE provider_id = ? AND remote_stream_id = ?');
+    // Optimized: Pre-fetch all channels to avoid N+1 query
+    const existingChannels = db.prepare('SELECT remote_stream_id, id FROM provider_channels WHERE provider_id = ?').all(providerId);
+    const existingMap = new Map();
+    for (const row of existingChannels) {
+      existingMap.set(row.remote_stream_id, row.id);
+    }
     
     db.transaction(() => {
       for (const ch of (channels || [])) {
         const sid = Number(ch.stream_id || ch.id || 0);
         if (sid > 0) {
-          const existing = checkExisting.get(providerId, sid);
+          const existingId = existingMap.get(sid);
+          let provChannelId;
           
-          if (existing) {
+          if (existingId) {
             // Update existing channel - preserves ID and user_channels relationships
             updateChannel.run(
               ch.name || 'Unknown',
@@ -370,9 +376,10 @@ async function performSync(providerId, userId, isManual = false) {
               sid
             );
             channelsUpdated++;
+            provChannelId = existingId;
           } else {
             // Insert new channel
-            insertChannel.run(
+            const info = insertChannel.run(
               providerId,
               sid,
               ch.name || 'Unknown',
@@ -382,6 +389,7 @@ async function performSync(providerId, userId, isManual = false) {
               ch.epg_channel_id || ''
             );
             channelsAdded++;
+            provChannelId = info.lastInsertRowid;
           }
           
           // Auto-add to user categories if enabled
@@ -390,8 +398,6 @@ async function performSync(providerId, userId, isManual = false) {
             const userCatId = categoryMap.get(catId);
             
             if (userCatId) {
-              const provChannelId = existing ? existing.id : db.prepare('SELECT id FROM provider_channels WHERE provider_id = ? AND remote_stream_id = ?').get(providerId, sid).id;
-              
               // Check if already added
               const existingUserChannel = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(userCatId, provChannelId);
               
