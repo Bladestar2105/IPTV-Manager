@@ -1699,12 +1699,14 @@ app.post('/api/epg-sources/:id/update', async (req, res) => {
 app.post('/api/epg-sources/update-all', async (req, res) => {
   try {
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
-    const providers = db.prepare("SELECT id, epg_url FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    
+    const results = [];
     
     // Update provider EPGs in parallel
     const providerPromises = providers.map(async (provider) => {
       try {
-        // No need to query DB again, we have epg_url
+        // Fetch provider EPG using URL directly from the provider object
         const response = await fetch(provider.epg_url);
         if (response.ok) {
           const epgData = await response.text();
