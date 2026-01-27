@@ -274,23 +274,30 @@ async function performSync(providerId, userId, isManual = false) {
     // Process categories and create mappings
     const categoryMap = new Map();
     
-    // Check if this is the first sync (no existing mappings)
-    const existingMappingsCount = db.prepare(`
-      SELECT COUNT(*) as count FROM category_mappings 
+    // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
+    const allMappings = db.prepare(`
+      SELECT * FROM category_mappings
       WHERE provider_id = ? AND user_id = ?
-    `).get(providerId, userId);
+    `).all(providerId, userId);
+
+    const isFirstSync = allMappings.length === 0;
     
-    const isFirstSync = existingMappingsCount.count === 0;
+    // Create lookup map and populate initial categoryMap
+    const mappingLookup = new Map();
+    for (const m of allMappings) {
+      const pCatId = Number(m.provider_category_id);
+      mappingLookup.set(pCatId, m);
+      if (m.user_category_id) {
+        categoryMap.set(pCatId, m.user_category_id);
+      }
+    }
     
     for (const provCat of providerCategories) {
       const catId = Number(provCat.category_id);
       const catName = provCat.category_name;
       
-      // Check if mapping exists
-      let mapping = db.prepare(`
-        SELECT * FROM category_mappings 
-        WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
-      `).get(providerId, userId, catId);
+      // Check if mapping exists using lookup
+      let mapping = mappingLookup.get(catId);
       
       // Auto-create categories if:
       // 1. No mapping exists AND not first sync AND auto_add enabled
@@ -313,6 +320,17 @@ async function performSync(providerId, userId, isManual = false) {
         `).run(providerId, userId, catId, catName, newCategoryId);
         
         categoryMap.set(catId, newCategoryId);
+
+        // Update lookup to prevent duplicates in current run
+        mappingLookup.set(catId, {
+          provider_id: providerId,
+          user_id: userId,
+          provider_category_id: catId,
+          provider_category_name: catName,
+          user_category_id: newCategoryId,
+          auto_created: 1
+        });
+
         categoriesAdded++;
         console.log(`  ✅ Created category: ${catName} (id=${newCategoryId})`);
       } else if (!mapping && isFirstSync) {
@@ -321,21 +339,21 @@ async function performSync(providerId, userId, isManual = false) {
           INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
           VALUES (?, ?, ?, ?, NULL, 0)
         `).run(providerId, userId, catId, catName);
+
+        // Update lookup to prevent duplicates in current run
+        mappingLookup.set(catId, {
+          provider_id: providerId,
+          user_id: userId,
+          provider_category_id: catId,
+          provider_category_name: catName,
+          user_category_id: null,
+          auto_created: 0
+        });
+
         console.log(`  📋 Registered category: ${catName} (no auto-create on first sync)`);
       } else if (mapping && mapping.user_category_id) {
-        categoryMap.set(catId, mapping.user_category_id);
+        // Already handled by initial population of categoryMap
       }
-    }
-    
-    // Load all existing mappings into categoryMap
-    const existingMappings = db.prepare(`
-      SELECT provider_category_id, user_category_id 
-      FROM category_mappings 
-      WHERE provider_id = ? AND user_id = ? AND user_category_id IS NOT NULL
-    `).all(providerId, userId);
-    
-    for (const mapping of existingMappings) {
-      categoryMap.set(Number(mapping.provider_category_id), mapping.user_category_id);
     }
     
     // Process channels
