@@ -1,3 +1,7 @@
+/**
+ * Author: Bladestar2105
+ * License: MIT
+ */
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

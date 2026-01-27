@@ -1,3 +1,7 @@
+/**
+ * Author: Bladestar2105
+ * License: MIT
+ */
 // JWT Token Management
 function getToken() {
   return localStorage.getItem('jwt_token');
