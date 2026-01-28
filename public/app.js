@@ -230,7 +230,7 @@ function updateProviderUserSelect(users) {
   const select = document.getElementById('provider-user-select');
   if (!select) return;
   const currentVal = select.value;
-  select.innerHTML = '<option value="">Select User...</option>';
+  select.innerHTML = `<option value="">${t('selectUserPlaceholder')}</option>`;
   users.forEach(u => {
     const opt = document.createElement('option');
     opt.value = u.id;
@@ -684,7 +684,7 @@ async function importSelectedCategories(withChannels) {
 
   const checkboxes = document.querySelectorAll('.cat-checkbox:checked');
   if (checkboxes.length === 0) {
-    alert(t('noCategoriesFound')); // Reusing key or should add 'noSelection'?
+    alert(t('noSelection'));
     return;
   }
 
@@ -1033,7 +1033,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
       });
-      alert(t('providerUpdated') || 'Provider updated');
+      alert(t('providerUpdated'));
       resetProviderForm();
     } else {
       await fetchJSON('/api/providers', {
@@ -1624,7 +1624,7 @@ document.addEventListener('DOMContentLoaded', () => {
        const selected = Array.from(document.querySelectorAll('.user-chan-check:checked')).map(cb => Number(cb.value));
        if (selected.length === 0) return;
 
-       if (!confirm(t('deleteChannelConfirm', {name: `${selected.length} items`}))) return;
+       if (!confirm(t('deleteChannelConfirm', {count: selected.length}))) return;
 
        try {
          await fetchJSON('/api/user-channels/bulk-delete', {
@@ -1651,7 +1651,7 @@ document.addEventListener('DOMContentLoaded', () => {
           let duration = blockForm.duration.value;
 
           if (duration === 'manual') {
-             const mins = prompt(t('minutes') || 'Minutes:', '60');
+             const mins = prompt(t('minutes'), '60');
              if (!mins) return;
              duration = Number(mins) * 60;
           } else {
@@ -1683,7 +1683,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   headers: {'Content-Type': 'application/json'},
                   body: JSON.stringify({ip_block_duration: duration})
               });
-              alert(t('settingsSaved') || 'Settings Saved');
+              alert(t('settingsSaved'));
           } catch(e) { alert(e.message); }
       });
   }
@@ -1770,7 +1770,7 @@ async function loadSecurity() {
     const logBody = document.getElementById('security-logs-tbody');
     logBody.innerHTML = '';
     if (logs.length === 0) {
-        logBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noLogs') || 'No logs found'}</td></tr>`;
+        logBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noLogs')}</td></tr>`;
     } else {
         logs.forEach(log => {
             const tr = document.createElement('tr');
@@ -1802,7 +1802,7 @@ async function loadSecurity() {
     if (blocked.length === 0) {
         const li = document.createElement('li');
         li.className = 'list-group-item text-muted';
-        li.textContent = 'None';
+        li.textContent = t('none');
         blockedList.appendChild(li);
     }
     blocked.forEach(b => {
@@ -1822,7 +1822,7 @@ async function loadSecurity() {
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm btn-outline-danger py-0';
-        btn.textContent = 'Unblock';
+        btn.textContent = t('unblock');
         btn.onclick = () => unblockIp(b.id);
 
         li.appendChild(div);
@@ -1836,7 +1836,7 @@ async function loadSecurity() {
     if (whitelist.length === 0) {
         const li = document.createElement('li');
         li.className = 'list-group-item text-muted';
-        li.textContent = 'None';
+        li.textContent = t('none');
         whitelistList.appendChild(li);
     }
     whitelist.forEach(w => {
@@ -1856,7 +1856,7 @@ async function loadSecurity() {
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm btn-outline-danger py-0';
-        btn.textContent = 'Remove';
+        btn.textContent = t('remove');
         btn.onclick = () => removeWhitelist(w.id);
 
         li.appendChild(div);
@@ -1868,7 +1868,7 @@ async function loadSecurity() {
     const clientLogBody = document.getElementById('client-logs-tbody');
     clientLogBody.innerHTML = '';
     if (clientLogs.length === 0) {
-        clientLogBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noLogs') || 'No logs found'}</td></tr>`;
+        clientLogBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noLogs')}</td></tr>`;
     } else {
         clientLogs.forEach(log => {
             const tr = document.createElement('tr');
@@ -1903,7 +1903,7 @@ async function loadSecurity() {
 }
 
 async function clearSecurityLogs() {
-    if(!confirm(t('confirmClearLogs') || 'Clear security logs?')) return;
+    if(!confirm(t('confirmClearLogs'))) return;
     try {
         await fetchJSON('/api/security/logs', {method: 'DELETE'});
         loadSecurity();
@@ -1911,7 +1911,7 @@ async function clearSecurityLogs() {
 }
 
 async function clearClientLogs() {
-    if(!confirm(t('confirmClearLogs') || 'Clear client logs?')) return;
+    if(!confirm(t('confirmClearLogs'))) return;
     try {
         await fetchJSON('/api/client-logs', {method: 'DELETE'});
         loadSecurity();
@@ -1919,7 +1919,7 @@ async function clearClientLogs() {
 }
 
 async function unblockIp(id) {
-    if(!confirm(t('confirmUnblock') || 'Unblock IP?')) return;
+    if(!confirm(t('confirmUnblock'))) return;
     try {
         await fetchJSON(`/api/security/block/${id}`, {method: 'DELETE'});
         loadSecurity();
@@ -1927,7 +1927,7 @@ async function unblockIp(id) {
 }
 
 async function removeWhitelist(id) {
-    if(!confirm(t('confirmRemoveWhitelist') || 'Remove from whitelist?')) return;
+    if(!confirm(t('confirmRemoveWhitelist'))) return;
     try {
         await fetchJSON(`/api/security/whitelist/${id}`, {method: 'DELETE'});
         loadSecurity();
@@ -2465,7 +2465,7 @@ function updateCatBulkDeleteBtn() {
     const btn = document.getElementById('cat-bulk-delete-btn');
     if (btn) {
         btn.style.display = count > 0 ? 'block' : 'none';
-        btn.textContent = `${t('deleteSelected') || 'Delete Selected'} (${count})`;
+        btn.textContent = `${t('deleteSelected')} (${count})`;
     }
 }
 
@@ -2474,6 +2474,6 @@ function updateChanBulkDeleteBtn() {
     const btn = document.getElementById('chan-bulk-delete-btn');
     if (btn) {
         btn.style.display = count > 0 ? 'block' : 'none';
-        btn.textContent = `${t('deleteSelected') || 'Delete'} (${count})`;
+        btn.textContent = `${t('deleteSelected')} (${count})`;
     }
 }

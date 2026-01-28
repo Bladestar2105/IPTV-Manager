@@ -34,7 +34,7 @@
     }
   </style>
 </head>
-<body class="bg-light">
+<body>
 
   <!-- Navbar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4" id="main-navbar" style="display: none;">
@@ -81,34 +81,30 @@
       <!-- Stats Cards -->
       <div class="row mb-4">
         <div class="col-md-3">
-          <div class="card text-white bg-primary mb-3">
+          <div class="card mb-3">
             <div class="card-body">
               <h5 class="card-title" data-i18n="totalUsers">Total Users</h5>
-              <p class="card-text display-4" id="stats-users">0</p>
             </div>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="card text-white bg-success mb-3">
+          <div class="card mb-3">
             <div class="card-body">
               <h5 class="card-title" data-i18n="totalProviders">Total Providers</h5>
-              <p class="card-text display-4" id="stats-providers">0</p>
             </div>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="card text-white bg-info mb-3">
+          <div class="card mb-3">
             <div class="card-body">
               <h5 class="card-title" data-i18n="activeStreams">Active Streams</h5>
-              <p class="card-text display-4" id="stats-streams">0</p>
             </div>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="card text-white bg-secondary mb-3">
+          <div class="card mb-3">
             <div class="card-body">
               <h5 class="card-title" data-i18n="epgSources">EPG Sources</h5>
-              <p class="card-text display-4" id="stats-epg">0</p>
             </div>
           </div>
         </div>
@@ -706,24 +702,24 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Edit User</h5>
+          <h5 class="modal-title" data-i18n="editUser">Edit User</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <form id="edit-user-form">
           <div class="modal-body">
             <input type="hidden" id="edit-user-id">
             <div class="mb-3">
-              <label class="form-label">Username</label>
+              <label class="form-label" data-i18n="username">Username</label>
               <input type="text" class="form-control" id="edit-user-username" required>
             </div>
             <div class="mb-3">
-              <label class="form-label">New Password</label>
-              <input type="password" class="form-control" id="edit-user-password" placeholder="Leave blank to keep current">
+              <label class="form-label" data-i18n="new_password">New Password</label>
+              <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+            <button type="submit" class="btn btn-primary" data-i18n="saveChanges">Save Changes</button>
           </div>
         </form>
       </div>
@@ -804,7 +800,7 @@
                 <div class="col-md-6">
                    <div class="form-check mt-4">
                       <input class="form-check-input" type="checkbox" name="epg_enabled" id="prov-epg-enabled" checked>
-                      <label class="form-check-label" for="prov-epg-enabled">Enable EPG</label>
+                      <label class="form-check-label" for="prov-epg-enabled" data-i18n="enableEpg">Enable EPG</label>
                    </div>
                 </div>
                 <div class="col-md-6">
