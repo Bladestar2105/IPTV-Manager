@@ -99,6 +99,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Browse',
+    updateAll: 'Update All',
     
     // Loading states
     loading: 'Loading...',
@@ -305,6 +307,8 @@ const translations = {
     noChannels: 'Keine Kanäle zugeordnet',
     pleaseSelectProvider: 'Bitte Provider auswählen',
     noChannelsAvailable: 'Keine Kanäle vorhanden',
+    available: 'Available',
+    assigned: 'Assigned',
     loadingChannels: '⏳ Lade Kanäle...',
     loadingError: '❌ Fehler beim Laden',
     noResults: '🔍 Keine Treffer für "{search}"',
@@ -340,6 +344,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Durchsuchen',
+    updateAll: 'Alle aktualisieren',
     
     // Loading states
     loading: 'Lädt...',
@@ -581,6 +587,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Parcourir',
+    updateAll: 'Tout mettre à jour',
     
     // Loading states
     loading: 'Chargement...',
@@ -822,6 +830,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Περιήγηση',
+    updateAll: 'Ενημέρωση όλων',
     
     // Loading states
     loading: 'Φόρτωση...',
