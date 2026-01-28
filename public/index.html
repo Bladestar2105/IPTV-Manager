@@ -51,6 +51,9 @@
           <li class="nav-item">
             <a class="nav-link" href="#" onclick="switchView('epg-mapping'); return false;" id="nav-epg-mapping" data-i18n="epgMapping">EPG Mapping</a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#" onclick="switchView('statistics'); return false;" id="nav-statistics" data-i18n="statistics">Statistics</a>
+          </li>
         </ul>
         <div class="d-flex align-items-center gap-2">
           <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto;">
@@ -208,7 +211,7 @@
             🔄 Update All EPG
           </button>
         </div>
-        <ul id="epg-sources-list" class="list-group"></ul>
+        <ul id="epg-sources-list" class="list-group" style="max-height: 400px; overflow-y: auto;"></ul>
       </div>
     </div>
 
@@ -220,6 +223,62 @@
     <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
     <p><strong data-i18n="epgUrlLabel">EPG URL</strong>: <code id="epg-url"></code></p>
     </div> <!-- End view-dashboard -->
+
+    <!-- View: Statistics -->
+    <div id="view-statistics" class="d-none">
+      <h2 data-i18n="statistics" class="mb-4">Statistics</h2>
+
+      <div class="row">
+        <!-- Active Streams -->
+        <div class="col-md-6 mb-4">
+          <div class="card h-100">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+              <span data-i18n="activeStreams">Active Streams</span>
+              <span class="badge bg-light text-dark" id="active-stream-count">0</span>
+            </div>
+            <div class="card-body p-0 table-responsive" style="max-height: 400px;">
+              <table class="table table-striped mb-0 small">
+                <thead>
+                  <tr>
+                    <th data-i18n="username">User</th>
+                    <th data-i18n="channelName">Channel</th>
+                    <th data-i18n="duration">Time</th>
+                    <th data-i18n="ip">IP</th>
+                  </tr>
+                </thead>
+                <tbody id="active-streams-tbody">
+                   <tr><td colspan="4" class="text-center text-muted" data-i18n="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Channels -->
+        <div class="col-md-6 mb-4">
+          <div class="card h-100">
+            <div class="card-header bg-secondary text-white">
+              <span data-i18n="topChannels">Top Channels</span>
+            </div>
+            <div class="card-body p-0 table-responsive" style="max-height: 400px;">
+              <table class="table table-striped mb-0 small">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th data-i18n="channelName">Channel</th>
+                    <th data-i18n="streamCount">Viewers</th>
+                    <th data-i18n="lastViewed">Last Viewed</th>
+                  </tr>
+                </thead>
+                <tbody id="top-channels-tbody">
+                   <tr><td colspan="4" class="text-center text-muted" data-i18n="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div> <!-- End view-statistics -->
 
     <!-- View: EPG Mapping -->
     <div id="view-epg-mapping" class="d-none">
@@ -282,12 +341,25 @@
         </div>
         <div class="modal-body">
           <input type="text" id="category-import-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchCategories" placeholder="🔍 Search categories..." />
+          <div class="d-flex justify-content-between mb-2">
+             <div>
+               <button class="btn btn-sm btn-outline-secondary" id="cat-select-all" data-i18n="selectAll">Select All</button>
+               <button class="btn btn-sm btn-outline-secondary" id="cat-deselect-all" data-i18n="deselectAll">Deselect All</button>
+             </div>
+             <div>
+               <span id="cat-selected-count" class="badge bg-info">0</span>
+             </div>
+          </div>
           <ul id="provider-categories-list" class="list-group" style="max-height:400px; overflow:auto;">
             <li class="list-group-item text-muted" data-i18n="loadingCategories">Loading categories...</li>
           </ul>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+          <div class="d-flex gap-2 w-100 justify-content-end">
+             <button type="button" class="btn btn-primary" id="btn-import-selected" data-i18n="importSelected">Import Selected</button>
+             <button type="button" class="btn btn-success" id="btn-import-selected-channels" data-i18n="importSelectedWithChannels">Import Selected w/ Channels</button>
+             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+          </div>
         </div>
       </div>
     </div>
