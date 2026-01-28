@@ -68,16 +68,16 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 
 4.  Start the server:
     ```bash
-    node server.js
+    npm start
     ```
 
 The application will be available at `http://localhost:3000`.
 
 ### First Time Setup
 - On first start, a default admin user is automatically created.
-- Credentials are displayed in the console and saved to `ADMIN_CREDENTIALS.txt`.
+- Credentials are displayed in the console (or set via `INITIAL_ADMIN_PASSWORD` environment variable).
 - **Default Username**: `admin`
-- **Default Password**: Random 16-character hex string.
+- **Default Password**: Random 16-character hex string (check console output).
 - ⚠️ **IMPORTANT**: Change the password immediately after first login!
 
 ## 📸 Screenshots
@@ -97,10 +97,6 @@ The application will be available at `http://localhost:3000`.
 | EPG Sources | EPG Browse |
 |:---:|:---:|
 | ![EPG Sources](docs/images/epg_sources.png) | ![EPG Browse](docs/images/epg_browse.png) |
-
-| Statistics |
-|:---:|
-| ![Statistics](docs/images/statistics.png) |
 
 ## 📚 API Documentation
 

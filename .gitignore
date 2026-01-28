@@ -1,48 +1,7 @@
-# Database
-db.sqlite
-db.sqlite-wal
-db.sqlite-shm
-
-# Node modules
 node_modules/
-
-# Vendor assets (will be auto-created)
-public/vendor/
-
-# Logs
-*.log
-npm-debug.log*
-
-# Environment
 .env
-.env.local
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Build
-dist/
-build/
-
-# Cache
-cache/
-
-# Credentials
-ADMIN_CREDENTIALS.txt
-TEST_CREDENTIALS.txt
-*.credentials.txt
-*test*.txt
-*_test_*.txt
+db.sqlite
 secret.key
-
-# Internal
-todo.md
-server_output.log
+cache/
+*.log
+.DS_Store

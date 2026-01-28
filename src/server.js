@@ -37,7 +37,7 @@ const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 10;
 // Encryption Configuration
 let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 if (!ENCRYPTION_KEY) {
-  const keyFile = path.join(__dirname, 'secret.key');
+  const keyFile = path.join(__dirname, '../secret.key');
   if (fs.existsSync(keyFile)) {
     ENCRYPTION_KEY = fs.readFileSync(keyFile, 'utf8').trim();
   } else {
@@ -83,7 +83,7 @@ function decrypt(text) {
 }
 
 // Create cache directories
-const CACHE_DIR = path.join(__dirname, 'cache');
+const CACHE_DIR = path.join(__dirname, '../cache');
 const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
 // Picon caching removed - using direct URLs for better performance
 
@@ -92,7 +92,19 @@ if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true
 
 // Security Middleware
 app.use(helmet({
-  contentSecurityPolicy: false, // Allow inline scripts for now
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "http:", "https:"],
+      connectSrc: ["'self'", "http:", "https:"],
+      frameSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: null,
+    },
+  },
   crossOriginEmbedderPolicy: false
 }));
 
@@ -167,18 +179,18 @@ app.use('/api', (req, res, next) => {
   // Allow CORS preflight
   if (req.method === 'OPTIONS') return next();
   // Public endpoints
-  if (req.path === '/login' || req.path === '/login/') return next();
+  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs') return next();
 
   authenticateToken(req, res, next);
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, '../public')));
 // Cache folder should not be publicly accessible via static route
 // EPG content is served via /xmltv.php which handles authentication
-// app.use('/cache', express.static(path.join(__dirname, 'cache')));
+// app.use('/cache', express.static(path.join(__dirname, '../cache')));
 
 // DB
-const db = new Database(path.join(__dirname, 'db.sqlite'));
+const db = new Database(path.join(__dirname, '../db.sqlite'));
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
 
@@ -344,6 +356,22 @@ try {
     );
 
     -- Picon cache table removed - using direct URLs for better performance
+
+    -- Settings
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    -- Client Logs
+    CREATE TABLE IF NOT EXISTS client_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      level TEXT DEFAULT 'error',
+      message TEXT,
+      timestamp INTEGER NOT NULL,
+      user_agent TEXT,
+      stack TEXT
+    );
   `);
   console.log("✅ Database OK");
   
@@ -775,6 +803,29 @@ function startEpgScheduler() {
   console.log('📅 EPG Scheduler started');
 }
 
+function getSetting(key, defaultValue) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    return row ? row.value : defaultValue;
+  } catch (e) {
+    return defaultValue;
+  }
+}
+
+function startCleanupScheduler() {
+  setInterval(() => {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      // Clean old client logs (7 days)
+      const retention = 7 * 86400;
+      db.prepare('DELETE FROM client_logs WHERE timestamp < ?').run(now - retention);
+    } catch (e) {
+      console.error('Cleanup error:', e);
+    }
+  }, 3600000); // Every hour
+}
+startCleanupScheduler();
+
 // Adult Content Detection
 function isAdultCategory(name) {
   const adultKeywords = [
@@ -907,14 +958,20 @@ async function getXtreamUser(req) {
     `).get(ip, failWindow).count;
 
     if (failCount >= 10) { // Threshold 10 for streaming clients
-      const blockDuration = 3600; // 1 hour
-      const expiresAt = now + blockDuration;
-      db.prepare(`
-        INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
-        ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
-      `).run(ip, 'Too many failed Xtream login attempts', expiresAt);
+      // Check whitelist before blocking
+      const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
 
-      console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed Xtream logins`);
+      if (!whitelisted) {
+        const durationSetting = getSetting('ip_block_duration', '3600');
+        const blockDuration = parseInt(durationSetting) || 3600;
+        const expiresAt = now + blockDuration;
+        db.prepare(`
+          INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
+          ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
+        `).run(ip, 'Too many failed Xtream login attempts', expiresAt);
+
+        console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed Xtream logins`);
+      }
     }
   }
 
@@ -1075,14 +1132,20 @@ app.post('/api/login', authLimiter, async (req, res) => {
     `).get(ip, failWindow).count;
 
     if (failCount >= 5) {
-      const blockDuration = 3600; // 1 hour
-      const expiresAt = now + blockDuration;
-      db.prepare(`
-        INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
-        ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
-      `).run(ip, 'Too many failed login attempts', expiresAt);
+      // Check whitelist before blocking
+      const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
 
-      console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed logins`);
+      if (!whitelisted) {
+        const durationSetting = getSetting('ip_block_duration', '3600');
+        const blockDuration = parseInt(durationSetting) || 3600;
+        const expiresAt = now + blockDuration;
+        db.prepare(`
+          INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
+          ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
+        `).run(ip, 'Too many failed login attempts', expiresAt);
+
+        console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed logins`);
+      }
     }
 
     return res.status(401).json({error: 'invalid_credentials'});
@@ -1727,6 +1790,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     const channel = db.prepare(`
       SELECT
         uc.id as user_channel_id,
+        pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
         p.url as provider_url,
@@ -1777,7 +1841,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager/2.5.1',
+        'User-Agent': 'IPTV-Manager',
         'Connection': 'keep-alive'
       },
       // Don't follow redirects automatically for better control
@@ -2522,7 +2586,7 @@ app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
 // Get available EPG sources from local JSON
 app.get('/api/epg-sources/available', authenticateToken, async (req, res) => {
   try {
-    const jsonPath = path.join(__dirname, 'public', 'epg_sources.json');
+    const jsonPath = path.join(__dirname, '../public', 'epg_sources.json');
     if (!fs.existsSync(jsonPath)) {
       return res.json([]);
     }
@@ -2762,12 +2826,69 @@ function levenshtein(a, b) {
   return matrix[b.length][a.length];
 }
 
+// === Settings API ===
+app.get('/api/settings', authenticateToken, (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM settings').all();
+    const settings = {};
+    rows.forEach(r => settings[r.key] = r.value);
+    res.json(settings);
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/settings', authenticateToken, (req, res) => {
+  try {
+    const settings = req.body;
+    const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    db.transaction(() => {
+      for (const [key, value] of Object.entries(settings)) {
+        insert.run(key, String(value));
+      }
+    })();
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// === Client Logs API ===
+app.post('/api/client-logs', (req, res) => {
+  try {
+    // Rate limit? Maybe rely on general limiter.
+    const { level, message, stack, user_agent } = req.body;
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare('INSERT INTO client_logs (level, message, stack, user_agent, timestamp) VALUES (?, ?, ?, ?, ?)')
+      .run(level || 'error', message || 'Unknown', stack || '', user_agent || '', now);
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.get('/api/client-logs', authenticateToken, (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const logs = db.prepare('SELECT * FROM client_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
+    res.json(logs);
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.delete('/api/client-logs', authenticateToken, (req, res) => {
+  try {
+    db.prepare('DELETE FROM client_logs').run();
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
 // === Security API ===
 app.get('/api/security/logs', authenticateToken, (req, res) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const logs = db.prepare('SELECT * FROM security_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
     res.json(logs);
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.delete('/api/security/logs', authenticateToken, (req, res) => {
+  try {
+    db.prepare('DELETE FROM security_logs').run();
+    res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
@@ -2782,6 +2903,12 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
   try {
     const { ip, reason, duration } = req.body; // duration in seconds
     if (!ip) return res.status(400).json({error: 'ip required'});
+
+    // Check whitelist
+    const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
+    if (whitelisted) {
+      return res.status(400).json({error: 'IP is whitelisted. Remove from whitelist first.'});
+    }
 
     const now = Math.floor(Date.now() / 1000);
     const expiresAt = now + (Number(duration) || 3600);

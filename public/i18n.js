@@ -12,6 +12,7 @@ const translations = {
     xtreamLogin: 'Xtream Codes Login',
     
     // User Section
+    totalUsers: 'Total Users',
     username: 'Username',
     password: 'Password',
     addUser: 'Add User',
@@ -19,6 +20,7 @@ const translations = {
     userCreated: '✅ User created',
     
     // Provider Section
+    totalProviders: 'Total Providers',
     providerName: 'Name',
     providerUrl: 'Provider URL',
     providerUsername: 'Username',
@@ -113,7 +115,7 @@ const translations = {
     authentication_required: 'Authentication required',
     
     // EPG Section
-    epgSources: '4. EPG Sources',
+    epgSources: 'EPG Sources',
     addEpgSource: '➕ Add EPG Source',
     browseEpgSources: '📚 Browse Available Sources',
     updateAllEpg: '🔄 Update All EPG',
@@ -237,6 +239,7 @@ const translations = {
     xtreamLogin: 'Xtream Codes Login',
     
     // User Section
+    totalUsers: 'Anzahl User',
     username: 'Benutzername',
     password: 'Passwort',
     addUser: 'User+',
@@ -244,6 +247,7 @@ const translations = {
     userCreated: '✅ User angelegt',
     
     // Provider Section
+    totalProviders: 'Anzahl Provider',
     providerName: 'Name',
     providerUrl: 'Provider URL',
     providerUsername: 'Benutzername',
@@ -338,7 +342,7 @@ const translations = {
     authentication_required: 'Authentifizierung erforderlich',
     
     // EPG Section
-    epgSources: '4. EPG-Quellen',
+    epgSources: 'EPG-Quellen',
     addEpgSource: '➕ EPG-Quelle hinzufügen',
     browseEpgSources: '📚 Verfügbare Quellen durchsuchen',
     updateAllEpg: '🔄 Alle EPGs aktualisieren',
@@ -462,6 +466,7 @@ const translations = {
     xtreamLogin: 'Connexion Xtream Codes',
     
     // User Section
+    totalUsers: 'Utilisateurs Totaux',
     username: "Nom d'utilisateur",
     password: 'Mot de passe',
     addUser: 'Ajouter Utilisateur',
@@ -469,6 +474,7 @@ const translations = {
     userCreated: '✅ Utilisateur créé',
     
     // Provider Section
+    totalProviders: 'Fournisseurs Totaux',
     providerName: 'Nom',
     providerUrl: 'URL du Fournisseur',
     providerUsername: "Nom d'utilisateur",
@@ -563,7 +569,7 @@ const translations = {
     authentication_required: 'Authentification requise',
     
     // EPG Section
-    epgSources: '4. Sources EPG',
+    epgSources: 'Sources EPG',
     addEpgSource: '➕ Ajouter Source EPG',
     browseEpgSources: '📚 Parcourir Sources Disponibles',
     updateAllEpg: '🔄 Tout Mettre à Jour',
@@ -687,6 +693,7 @@ const translations = {
     xtreamLogin: 'Σύνδεση Xtream Codes',
     
     // User Section
+    totalUsers: 'Σύνολο Χρηστών',
     username: 'Όνομα χρήστη',
     password: 'Κωδικός πρόσβασης',
     addUser: 'Προσθήκη Χρήστη',
@@ -694,6 +701,7 @@ const translations = {
     userCreated: '✅ Χρήστης δημιουργήθηκε',
     
     // Provider Section
+    totalProviders: 'Σύνολο Παρόχων',
     providerName: 'Όνομα',
     providerUrl: 'URL Παρόχου',
     providerUsername: 'Όνομα χρήστη',
@@ -778,7 +786,7 @@ const translations = {
     saving: 'Αποθήκευση...',
 
     // EPG Section
-    epgSources: '4. Πηγές EPG',
+    epgSources: 'Πηγές EPG',
     addEpgSource: '➕ Προσθήκη Πηγής EPG',
     browseEpgSources: '📚 Περιήγηση Πηγών',
     updateAllEpg: '🔄 Ενημέρωση Όλων',
