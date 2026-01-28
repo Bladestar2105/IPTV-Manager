@@ -114,10 +114,10 @@
         </div>
       </div>
 
-      <div class="row">
+      <div class="row mb-4">
         <!-- User List & Selection -->
-        <div class="col-md-4">
-          <div class="card mb-4">
+        <div class="col-md-6">
+          <div class="card h-100">
             <div class="card-header" data-i18n="userManagement">User Management</div>
             <div class="card-body">
                <form id="user-form" class="row g-2 mb-3">
@@ -128,9 +128,11 @@
                <ul id="user-list" class="list-group list-group-flush" style="max-height: 400px; overflow-y: auto;"></ul>
             </div>
           </div>
+        </div>
 
-          <!-- Provider Selection (Visible only when User Selected) -->
-          <div class="card mb-4" id="provider-section" style="display:none;">
+        <!-- Provider Selection (Visible only when User Selected) -->
+        <div class="col-md-6" id="provider-section" style="display:none;">
+          <div class="card h-100">
              <div class="card-header" data-i18n="providerManagement">Providers</div>
              <div class="card-body">
                 <div id="provider-list-container">
@@ -141,9 +143,11 @@
              </div>
           </div>
         </div>
+      </div>
 
+      <div class="row">
         <!-- Main Content Area -->
-        <div class="col-md-8">
+        <div class="col-12">
            <!-- Details Panel -->
            <div class="card mb-4">
               <div class="card-header">
