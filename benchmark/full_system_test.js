@@ -50,19 +50,23 @@ async function request(method, url, body = null, token = null) {
 }
 
 async function getAdminToken() {
-    let creds = '';
-    try {
-        creds = fs.readFileSync('ADMIN_CREDENTIALS.txt', 'utf8');
-    } catch(e) {
-        log('Could not read ADMIN_CREDENTIALS.txt', 'ERROR');
-        process.exit(1);
+    let username = process.env.ADMIN_USERNAME || 'admin';
+    let password = process.env.ADMIN_PASSWORD;
+
+    if (!password) {
+        let creds = '';
+        try {
+            creds = fs.readFileSync('ADMIN_CREDENTIALS.txt', 'utf8');
+            const usernameMatch = creds.match(/Username: (.*)/);
+            const passwordMatch = creds.match(/Password: (.*)/);
+
+            username = usernameMatch[1].trim();
+            password = passwordMatch[1].trim();
+        } catch(e) {
+            log('Could not read ADMIN_CREDENTIALS.txt and ADMIN_PASSWORD not set', 'ERROR');
+            process.exit(1);
+        }
     }
-
-    const usernameMatch = creds.match(/Username: (.*)/);
-    const passwordMatch = creds.match(/Password: (.*)/);
-
-    const username = usernameMatch[1].trim();
-    const password = passwordMatch[1].trim();
 
     const res = await request('POST', '/api/login', { username, password });
     if (!res.ok) {
