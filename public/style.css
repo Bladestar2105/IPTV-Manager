@@ -357,8 +357,8 @@ hr {
 }
 
 .form-check-input {
-  background-color: rgba(31, 41, 55, 0.8);
-  border-color: var(--tv-border);
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--tv-text-muted);
 }
 
 .form-check-input:checked {

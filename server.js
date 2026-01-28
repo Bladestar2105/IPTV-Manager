@@ -132,6 +132,34 @@ morgan.token('url', (req, res) => {
 });
 
 app.use(morgan(':method :url :status :response-time ms - :res[content-length]'));
+
+// IP Blocking Middleware
+app.use(async (req, res, next) => {
+  const ip = req.ip;
+  const now = Math.floor(Date.now() / 1000);
+
+  try {
+    // 1. Check Whitelist
+    const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
+    if (whitelisted) return next();
+
+    // 2. Check Blocklist
+    const blocked = db.prepare('SELECT * FROM blocked_ips WHERE ip = ?').get(ip);
+    if (blocked) {
+      if (blocked.expires_at > now) {
+        console.warn(`⛔ IP Blocked: ${ip} (Reason: ${blocked.reason})`);
+        return res.status(403).send('Access Denied');
+      } else {
+        // Expired, remove it
+        db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(blocked.id);
+      }
+    }
+  } catch (e) {
+    console.error('IP Check Error:', e);
+  }
+  next();
+});
+
 app.use('/api', apiLimiter);
 
 // Global API Authentication
@@ -291,6 +319,30 @@ try {
       FOREIGN KEY (provider_channel_id) REFERENCES provider_channels(id)
     );
     
+    -- Security Tables
+    CREATE TABLE IF NOT EXISTS security_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL,
+      action TEXT NOT NULL,
+      details TEXT,
+      timestamp INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS blocked_ips (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL UNIQUE,
+      reason TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS whitelisted_ips (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL UNIQUE,
+      description TEXT,
+      created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+
     -- Picon cache table removed - using direct URLs for better performance
   `);
   console.log("✅ Database OK");
@@ -829,7 +881,35 @@ async function authUser(username, password) {
 async function getXtreamUser(req) {
   const username = (req.params.username || req.query.username || '').trim();
   const password = (req.params.password || req.query.password || '').trim();
-  return await authUser(username, password);
+  const user = await authUser(username, password);
+
+  if (!user && username) {
+    const ip = req.ip;
+    const now = Math.floor(Date.now() / 1000);
+
+    // Log Failure
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'xtream_login_failed', `User: ${username}`, now);
+
+    // Check for brute force
+    const failWindow = now - 900; // 15 minutes
+    const failCount = db.prepare(`
+      SELECT COUNT(*) as count FROM security_logs
+      WHERE ip = ? AND action IN ('login_failed', 'xtream_login_failed') AND timestamp > ?
+    `).get(ip, failWindow).count;
+
+    if (failCount >= 10) { // Threshold 10 for streaming clients
+      const blockDuration = 3600; // 1 hour
+      const expiresAt = now + blockDuration;
+      db.prepare(`
+        INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
+        ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
+      `).run(ip, 'Too many failed Xtream login attempts', expiresAt);
+
+      console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed Xtream logins`);
+    }
+  }
+
+  return user;
 }
 
 // === API: Users ===
@@ -941,6 +1021,9 @@ app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
 
 // === API: Authentication ===
 app.post('/api/login', authLimiter, async (req, res) => {
+  const ip = req.ip;
+  const now = Math.floor(Date.now() / 1000);
+
   try {
     const { username, password } = req.body;
     
@@ -955,6 +1038,10 @@ app.post('/api/login', authLimiter, async (req, res) => {
       const isValid = await bcrypt.compare(password, admin.password);
       if (isValid) {
         const token = generateToken(admin);
+
+        // Log Success
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_success', `User: ${username}`, now);
+
         return res.json({
           token,
           user: {
@@ -968,6 +1055,27 @@ app.post('/api/login', authLimiter, async (req, res) => {
       }
     }
     
+    // Log Failure
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_failed', `User: ${username}`, now);
+
+    // Check for brute force
+    const failWindow = now - 900; // 15 minutes
+    const failCount = db.prepare(`
+      SELECT COUNT(*) as count FROM security_logs
+      WHERE ip = ? AND action = 'login_failed' AND timestamp > ?
+    `).get(ip, failWindow).count;
+
+    if (failCount >= 5) {
+      const blockDuration = 3600; // 1 hour
+      const expiresAt = now + blockDuration;
+      db.prepare(`
+        INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
+        ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
+      `).run(ip, 'Too many failed login attempts', expiresAt);
+
+      console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed logins`);
+    }
+
     return res.status(401).json({error: 'invalid_credentials'});
   } catch (e) {
     console.error('Login error:', e);
@@ -1776,6 +1884,35 @@ app.delete('/api/user-categories/:id', authenticateToken, (req, res) => {
   }
 });
 
+app.post('/api/user-categories/bulk-delete', authenticateToken, (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
+
+    db.transaction(() => {
+      for (const id of ids) {
+         db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
+         db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
+         db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
+      }
+    })();
+
+    res.json({success: true, deleted: ids.length});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/user-channels/bulk-delete', authenticateToken, (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
+
+    const placeholders = ids.map(() => '?').join(',');
+    db.prepare(`DELETE FROM user_channels WHERE id IN (${placeholders})`).run(...ids);
+
+    res.json({success: true, deleted: ids.length});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
 app.delete('/api/user-channels/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -2127,16 +2264,26 @@ app.get('/api/epg-sources', authenticateToken, (req, res) => {
     // Add provider EPG sources
     const providers = db.prepare("SELECT id, name, epg_url FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
     const allSources = [
-      ...providers.map(p => ({
-        id: `provider_${p.id}`,
-        name: `${p.name} (Provider EPG)`,
-        url: p.epg_url,
-        enabled: 1,
-        last_update: 0,
-        update_interval: 86400,
-        source_type: 'provider',
-        is_updating: 0
-      })),
+      ...providers.map(p => {
+        let lastUpdate = 0;
+        const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${p.id}.xml`);
+        if (fs.existsSync(cacheFile)) {
+          try {
+            lastUpdate = Math.floor(fs.statSync(cacheFile).mtimeMs / 1000);
+          } catch(e) {}
+        }
+
+        return {
+          id: `provider_${p.id}`,
+          name: `${p.name} (Provider EPG)`,
+          url: p.epg_url,
+          enabled: 1,
+          last_update: lastUpdate,
+          update_interval: 86400,
+          source_type: 'provider',
+          is_updating: 0
+        };
+      }),
       ...sources
     ];
     
@@ -2538,6 +2685,84 @@ function levenshtein(a, b) {
   }
   return matrix[b.length][a.length];
 }
+
+// === Security API ===
+app.get('/api/security/logs', authenticateToken, (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const logs = db.prepare('SELECT * FROM security_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
+    res.json(logs);
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.get('/api/security/blocked', authenticateToken, (req, res) => {
+  try {
+    const ips = db.prepare('SELECT * FROM blocked_ips ORDER BY created_at DESC').all();
+    res.json(ips);
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/security/block', authenticateToken, (req, res) => {
+  try {
+    const { ip, reason, duration } = req.body; // duration in seconds
+    if (!ip) return res.status(400).json({error: 'ip required'});
+
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = now + (Number(duration) || 3600);
+
+    db.prepare(`
+      INSERT INTO blocked_ips (ip, reason, expires_at) VALUES (?, ?, ?)
+      ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at, reason = excluded.reason
+    `).run(ip, reason || 'Manual Block', expiresAt);
+
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
+  try {
+    const id = req.params.id;
+    // Check if it looks like an IP or ID
+    if (id.includes('.') || id.includes(':')) {
+       db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(id);
+    } else {
+       db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(id);
+    }
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.get('/api/security/whitelist', authenticateToken, (req, res) => {
+  try {
+    const ips = db.prepare('SELECT * FROM whitelisted_ips ORDER BY created_at DESC').all();
+    res.json(ips);
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.post('/api/security/whitelist', authenticateToken, (req, res) => {
+  try {
+    const { ip, description } = req.body;
+    if (!ip) return res.status(400).json({error: 'ip required'});
+
+    db.prepare('INSERT OR REPLACE INTO whitelisted_ips (ip, description) VALUES (?, ?)').run(ip, description || '');
+    // Also remove from blocked if exists
+    db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(ip);
+
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+app.delete('/api/security/whitelist/:id', authenticateToken, (req, res) => {
+  try {
+     const id = req.params.id;
+     if (id.includes('.') || id.includes(':')) {
+        db.prepare('DELETE FROM whitelisted_ips WHERE ip = ?').run(id);
+     } else {
+        db.prepare('DELETE FROM whitelisted_ips WHERE id = ?').run(id);
+     }
+    res.json({success: true});
+  } catch (e) { res.status(500).json({error: e.message}); }
+});
 
 // Start
 app.listen(PORT, () => {
