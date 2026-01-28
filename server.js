@@ -178,9 +178,18 @@ try {
       logo TEXT DEFAULT '',
       stream_type TEXT DEFAULT 'live',
       epg_channel_id TEXT DEFAULT '',
+      original_sort_order INTEGER DEFAULT 0,
       UNIQUE(provider_id, remote_stream_id)
     );
     
+    CREATE TABLE IF NOT EXISTS stream_stats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id INTEGER,
+      views INTEGER DEFAULT 0,
+      last_viewed INTEGER DEFAULT 0,
+      FOREIGN KEY (channel_id) REFERENCES provider_channels(id)
+    );
+
     CREATE TABLE IF NOT EXISTS admin_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -291,6 +300,7 @@ try {
 
   // Migrate providers schema
   migrateProvidersSchema();
+  migrateChannelsSchema();
 
   // Migrate passwords
   migrateProviderPasswords();
@@ -320,6 +330,20 @@ function migrateProvidersSchema() {
     }
   } catch (e) {
     console.error('Schema migration error:', e);
+  }
+}
+
+function migrateChannelsSchema() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(provider_channels)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('original_sort_order')) {
+      db.exec('ALTER TABLE provider_channels ADD COLUMN original_sort_order INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: original_sort_order column added to provider_channels');
+    }
+  } catch (e) {
+    console.error('Channel Schema migration error:', e);
   }
 }
 
@@ -355,6 +379,8 @@ try {
 
 // Sync Scheduler
 let syncIntervals = new Map();
+// Active Streams Tracking
+const activeStreams = new Map();
 
 function calculateNextSync(interval) {
   const now = Math.floor(Date.now() / 1000);
@@ -439,13 +465,13 @@ async function performSync(providerId, userId, isManual = false) {
     // Prepare channel statements
     const insertChannel = db.prepare(`
       INSERT OR IGNORE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const updateChannel = db.prepare(`
       UPDATE provider_channels 
-      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?
+      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
     
@@ -524,7 +550,9 @@ async function performSync(providerId, userId, isManual = false) {
       }
 
       // 2. Process Channels
-      for (const ch of (channels || [])) {
+      const channelList = channels || [];
+      for (let i = 0; i < channelList.length; i++) {
+        const ch = channelList[i];
         const sid = Number(ch.stream_id || ch.id || 0);
         if (sid > 0) {
           const existingId = existingMap.get(sid);
@@ -537,6 +565,7 @@ async function performSync(providerId, userId, isManual = false) {
               Number(ch.category_id || 0),
               ch.stream_icon || '',
               ch.epg_channel_id || '',
+              i, // original_sort_order
               providerId,
               sid
             );
@@ -551,7 +580,8 @@ async function performSync(providerId, userId, isManual = false) {
               Number(ch.category_id || 0),
               ch.stream_icon || '',
               'live',
-              ch.epg_channel_id || ''
+              ch.epg_channel_id || '',
+              i // original_sort_order
             );
             channelsAdded++;
             provChannelId = info.lastInsertRowid;
@@ -1019,16 +1049,28 @@ app.get('/api/providers', authenticateToken, (req, res) => {
     }
 
     const providers = db.prepare(query).all(...params);
-    // Mask passwords
-    const safeProviders = providers.map(p => ({
-      ...p,
-      password: '********' // Masked
-    }));
+    // Mask passwords and add EPG info
+    const safeProviders = providers.map(p => {
+      let lastUpdate = 0;
+      if (p.epg_url) {
+         const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${p.id}.xml`);
+         if (fs.existsSync(cacheFile)) {
+             try {
+                lastUpdate = Math.floor(fs.statSync(cacheFile).mtimeMs / 1000);
+             } catch(e) {}
+         }
+      }
+      return {
+        ...p,
+        password: '********', // Masked
+        epg_last_updated: lastUpdate
+      };
+    });
     res.json(safeProviders);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/providers', authenticateToken, (req, res) => {
+app.post('/api/providers', authenticateToken, async (req, res) => {
   try {
     const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
@@ -1038,8 +1080,29 @@ app.post('/api/providers', authenticateToken, (req, res) => {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
 
-    if (epg_url && !/^https?:\/\//i.test(epg_url.trim())) {
+    let finalEpgUrl = (epg_url || '').trim();
+    if (finalEpgUrl && !/^https?:\/\//i.test(finalEpgUrl)) {
       return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
+    }
+
+    // Auto-discover EPG URL if missing
+    if (!finalEpgUrl) {
+      try {
+        const baseUrl = url.trim().replace(/\/+$/, '');
+        const discoveredUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(username.trim())}&password=${encodeURIComponent(password.trim())}`;
+        // Check if it exists (HEAD request with short timeout)
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(discoveredUrl, { method: 'HEAD', signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (resp.ok) {
+          finalEpgUrl = discoveredUrl;
+          console.log('✅ Auto-discovered EPG URL:', finalEpgUrl);
+        }
+      } catch (e) {
+        console.log('⚠️ EPG Auto-discovery failed:', e.message);
+      }
     }
 
     const encryptedPassword = encrypt(password.trim());
@@ -1052,7 +1115,7 @@ app.post('/api/providers', authenticateToken, (req, res) => {
       url.trim(),
       username.trim(),
       encryptedPassword,
-      (epg_url || '').trim(),
+      finalEpgUrl,
       user_id ? Number(user_id) : null,
       epg_update_interval ? Number(epg_update_interval) : 86400,
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1
@@ -1090,7 +1153,7 @@ app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
 
 app.get('/api/providers/:id/channels', authenticateToken, (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ? ORDER BY name').all(Number(req.params.id));
+    const rows = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ? ORDER BY original_sort_order ASC, name ASC').all(Number(req.params.id));
     res.json(rows);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -1170,10 +1233,11 @@ app.post('/api/providers/:providerId/import-category', authenticateToken, async 
     const newCategoryId = catInfo.lastInsertRowid;
 
     if (import_channels) {
+      // Use original_sort_order for correct import order
       const channels = db.prepare(`
         SELECT id FROM provider_channels 
         WHERE provider_id = ? AND original_category_id = ?
-        ORDER BY name
+        ORDER BY original_sort_order ASC, name ASC
       `).all(providerId, Number(category_id));
 
       const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
@@ -1198,6 +1262,73 @@ app.post('/api/providers/:providerId/import-category', authenticateToken, async 
         is_adult: isAdult
       });
     }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+// Import multiple categories
+app.post('/api/providers/:providerId/import-categories', authenticateToken, async (req, res) => {
+  try {
+    const providerId = Number(req.params.providerId);
+    const { user_id, categories } = req.body;
+
+    if (!user_id || !Array.isArray(categories) || categories.length === 0) {
+      return res.status(400).json({error: 'Missing required fields or invalid categories'});
+    }
+
+    const results = [];
+    let totalChannels = 0;
+    let totalCategories = 0;
+
+    const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)');
+    const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+    const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
+
+    db.transaction(() => {
+      let maxSort = getMaxSort.get(user_id).max_sort;
+
+      for (const cat of categories) {
+        if (!cat.id || !cat.name) continue;
+
+        const isAdult = isAdultCategory(cat.name) ? 1 : 0;
+        maxSort++;
+
+        const catInfo = insertUserCategory.run(user_id, cat.name, isAdult, maxSort);
+        const newCategoryId = catInfo.lastInsertRowid;
+        totalCategories++;
+
+        let channelsImported = 0;
+        if (cat.import_channels) {
+          const channels = db.prepare(`
+            SELECT id FROM provider_channels
+            WHERE provider_id = ? AND original_category_id = ?
+            ORDER BY original_sort_order ASC, name ASC
+          `).all(providerId, Number(cat.id));
+
+          channels.forEach((ch, idx) => {
+            insertChannel.run(newCategoryId, ch.id, idx);
+          });
+          channelsImported = channels.length;
+          totalChannels += channelsImported;
+        }
+
+        results.push({
+          category_id: cat.id,
+          new_id: newCategoryId,
+          name: cat.name,
+          channels_imported: channelsImported
+        });
+      }
+    })();
+
+    res.json({
+      success: true,
+      categories_imported: totalCategories,
+      channels_imported: totalChannels,
+      results
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({error: e.message});
@@ -1406,6 +1537,8 @@ async function cachePicon(originalUrl, channelName) {
 
 // === Stream Proxy ===
 app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
+  const connectionId = crypto.randomUUID();
+
   try {
     const streamId = Number(req.params.stream_id || 0);
     
@@ -1431,6 +1564,26 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
+    // Track active stream
+    const startTime = Date.now();
+    activeStreams.set(connectionId, {
+      id: connectionId,
+      user_id: user.id,
+      username: user.username,
+      channel_name: channel.name,
+      start_time: startTime,
+      ip: req.ip
+    });
+
+    // Update statistics in DB
+    const now = Math.floor(startTime / 1000);
+    const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
+    if (existingStat) {
+      db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
+    } else {
+      db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
+    }
+
     // Decrypt provider password
     channel.provider_pass = decrypt(channel.provider_pass);
 
@@ -1450,6 +1603,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     
     if (!upstream.ok || !upstream.body) {
       console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      activeStreams.delete(connectionId);
       return res.sendStatus(502);
     }
 
@@ -1475,6 +1629,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Stream error:', err.message);
       }
+      activeStreams.delete(connectionId);
       if (!res.headersSent) {
         res.sendStatus(502);
       }
@@ -1482,6 +1637,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     
     // Handle client disconnect gracefully
     req.on('close', () => {
+      activeStreams.delete(connectionId);
       if (upstream.body && !upstream.body.destroyed) {
         upstream.body.destroy();
       }
@@ -1489,9 +1645,37 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     
   } catch (e) {
     console.error('Stream proxy error:', e.message);
+    activeStreams.delete(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
     }
+  }
+});
+
+// === Statistics API ===
+app.get('/api/statistics', authenticateToken, (req, res) => {
+  try {
+    // Top Channels
+    const topChannels = db.prepare(`
+      SELECT ss.views, ss.last_viewed, pc.name, pc.logo
+      FROM stream_stats ss
+      JOIN provider_channels pc ON pc.id = ss.channel_id
+      ORDER BY ss.views DESC
+      LIMIT 10
+    `).all();
+
+    // Active Streams
+    const streams = Array.from(activeStreams.values()).map(s => ({
+      ...s,
+      duration: Math.floor((Date.now() - s.start_time) / 1000)
+    }));
+
+    res.json({
+      active_streams: streams,
+      top_channels: topChannels
+    });
+  } catch (e) {
+    res.status(500).json({error: e.message});
   }
 });
 
@@ -1852,6 +2036,24 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
        finalPassword = encrypt(password.trim());
     }
 
+    let finalEpgUrl = (epg_url || '').trim();
+    if (!finalEpgUrl) {
+       // Auto-discover if empty
+       try {
+        const baseUrl = url.trim().replace(/\/+$/, '');
+        // Use provided password or decrypt existing if masked
+        const pwdToUse = password.trim() === '********' ? decrypt(existing.password) : password.trim();
+        const usrToUse = username.trim();
+
+        const discoveredUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(usrToUse)}&password=${encodeURIComponent(pwdToUse)}`;
+
+        // Simple heuristic: if we are updating and URL/User/Pass changed, or just EPG is empty, try to fetch.
+        // We only save it if we can confirm it (optional, but good practice).
+        // Since this is PUT, let's just construct it if it's standard Xtream.
+        finalEpgUrl = discoveredUrl;
+       } catch(e) {}
+    }
+
     db.prepare(`
       UPDATE providers
       SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?
@@ -1861,7 +2063,7 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
       url.trim(),
       username.trim(),
       finalPassword,
-      (epg_url || '').trim(),
+      finalEpgUrl,
       user_id !== undefined ? (user_id ? Number(user_id) : null) : existing.user_id,
       epg_update_interval ? Number(epg_update_interval) : existing.epg_update_interval,
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
