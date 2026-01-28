@@ -41,6 +41,7 @@ TEST_CREDENTIALS.txt
 *.credentials.txt
 *test*.txt
 *_test_*.txt
+secret.key
 
 # Internal
 todo.md

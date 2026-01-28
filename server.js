@@ -19,6 +19,7 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 // Load environment variables
 dotenv.config();
@@ -29,9 +30,57 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Security configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-key-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 10;
+
+// Encryption Configuration
+let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY) {
+  const keyFile = path.join(__dirname, 'secret.key');
+  if (fs.existsSync(keyFile)) {
+    ENCRYPTION_KEY = fs.readFileSync(keyFile, 'utf8').trim();
+  } else {
+    ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(keyFile, ENCRYPTION_KEY);
+    console.log('🔐 Generated new unique encryption key and saved to secret.key');
+  }
+}
+// Ensure key is 32 bytes for AES-256
+if (Buffer.from(ENCRYPTION_KEY, 'hex').length !== 32) {
+  // Hash it if it's not the right length/format
+  ENCRYPTION_KEY = crypto.createHash('sha256').update(ENCRYPTION_KEY).digest('hex');
+}
+
+function encrypt(text) {
+  if (!text) return text;
+  try {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+  } catch (e) {
+    console.error('Encryption error:', e);
+    return text;
+  }
+}
+
+function decrypt(text) {
+  if (!text) return text;
+  try {
+    const textParts = text.split(':');
+    if (textParts.length !== 2) return text;
+    const iv = Buffer.from(textParts[0], 'hex');
+    const encryptedText = Buffer.from(textParts[1], 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  } catch (e) {
+    return text;
+  }
+}
 
 // Create cache directories
 const CACHE_DIR = path.join(__dirname, 'cache');
@@ -71,8 +120,30 @@ app.use(cors({
   origin: process.env.ALLOWED_ORIGINS || '*',
   credentials: true
 }));
-app.use(morgan('dev'));
+
+// Custom morgan token to redact sensitive info
+morgan.token('url', (req, res) => {
+  let url = req.originalUrl || req.url;
+  // Redact password in /live/ path
+  url = url.replace(/\/live\/([^/]+)\/([^/]+)\//, '/live/$1/********.redacted/');
+  // Redact password query param
+  url = url.replace(/([?&])password=[^&]*/i, '$1password=********');
+  return url;
+});
+
+app.use(morgan(':method :url :status :response-time ms - :res[content-length]'));
 app.use('/api', apiLimiter);
+
+// Global API Authentication
+app.use('/api', (req, res, next) => {
+  // Allow CORS preflight
+  if (req.method === 'OPTIONS') return next();
+  // Public endpoints
+  if (req.path === '/login' || req.path === '/login/') return next();
+
+  authenticateToken(req, res, next);
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 // Cache folder should not be publicly accessible via static route
 // EPG content is served via /xmltv.php which handles authentication
@@ -207,9 +278,34 @@ try {
   
   // Create default admin user if no users exist
   await createDefaultAdmin();
+
+  // Migrate passwords
+  migrateProviderPasswords();
 } catch (e) {
   console.error("❌ DB Error:", e.message);
   process.exit(1);
+}
+
+function migrateProviderPasswords() {
+  try {
+    const providers = db.prepare('SELECT * FROM providers').all();
+    let migrated = 0;
+    for (const p of providers) {
+      if (!p.password) continue;
+      // Check if already encrypted (try to decrypt)
+      if (p.password.includes(':')) {
+         const val = decrypt(p.password);
+         if (val !== p.password) continue; // Decryption successful, so it was already encrypted
+      }
+      // Encrypt
+      const enc = encrypt(p.password);
+      db.prepare('UPDATE providers SET password = ? WHERE id = ?').run(enc, p.id);
+      migrated++;
+    }
+    if (migrated > 0) console.log(`🔐 Encrypted passwords for ${migrated} providers`);
+  } catch (e) {
+    console.error('Migration error:', e);
+  }
 }
 
 // Migration: is_adult Spalte hinzufügen falls nicht vorhanden
@@ -246,6 +342,9 @@ async function performSync(providerId, userId, isManual = false) {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
     
+    // Decrypt password for usage
+    provider.password = decrypt(provider.password);
+
     const config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
     if (!config && !isManual) return;
     
@@ -555,13 +654,21 @@ async function createDefaultAdmin() {
     const adminCount = db.prepare('SELECT COUNT(*) as count FROM admin_users').get();
     
     if (adminCount.count === 0) {
-      // Generate random password
-      const crypto = await import('crypto');
-      const randomPassword = crypto.randomBytes(8).toString('hex');
+      // Use env password or generate random
+      const initialPassword = process.env.INITIAL_ADMIN_PASSWORD;
+      let passwordToUse;
+
+      if (initialPassword) {
+        passwordToUse = initialPassword;
+      } else {
+        const crypto = await import('crypto');
+        passwordToUse = crypto.randomBytes(8).toString('hex');
+      }
+
       const username = 'admin';
       
       // Hash password
-      const hashedPassword = await bcrypt.hash(randomPassword, BCRYPT_ROUNDS);
+      const hashedPassword = await bcrypt.hash(passwordToUse, BCRYPT_ROUNDS);
       
       // Create admin user in admin_users table (NOT in users table)
       db.prepare('INSERT INTO admin_users (username, password, is_active) VALUES (?, ?, 1)')
@@ -571,19 +678,11 @@ async function createDefaultAdmin() {
       console.log('🔐 DEFAULT ADMIN USER CREATED (WebGUI Only)');
       console.log('='.repeat(60));
       console.log(`Username: ${username}`);
-      console.log(`Password: ${randomPassword}`);
+      console.log(`Password: ${passwordToUse}`);
       console.log('='.repeat(60));
       console.log('⚠️  IMPORTANT: Please change this password after first login!');
       console.log('ℹ️  NOTE: Admin user is for WebGUI only, not for IPTV streams!');
       console.log('='.repeat(60) + '\\n');
-      
-      // Save credentials to file for reference
-      const fs = await import('fs');
-      const credentialsFile = path.join(__dirname, 'ADMIN_CREDENTIALS.txt');
-      const credentialsContent = `IPTV-Manager Default Admin Credentials\nGenerated: ${new Date().toISOString()}\n\nUsername: ${username}\nPassword: ${randomPassword}\n\n⚠️ IMPORTANT: \n- Change this password immediately after first login\n- Delete this file after noting the credentials\n- Keep these credentials secure\n- This admin user is for WebGUI management only\n- Create separate users for IPTV stream access\n`;
-      
-      fs.writeFileSync(credentialsFile, credentialsContent);
-      console.log(`📄 Credentials also saved to: ${credentialsFile}\\n`);
     }
   } catch (error) {
     console.error('❌ Error creating default admin:', error);
@@ -607,6 +706,13 @@ async function authUser(username, password) {
     console.error('authUser error:', e);
     return null;
   }
+}
+
+// Helper for Xtream endpoints
+async function getXtreamUser(req) {
+  const username = (req.params.username || req.query.username || '').trim();
+  const password = (req.params.password || req.query.password || '').trim();
+  return await authUser(username, password);
 }
 
 // === API: Users ===
@@ -765,7 +871,13 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
 // === API: Providers ===
 app.get('/api/providers', authenticateToken, (req, res) => {
   try {
-    res.json(db.prepare('SELECT * FROM providers').all());
+    const providers = db.prepare('SELECT * FROM providers').all();
+    // Mask passwords
+    const safeProviders = providers.map(p => ({
+      ...p,
+      password: '********' // Masked
+    }));
+    res.json(safeProviders);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
@@ -783,8 +895,10 @@ app.post('/api/providers', authenticateToken, (req, res) => {
       return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
     }
 
+    const encryptedPassword = encrypt(password.trim());
+
     const info = db.prepare('INSERT INTO providers (name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?)')
-      .run(name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim());
+      .run(name.trim(), url.trim(), username.trim(), encryptedPassword, (epg_url || '').trim());
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -829,6 +943,9 @@ app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => 
     const id = Number(req.params.id);
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!provider) return res.status(404).json({error: 'Provider not found'});
+
+    // Decrypt password
+    provider.password = decrypt(provider.password);
 
     let categories = [];
     
@@ -1028,7 +1145,7 @@ app.get('/player_api.php', async (req, res) => {
     const password = (req.query.password || '').trim();
     const action = (req.query.action || '').trim();
     
-    const user = await authUser(username, password);
+    const user = await getXtreamUser(req);
     if (!user) {
       return res.json({user_info: {auth: 0, message: 'Invalid credentials'}});
     }
@@ -1130,13 +1247,11 @@ async function cachePicon(originalUrl, channelName) {
 // === Stream Proxy ===
 app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
   try {
-    const username = (req.params.username || '').trim();
-    const password = (req.params.password || '').trim();
     const streamId = Number(req.params.stream_id || 0);
     
     if (!streamId) return res.sendStatus(404);
     
-    const user = await authUser(username, password);
+    const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
     const channel = db.prepare(`
@@ -1155,6 +1270,9 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     `).get(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
+
+    // Decrypt provider password
+    channel.provider_pass = decrypt(channel.provider_pass);
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.ts`;
@@ -1220,10 +1338,7 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
 // === XMLTV ===
 app.get('/xmltv.php', async (req, res) => {
   try {
-    const username = (req.query.username || '').trim();
-    const password = (req.query.password || '').trim();
-    
-    const user = await authUser(username, password);
+    const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
     // Collect all EPG data from cache
@@ -1557,11 +1672,21 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
       return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
     }
 
+    // Get existing to check for masked password
+    const existing = db.prepare('SELECT password FROM providers WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({error: 'provider not found'});
+
+    let finalPassword = existing.password;
+    // Only update password if it's not the mask
+    if (password.trim() !== '********') {
+       finalPassword = encrypt(password.trim());
+    }
+
     db.prepare(`
       UPDATE providers
       SET name = ?, url = ?, username = ?, password = ?, epg_url = ?
       WHERE id = ?
-    `).run(name.trim(), url.trim(), username.trim(), password.trim(), (epg_url || '').trim(), id);
+    `).run(name.trim(), url.trim(), username.trim(), finalPassword, (epg_url || '').trim(), id);
     
     res.json({success: true});
   } catch (e) {
