@@ -2,6 +2,37 @@
  * Author: Bladestar2105
  * License: MIT
  */
+
+window.onerror = function(msg, url, line, col, error) {
+   const stack = error ? error.stack : '';
+   logToBackend('error', msg, stack);
+};
+
+window.onunhandledrejection = function(event) {
+   logToBackend('error', 'Unhandled Rejection: ' + event.reason, '');
+};
+
+async function logToBackend(level, message, stack) {
+   try {
+      if (message.includes('Failed to log')) return;
+
+      const token = localStorage.getItem('jwt_token');
+      const headers = {'Content-Type': 'application/json'};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      await fetch('/api/client-logs', {
+         method: 'POST',
+         headers: headers,
+         body: JSON.stringify({
+            level,
+            message,
+            stack,
+            user_agent: navigator.userAgent
+         })
+      });
+   } catch(e) { console.error('Failed to log to backend', e); }
+}
+
 // JWT Token Management
 function getToken() {
   return localStorage.getItem('jwt_token');
@@ -111,9 +142,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+function updateStatsCounters(type, value) {
+    const el = document.getElementById(`stats-${type}`);
+    if (el) el.textContent = value;
+}
+
 // === User Management ===
 async function loadUsers() {
   const users = await fetchJSON('/api/users');
+  updateStatsCounters('users', users.length);
   const list = document.getElementById('user-list');
   list.innerHTML = '';
   
@@ -140,12 +177,12 @@ async function loadUsers() {
       }
 
       loadUserCategories();
-      loadProviders(); // Refresh providers to filter channel assignment dropdown
+      loadProviders(u.id); // Refresh providers
 
       // Update provider form user select if not editing
       const provForm = document.getElementById('provider-form');
-      if (!provForm.provider_id.value) {
-          provForm.user_id.value = u.id;
+      if (provForm && !provForm.provider_id.value) {
+          if(provForm.user_id) provForm.user_id.value = u.id;
       }
     };
     
@@ -235,14 +272,25 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
 });
 
 // === Provider Management ===
-async function loadProviders() {
+async function loadProviders(filterUserId = null) {
   const providers = await fetchJSON('/api/providers');
+  updateStatsCounters('providers', providers.length);
+
   const list = document.getElementById('provider-list');
   list.innerHTML = '';
 
   updateChannelProviderSelect(providers);
 
-  providers.forEach(p => {
+  const targetUserId = filterUserId || selectedUserId;
+  const section = document.getElementById('provider-section');
+  if (section) section.style.display = targetUserId ? 'block' : 'none';
+
+  // Filter for display
+  const providersToRender = targetUserId
+      ? providers.filter(p => p.user_id == targetUserId)
+      : [];
+
+  providersToRender.forEach(p => {
     const li = document.createElement('li');
     li.className = 'list-group-item';
     
@@ -354,20 +402,25 @@ function prepareEditProvider(p) {
   form.epg_enabled.checked = p.epg_enabled !== 0;
 
   document.getElementById('save-provider-btn').textContent = t('saveChanges') || 'Save';
-  document.getElementById('cancel-edit-provider').style.display = 'inline-block';
 
-  form.scrollIntoView({ behavior: 'smooth' });
+  // Show Modal
+  const modalEl = document.getElementById('add-provider-modal');
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
 }
 
-document.getElementById('cancel-edit-provider').addEventListener('click', resetProviderForm);
+function showAddProviderModal() {
+    const modal = new bootstrap.Modal(document.getElementById('add-provider-modal'));
+    resetProviderForm();
+    modal.show();
+}
 
 function resetProviderForm() {
   const form = document.getElementById('provider-form');
   form.reset();
   form.provider_id.value = '';
   document.getElementById('save-provider-btn').textContent = t('addProvider');
-  document.getElementById('cancel-edit-provider').style.display = 'none';
-  if (selectedUserId) form.user_id.value = selectedUserId;
+  if (selectedUserId && form.user_id) form.user_id.value = selectedUserId;
 }
 
 // === Category Management ===
@@ -993,7 +1046,13 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
       if (selectedUserId) f.user_id.value = selectedUserId;
       alert(t('providerCreated'));
     }
-    loadProviders();
+
+    // Close Modal
+    const modalEl = document.getElementById('add-provider-modal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+
+    loadProviders(selectedUserId);
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   }
@@ -1167,6 +1226,7 @@ let availableEpgSources = [];
 async function loadEpgSources() {
   try {
     const sources = await fetchJSON('/api/epg-sources');
+    updateStatsCounters('epg', sources.length);
     const list = document.getElementById('epg-sources-list');
     list.innerHTML = '';
     
@@ -1612,6 +1672,22 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
 
+  const settingsForm = document.getElementById('security-settings-form');
+  if (settingsForm) {
+      settingsForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const duration = settingsForm.ip_block_duration.value;
+          try {
+              await fetchJSON('/api/settings', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ip_block_duration: duration})
+              });
+              alert(t('settingsSaved') || 'Settings Saved');
+          } catch(e) { alert(e.message); }
+      });
+  }
+
   const whitelistForm = document.getElementById('whitelist-ip-form');
   if (whitelistForm) {
       whitelistForm.addEventListener('submit', async (e) => {
@@ -1677,11 +1753,18 @@ function switchView(viewName) {
 
 async function loadSecurity() {
   try {
-    const [logs, blocked, whitelist] = await Promise.all([
+    const [logs, blocked, whitelist, settings, clientLogs] = await Promise.all([
       fetchJSON('/api/security/logs'),
       fetchJSON('/api/security/blocked'),
-      fetchJSON('/api/security/whitelist')
+      fetchJSON('/api/security/whitelist'),
+      fetchJSON('/api/settings'),
+      fetchJSON('/api/client-logs')
     ]);
+
+    // Render Settings
+    if (document.getElementById('setting-block-duration')) {
+        document.getElementById('setting-block-duration').value = settings.ip_block_duration || '3600';
+    }
 
     // Render Logs
     const logBody = document.getElementById('security-logs-tbody');
@@ -1781,9 +1864,58 @@ async function loadSecurity() {
         whitelistList.appendChild(li);
     });
 
+    // Render Client Logs
+    const clientLogBody = document.getElementById('client-logs-tbody');
+    clientLogBody.innerHTML = '';
+    if (clientLogs.length === 0) {
+        clientLogBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noLogs') || 'No logs found'}</td></tr>`;
+    } else {
+        clientLogs.forEach(log => {
+            const tr = document.createElement('tr');
+            tr.className = log.level === 'error' ? 'table-danger' : '';
+
+            const tdDate = document.createElement('td');
+            tdDate.textContent = new Date(log.timestamp * 1000).toLocaleString();
+
+            const tdLevel = document.createElement('td');
+            tdLevel.textContent = log.level;
+
+            const tdMessage = document.createElement('td');
+            tdMessage.textContent = log.message;
+
+            const tdStack = document.createElement('td');
+            const small = document.createElement('small');
+            small.textContent = log.stack || log.user_agent || '';
+            tdStack.appendChild(small);
+
+            tr.appendChild(tdDate);
+            tr.appendChild(tdLevel);
+            tr.appendChild(tdMessage);
+            tr.appendChild(tdStack);
+
+            clientLogBody.appendChild(tr);
+        });
+    }
+
   } catch(e) {
     console.error('Security load error:', e);
   }
+}
+
+async function clearSecurityLogs() {
+    if(!confirm(t('confirmClearLogs') || 'Clear security logs?')) return;
+    try {
+        await fetchJSON('/api/security/logs', {method: 'DELETE'});
+        loadSecurity();
+    } catch(e) { alert(e.message); }
+}
+
+async function clearClientLogs() {
+    if(!confirm(t('confirmClearLogs') || 'Clear client logs?')) return;
+    try {
+        await fetchJSON('/api/client-logs', {method: 'DELETE'});
+        loadSecurity();
+    } catch(e) { alert(e.message); }
 }
 
 async function unblockIp(id) {
@@ -1805,6 +1937,7 @@ async function removeWhitelist(id) {
 async function loadStatistics() {
   try {
     const data = await fetchJSON('/api/statistics');
+    updateStatsCounters('streams', data.active_streams.length);
 
     // Active Streams
     const activeTbody = document.getElementById('active-streams-tbody');

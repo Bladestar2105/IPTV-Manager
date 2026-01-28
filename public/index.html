@@ -78,186 +78,192 @@
     <div id="view-dashboard">
       <h1 class="mb-4" data-i18n="title">IPTV-Manager</h1>
 
-    <!-- 1. Users -->
-    <h3 data-i18n="userManagement">1. User Management</h3>
-    <div class="row mb-4">
-      <div class="col-md-6">
-        <form id="user-form" class="row g-2 mb-3">
-          <div class="col-4"><input class="form-control" name="username" data-i18n-placeholder="username" placeholder="Username" required /></div>
-          <div class="col-4"><input class="form-control" name="password" type="password" data-i18n-placeholder="password" placeholder="Password" required /></div>
-          <div class="col-4"><button class="btn btn-primary w-100" type="submit" data-i18n="addUser">Add User</button></div>
-        </form>
-        <ul id="user-list" class="list-group"></ul>
+      <!-- Stats Cards -->
+      <div class="row mb-4">
+        <div class="col-md-3">
+          <div class="card text-white bg-primary mb-3">
+            <div class="card-body">
+              <h5 class="card-title" data-i18n="totalUsers">Total Users</h5>
+              <p class="card-text display-4" id="stats-users">0</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card text-white bg-success mb-3">
+            <div class="card-body">
+              <h5 class="card-title" data-i18n="totalProviders">Total Providers</h5>
+              <p class="card-text display-4" id="stats-providers">0</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card text-white bg-info mb-3">
+            <div class="card-body">
+              <h5 class="card-title" data-i18n="activeStreams">Active Streams</h5>
+              <p class="card-text display-4" id="stats-streams">0</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="card text-white bg-secondary mb-3">
+            <div class="card-body">
+              <h5 class="card-title" data-i18n="epgSources">EPG Sources</h5>
+              <p class="card-text display-4" id="stats-epg">0</p>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
 
-    <!-- 2. Providers -->
-    <h3 data-i18n="providerManagement">2. Provider Management</h3>
-    <div class="row mb-4">
-      <div class="col-md-12">
-        <form id="provider-form" class="row g-2 mb-3 align-items-end">
-          <input type="hidden" name="provider_id" value="">
-          <div class="col-md-2">
-            <label class="form-label small mb-1">Name</label>
-            <input class="form-control form-control-sm" name="name" data-i18n-placeholder="providerName" placeholder="Name" required />
-          </div>
-          <div class="col-md-3">
-            <label class="form-label small mb-1">URL</label>
-            <input class="form-control form-control-sm" name="url" placeholder="http://provider.com" required />
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small mb-1">Username</label>
-            <input class="form-control form-control-sm" name="username" data-i18n-placeholder="providerUsername" placeholder="Username" required />
-          </div>
-          <div class="col-md-2">
-            <label class="form-label small mb-1">Password</label>
-            <input class="form-control form-control-sm" name="password" data-i18n-placeholder="providerPassword" placeholder="Password" required />
-          </div>
-          <div class="col-md-3">
-            <label class="form-label small mb-1">EPG URL</label>
-            <input class="form-control form-control-sm" name="epg_url" data-i18n-placeholder="epgUrl" placeholder="EPG URL (optional)" />
+      <div class="row">
+        <!-- User List & Selection -->
+        <div class="col-md-4">
+          <div class="card mb-4">
+            <div class="card-header" data-i18n="userManagement">User Management</div>
+            <div class="card-body">
+               <form id="user-form" class="row g-2 mb-3">
+                  <div class="col-4"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" placeholder="Username" required /></div>
+                  <div class="col-4"><input class="form-control form-control-sm" name="password" type="password" data-i18n-placeholder="password" placeholder="Password" required /></div>
+                  <div class="col-4"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
+               </form>
+               <ul id="user-list" class="list-group list-group-flush" style="max-height: 400px; overflow-y: auto;"></ul>
+            </div>
           </div>
 
-          <div class="col-md-3">
-            <label class="form-label small mb-1">Owner</label>
-            <select class="form-select form-select-sm" name="user_id" id="provider-user-select" required>
-               <option value="">Select User...</option>
-            </select>
-          </div>
-
-          <div class="col-md-9">
-             <div class="row align-items-end">
-                <div class="col-auto">
-                   <div class="form-check mb-2">
-                      <input class="form-check-input" type="checkbox" name="epg_enabled" id="prov-epg-enabled" checked>
-                      <label class="form-check-label small" for="prov-epg-enabled">Enable EPG</label>
-                   </div>
-                </div>
-                <div class="col-auto">
-                    <label class="form-label small mb-1">EPG Interval</label>
-                    <select class="form-select form-select-sm" name="epg_update_interval">
-                        <option value="3600">1h</option>
-                        <option value="21600">6h</option>
-                        <option value="43200">12h</option>
-                        <option value="86400" selected>24h</option>
-                    </select>
-                </div>
-                <div class="col text-end">
-                   <button type="button" id="cancel-edit-provider" class="btn btn-secondary btn-sm me-2" style="display:none;">Cancel</button>
-                   <button class="btn btn-primary btn-sm" type="submit" id="save-provider-btn" data-i18n="addProvider">Add Provider</button>
+          <!-- Provider Selection (Visible only when User Selected) -->
+          <div class="card mb-4" id="provider-section" style="display:none;">
+             <div class="card-header" data-i18n="providerManagement">Providers</div>
+             <div class="card-body">
+                <div id="provider-list-container">
+                   <p class="text-muted small" data-i18n="selectUserHint">Providers for selected user:</p>
+                   <ul id="provider-list" class="list-group list-group-flush mb-3"></ul>
+                   <button class="btn btn-sm btn-outline-primary w-100" onclick="showAddProviderModal()" data-i18n="addProvider">Add Provider</button>
                 </div>
              </div>
           </div>
-        </form>
-        <ul id="provider-list" class="list-group"></ul>
-      </div>
-    </div>
-
-    <!-- 3. User-Kategorien & Kanäle -->
-    <h3 data-i18n="categoriesChannels">3. User Categories & Channels</h3>
-    <div class="row">
-      <div class="col-md-4">
-        <h5 data-i18n="selectedUser">Selected User</h5>
-        <p id="selected-user-label"><em data-i18n="noUserSelected">No user selected</em></p>
-        
-        <button id="import-categories-btn" class="btn btn-outline-primary btn-sm w-100 mb-2" data-i18n="importCategories">
-          📥 Import Provider Categories
-        </button>
-        
-        <form id="category-form" class="row g-2 mb-3">
-          <div class="col-8"><input class="form-control" name="name" data-i18n-placeholder="categoryName" placeholder="Category Name" required /></div>
-          <div class="col-4"><button class="btn btn-primary w-100" type="submit" data-i18n="addCategory">Add Category</button></div>
-        </form>
-
-        <div class="d-flex justify-content-between align-items-center mb-2">
-           <div class="form-check">
-             <input class="form-check-input" type="checkbox" id="cat-select-all-toggle">
-             <label class="form-check-label small text-muted" for="cat-select-all-toggle" data-i18n="selectAll">Select All</label>
-           </div>
-           <button class="btn btn-sm btn-danger" id="cat-bulk-delete-btn" style="display:none;" data-i18n="deleteSelected">Delete Selected</button>
         </div>
 
-        <p class="small text-secondary" data-i18n="dragToSort">🖐️ Drag & Drop to sort</p>
-        <ul id="category-list" class="list-group" style="max-height: 500px; overflow-y: auto;"></ul>
+        <!-- Main Content Area -->
+        <div class="col-md-8">
+           <!-- Details Panel -->
+           <div class="card mb-4">
+              <div class="card-header">
+                 <span data-i18n="selectedUser">Selected User</span>: <span id="selected-user-label" class="fw-bold">-</span>
+              </div>
+              <div class="card-body">
+                 <!-- Tabs for User Details -->
+                 <ul class="nav nav-tabs mb-3" id="user-tabs" role="tablist">
+                    <li class="nav-item">
+                       <button class="nav-link active" id="tab-channels-btn" data-bs-toggle="tab" data-bs-target="#tab-channels" type="button" data-i18n="channels">Channels</button>
+                    </li>
+                    <li class="nav-item">
+                       <button class="nav-link" id="tab-xtream-btn" data-bs-toggle="tab" data-bs-target="#tab-xtream" type="button" data-i18n="xtreamCodes">Xtream Codes</button>
+                    </li>
+                 </ul>
+
+                 <div class="tab-content" id="user-tab-content">
+                    <!-- Channels Tab -->
+                    <div class="tab-pane fade show active" id="tab-channels">
+                       <div class="row">
+                          <div class="col-md-5">
+                             <h6 data-i18n="categories">Categories</h6>
+                             <form id="category-form" class="input-group input-group-sm mb-2">
+                                <input class="form-control" name="name" placeholder="New Category" required />
+                                <button class="btn btn-outline-secondary" type="submit">+</button>
+                             </form>
+                             <div class="d-flex justify-content-between align-items-center mb-1">
+                                <div class="form-check form-check-sm">
+                                   <input class="form-check-input" type="checkbox" id="cat-select-all-toggle">
+                                   <label class="form-check-label small" for="cat-select-all-toggle">All</label>
+                                </div>
+                                <button class="btn btn-sm btn-danger py-0" id="cat-bulk-delete-btn" style="display:none;">Del</button>
+                             </div>
+                             <ul id="category-list" class="list-group small" style="max-height: 400px; overflow-y: auto;"></ul>
+                             <button id="import-categories-btn" class="btn btn-outline-primary btn-sm w-100 mt-2" data-i18n="importCategories">Import Categories</button>
+                          </div>
+                          <div class="col-md-7">
+                             <h6 data-i18n="channels">Channels</h6>
+                             <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
+                             <input type="text" id="channel-search" class="form-control form-control-sm mb-2" placeholder="Search..." disabled />
+
+                             <div class="row g-2">
+                                <div class="col-6">
+                                   <div class="border rounded p-1 bg-light small text-center">Available</div>
+                                   <ul id="provider-channel-list" class="list-group small mt-1" style="max-height: 300px; overflow-y: auto;"></ul>
+                                </div>
+                                <div class="col-6">
+                                   <div class="border rounded p-1 bg-light small text-center">Assigned</div>
+                                   <div class="d-flex justify-content-between align-items-center mb-1 px-1">
+                                      <div class="form-check form-check-sm">
+                                         <input class="form-check-input" type="checkbox" id="chan-select-all-toggle">
+                                      </div>
+                                      <button class="btn btn-sm btn-danger py-0" id="chan-bulk-delete-btn" style="display:none;">Del</button>
+                                   </div>
+                                   <ul id="user-channel-list" class="list-group small mt-1" style="max-height: 300px; overflow-y: auto;"></ul>
+                                </div>
+                             </div>
+                          </div>
+                       </div>
+                    </div>
+
+                    <!-- Xtream Codes Tab -->
+                    <div class="tab-pane fade" id="tab-xtream">
+                       <p><strong data-i18n="url">URL</strong>: <code id="xtream-url"></code></p>
+                       <p><strong data-i18n="username">Username</strong>: <code id="xtream-user">-</code></p>
+                       <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
+                       <p><strong data-i18n="epgUrlLabel">EPG URL</strong>: <code id="epg-url"></code></p>
+                       <hr>
+                       <label class="form-label" data-i18n="m3uLink">M3U Link</label>
+                       <div class="input-group">
+                          <code id="m3u-link" class="form-control bg-light">-</code>
+                          <button class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('m3u-link').textContent)">📋</button>
+                       </div>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        </div>
       </div>
       
-      <div class="col-md-8">
-        <h5 data-i18n="channelAssignment">Channel Assignment</h5>
-        <div class="card mb-3">
-          <div class="card-body">
-            <label class="form-label" data-i18n="selectProvider">Select Provider</label>
-            <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
-            <input type="text" id="channel-search" class="form-control form-control-sm" data-i18n-placeholder="searchChannels" placeholder="🔍 Search channels..." disabled />
-            <small class="text-secondary" data-i18n="searchChannelsHint">Select provider, then search channels</small>
-          </div>
-        </div>
-        
-        <div class="row">
-          <div class="col-md-6">
-            <h6 data-i18n="providerChannels">Provider Channels</h6>
-            <ul id="provider-channel-list" class="list-group small" style="max-height:400px; overflow:auto;">
-              <li class="list-group-item text-secondary" data-i18n="pleaseSelectProvider">Please select provider</li>
-            </ul>
-          </div>
-          <div class="col-md-6">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-               <h6><span data-i18n="userChannels">User Channels</span> <small class="text-secondary" data-i18n="dragToSortChannels">🖐️ Drag & Drop</small></h6>
-               <div>
-                 <button class="btn btn-sm btn-danger py-0 px-2" id="chan-bulk-delete-btn" style="display:none; font-size: 0.8rem;" data-i18n="deleteSelected">Delete Selected</button>
-               </div>
+      <div class="card mt-4">
+         <div class="card-header d-flex justify-content-between align-items-center">
+            <span data-i18n="epgSources">EPG Sources</span>
+            <div>
+               <button id="add-epg-source-btn" class="btn btn-sm btn-primary">+</button>
+               <button id="browse-epg-sources-btn" class="btn btn-sm btn-secondary">Browse</button>
+               <button id="update-all-epg-btn" class="btn btn-sm btn-info">Update All</button>
             </div>
-            <div class="form-check mb-2">
-                 <input class="form-check-input" type="checkbox" id="chan-select-all-toggle">
-                 <label class="form-check-label small text-muted" for="chan-select-all-toggle" data-i18n="selectAll">Select All</label>
-            </div>
-            <ul id="user-channel-list" class="list-group small" style="max-height:400px; overflow:auto;"></ul>
-          </div>
-        </div>
+         </div>
+         <div class="card-body">
+            <ul id="epg-sources-list" class="list-group list-group-flush"></ul>
+         </div>
       </div>
-    </div>
 
-    <!-- 4. EPG Sources -->
-    <hr class="my-4">
-    <h3 data-i18n="epgSources">4. EPG Sources</h3>
-    <div class="row mb-4">
-      <div class="col-md-12">
-        <div class="d-flex gap-2 mb-3">
-          <button id="add-epg-source-btn" class="btn btn-outline-primary btn-sm" data-i18n="addEpgSource">
-            ➕ Add EPG Source
-          </button>
-          <button id="browse-epg-sources-btn" class="btn btn-outline-secondary btn-sm" data-i18n="browseEpgSources">
-            📚 Browse Available Sources
-          </button>
-          <button id="update-all-epg-btn" class="btn btn-outline-info btn-sm" data-i18n="updateAllEpg">
-            🔄 Update All EPG
-          </button>
-        </div>
-        <ul id="epg-sources-list" class="list-group" style="max-height: 400px; overflow-y: auto;"></ul>
-      </div>
-    </div>
-
-    <!-- 5. Xtream Codes Info -->
-    <hr class="my-4">
-    <h3 data-i18n="xtreamLogin">5. Xtream Codes Login</h3>
-    <p><strong data-i18n="url">URL</strong>: <code id="xtream-url"></code></p>
-    <p><strong data-i18n="username">Username</strong>: <code id="xtream-user">-</code></p>
-    <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
-    <p><strong data-i18n="epgUrlLabel">EPG URL</strong>: <code id="epg-url"></code></p>
-
-    <!-- 6. M3U Playlist -->
-    <hr class="my-4">
-    <h3 data-i18n="m3uPlaylist">6. M3U Playlist</h3>
-    <p><span data-i18n="m3uDescription">Use this link in your IPTV player.</span></p>
-    <div class="input-group mb-3">
-      <span class="input-group-text" data-i18n="m3uLink">M3U Link</span>
-      <code id="m3u-link" class="form-control" style="display: flex; align-items: center;">-</code>
-      <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('m3u-link').textContent)">📋</button>
-    </div>
     </div> <!-- End view-dashboard -->
 
     <!-- View: Security -->
     <div id="view-security" class="d-none">
       <h3 data-i18n="security">Security</h3>
+
+      <!-- Settings -->
+      <div class="card mb-4">
+         <div class="card-header" data-i18n="settings">Settings</div>
+         <div class="card-body">
+            <form id="security-settings-form" class="row align-items-end">
+               <div class="col-auto">
+                  <label class="form-label" data-i18n="ipBlockDuration">IP Block Duration (seconds)</label>
+                  <select class="form-select" name="ip_block_duration" id="setting-block-duration">
+                     <option value="3600">1 Hour (3600)</option>
+                     <option value="21600">6 Hours (21600)</option>
+                     <option value="86400">24 Hours (86400)</option>
+                     <option value="604800">7 Days (604800)</option>
+                  </select>
+               </div>
+               <div class="col-auto">
+                  <button class="btn btn-primary" type="submit" data-i18n="save">Save</button>
+               </div>
+            </form>
+         </div>
+      </div>
 
       <div class="row mb-4">
          <div class="col-md-6">
@@ -287,9 +293,12 @@
          </div>
       </div>
 
-      <h5 data-i18n="securityLogs">Security Logs</h5>
-      <div class="card">
-        <div class="card-body p-0 table-responsive" style="max-height: 400px;">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+         <h5 data-i18n="securityLogs">Security Logs</h5>
+         <button class="btn btn-sm btn-outline-danger" onclick="clearSecurityLogs()" data-i18n="clearLogs">Clear Logs</button>
+      </div>
+      <div class="card mb-4">
+        <div class="card-body p-0 table-responsive" style="max-height: 300px;">
           <table class="table table-sm table-striped mb-0 small">
              <thead>
                <tr>
@@ -305,6 +314,29 @@
           </table>
         </div>
       </div>
+
+      <div class="d-flex justify-content-between align-items-center mb-2">
+         <h5 data-i18n="clientLogs">Client Logs</h5>
+         <button class="btn btn-sm btn-outline-danger" onclick="clearClientLogs()" data-i18n="clearLogs">Clear Logs</button>
+      </div>
+      <div class="card">
+        <div class="card-body p-0 table-responsive" style="max-height: 300px;">
+          <table class="table table-sm table-striped mb-0 small">
+             <thead>
+               <tr>
+                 <th data-i18n="time">Time</th>
+                 <th data-i18n="level">Level</th>
+                 <th data-i18n="message">Message</th>
+                 <th data-i18n="details">Details</th>
+               </tr>
+             </thead>
+             <tbody id="client-logs-tbody">
+                <tr><td colspan="4" class="text-center text-muted" data-i18n="loading">Loading...</td></tr>
+             </tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
 
     <!-- View: Statistics -->
@@ -726,6 +758,71 @@
             <button type="submit" class="btn btn-primary w-100" id="change-password-btn" data-i18n="change_password">Change Password</button>
           </form>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Provider Modal -->
+  <div class="modal fade" id="add-provider-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="addProvider">Add Provider</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="provider-form">
+          <div class="modal-body">
+             <input type="hidden" name="provider_id" value="">
+             <!-- Hidden user_id, set by JS -->
+             <input type="hidden" name="user_id" value="">
+
+             <div class="row mb-3">
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="name">Name</label>
+                   <input class="form-control" name="name" required>
+                </div>
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="url">URL</label>
+                   <input class="form-control" name="url" placeholder="http://..." required>
+                </div>
+             </div>
+             <div class="row mb-3">
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="username">Username</label>
+                   <input class="form-control" name="username" required>
+                </div>
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="password">Password</label>
+                   <input class="form-control" name="password" required>
+                </div>
+             </div>
+             <div class="mb-3">
+                <label class="form-label" data-i18n="epgUrl">EPG URL</label>
+                <input class="form-control" name="epg_url" placeholder="(Optional)">
+             </div>
+             <div class="row">
+                <div class="col-md-6">
+                   <div class="form-check mt-4">
+                      <input class="form-check-input" type="checkbox" name="epg_enabled" id="prov-epg-enabled" checked>
+                      <label class="form-check-label" for="prov-epg-enabled">Enable EPG</label>
+                   </div>
+                </div>
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="updateInterval">Update Interval</label>
+                   <select class="form-select" name="epg_update_interval">
+                        <option value="3600">1h</option>
+                        <option value="21600">6h</option>
+                        <option value="43200">12h</option>
+                        <option value="86400" selected>24h</option>
+                   </select>
+                </div>
+             </div>
+          </div>
+          <div class="modal-footer">
+             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+             <button type="submit" class="btn btn-primary" id="save-provider-btn" data-i18n="save">Save</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
