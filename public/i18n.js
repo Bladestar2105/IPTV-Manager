@@ -200,7 +200,32 @@ const translations = {
     deselectAll: 'Deselect All',
 
     // Updates
-    lastEpgUpdate: 'Last EPG Update'
+    lastEpgUpdate: 'Last EPG Update',
+
+    // M3U & Security
+    m3uPlaylist: '6. M3U Playlist',
+    m3uLink: 'M3U Link',
+    m3uDescription: 'Use this link in your IPTV player.',
+    blockDuration: 'Duration',
+    whitelistReason: 'Reason',
+    minutes: 'Minutes',
+    hours: 'Hours',
+    custom: 'Custom',
+    reasonPlaceholder: 'Reason for whitelisting',
+
+    // Security View
+    security: 'Security',
+    blockIp: 'Block IP',
+    whitelistIp: 'Whitelist IP',
+    block: 'Block',
+    whitelist: 'Whitelist',
+    securityLogs: 'Security Logs',
+    time: 'Time',
+    action: 'Action',
+    details: 'Details',
+    confirmUnblock: 'Really unblock this IP?',
+    confirmRemoveWhitelist: 'Remove from whitelist?',
+    noLogs: 'No logs found'
   },
   
   de: {
@@ -400,7 +425,32 @@ const translations = {
     deselectAll: 'Auswahl aufheben',
 
     // Updates
-    lastEpgUpdate: 'Letztes EPG-Update'
+    lastEpgUpdate: 'Letztes EPG-Update',
+
+    // M3U & Security
+    m3uPlaylist: '6. M3U Playlist',
+    m3uLink: 'M3U Link',
+    m3uDescription: 'Verwenden Sie diesen Link in Ihrem IPTV-Player.',
+    blockDuration: 'Dauer',
+    whitelistReason: 'Grund',
+    minutes: 'Minuten',
+    hours: 'Stunden',
+    custom: 'Benutzerdefiniert',
+    reasonPlaceholder: 'Grund für Whitelist',
+
+    // Security View
+    security: 'Sicherheit',
+    blockIp: 'IP Blockieren',
+    whitelistIp: 'IP Freigeben',
+    block: 'Blockieren',
+    whitelist: 'Freigeben',
+    securityLogs: 'Sicherheitsprotokolle',
+    time: 'Zeit',
+    action: 'Aktion',
+    details: 'Details',
+    confirmUnblock: 'IP wirklich entblocken?',
+    confirmRemoveWhitelist: 'Von der Whitelist entfernen?',
+    noLogs: 'Keine Protokolle gefunden'
   },
 
   fr: {
@@ -600,7 +650,32 @@ const translations = {
     deselectAll: 'Tout désélectionner',
 
     // Updates
-    lastEpgUpdate: 'Dernière mise à jour EPG'
+    lastEpgUpdate: 'Dernière mise à jour EPG',
+
+    // M3U & Security
+    m3uPlaylist: '6. Playlist M3U',
+    m3uLink: 'Lien M3U',
+    m3uDescription: 'Utilisez ce lien dans votre lecteur IPTV.',
+    blockDuration: 'Durée',
+    whitelistReason: 'Raison',
+    minutes: 'Minutes',
+    hours: 'Heures',
+    custom: 'Personnalisé',
+    reasonPlaceholder: 'Raison de la liste blanche',
+
+    // Security View
+    security: 'Sécurité',
+    blockIp: 'Bloquer IP',
+    whitelistIp: 'Liste Blanche IP',
+    block: 'Bloquer',
+    whitelist: 'Autoriser',
+    securityLogs: 'Journaux de Sécurité',
+    time: 'Temps',
+    action: 'Action',
+    details: 'Détails',
+    confirmUnblock: 'Vraiment débloquer cette IP ?',
+    confirmRemoveWhitelist: 'Retirer de la liste blanche ?',
+    noLogs: 'Aucun journal trouvé'
   },
 
   el: {
@@ -790,7 +865,32 @@ const translations = {
     deselectAll: 'Αποεπιλογή Όλων',
 
     // Updates
-    lastEpgUpdate: 'Τελευταία Ενημέρωση EPG'
+    lastEpgUpdate: 'Τελευταία Ενημέρωση EPG',
+
+    // M3U & Security
+    m3uPlaylist: '6. Λίστα Αναπαραγωγής M3U',
+    m3uLink: 'Σύνδεσμος M3U',
+    m3uDescription: 'Χρησιμοποιήστε αυτόν τον σύνδεσμο στον IPTV player σας.',
+    blockDuration: 'Διάρκεια',
+    whitelistReason: 'Αιτιολογία',
+    minutes: 'Λεπτά',
+    hours: 'Ώρες',
+    custom: 'Προσαρμοσμένο',
+    reasonPlaceholder: 'Αιτιολογία για λευκή λίστα',
+
+    // Security View
+    security: 'Ασφάλεια',
+    blockIp: 'Αποκλεισμός IP',
+    whitelistIp: 'Λευκή Λίστα IP',
+    block: 'Αποκλεισμός',
+    whitelist: 'Προσθήκη',
+    securityLogs: 'Αρχεία Ασφαλείας',
+    time: 'Ώρα',
+    action: 'Ενέργεια',
+    details: 'Λεπτομέρειες',
+    confirmUnblock: 'Άρση αποκλεισμού IP;',
+    confirmRemoveWhitelist: 'Αφαίρεση από τη λευκή λίστα;',
+    noLogs: 'Δεν βρέθηκαν αρχεία'
   }
 };
 

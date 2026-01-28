@@ -1635,6 +1635,66 @@ app.get('/player_api.php', async (req, res) => {
   }
 });
 
+// === M3U Playlist API ===
+app.get('/get.php', async (req, res) => {
+  try {
+    const username = (req.query.username || '').trim();
+    const password = (req.query.password || '').trim();
+    const type = (req.query.type || 'm3u').trim();
+    const output = (req.query.output || 'ts').trim();
+
+    const user = await getXtreamUser(req);
+    if (!user) return res.sendStatus(401);
+
+    const rows = db.prepare(`
+      SELECT uc.id as user_channel_id, pc.name, pc.logo, pc.epg_channel_id,
+             cat.name as category_name, map.epg_channel_id as manual_epg_id
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      WHERE cat.user_id = ?
+      ORDER BY uc.sort_order
+    `).all(user.id);
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    let m3u = '#EXTM3U';
+
+    if (type === 'm3u_plus') {
+       m3u += ` url-tvg="${baseUrl}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}"\n`;
+    } else {
+       m3u += '\n';
+    }
+
+    for (const ch of rows) {
+      const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
+      const logo = ch.logo || '';
+      const group = ch.category_name || '';
+      const name = ch.name || 'Unknown';
+      const streamId = ch.user_channel_id;
+
+      // Stream URL extension
+      const ext = output === 'hls' ? 'm3u8' : 'ts';
+      const streamUrl = `${baseUrl}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${ext}`;
+
+      if (type === 'm3u_plus') {
+        m3u += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${name}" tvg-logo="${logo}" group-title="${group}",${name}\n`;
+      } else {
+        m3u += `#EXTINF:-1,${name}\n`;
+      }
+      m3u += `${streamUrl}\n`;
+    }
+
+    res.setHeader('Content-Type', 'audio/x-mpegurl'); // Standard M3U MIME
+    res.setHeader('Content-Disposition', `attachment; filename="playlist.m3u"`);
+    res.send(m3u);
+
+  } catch (e) {
+    console.error('get.php error:', e);
+    res.sendStatus(500);
+  }
+});
+
 // Picon caching function
 // Picon caching removed - using direct URLs for better performance and reliability
 // This avoids timeout issues and reduces server load
@@ -1671,6 +1731,13 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     `).get(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
+
+    // Cleanup existing streams for this user/ip (Fast-Tapping Fix)
+    for (const [key, stream] of activeStreams.entries()) {
+      if (stream.user_id === user.id && stream.ip === req.ip) {
+         activeStreams.delete(key);
+      }
+    }
 
     // Track active stream
     const startTime = Date.now();
