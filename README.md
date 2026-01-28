@@ -89,6 +89,10 @@ The application will be available at `http://localhost:3000`.
 |:---:|
 | ![Sync Logs](docs/images/sync_logs.png) |
 
+| EPG Sources | EPG Browse |
+|:---:|:---:|
+| ![EPG Sources](docs/images/epg_sources.png) | ![EPG Browse](docs/images/epg_browse.png) |
+
 ## 📚 API Documentation
 
 ### Authentication
