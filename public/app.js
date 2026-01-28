@@ -153,6 +153,19 @@ async function loadUsers() {
     delBtn.onclick = async () => {
       if (!confirm(t('deleteUserConfirm', {name: u.username}))) return;
       await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
+
+      // Clear state if deleted user was selected
+      if (selectedUserId === u.id) {
+          selectedUser = null;
+          selectedUserId = null;
+          selectedCategoryId = null;
+          document.getElementById('selected-user-label').innerHTML = `<em data-i18n="noUserSelected">${t('noUserSelected')}</em>`;
+          document.getElementById('category-list').innerHTML = '';
+          document.getElementById('user-channel-list').innerHTML = '';
+          if (categorySortable) { categorySortable.destroy(); categorySortable = null; }
+          if (channelSortable) { channelSortable.destroy(); channelSortable = null; }
+      }
+
       loadUsers();
     };
     
@@ -366,9 +379,20 @@ async function loadUserCategories() {
       li.style.borderLeft = '4px solid #dc3545';
     }
     
+    // Checkbox
+    const checkDiv = document.createElement('div');
+    checkDiv.className = 'form-check d-flex align-items-center me-2 mb-0';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'form-check-input user-cat-check';
+    checkbox.value = c.id;
+    checkbox.onclick = (e) => { e.stopPropagation(); updateCatBulkDeleteBtn(); };
+    checkDiv.appendChild(checkbox);
+    li.appendChild(checkDiv);
+
     // Drag Handle
     const dragHandle = document.createElement('span');
-    dragHandle.className = 'drag-handle';
+    dragHandle.className = 'drag-handle me-2';
     dragHandle.innerHTML = '⋮⋮';
     dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
@@ -822,9 +846,20 @@ async function loadUserCategoryChannels() {
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = ch.user_channel_id;
     
+    // Checkbox
+    const checkDiv = document.createElement('div');
+    checkDiv.className = 'form-check d-flex align-items-center me-2 mb-0';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'form-check-input user-chan-check';
+    checkbox.value = ch.user_channel_id;
+    checkbox.onclick = (e) => { e.stopPropagation(); updateChanBulkDeleteBtn(); };
+    checkDiv.appendChild(checkbox);
+    li.appendChild(checkDiv);
+
     // Drag Handle
     const dragHandle = document.createElement('span');
-    dragHandle.className = 'drag-handle';
+    dragHandle.className = 'drag-handle me-2';
     dragHandle.innerHTML = '⋮⋮';
     dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
@@ -1467,6 +1502,106 @@ document.addEventListener('DOMContentLoaded', () => {
     epgSelectSearch.addEventListener('input', filterEpgSelectionList);
   }
 
+  // Bulk Delete Listeners - Categories
+  const catSelectAll = document.getElementById('cat-select-all-toggle');
+  if (catSelectAll) {
+    catSelectAll.addEventListener('change', (e) => {
+      document.querySelectorAll('.user-cat-check').forEach(cb => cb.checked = e.target.checked);
+      updateCatBulkDeleteBtn();
+    });
+  }
+
+  const catBulkDeleteBtn = document.getElementById('cat-bulk-delete-btn');
+  if (catBulkDeleteBtn) {
+    catBulkDeleteBtn.addEventListener('click', async () => {
+       const selected = Array.from(document.querySelectorAll('.user-cat-check:checked')).map(cb => Number(cb.value));
+       if (selected.length === 0) return;
+
+       if (!confirm(t('deleteCategoryConfirm', {name: `${selected.length} items`}))) return;
+
+       try {
+         await fetchJSON('/api/user-categories/bulk-delete', {
+           method: 'POST',
+           headers: {'Content-Type': 'application/json'},
+           body: JSON.stringify({ids: selected})
+         });
+         loadUserCategories();
+         if (catSelectAll) catSelectAll.checked = false;
+         updateCatBulkDeleteBtn();
+       } catch (e) {
+         alert(t('errorPrefix') + ' ' + e.message);
+       }
+    });
+  }
+
+  // Bulk Delete Listeners - Channels
+  const chanSelectAll = document.getElementById('chan-select-all-toggle');
+  if (chanSelectAll) {
+    chanSelectAll.addEventListener('change', (e) => {
+      document.querySelectorAll('.user-chan-check').forEach(cb => cb.checked = e.target.checked);
+      updateChanBulkDeleteBtn();
+    });
+  }
+
+  const chanBulkDeleteBtn = document.getElementById('chan-bulk-delete-btn');
+  if (chanBulkDeleteBtn) {
+    chanBulkDeleteBtn.addEventListener('click', async () => {
+       const selected = Array.from(document.querySelectorAll('.user-chan-check:checked')).map(cb => Number(cb.value));
+       if (selected.length === 0) return;
+
+       if (!confirm(t('deleteChannelConfirm', {name: `${selected.length} items`}))) return;
+
+       try {
+         await fetchJSON('/api/user-channels/bulk-delete', {
+           method: 'POST',
+           headers: {'Content-Type': 'application/json'},
+           body: JSON.stringify({ids: selected})
+         });
+         loadUserCategoryChannels();
+         if (chanSelectAll) chanSelectAll.checked = false;
+         updateChanBulkDeleteBtn();
+       } catch (e) {
+         alert(t('errorPrefix') + ' ' + e.message);
+       }
+    });
+  }
+
+  // Security Forms
+  const blockForm = document.getElementById('block-ip-form');
+  if (blockForm) {
+      blockForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const ip = blockForm.ip.value;
+          const reason = blockForm.reason.value;
+          try {
+              await fetchJSON('/api/security/block', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ip, reason, duration: 3600})
+              });
+              blockForm.reset();
+              loadSecurity();
+          } catch(e) { alert(e.message); }
+      });
+  }
+
+  const whitelistForm = document.getElementById('whitelist-ip-form');
+  if (whitelistForm) {
+      whitelistForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const ip = whitelistForm.ip.value;
+          try {
+              await fetchJSON('/api/security/whitelist', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ip, description: 'Manual'})
+              });
+              whitelistForm.reset();
+              loadSecurity();
+          } catch(e) { alert(e.message); }
+      });
+  }
+
   // Check authentication on page load
   checkAuthentication();
   
@@ -1504,7 +1639,138 @@ function switchView(viewName) {
     document.getElementById('nav-statistics').classList.add('active');
     loadStatistics();
     statsInterval = setInterval(loadStatistics, 5000);
+  } else if (viewName === 'security') {
+    document.getElementById('view-security').classList.remove('d-none');
+    document.getElementById('nav-security').classList.add('active');
+    loadSecurity();
   }
+}
+
+async function loadSecurity() {
+  try {
+    const [logs, blocked, whitelist] = await Promise.all([
+      fetchJSON('/api/security/logs'),
+      fetchJSON('/api/security/blocked'),
+      fetchJSON('/api/security/whitelist')
+    ]);
+
+    // Render Logs
+    const logBody = document.getElementById('security-logs-tbody');
+    logBody.innerHTML = '';
+    if (logs.length === 0) {
+        logBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noLogs') || 'No logs found'}</td></tr>`;
+    } else {
+        logs.forEach(log => {
+            const tr = document.createElement('tr');
+
+            const tdDate = document.createElement('td');
+            tdDate.textContent = new Date(log.timestamp * 1000).toLocaleString();
+
+            const tdIp = document.createElement('td');
+            tdIp.textContent = log.ip;
+
+            const tdAction = document.createElement('td');
+            tdAction.textContent = log.action;
+
+            const tdDetails = document.createElement('td');
+            tdDetails.textContent = log.details || '';
+
+            tr.appendChild(tdDate);
+            tr.appendChild(tdIp);
+            tr.appendChild(tdAction);
+            tr.appendChild(tdDetails);
+
+            logBody.appendChild(tr);
+        });
+    }
+
+    // Render Blocked
+    const blockedList = document.getElementById('blocked-ip-list');
+    blockedList.innerHTML = '';
+    if (blocked.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item text-muted';
+        li.textContent = 'None';
+        blockedList.appendChild(li);
+    }
+    blocked.forEach(b => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+
+        const div = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = b.ip;
+        const br = document.createElement('br');
+        const small = document.createElement('small');
+        small.textContent = `${b.reason || ''} (Exp: ${new Date(b.expires_at * 1000).toLocaleString()})`;
+
+        div.appendChild(strong);
+        div.appendChild(br);
+        div.appendChild(small);
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline-danger py-0';
+        btn.textContent = 'Unblock';
+        btn.onclick = () => unblockIp(b.id);
+
+        li.appendChild(div);
+        li.appendChild(btn);
+        blockedList.appendChild(li);
+    });
+
+    // Render Whitelist
+    const whitelistList = document.getElementById('whitelisted-ip-list');
+    whitelistList.innerHTML = '';
+    if (whitelist.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item text-muted';
+        li.textContent = 'None';
+        whitelistList.appendChild(li);
+    }
+    whitelist.forEach(w => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+
+        const div = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = w.ip;
+        const br = document.createElement('br');
+        const small = document.createElement('small');
+        small.textContent = w.description || '';
+
+        div.appendChild(strong);
+        div.appendChild(br);
+        div.appendChild(small);
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline-danger py-0';
+        btn.textContent = 'Remove';
+        btn.onclick = () => removeWhitelist(w.id);
+
+        li.appendChild(div);
+        li.appendChild(btn);
+        whitelistList.appendChild(li);
+    });
+
+  } catch(e) {
+    console.error('Security load error:', e);
+  }
+}
+
+async function unblockIp(id) {
+    if(!confirm(t('confirmUnblock') || 'Unblock IP?')) return;
+    try {
+        await fetchJSON(`/api/security/block/${id}`, {method: 'DELETE'});
+        loadSecurity();
+    } catch(e) { alert(e.message); }
+}
+
+async function removeWhitelist(id) {
+    if(!confirm(t('confirmRemoveWhitelist') || 'Remove from whitelist?')) return;
+    try {
+        await fetchJSON(`/api/security/whitelist/${id}`, {method: 'DELETE'});
+        loadSecurity();
+    } catch(e) { alert(e.message); }
 }
 
 async function loadStatistics() {
@@ -2030,4 +2296,22 @@ async function handleChangePassword(event) {
     changePasswordBtn.disabled = false;
     changePasswordBtn.textContent = t('change_password');
   }
+}
+
+function updateCatBulkDeleteBtn() {
+    const count = document.querySelectorAll('.user-cat-check:checked').length;
+    const btn = document.getElementById('cat-bulk-delete-btn');
+    if (btn) {
+        btn.style.display = count > 0 ? 'block' : 'none';
+        btn.textContent = `${t('deleteSelected') || 'Delete Selected'} (${count})`;
+    }
+}
+
+function updateChanBulkDeleteBtn() {
+    const count = document.querySelectorAll('.user-chan-check:checked').length;
+    const btn = document.getElementById('chan-bulk-delete-btn');
+    if (btn) {
+        btn.style.display = count > 0 ? 'block' : 'none';
+        btn.textContent = `${t('deleteSelected') || 'Delete'} (${count})`;
+    }
 }
