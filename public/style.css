@@ -75,6 +75,20 @@ h5, h6 {
   border-color: var(--tv-blue-light);
 }
 
+.card-header {
+  background-color: rgba(31, 41, 55, 0.8);
+  border-bottom: 1px solid var(--tv-border);
+  color: var(--tv-cyan);
+  font-weight: 600;
+  padding: 0.75rem 1.25rem;
+}
+
+.card-title {
+  margin-bottom: 0;
+  color: var(--tv-blue-light);
+  text-align: center;
+}
+
 .form-control, .form-select {
   background: rgba(31, 41, 55, 0.9);
   border: 1px solid var(--tv-border);

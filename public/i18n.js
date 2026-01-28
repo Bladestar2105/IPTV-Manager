@@ -99,6 +99,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Browse',
+    updateAll: 'Update All',
     
     // Loading states
     loading: 'Loading...',
@@ -227,7 +229,21 @@ const translations = {
     details: 'Details',
     confirmUnblock: 'Really unblock this IP?',
     confirmRemoveWhitelist: 'Remove from whitelist?',
-    noLogs: 'No logs found'
+    noLogs: 'No logs found',
+    selectUserPlaceholder: '-- Select User --',
+    userUpdated: '✅ User updated',
+    providerUpdated: '✅ Provider updated',
+    settingsSaved: '✅ Settings saved',
+    confirmClearLogs: 'Really clear logs?',
+    deleteSelected: 'Delete Selected',
+    deleteChannelConfirm: 'Really delete {count} channels?',
+    unblock: 'Unblock',
+    remove: 'Remove',
+    none: 'None',
+    noSelection: 'No items selected',
+    editUser: 'Edit User',
+    leaveBlankToKeep: 'Leave blank to keep current',
+    enableEpg: 'Enable EPG'
   },
   
   de: {
@@ -291,6 +307,8 @@ const translations = {
     noChannels: 'Keine Kanäle zugeordnet',
     pleaseSelectProvider: 'Bitte Provider auswählen',
     noChannelsAvailable: 'Keine Kanäle vorhanden',
+    available: 'Available',
+    assigned: 'Assigned',
     loadingChannels: '⏳ Lade Kanäle...',
     loadingError: '❌ Fehler beim Laden',
     noResults: '🔍 Keine Treffer für "{search}"',
@@ -326,6 +344,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Durchsuchen',
+    updateAll: 'Alle aktualisieren',
     
     // Loading states
     loading: 'Lädt...',
@@ -454,7 +474,21 @@ const translations = {
     details: 'Details',
     confirmUnblock: 'IP wirklich entblocken?',
     confirmRemoveWhitelist: 'Von der Whitelist entfernen?',
-    noLogs: 'Keine Protokolle gefunden'
+    noLogs: 'Keine Protokolle gefunden',
+    selectUserPlaceholder: '-- User wählen --',
+    userUpdated: '✅ User aktualisiert',
+    providerUpdated: '✅ Provider aktualisiert',
+    settingsSaved: '✅ Einstellungen gespeichert',
+    confirmClearLogs: 'Protokolle wirklich löschen?',
+    deleteSelected: 'Auswahl löschen',
+    deleteChannelConfirm: 'Wirklich {count} Kanäle löschen?',
+    unblock: 'Entblocken',
+    remove: 'Entfernen',
+    none: 'Keine',
+    noSelection: 'Keine Auswahl',
+    editUser: 'User bearbeiten',
+    leaveBlankToKeep: 'Leer lassen um aktuelles zu behalten',
+    enableEpg: 'EPG aktivieren'
   },
 
   fr: {
@@ -553,6 +587,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Parcourir',
+    updateAll: 'Tout mettre à jour',
     
     // Loading states
     loading: 'Chargement...',
@@ -681,7 +717,21 @@ const translations = {
     details: 'Détails',
     confirmUnblock: 'Vraiment débloquer cette IP ?',
     confirmRemoveWhitelist: 'Retirer de la liste blanche ?',
-    noLogs: 'Aucun journal trouvé'
+    noLogs: 'Aucun journal trouvé',
+    selectUserPlaceholder: '-- Sélectionner Utilisateur --',
+    userUpdated: '✅ Utilisateur mis à jour',
+    providerUpdated: '✅ Fournisseur mis à jour',
+    settingsSaved: '✅ Paramètres enregistrés',
+    confirmClearLogs: 'Vraiment effacer les journaux ?',
+    deleteSelected: 'Supprimer la sélection',
+    deleteChannelConfirm: 'Vraiment supprimer {count} chaînes ?',
+    unblock: 'Débloquer',
+    remove: 'Retirer',
+    none: 'Aucun',
+    noSelection: 'Aucune sélection',
+    editUser: 'Modifier Utilisateur',
+    leaveBlankToKeep: 'Laisser vide pour conserver l\'actuel',
+    enableEpg: 'Activer EPG'
   },
 
   el: {
@@ -780,6 +830,8 @@ const translations = {
     edit: '✏️',
     adult: '🔞',
     add: '+',
+    browse: 'Περιήγηση',
+    updateAll: 'Ενημέρωση όλων',
     
     // Loading states
     loading: 'Φόρτωση...',
@@ -898,7 +950,21 @@ const translations = {
     details: 'Λεπτομέρειες',
     confirmUnblock: 'Άρση αποκλεισμού IP;',
     confirmRemoveWhitelist: 'Αφαίρεση από τη λευκή λίστα;',
-    noLogs: 'Δεν βρέθηκαν αρχεία'
+    noLogs: 'Δεν βρέθηκαν αρχεία',
+    selectUserPlaceholder: '-- Επιλέξτε Χρήστη --',
+    userUpdated: '✅ Ο χρήστης ενημερώθηκε',
+    providerUpdated: '✅ Ο πάροχος ενημερώθηκε',
+    settingsSaved: '✅ Οι ρυθμίσεις αποθηκεύτηκαν',
+    confirmClearLogs: 'Πραγματικά εκκαθάριση αρχείων;',
+    deleteSelected: 'Διαγραφή Επιλεγμένων',
+    deleteChannelConfirm: 'Πραγματικά διαγραφή {count} καναλιών;',
+    unblock: 'Ξεμπλοκάρισμα',
+    remove: 'Αφαίρεση',
+    none: 'Κανένα',
+    noSelection: 'Καμία επιλογή',
+    editUser: 'Επεξεργασία Χρήστη',
+    leaveBlankToKeep: 'Αφήστε κενό για να διατηρήσετε τον τρέχοντα',
+    enableEpg: 'Ενεργοποίηση EPG'
   }
 };
 

@@ -34,7 +34,7 @@
     }
   </style>
 </head>
-<body class="bg-light">
+<body>
 
   <!-- Navbar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4" id="main-navbar" style="display: none;">
@@ -81,34 +81,34 @@
       <!-- Stats Cards -->
       <div class="row mb-4">
         <div class="col-md-3">
-          <div class="card text-white bg-primary mb-3">
+          <div class="card mb-3 text-center">
             <div class="card-body">
-              <h5 class="card-title" data-i18n="totalUsers">Total Users</h5>
-              <p class="card-text display-4" id="stats-users">0</p>
+              <h5 class="card-title text-muted" data-i18n="totalUsers">Total Users</h5>
+              <p class="card-text display-4 fw-bold text-primary" id="stats-users">0</p>
             </div>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="card text-white bg-success mb-3">
+          <div class="card mb-3 text-center">
             <div class="card-body">
-              <h5 class="card-title" data-i18n="totalProviders">Total Providers</h5>
-              <p class="card-text display-4" id="stats-providers">0</p>
+              <h5 class="card-title text-muted" data-i18n="totalProviders">Total Providers</h5>
+              <p class="card-text display-4 fw-bold text-success" id="stats-providers">0</p>
             </div>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="card text-white bg-info mb-3">
+          <div class="card mb-3 text-center">
             <div class="card-body">
-              <h5 class="card-title" data-i18n="activeStreams">Active Streams</h5>
-              <p class="card-text display-4" id="stats-streams">0</p>
+              <h5 class="card-title text-muted" data-i18n="activeStreams">Active Streams</h5>
+              <p class="card-text display-4 fw-bold text-danger" id="stats-streams">0</p>
             </div>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="card text-white bg-secondary mb-3">
+          <div class="card mb-3 text-center">
             <div class="card-body">
-              <h5 class="card-title" data-i18n="epgSources">EPG Sources</h5>
-              <p class="card-text display-4" id="stats-epg">0</p>
+              <h5 class="card-title text-muted" data-i18n="epgSources">EPG Sources</h5>
+              <p class="card-text display-4 fw-bold text-info" id="stats-epg">0</p>
             </div>
           </div>
         </div>
@@ -183,15 +183,15 @@
                           <div class="col-md-7">
                              <h6 data-i18n="channels">Channels</h6>
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
-                             <input type="text" id="channel-search" class="form-control form-control-sm mb-2" placeholder="Search..." disabled />
+                             <input type="text" id="channel-search" class="form-control form-control-sm mb-2" data-i18n-placeholder="searchChannels" placeholder="Search..." disabled />
 
                              <div class="row g-2">
                                 <div class="col-6">
-                                   <div class="border rounded p-1 bg-light small text-center">Available</div>
+                                   <div class="border rounded p-1 bg-light small text-center" data-i18n="available">Available</div>
                                    <ul id="provider-channel-list" class="list-group small mt-1" style="max-height: 300px; overflow-y: auto;"></ul>
                                 </div>
                                 <div class="col-6">
-                                   <div class="border rounded p-1 bg-light small text-center">Assigned</div>
+                                   <div class="border rounded p-1 bg-light small text-center" data-i18n="assigned">Assigned</div>
                                    <div class="d-flex justify-content-between align-items-center mb-1 px-1">
                                       <div class="form-check form-check-sm">
                                          <input class="form-check-input" type="checkbox" id="chan-select-all-toggle">
@@ -229,8 +229,8 @@
             <span data-i18n="epgSources">EPG Sources</span>
             <div>
                <button id="add-epg-source-btn" class="btn btn-sm btn-primary">+</button>
-               <button id="browse-epg-sources-btn" class="btn btn-sm btn-secondary">Browse</button>
-               <button id="update-all-epg-btn" class="btn btn-sm btn-info">Update All</button>
+               <button id="browse-epg-sources-btn" class="btn btn-sm btn-secondary" data-i18n="browse">Browse</button>
+               <button id="update-all-epg-btn" class="btn btn-sm btn-info" data-i18n="updateAll">Update All</button>
             </div>
          </div>
          <div class="card-body">
@@ -408,7 +408,7 @@
 
       <div class="d-flex justify-content-between align-items-center mb-2">
          <h3 data-i18n="channelMappingList" class="m-0 border-0">Channel List</h3>
-         <input type="text" id="epg-mapping-search" class="form-control form-control-sm" style="width: 250px;" placeholder="Search channels...">
+         <input type="text" id="epg-mapping-search" class="form-control form-control-sm" style="width: 250px;" data-i18n-placeholder="searchChannels" placeholder="Search channels...">
       </div>
 
       <div class="table-responsive" style="max-height: 600px; border: 1px solid var(--tv-border); border-radius: 8px;">
@@ -706,24 +706,24 @@
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">Edit User</h5>
+          <h5 class="modal-title" data-i18n="editUser">Edit User</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <form id="edit-user-form">
           <div class="modal-body">
             <input type="hidden" id="edit-user-id">
             <div class="mb-3">
-              <label class="form-label">Username</label>
+              <label class="form-label" data-i18n="username">Username</label>
               <input type="text" class="form-control" id="edit-user-username" required>
             </div>
             <div class="mb-3">
-              <label class="form-label">New Password</label>
-              <input type="password" class="form-control" id="edit-user-password" placeholder="Leave blank to keep current">
+              <label class="form-label" data-i18n="new_password">New Password</label>
+              <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
+            <button type="submit" class="btn btn-primary" data-i18n="saveChanges">Save Changes</button>
           </div>
         </form>
       </div>
@@ -804,7 +804,7 @@
                 <div class="col-md-6">
                    <div class="form-check mt-4">
                       <input class="form-check-input" type="checkbox" name="epg_enabled" id="prov-epg-enabled" checked>
-                      <label class="form-check-label" for="prov-epg-enabled">Enable EPG</label>
+                      <label class="form-check-label" for="prov-epg-enabled" data-i18n="enableEpg">Enable EPG</label>
                    </div>
                 </div>
                 <div class="col-md-6">
@@ -836,7 +836,7 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="text" id="epg-select-search" class="form-control form-control-sm mb-3" placeholder="Search EPG channels...">
+          <input type="text" id="epg-select-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchChannels" placeholder="Search EPG channels...">
           <ul id="epg-select-list" class="list-group" style="max-height:400px; overflow:auto;">
              <li class="list-group-item text-center text-muted">Loading...</li>
           </ul>
