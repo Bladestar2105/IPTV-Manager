@@ -27,7 +27,10 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **Background Sync Scheduler**: Automatic synchronization runs in the background.
 - **Comprehensive Sync Logging**: Detailed logs of all sync operations.
 - **Category Import**: Import provider categories with or without channels.
+- **Bulk Import**: Select and import multiple provider categories at once.
 - **Adult Content Filtering**: Automatic detection and marking of adult content.
+- **Live Statistics**: Real-time tracking of active streams and viewing statistics.
+- **Internationalization**: Full UI support for English, German, French, and Greek.
 
 ### Security
 - **🔐 Password Hashing**: Bcrypt-based password hashing.
@@ -93,6 +96,10 @@ The application will be available at `http://localhost:3000`.
 |:---:|:---:|
 | ![EPG Sources](docs/images/epg_sources.png) | ![EPG Browse](docs/images/epg_browse.png) |
 
+| Statistics |
+|:---:|
+| ![Statistics](docs/images/statistics.png) |
+
 ## 📚 API Documentation
 
 ### Authentication
@@ -114,6 +121,10 @@ The application will be available at `http://localhost:3000`.
 *   `GET /api/providers/:id/channels`: Get channels for a provider.
 *   `GET /api/providers/:id/categories`: Get categories for a provider.
 *   `POST /api/providers/:id/import-category`: Import a category from a provider.
+*   `POST /api/providers/:id/import-categories`: Bulk import categories from a provider.
+
+### Statistics
+*   `GET /api/statistics`: Get active streams and channel viewing statistics.
 
 ### Categories & Channels
 *   `GET /api/users/:userId/categories`: List categories for a user.
