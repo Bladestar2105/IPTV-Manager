@@ -225,7 +225,8 @@ async function loadProviders() {
     li.className = 'list-group-item';
     
     const epgStatus = p.epg_enabled ? '✅' : '❌';
-    const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h)</small>` : '';
+    const lastUpdate = p.epg_last_updated ? new Date(p.epg_last_updated * 1000).toLocaleString() : t('never');
+    const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h) | ${t('lastEpgUpdate')}: ${lastUpdate}</small>` : '';
     const ownerInfo = p.owner_name ? `<br><small class="text-primary">Owner: ${p.owner_name}</small>` : '';
 
     const row = document.createElement('div');
@@ -507,6 +508,7 @@ function renderProviderCategories() {
   const search = searchInput.value.toLowerCase().trim();
   
   list.innerHTML = '';
+  updateSelectedCount();
   
   if (!providerCategories || providerCategories.length === 0) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noCategoriesFound')}</li>`;
@@ -524,11 +526,23 @@ function renderProviderCategories() {
 
   filtered.forEach(cat => {
     const li = document.createElement('li');
-    li.className = 'list-group-item';
+    li.className = 'list-group-item d-flex align-items-center';
     
     if (cat.is_adult) {
       li.style.borderLeft = '4px solid #dc3545';
     }
+
+    // Checkbox
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'form-check-input me-3 cat-checkbox';
+    checkbox.value = cat.category_id;
+    checkbox.dataset.name = cat.category_name;
+    checkbox.onchange = updateSelectedCount;
+    li.appendChild(checkbox);
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'flex-grow-1';
     
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
@@ -561,9 +575,80 @@ function renderProviderCategories() {
     btnGroup.appendChild(importWithChannelsBtn);
     row.appendChild(btnGroup);
     
-    li.appendChild(row);
+    contentDiv.appendChild(row);
+    li.appendChild(contentDiv);
     list.appendChild(li);
   });
+}
+
+function updateSelectedCount() {
+    const count = document.querySelectorAll('.cat-checkbox:checked').length;
+    const badge = document.getElementById('cat-selected-count');
+    if(badge) badge.textContent = count;
+}
+
+async function importSelectedCategories(withChannels) {
+  if (!selectedUserId) {
+    alert(t('pleaseSelectUserFirst'));
+    return;
+  }
+
+  const select = document.getElementById('channel-provider-select');
+  const providerId = select.value;
+
+  const checkboxes = document.querySelectorAll('.cat-checkbox:checked');
+  if (checkboxes.length === 0) {
+    alert(t('noCategoriesFound')); // Reusing key or should add 'noSelection'?
+    return;
+  }
+
+  const categories = Array.from(checkboxes).map(cb => ({
+    id: cb.value,
+    name: cb.dataset.name,
+    import_channels: withChannels
+  }));
+
+  if (!confirm(t('importCategories') + ` (${categories.length})?`)) return;
+
+  const btnId = withChannels ? 'btn-import-selected-channels' : 'btn-import-selected';
+  const btn = document.getElementById(btnId);
+  if(btn) {
+      btn.disabled = true;
+      btn.textContent = t('loading');
+  }
+
+  try {
+    const result = await fetchJSON(`/api/providers/${providerId}/import-categories`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        user_id: selectedUserId,
+        categories: categories
+      })
+    });
+
+    let msg = `✅ ${result.categories_imported} categories imported`;
+    if (result.channels_imported > 0) {
+        msg += `, ${result.channels_imported} channels`;
+    }
+    alert(msg);
+
+    // Refresh user categories in background
+    loadUserCategories();
+
+    // Uncheck all
+    checkboxes.forEach(cb => cb.checked = false);
+    updateSelectedCount();
+
+  } catch (e) {
+    console.error('❌ Import error:', e);
+    alert(t('errorPrefix') + ' ' + e.message);
+  } finally {
+      if(btn) {
+          btn.disabled = false;
+          btn.textContent = withChannels ? t('importSelectedWithChannels') : t('importSelected');
+      }
+  }
 }
 
 async function importCategory(cat, withChannels) {
@@ -1285,6 +1370,30 @@ document.addEventListener('DOMContentLoaded', () => {
   if (catSearch) {
     catSearch.addEventListener('input', renderProviderCategories);
   }
+
+  // Bulk Import Events
+  const btnSelectAll = document.getElementById('cat-select-all');
+  if (btnSelectAll) {
+      btnSelectAll.addEventListener('click', () => {
+          document.querySelectorAll('.cat-checkbox').forEach(cb => cb.checked = true);
+          updateSelectedCount();
+      });
+  }
+  const btnDeselectAll = document.getElementById('cat-deselect-all');
+  if (btnDeselectAll) {
+      btnDeselectAll.addEventListener('click', () => {
+          document.querySelectorAll('.cat-checkbox').forEach(cb => cb.checked = false);
+          updateSelectedCount();
+      });
+  }
+  const btnImportSelected = document.getElementById('btn-import-selected');
+  if (btnImportSelected) {
+      btnImportSelected.addEventListener('click', () => importSelectedCategories(false));
+  }
+  const btnImportSelectedChannels = document.getElementById('btn-import-selected-channels');
+  if (btnImportSelectedChannels) {
+      btnImportSelectedChannels.addEventListener('click', () => importSelectedCategories(true));
+  }
   
   const syncConfigForm = document.getElementById('sync-config-form');
   if (syncConfigForm) {
@@ -1365,10 +1474,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // === View Management ===
+let statsInterval = null;
+
 function switchView(viewName) {
   // Hide all views
   document.getElementById('view-dashboard').classList.add('d-none');
   document.getElementById('view-epg-mapping').classList.add('d-none');
+  document.getElementById('view-statistics').classList.add('d-none');
+
+  // Stop stats interval if running
+  if (statsInterval) {
+      clearInterval(statsInterval);
+      statsInterval = null;
+  }
 
   // Update nav active state
   document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
@@ -1381,7 +1499,73 @@ function switchView(viewName) {
     document.getElementById('view-epg-mapping').classList.remove('d-none');
     document.getElementById('nav-epg-mapping').classList.add('active');
     loadEpgMappingProviders();
+  } else if (viewName === 'statistics') {
+    document.getElementById('view-statistics').classList.remove('d-none');
+    document.getElementById('nav-statistics').classList.add('active');
+    loadStatistics();
+    statsInterval = setInterval(loadStatistics, 5000);
   }
+}
+
+async function loadStatistics() {
+  try {
+    const data = await fetchJSON('/api/statistics');
+
+    // Active Streams
+    const activeTbody = document.getElementById('active-streams-tbody');
+    const badge = document.getElementById('active-stream-count');
+    if(badge) badge.textContent = data.active_streams.length;
+
+    activeTbody.innerHTML = '';
+    if (data.active_streams.length === 0) {
+        activeTbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noResults', {search: ''})}</td></tr>`;
+    } else {
+        data.active_streams.forEach(s => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${s.username}</td>
+                <td>${s.channel_name}</td>
+                <td>${formatDuration(s.duration)}</td>
+                <td>${s.ip || '-'}</td>
+            `;
+            activeTbody.appendChild(tr);
+        });
+    }
+
+    // Top Channels
+    const topTbody = document.getElementById('top-channels-tbody');
+    topTbody.innerHTML = '';
+
+    if (data.top_channels.length === 0) {
+        topTbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noResults', {search: ''})}</td></tr>`;
+    } else {
+        data.top_channels.forEach((ch, idx) => {
+            const tr = document.createElement('tr');
+            const lastDate = ch.last_viewed ? new Date(ch.last_viewed * 1000).toLocaleString() : '-';
+            tr.innerHTML = `
+                <td>${idx+1}</td>
+                <td>
+                    ${ch.logo ? `<img src="${ch.logo}" width="20" class="me-1" onerror="this.style.display='none'">` : ''}
+                    ${ch.name}
+                </td>
+                <td>${ch.views}</td>
+                <td>${lastDate}</td>
+            `;
+            topTbody.appendChild(tr);
+        });
+    }
+  } catch(e) {
+    console.error('Stats error:', e);
+  }
+}
+
+function formatDuration(sec) {
+    if (!sec) return '0s';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m ${s}s`;
 }
 
 // === EPG Mapping Logic ===

@@ -180,7 +180,27 @@ const translations = {
     autoMapConfirm: 'Auto-map all unmapped channels?',
     autoMapSuccess: 'Auto-mapping complete: {count} channels mapped.',
     mappingSaved: 'Mapping saved',
-    mappingRemoved: 'Mapping removed'
+    mappingRemoved: 'Mapping removed',
+
+    // Statistics
+    statistics: 'Statistics',
+    activeStreams: 'Active Streams',
+    topChannels: 'Top Channels',
+    streamCount: 'Viewers',
+    lastViewed: 'Last Viewed',
+    currentViewers: 'Current Viewers',
+    duration: 'Duration',
+    ip: 'IP Address',
+    client: 'Client',
+
+    // Bulk Import
+    importSelected: '📥 Import Selected',
+    importSelectedWithChannels: '📥 Import Selected w/ Channels',
+    selectAll: 'Select All',
+    deselectAll: 'Deselect All',
+
+    // Updates
+    lastEpgUpdate: 'Last EPG Update'
   },
   
   de: {
@@ -360,7 +380,27 @@ const translations = {
     autoMapConfirm: 'Alle nicht zugeordneten Kanäle automatisch zuordnen?',
     autoMapSuccess: 'Auto-Mapping fertig: {count} Kanäle zugeordnet.',
     mappingSaved: 'Zuordnung gespeichert',
-    mappingRemoved: 'Zuordnung entfernt'
+    mappingRemoved: 'Zuordnung entfernt',
+
+    // Statistics
+    statistics: 'Statistiken',
+    activeStreams: 'Aktive Streams',
+    topChannels: 'Top Kanäle',
+    streamCount: 'Zuschauer',
+    lastViewed: 'Zuletzt gesehen',
+    currentViewers: 'Aktuelle Zuschauer',
+    duration: 'Dauer',
+    ip: 'IP-Adresse',
+    client: 'Client',
+
+    // Bulk Import
+    importSelected: '📥 Auswahl importieren',
+    importSelectedWithChannels: '📥 Auswahl mit Kanälen',
+    selectAll: 'Alle auswählen',
+    deselectAll: 'Auswahl aufheben',
+
+    // Updates
+    lastEpgUpdate: 'Letztes EPG-Update'
   },
 
   fr: {
@@ -540,7 +580,27 @@ const translations = {
     autoMapConfirm: 'Associer automatiquement toutes les chaînes non associées ?',
     autoMapSuccess: 'Auto-association terminée : {count} chaînes associées.',
     mappingSaved: 'Association enregistrée',
-    mappingRemoved: 'Association supprimée'
+    mappingRemoved: 'Association supprimée',
+
+    // Statistics
+    statistics: 'Statistiques',
+    activeStreams: 'Flux Actifs',
+    topChannels: 'Top Chaînes',
+    streamCount: 'Spectateurs',
+    lastViewed: 'Vu pour la dernière fois',
+    currentViewers: 'Spectateurs actuels',
+    duration: 'Durée',
+    ip: 'Adresse IP',
+    client: 'Client',
+
+    // Bulk Import
+    importSelected: '📥 Importer la sélection',
+    importSelectedWithChannels: '📥 Importer avec chaînes',
+    selectAll: 'Tout sélectionner',
+    deselectAll: 'Tout désélectionner',
+
+    // Updates
+    lastEpgUpdate: 'Dernière mise à jour EPG'
   },
 
   el: {
@@ -710,7 +770,27 @@ const translations = {
     autoMapConfirm: 'Αυτόματη αντιστοίχιση όλων των μη αντιστοιχισμένων καναλιών;',
     autoMapSuccess: 'Η αυτόματη αντιστοίχιση ολοκληρώθηκε: {count} κανάλια.',
     mappingSaved: 'Η αντιστοίχιση αποθηκεύτηκε',
-    mappingRemoved: 'Η αντιστοίχιση αφαιρέθηκε'
+    mappingRemoved: 'Η αντιστοίχιση αφαιρέθηκε',
+
+    // Statistics
+    statistics: 'Στατιστικά',
+    activeStreams: 'Ενεργές Ροές',
+    topChannels: 'Κορυφαία Κανάλια',
+    streamCount: 'Θεατές',
+    lastViewed: 'Τελευταία Προβολή',
+    currentViewers: 'Τρέχοντες Θεατές',
+    duration: 'Διάρκεια',
+    ip: 'Διεύθυνση IP',
+    client: 'Πελάτης',
+
+    // Bulk Import
+    importSelected: '📥 Εισαγωγή Επιλεγμένων',
+    importSelectedWithChannels: '📥 Εισαγωγή με Κανάλια',
+    selectAll: 'Επιλογή Όλων',
+    deselectAll: 'Αποεπιλογή Όλων',
+
+    // Updates
+    lastEpgUpdate: 'Τελευταία Ενημέρωση EPG'
   }
 };
 
