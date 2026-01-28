@@ -130,6 +130,15 @@ async function loadUsers() {
       document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${u.username} (id=${u.id})`;
       document.getElementById('xtream-user').textContent = u.username;
       document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
+
+      // Update M3U Link
+      const m3uLinkEl = document.getElementById('m3u-link');
+      if (m3uLinkEl) {
+          const baseUrl = window.location.origin;
+          // Use placeholder for password since we don't have the plain text
+          m3uLinkEl.textContent = `${baseUrl}/get.php?username=${encodeURIComponent(u.username)}&password=<PASSWORD>&type=m3u_plus&output=ts`;
+      }
+
       loadUserCategories();
       loadProviders(); // Refresh providers to filter channel assignment dropdown
 
