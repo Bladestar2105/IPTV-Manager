@@ -89,13 +89,59 @@
     <h3 data-i18n="providerManagement">2. Provider Management</h3>
     <div class="row mb-4">
       <div class="col-md-12">
-        <form id="provider-form" class="row g-2 mb-3">
-          <div class="col-md-2"><input class="form-control" name="name" data-i18n-placeholder="providerName" placeholder="Name" required /></div>
-          <div class="col-md-3"><input class="form-control" name="url" placeholder="http://provider.com" required /></div>
-          <div class="col-md-2"><input class="form-control" name="username" data-i18n-placeholder="providerUsername" placeholder="Username" required /></div>
-          <div class="col-md-2"><input class="form-control" name="password" data-i18n-placeholder="providerPassword" placeholder="Password" required /></div>
-          <div class="col-md-2"><input class="form-control" name="epg_url" data-i18n-placeholder="epgUrl" placeholder="EPG URL (optional)" /></div>
-          <div class="col-md-1"><button class="btn btn-primary w-100" type="submit" data-i18n="addProvider">Add Provider</button></div>
+        <form id="provider-form" class="row g-2 mb-3 align-items-end">
+          <input type="hidden" name="provider_id" value="">
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Name</label>
+            <input class="form-control form-control-sm" name="name" data-i18n-placeholder="providerName" placeholder="Name" required />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small mb-1">URL</label>
+            <input class="form-control form-control-sm" name="url" placeholder="http://provider.com" required />
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Username</label>
+            <input class="form-control form-control-sm" name="username" data-i18n-placeholder="providerUsername" placeholder="Username" required />
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Password</label>
+            <input class="form-control form-control-sm" name="password" data-i18n-placeholder="providerPassword" placeholder="Password" required />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small mb-1">EPG URL</label>
+            <input class="form-control form-control-sm" name="epg_url" data-i18n-placeholder="epgUrl" placeholder="EPG URL (optional)" />
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label small mb-1">Owner</label>
+            <select class="form-select form-select-sm" name="user_id" id="provider-user-select" required>
+               <option value="">Select User...</option>
+            </select>
+          </div>
+
+          <div class="col-md-9">
+             <div class="row align-items-end">
+                <div class="col-auto">
+                   <div class="form-check mb-2">
+                      <input class="form-check-input" type="checkbox" name="epg_enabled" id="prov-epg-enabled" checked>
+                      <label class="form-check-label small" for="prov-epg-enabled">Enable EPG</label>
+                   </div>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small mb-1">EPG Interval</label>
+                    <select class="form-select form-select-sm" name="epg_update_interval">
+                        <option value="3600">1h</option>
+                        <option value="21600">6h</option>
+                        <option value="43200">12h</option>
+                        <option value="86400" selected>24h</option>
+                    </select>
+                </div>
+                <div class="col text-end">
+                   <button type="button" id="cancel-edit-provider" class="btn btn-secondary btn-sm me-2" style="display:none;">Cancel</button>
+                   <button class="btn btn-primary btn-sm" type="submit" id="save-provider-btn" data-i18n="addProvider">Add Provider</button>
+                </div>
+             </div>
+          </div>
         </form>
         <ul id="provider-list" class="list-group"></ul>
       </div>
@@ -117,7 +163,7 @@
           <div class="col-4"><button class="btn btn-primary w-100" type="submit" data-i18n="addCategory">Add Category</button></div>
         </form>
         <p class="small text-secondary" data-i18n="dragToSort">🖐️ Drag & Drop to sort</p>
-        <ul id="category-list" class="list-group"></ul>
+        <ul id="category-list" class="list-group" style="max-height: 500px; overflow-y: auto;"></ul>
       </div>
       
       <div class="col-md-8">
@@ -476,6 +522,35 @@
             <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
           </form>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit User Modal -->
+  <div class="modal fade" id="edit-user-modal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Edit User</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <form id="edit-user-form">
+          <div class="modal-body">
+            <input type="hidden" id="edit-user-id">
+            <div class="mb-3">
+              <label class="form-label">Username</label>
+              <input type="text" class="form-control" id="edit-user-username" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">New Password</label>
+              <input type="password" class="form-control" id="edit-user-password" placeholder="Leave blank to keep current">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

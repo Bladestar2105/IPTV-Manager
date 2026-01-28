@@ -163,7 +163,10 @@ try {
       url TEXT NOT NULL,
       username TEXT NOT NULL,
       password TEXT NOT NULL,
-      epg_url TEXT
+      epg_url TEXT,
+      user_id INTEGER,
+      epg_update_interval INTEGER DEFAULT 86400,
+      epg_enabled INTEGER DEFAULT 1
     );
     
     CREATE TABLE IF NOT EXISTS provider_channels (
@@ -286,11 +289,38 @@ try {
   // Create default admin user if no users exist
   await createDefaultAdmin();
 
+  // Migrate providers schema
+  migrateProvidersSchema();
+
   // Migrate passwords
   migrateProviderPasswords();
 } catch (e) {
   console.error("❌ DB Error:", e.message);
   process.exit(1);
+}
+
+function migrateProvidersSchema() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('user_id')) {
+      db.exec('ALTER TABLE providers ADD COLUMN user_id INTEGER');
+      console.log('✅ DB Migration: user_id column added to providers');
+    }
+
+    if (!columns.includes('epg_update_interval')) {
+      db.exec('ALTER TABLE providers ADD COLUMN epg_update_interval INTEGER DEFAULT 86400');
+      console.log('✅ DB Migration: epg_update_interval column added to providers');
+    }
+
+    if (!columns.includes('epg_enabled')) {
+      db.exec('ALTER TABLE providers ADD COLUMN epg_enabled INTEGER DEFAULT 1');
+      console.log('✅ DB Migration: epg_enabled column added to providers');
+    }
+  } catch (e) {
+    console.error('Schema migration error:', e);
+  }
 }
 
 function migrateProviderPasswords() {
@@ -603,6 +633,56 @@ function startSyncScheduler() {
 
 // Start scheduler on startup
 startSyncScheduler();
+startEpgScheduler();
+
+function startEpgScheduler() {
+  // Check every minute
+  setInterval(async () => {
+    const now = Math.floor(Date.now() / 1000);
+
+    // 1. Custom Sources
+    const sources = db.prepare('SELECT * FROM epg_sources WHERE enabled = 1 AND is_updating = 0').all();
+    for (const source of sources) {
+      if (source.last_update + source.update_interval <= now) {
+        try {
+          await updateEpgSource(source.id);
+        } catch (e) {
+          console.error(`Scheduled EPG update failed for ${source.name}:`, e.message);
+        }
+      }
+    }
+
+    // 2. Provider Sources
+    const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
+    for (const provider of providers) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+      let lastUpdate = 0;
+      if (fs.existsSync(cacheFile)) {
+        const stats = fs.statSync(cacheFile);
+        lastUpdate = Math.floor(stats.mtimeMs / 1000);
+      }
+
+      const interval = provider.epg_update_interval || 86400;
+
+      if (lastUpdate + interval <= now) {
+        try {
+          console.log(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
+          const response = await fetch(provider.epg_url);
+          if (response.ok) {
+            const epgData = await response.text();
+            await fs.promises.writeFile(cacheFile, epgData, 'utf8');
+            console.log(`✅ Scheduled EPG update success: ${provider.name}`);
+          } else {
+            console.error(`Scheduled EPG update HTTP error ${response.status} for ${provider.name}`);
+          }
+        } catch (e) {
+          console.error(`Scheduled EPG update failed for ${provider.name}:`, e.message);
+        }
+      }
+    }
+  }, 60000);
+  console.log('📅 EPG Scheduler started');
+}
 
 // Adult Content Detection
 function isAdultCategory(name) {
@@ -782,6 +862,53 @@ app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
   }
 });
 
+app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { username, password } = req.body;
+
+    // Get existing user
+    const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({error: 'user not found'});
+
+    const updates = [];
+    const params = [];
+
+    if (username) {
+        const u = username.trim();
+        if (u.length < 3 || u.length > 50) {
+            return res.status(400).json({ error: 'invalid_username_length' });
+        }
+        // Check uniqueness if username changed
+        if (u !== existing.username) {
+           const duplicate = db.prepare('SELECT id FROM users WHERE username = ?').get(u);
+           if (duplicate) return res.status(400).json({ error: 'username_taken' });
+        }
+        updates.push('username = ?');
+        params.push(u);
+    }
+
+    if (password) {
+        const p = password.trim();
+        if (p.length < 8) {
+            return res.status(400).json({ error: 'password_too_short' });
+        }
+        const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
+        updates.push('password = ?');
+        params.push(hashedPassword);
+    }
+
+    if (updates.length === 0) return res.json({success: true}); // Nothing to update
+
+    params.push(id);
+    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
 // === API: Authentication ===
 app.post('/api/login', authLimiter, async (req, res) => {
   try {
@@ -878,7 +1005,20 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
 // === API: Providers ===
 app.get('/api/providers', authenticateToken, (req, res) => {
   try {
-    const providers = db.prepare('SELECT * FROM providers').all();
+    const { user_id } = req.query;
+    let query = `
+      SELECT p.*, u.username as owner_name
+      FROM providers p
+      LEFT JOIN users u ON u.id = p.user_id
+    `;
+    const params = [];
+
+    if (user_id) {
+      query += ' WHERE p.user_id = ?';
+      params.push(Number(user_id));
+    }
+
+    const providers = db.prepare(query).all(...params);
     // Mask passwords
     const safeProviders = providers.map(p => ({
       ...p,
@@ -890,7 +1030,7 @@ app.get('/api/providers', authenticateToken, (req, res) => {
 
 app.post('/api/providers', authenticateToken, (req, res) => {
   try {
-    const { name, url, username, password, epg_url } = req.body;
+    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
 
     // Validate URL
@@ -904,8 +1044,19 @@ app.post('/api/providers', authenticateToken, (req, res) => {
 
     const encryptedPassword = encrypt(password.trim());
 
-    const info = db.prepare('INSERT INTO providers (name, url, username, password, epg_url) VALUES (?, ?, ?, ?, ?)')
-      .run(name.trim(), url.trim(), username.trim(), encryptedPassword, (epg_url || '').trim());
+    const info = db.prepare(`
+      INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      name.trim(),
+      url.trim(),
+      username.trim(),
+      encryptedPassword,
+      (epg_url || '').trim(),
+      user_id ? Number(user_id) : null,
+      epg_update_interval ? Number(epg_update_interval) : 86400,
+      epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1
+    );
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -1456,7 +1607,17 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
     const id = Number(req.params.id);
 
     db.transaction(() => {
-      // Delete related data first
+      // 1. Delete owned providers and their dependencies
+      const userProviders = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(id);
+      for (const p of userProviders) {
+        db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(p.id);
+        db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(p.id);
+        db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(p.id);
+        db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(p.id);
+        db.prepare('DELETE FROM providers WHERE id = ?').run(p.id);
+      }
+
+      // 2. Delete user data
       db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);
 
       // Update mappings to remove user_category_id reference before deleting categories
@@ -1667,7 +1828,7 @@ app.put('/api/user-categories/:id', authenticateToken, (req, res) => {
 app.put('/api/providers/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { name, url, username, password, epg_url } = req.body;
+    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
     if (!name || !url || !username || !password) {
       return res.status(400).json({error: 'missing fields'});
     }
@@ -1682,7 +1843,7 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
     }
 
     // Get existing to check for masked password
-    const existing = db.prepare('SELECT password FROM providers WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({error: 'provider not found'});
 
     let finalPassword = existing.password;
@@ -1693,9 +1854,19 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
 
     db.prepare(`
       UPDATE providers
-      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?
+      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?
       WHERE id = ?
-    `).run(name.trim(), url.trim(), username.trim(), finalPassword, (epg_url || '').trim(), id);
+    `).run(
+      name.trim(),
+      url.trim(),
+      username.trim(),
+      finalPassword,
+      (epg_url || '').trim(),
+      user_id !== undefined ? (user_id ? Number(user_id) : null) : existing.user_id,
+      epg_update_interval ? Number(epg_update_interval) : existing.epg_update_interval,
+      epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
+      id
+    );
     
     res.json({success: true});
   } catch (e) {
@@ -1886,7 +2057,7 @@ app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
 app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
   try {
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
-    const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
     
     // Update provider EPGs in parallel
     const providerPromises = providers.map(async (provider) => {
@@ -1923,87 +2094,31 @@ app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
   }
 });
 
-// Cache for EPG sources
-let epgSourcesCache = null;
-let epgSourcesCacheTime = 0;
-const EPG_CACHE_DURATION = 3600000; // 1 hour
-
-// Get available EPG sources from globetvapp/epg
+// Get available EPG sources from local JSON
 app.get('/api/epg-sources/available', authenticateToken, async (req, res) => {
   try {
-    // Return cached data if available and fresh
-    const now = Date.now();
-    if (epgSourcesCache && (now - epgSourcesCacheTime) < EPG_CACHE_DURATION) {
-      return res.json(epgSourcesCache);
+    const jsonPath = path.join(__dirname, 'public', 'epg_sources.json');
+    if (!fs.existsSync(jsonPath)) {
+      return res.json([]);
     }
+    const content = await fs.promises.readFile(jsonPath, 'utf8');
+    const data = JSON.parse(content);
+    // Map to expected format if needed, but the JSON structure seems compatible
+    // The existing frontend expects {name, url, size, country}
+    // The JSON has {name, url, country_code, description}
+    // We can map it to match frontend expectation
     
-    console.log('📡 Fetching EPG sources via GitHub Tree API...');
-
-    // 1. Get default branch
-    const repoResponse = await fetch('https://api.github.com/repos/globetvapp/epg');
-    const repoData = await repoResponse.json();
+    const sources = (data.epg_sources || []).map(s => ({
+      name: s.name,
+      url: s.url,
+      size: 0, // Unknown size, optional
+      country: s.country_code // Use country_code as country
+    }));
     
-    if (repoData.message && repoData.message.includes('rate limit')) {
-      console.warn('GitHub API rate limit reached (repo info), returning cached or empty data');
-      return res.json(epgSourcesCache || []);
-    }
-
-    if (!repoResponse.ok) {
-       throw new Error('Failed to fetch repo info');
-    }
-
-    const defaultBranch = repoData.default_branch || 'main';
-
-    // 2. Fetch tree recursively
-    const treeResponse = await fetch(`https://api.github.com/repos/globetvapp/epg/git/trees/${defaultBranch}?recursive=1`);
-    const treeData = await treeResponse.json();
-
-    if (treeData.message && treeData.message.includes('rate limit')) {
-      console.warn('GitHub API rate limit reached (tree), returning cached or empty data');
-      return res.json(epgSourcesCache || []);
-    }
-
-    if (!treeResponse.ok) {
-      throw new Error('Failed to fetch tree');
-    }
-
-    const epgSources = [];
-    const tree = treeData.tree || [];
-
-    for (const item of tree) {
-      // Filter for files, .xml, not .gz
-      if (item.type === 'blob' && item.path.endsWith('.xml') && !item.path.endsWith('.xml.gz')) {
-        const parts = item.path.split('/');
-        // Ensure structure is Country/File.xml (depth 2)
-        if (parts.length === 2) {
-          const country = parts[0];
-          const filename = parts[1];
-          // Construct raw URL
-          const downloadUrl = `https://raw.githubusercontent.com/globetvapp/epg/${defaultBranch}/${encodeURI(item.path)}`;
-
-          epgSources.push({
-            name: `${country} - ${filename.replace(/\.xml$/, '')}`,
-            url: downloadUrl,
-            size: item.size,
-            country: country
-          });
-        }
-      }
-    }
-    
-    console.log(`✅ Found ${epgSources.length} EPG sources via Tree API`);
-    
-    // Cache the results
-    if (epgSources.length > 0) {
-      epgSourcesCache = epgSources;
-      epgSourcesCacheTime = now;
-    }
-    
-    res.json(epgSources);
+    res.json(sources);
   } catch (e) {
     console.error('EPG sources error:', e.message);
-    // Return cached data if available, otherwise empty array
-    res.json(epgSourcesCache || []);
+    res.status(500).json({error: e.message});
   }
 });
 
@@ -2121,6 +2236,24 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
 
     if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
 
+    // Load Global Mappings (from other providers)
+    const globalMappings = db.prepare(`
+      SELECT pc.name, map.epg_channel_id
+      FROM epg_channel_mappings map
+      JOIN provider_channels pc ON pc.id = map.provider_channel_id
+    `).all();
+
+    const globalMap = new Map();
+    for (const m of globalMappings) {
+        const clean = m.name.toLowerCase()
+         .replace(/\s+/g, ' ')
+         .replace(/^(uk|us|de|fr|it|es|pt|pl|tr|gr|nl|be|ch|at):?\s*/i, '')
+         .replace(/\(.*\)/g, '')
+         .replace(/\[.*\]/g, '')
+         .trim();
+        if (clean) globalMap.set(clean, m.epg_channel_id);
+    }
+
     const epgList = await loadAllEpgChannels();
     const epgChannels = new Map();
     for (const ch of epgList) {
@@ -2144,8 +2277,15 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
          .replace(/\[.*\]/g, '')
          .trim();
 
-       let epgId = epgChannels.get(cleanName);
+       // 1. Try Global Map
+       let epgId = globalMap.get(cleanName);
 
+       // 2. Try Exact Match
+       if (!epgId) {
+         epgId = epgChannels.get(cleanName);
+       }
+
+       // 3. Fuzzy Match
        if (!epgId) {
          // Fuzzy match with Levenshtein
          // Optimization: Only check channels with similar length

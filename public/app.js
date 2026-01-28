@@ -131,8 +131,22 @@ async function loadUsers() {
       document.getElementById('xtream-user').textContent = u.username;
       document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
       loadUserCategories();
+      loadProviders(); // Refresh providers to filter channel assignment dropdown
+
+      // Update provider form user select if not editing
+      const provForm = document.getElementById('provider-form');
+      if (!provForm.provider_id.value) {
+          provForm.user_id.value = u.id;
+      }
     };
     
+    const btnGroup = document.createElement('div');
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+    editBtn.innerHTML = '✏️'; // Edit icon
+    editBtn.onclick = () => showEditUserModal(u);
+
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
@@ -142,30 +156,89 @@ async function loadUsers() {
       loadUsers();
     };
     
+    btnGroup.appendChild(editBtn);
+    btnGroup.appendChild(delBtn);
     li.appendChild(span);
-    li.appendChild(delBtn);
+    li.appendChild(btnGroup);
     list.appendChild(li);
   });
+
+  // Populate provider user select
+  updateProviderUserSelect(users);
 }
+
+function updateProviderUserSelect(users) {
+  const select = document.getElementById('provider-user-select');
+  if (!select) return;
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">Select User...</option>';
+  users.forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.id;
+    opt.textContent = u.username;
+    select.appendChild(opt);
+  });
+  if (currentVal) select.value = currentVal;
+}
+
+function showEditUserModal(user) {
+  const modal = new bootstrap.Modal(document.getElementById('edit-user-modal'));
+  document.getElementById('edit-user-id').value = user.id;
+  document.getElementById('edit-user-username').value = user.username;
+  document.getElementById('edit-user-password').value = '';
+  modal.show();
+}
+
+document.getElementById('edit-user-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = document.getElementById('edit-user-id').value;
+  const username = document.getElementById('edit-user-username').value;
+  const password = document.getElementById('edit-user-password').value;
+
+  const body = { username };
+  if (password) body.password = password;
+
+  try {
+    await fetchJSON(`/api/users/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    bootstrap.Modal.getInstance(document.getElementById('edit-user-modal')).hide();
+    loadUsers();
+    alert(t('userUpdated'));
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + (e.message || 'Error'));
+  }
+});
 
 // === Provider Management ===
 async function loadProviders() {
   const providers = await fetchJSON('/api/providers');
   const list = document.getElementById('provider-list');
-  const select = document.getElementById('channel-provider-select');
   list.innerHTML = '';
-  select.innerHTML = `<option value="">${t('selectProviderPlaceholder')}</option>`;
+
+  updateChannelProviderSelect(providers);
 
   providers.forEach(p => {
     const li = document.createElement('li');
     li.className = 'list-group-item';
     
+    const epgStatus = p.epg_enabled ? '✅' : '❌';
+    const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h)</small>` : '';
+    const ownerInfo = p.owner_name ? `<br><small class="text-primary">Owner: ${p.owner_name}</small>` : '';
+
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
-    row.innerHTML = `<strong>${p.name}</strong> <small>(${p.url})</small>`;
+    row.innerHTML = `<div><strong>${p.name}</strong> <small>(${p.url})</small>${ownerInfo}${epgInfo}</div>`;
     
     const btnGroup = document.createElement('div');
     
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+    editBtn.innerHTML = '✏️';
+    editBtn.onclick = () => prepareEditProvider(p);
+
     const syncBtn = document.createElement('button');
     syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
     syncBtn.textContent = t('sync');
@@ -216,6 +289,7 @@ async function loadProviders() {
       loadProviders();
     };
     
+    btnGroup.appendChild(editBtn);
     btnGroup.appendChild(syncBtn);
     btnGroup.appendChild(configBtn);
     btnGroup.appendChild(logsBtn);
@@ -223,12 +297,54 @@ async function loadProviders() {
     row.appendChild(btnGroup);
     li.appendChild(row);
     list.appendChild(li);
+  });
+}
 
+function updateChannelProviderSelect(providers) {
+  const select = document.getElementById('channel-provider-select');
+  if (!select) return;
+
+  select.innerHTML = `<option value="">${t('selectProviderPlaceholder')}</option>`;
+
+  const filtered = selectedUserId
+    ? providers.filter(p => p.user_id == selectedUserId)
+    : [];
+
+  filtered.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.id;
     opt.textContent = p.name;
     select.appendChild(opt);
   });
+}
+
+function prepareEditProvider(p) {
+  const form = document.getElementById('provider-form');
+  form.provider_id.value = p.id;
+  form.name.value = p.name;
+  form.url.value = p.url;
+  form.username.value = p.username;
+  form.password.value = '********';
+  form.epg_url.value = p.epg_url || '';
+  form.user_id.value = p.user_id || '';
+  form.epg_update_interval.value = p.epg_update_interval || 86400;
+  form.epg_enabled.checked = p.epg_enabled !== 0;
+
+  document.getElementById('save-provider-btn').textContent = t('saveChanges') || 'Save';
+  document.getElementById('cancel-edit-provider').style.display = 'inline-block';
+
+  form.scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('cancel-edit-provider').addEventListener('click', resetProviderForm);
+
+function resetProviderForm() {
+  const form = document.getElementById('provider-form');
+  form.reset();
+  form.provider_id.value = '';
+  document.getElementById('save-provider-btn').textContent = t('addProvider');
+  document.getElementById('cancel-edit-provider').style.display = 'none';
+  if (selectedUserId) form.user_id.value = selectedUserId;
 }
 
 // === Category Management ===
@@ -715,21 +831,40 @@ document.getElementById('user-form').addEventListener('submit', async e => {
 document.getElementById('provider-form').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
+  const id = f.provider_id.value;
+
+  const body = {
+    name: f.name.value,
+    url: f.url.value,
+    username: f.username.value,
+    password: f.password.value,
+    epg_url: f.epg_url.value || null,
+    user_id: f.user_id.value || null,
+    epg_update_interval: f.epg_update_interval.value,
+    epg_enabled: f.epg_enabled.checked
+  };
+
   try {
-    await fetchJSON('/api/providers', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        name: f.name.value,
-        url: f.url.value,
-        username: f.username.value,
-        password: f.password.value,
-        epg_url: f.epg_url.value || null
-      })
-    });
-    f.reset();
+    if (id) {
+      await fetchJSON(`/api/providers/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      alert(t('providerUpdated') || 'Provider updated');
+      resetProviderForm();
+    } else {
+      await fetchJSON('/api/providers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      f.reset();
+      // Keep selected user if any
+      if (selectedUserId) f.user_id.value = selectedUserId;
+      alert(t('providerCreated'));
+    }
     loadProviders();
-    alert(t('providerCreated'));
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   }
