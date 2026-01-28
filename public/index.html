@@ -243,6 +243,16 @@
     <p><strong data-i18n="username">Username</strong>: <code id="xtream-user">-</code></p>
     <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
     <p><strong data-i18n="epgUrlLabel">EPG URL</strong>: <code id="epg-url"></code></p>
+
+    <!-- 6. M3U Playlist -->
+    <hr class="my-4">
+    <h3 data-i18n="m3uPlaylist">6. M3U Playlist</h3>
+    <p><span data-i18n="m3uDescription">Use this link in your IPTV player.</span></p>
+    <div class="input-group mb-3">
+      <span class="input-group-text" data-i18n="m3uLink">M3U Link</span>
+      <code id="m3u-link" class="form-control" style="background-color: #e9ecef; display: flex; align-items: center;">-</code>
+      <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('m3u-link').textContent)">📋</button>
+    </div>
     </div> <!-- End view-dashboard -->
 
     <!-- View: Security -->
@@ -252,9 +262,16 @@
       <div class="row mb-4">
          <div class="col-md-6">
             <h5 data-i18n="blockIp">Block IP</h5>
-            <form id="block-ip-form" class="d-flex gap-2 mb-2">
-               <input class="form-control form-control-sm" name="ip" placeholder="IP Address" required>
-               <input class="form-control form-control-sm" name="reason" placeholder="Reason">
+            <form id="block-ip-form" class="d-flex gap-2 mb-2 align-items-center">
+               <input class="form-control form-control-sm" name="ip" placeholder="IP Address" required style="width: 150px;">
+               <input class="form-control form-control-sm" name="reason" data-i18n-placeholder="whitelistReason" placeholder="Reason" style="flex-grow: 1;">
+               <select class="form-select form-select-sm" name="duration" style="width: auto;">
+                  <option value="3600">1h</option>
+                  <option value="21600">6h</option>
+                  <option value="43200">12h</option>
+                  <option value="86400">24h</option>
+                  <option value="manual" data-i18n="custom">Custom</option>
+               </select>
                <button class="btn btn-sm btn-danger" data-i18n="block">Block</button>
             </form>
             <ul id="blocked-ip-list" class="list-group small" style="max-height: 200px; overflow:auto;"></ul>
@@ -263,6 +280,7 @@
             <h5 data-i18n="whitelistIp">Whitelist IP</h5>
             <form id="whitelist-ip-form" class="d-flex gap-2 mb-2">
                <input class="form-control form-control-sm" name="ip" placeholder="IP Address" required>
+               <input class="form-control form-control-sm" name="description" data-i18n-placeholder="reasonPlaceholder" placeholder="Reason">
                <button class="btn btn-sm btn-success" data-i18n="whitelist">Whitelist</button>
             </form>
             <ul id="whitelisted-ip-list" class="list-group small" style="max-height: 200px; overflow:auto;"></ul>

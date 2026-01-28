@@ -1672,6 +1672,13 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
+    // Cleanup existing streams for this user/ip (Fast-Tapping Fix)
+    for (const [key, stream] of activeStreams.entries()) {
+      if (stream.user_id === user.id && stream.ip === req.ip) {
+         activeStreams.delete(key);
+      }
+    }
+
     // Track active stream
     const startTime = Date.now();
     activeStreams.set(connectionId, {

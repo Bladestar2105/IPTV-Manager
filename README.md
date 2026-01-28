@@ -31,6 +31,7 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **Adult Content Filtering**: Automatic detection and marking of adult content.
 - **Live Statistics**: Real-time tracking of active streams and viewing statistics.
 - **Internationalization**: Full UI support for English, German, French, and Greek.
+- **M3U Playlist Generation**: Easy access to generated M3U playlist links for IPTV players.
 
 ### Security
 - **🔐 Password Hashing**: Bcrypt-based password hashing.
@@ -38,6 +39,7 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **🛡️ Rate Limiting**: Protection against brute force attacks.
 - **🔒 Security Headers**: Helmet.js for comprehensive security headers.
 - **🚪 Login System**: Secure login modal with session management.
+- **🚫 IP Blocking**: Configurable blocking duration (1h to 24h or custom) and whitelisting with reasons.
 
 ## 📋 Requirements
 

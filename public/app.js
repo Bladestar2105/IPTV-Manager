@@ -1395,6 +1395,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('xtream-url').textContent = window.location.origin;
   document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
   document.getElementById('epg-url').textContent = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
+
+  const m3uLinkEl = document.getElementById('m3u-link');
+  if (m3uLinkEl) {
+      const baseUrl = window.location.origin;
+      m3uLinkEl.textContent = `${baseUrl}/get.php?username=DUMMY&password=DUMMY&type=m3u&output=ts`;
+  }
   
   const importBtn = document.getElementById('import-categories-btn');
   if (importBtn) {
@@ -1573,13 +1579,25 @@ document.addEventListener('DOMContentLoaded', () => {
           e.preventDefault();
           const ip = blockForm.ip.value;
           const reason = blockForm.reason.value;
+          let duration = blockForm.duration.value;
+
+          if (duration === 'manual') {
+             const mins = prompt(t('minutes') || 'Minutes:', '60');
+             if (!mins) return;
+             duration = Number(mins) * 60;
+          } else {
+             duration = Number(duration);
+          }
+
           try {
               await fetchJSON('/api/security/block', {
                   method: 'POST',
                   headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({ip, reason, duration: 3600})
+                  body: JSON.stringify({ip, reason, duration})
               });
               blockForm.reset();
+              // Reset select default
+              if(blockForm.duration) blockForm.duration.value = '3600';
               loadSecurity();
           } catch(e) { alert(e.message); }
       });
@@ -1590,11 +1608,12 @@ document.addEventListener('DOMContentLoaded', () => {
       whitelistForm.addEventListener('submit', async (e) => {
           e.preventDefault();
           const ip = whitelistForm.ip.value;
+          const description = whitelistForm.description.value;
           try {
               await fetchJSON('/api/security/whitelist', {
                   method: 'POST',
                   headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({ip, description: 'Manual'})
+                  body: JSON.stringify({ip, description: description || 'Manual'})
               });
               whitelistForm.reset();
               loadSecurity();
@@ -1616,6 +1635,7 @@ function switchView(viewName) {
   document.getElementById('view-dashboard').classList.add('d-none');
   document.getElementById('view-epg-mapping').classList.add('d-none');
   document.getElementById('view-statistics').classList.add('d-none');
+  document.getElementById('view-security').classList.add('d-none');
 
   // Stop stats interval if running
   if (statsInterval) {
