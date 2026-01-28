@@ -718,6 +718,8 @@ startSyncScheduler();
 startEpgScheduler();
 
 function startEpgScheduler() {
+  const failedUpdates = new Map();
+
   // Check every minute
   setInterval(async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -746,6 +748,10 @@ function startEpgScheduler() {
 
       const interval = provider.epg_update_interval || 86400;
 
+      // Check if recently failed (Backoff: 15 minutes)
+      const lastFail = failedUpdates.get(provider.id) || 0;
+      if (lastFail && (lastFail + 900 > now)) continue;
+
       if (lastUpdate + interval <= now) {
         try {
           console.log(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
@@ -754,11 +760,14 @@ function startEpgScheduler() {
             const epgData = await response.text();
             await fs.promises.writeFile(cacheFile, epgData, 'utf8');
             console.log(`✅ Scheduled EPG update success: ${provider.name}`);
+            failedUpdates.delete(provider.id);
           } else {
             console.error(`Scheduled EPG update HTTP error ${response.status} for ${provider.name}`);
+            failedUpdates.set(provider.id, now);
           }
         } catch (e) {
           console.error(`Scheduled EPG update failed for ${provider.name}:`, e.message);
+          failedUpdates.set(provider.id, now);
         }
       }
     }
@@ -1062,7 +1071,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
     const failWindow = now - 900; // 15 minutes
     const failCount = db.prepare(`
       SELECT COUNT(*) as count FROM security_logs
-      WHERE ip = ? AND action = 'login_failed' AND timestamp > ?
+      WHERE ip = ? AND action IN ('login_failed', 'xtream_login_failed') AND timestamp > ?
     `).get(ip, failWindow).count;
 
     if (failCount >= 5) {
@@ -2329,7 +2338,7 @@ app.get('/api/epg-sources', authenticateToken, (req, res) => {
     const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
     
     // Add provider EPG sources
-    const providers = db.prepare("SELECT id, name, epg_url FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
     const allSources = [
       ...providers.map(p => {
         let lastUpdate = 0;
@@ -2346,7 +2355,7 @@ app.get('/api/epg-sources', authenticateToken, (req, res) => {
           url: p.epg_url,
           enabled: 1,
           last_update: lastUpdate,
-          update_interval: 86400,
+          update_interval: p.epg_update_interval || 86400,
           source_type: 'provider',
           is_updating: 0
         };

@@ -1408,7 +1408,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const m3uLinkEl = document.getElementById('m3u-link');
   if (m3uLinkEl) {
       const baseUrl = window.location.origin;
-      m3uLinkEl.textContent = `${baseUrl}/get.php?username=DUMMY&password=DUMMY&type=m3u&output=ts`;
+      m3uLinkEl.textContent = `${baseUrl}/get.php?username=DUMMY&password=DUMMY&type=m3u_plus&output=ts`;
   }
   
   const importBtn = document.getElementById('import-categories-btn');
