@@ -271,6 +271,13 @@ try {
       last_update INTEGER DEFAULT 0,
       FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id)
     );
+
+    CREATE TABLE IF NOT EXISTS epg_channel_mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_channel_id INTEGER NOT NULL UNIQUE,
+      epg_channel_id TEXT NOT NULL,
+      FOREIGN KEY (provider_channel_id) REFERENCES provider_channels(id)
+    );
     
     -- Picon cache table removed - using direct URLs for better performance
   `);
@@ -1193,10 +1200,12 @@ app.get('/player_api.php', async (req, res) => {
 
     if (action === 'get_live_streams') {
       const rows = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
+               map.epg_channel_id as manual_epg_id
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ?
         ORDER BY uc.sort_order
       `).all(user.id);
@@ -1211,7 +1220,7 @@ app.get('/player_api.php', async (req, res) => {
           stream_type: 'live',
           stream_id: Number(ch.user_channel_id),
           stream_icon: iconUrl,
-          epg_channel_id: ch.epg_channel_id || '',
+          epg_channel_id: ch.manual_epg_id || ch.epg_channel_id || '',
           added: now.toString(),
           is_adult: ch.category_is_adult || 0,
           category_id: String(ch.user_category_id),
@@ -1997,6 +2006,196 @@ app.get('/api/epg-sources/available', authenticateToken, async (req, res) => {
     res.json(epgSourcesCache || []);
   }
 });
+
+// === EPG Mapping APIs ===
+async function loadAllEpgChannels() {
+  const epgFiles = [];
+
+  const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+  for (const provider of providers) {
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+    if (fs.existsSync(cacheFile)) {
+      epgFiles.push({ file: cacheFile, source: `Provider ${provider.id}` });
+    }
+  }
+
+  const sources = db.prepare('SELECT id, name FROM epg_sources WHERE enabled = 1').all();
+  for (const source of sources) {
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
+    if (fs.existsSync(cacheFile)) {
+      epgFiles.push({ file: cacheFile, source: source.name });
+    }
+  }
+
+  const allChannels = [];
+  const seenIds = new Set();
+
+  for (const item of epgFiles) {
+    try {
+      const content = await fs.promises.readFile(item.file, 'utf8');
+      const channelRegex = /<channel id="([^"]+)">([\s\S]*?)<\/channel>/g;
+      let match;
+      while ((match = channelRegex.exec(content)) !== null) {
+        const id = match[1];
+        if (seenIds.has(id)) continue;
+
+        const inner = match[2];
+        const nameMatch = inner.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
+        const iconMatch = inner.match(/<icon[^>]+src="([^"]+)"/);
+
+        allChannels.push({
+          id: id,
+          name: nameMatch ? nameMatch[1] : id,
+          logo: iconMatch ? iconMatch[1] : null,
+          source: item.source
+        });
+        seenIds.add(id);
+      }
+    } catch (e) {
+      console.error(`Error reading EPG file ${item.file}:`, e);
+    }
+  }
+  return allChannels;
+}
+
+app.get('/api/epg/channels', authenticateToken, async (req, res) => {
+  try {
+    const channels = await loadAllEpgChannels();
+    res.json(channels);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.post('/api/mapping/manual', authenticateToken, (req, res) => {
+  try {
+    const { provider_channel_id, epg_channel_id } = req.body;
+    if (!provider_channel_id || !epg_channel_id) return res.status(400).json({error: 'missing fields'});
+
+    db.prepare(`
+      INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
+      VALUES (?, ?)
+      ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
+    `).run(Number(provider_channel_id), epg_channel_id);
+
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.delete('/api/mapping/:id', authenticateToken, (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.get('/api/mapping/:providerId', authenticateToken, (req, res) => {
+  try {
+    const id = Number(req.params.providerId);
+    const mappings = db.prepare('SELECT * FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').all(id);
+    const map = {};
+    mappings.forEach(m => map[m.provider_channel_id] = m.epg_channel_id);
+    res.json(map);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
+  try {
+    const { provider_id } = req.body;
+    if (!provider_id) return res.status(400).json({error: 'provider_id required'});
+
+    // Get unmapped channels
+    const channels = db.prepare(`
+      SELECT pc.id, pc.name, pc.epg_channel_id
+      FROM provider_channels pc
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      WHERE pc.provider_id = ? AND map.id IS NULL
+    `).all(Number(provider_id));
+
+    if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
+
+    const epgList = await loadAllEpgChannels();
+    const epgChannels = new Map();
+    for (const ch of epgList) {
+       if (ch.name) epgChannels.set(ch.name.toLowerCase(), ch.id);
+    }
+
+    let matched = 0;
+    const insert = db.prepare(`
+      INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
+      VALUES (?, ?)
+      ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
+    `);
+
+    const updates = [];
+
+    for (const ch of channels) {
+       const cleanName = ch.name.toLowerCase()
+         .replace(/\s+/g, ' ')
+         .replace(/^(uk|us|de|fr|it|es|pt|pl|tr|gr|nl|be|ch|at):?\s*/i, '')
+         .replace(/\(.*\)/g, '')
+         .replace(/\[.*\]/g, '')
+         .trim();
+
+       let epgId = epgChannels.get(cleanName);
+
+       if (!epgId) {
+         // Fuzzy match with Levenshtein
+         // Optimization: Only check channels with similar length
+         for (const [epgName, id] of epgChannels.entries()) {
+           if (Math.abs(epgName.length - cleanName.length) > 3) continue;
+
+           if (levenshtein(cleanName, epgName) < 3) {
+              epgId = id;
+              break;
+           }
+         }
+       }
+
+       if (epgId) {
+         updates.push({pid: ch.id, eid: epgId});
+         matched++;
+       }
+    }
+
+    if (updates.length > 0) {
+      db.transaction(() => {
+        for (const u of updates) {
+          insert.run(u.pid, u.eid);
+        }
+      })();
+    }
+
+    res.json({success: true, matched});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
+
+function levenshtein(a, b) {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
 
 // Start
 app.listen(PORT, () => {

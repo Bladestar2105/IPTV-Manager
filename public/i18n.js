@@ -161,7 +161,26 @@ const translations = {
     password_changed_successfully: 'Password changed successfully!',
     change_password_failed: 'Failed to change password',
     changing_password: 'Changing password...',
-    missing_fields: 'Please fill in all fields'
+    missing_fields: 'Please fill in all fields',
+
+    // EPG Mapping
+    dashboard: 'Dashboard',
+    epgMapping: 'EPG Mapping',
+    epgMappingTitle: 'EPG Mapping',
+    autoMap: '⚡ Auto Map',
+    channelMappingList: 'Channel List',
+    channelName: 'Channel Name',
+    currentEpgId: 'Current EPG ID',
+    manualMapping: 'Manual Mapping',
+    actions: 'Actions',
+    selectEpgChannel: 'Select EPG Channel',
+    map: 'Map',
+    unmap: 'Unmap',
+    selectProviderFirst: 'Please select a provider first',
+    autoMapConfirm: 'Auto-map all unmapped channels?',
+    autoMapSuccess: 'Auto-mapping complete: {count} channels mapped.',
+    mappingSaved: 'Mapping saved',
+    mappingRemoved: 'Mapping removed'
   },
   
   de: {
@@ -322,7 +341,26 @@ const translations = {
     password_changed_successfully: 'Passwort erfolgreich geändert!',
     change_password_failed: 'Passwortänderung fehlgeschlagen',
     changing_password: 'Passwort wird geändert...',
-    missing_fields: 'Bitte alle Felder ausfüllen'
+    missing_fields: 'Bitte alle Felder ausfüllen',
+
+    // EPG Mapping
+    dashboard: 'Dashboard',
+    epgMapping: 'EPG Zuordnung',
+    epgMappingTitle: 'EPG Zuordnung',
+    autoMap: '⚡ Auto Map',
+    channelMappingList: 'Kanalliste',
+    channelName: 'Kanal Name',
+    currentEpgId: 'Aktuelle EPG ID',
+    manualMapping: 'Manuelle Zuordnung',
+    actions: 'Aktionen',
+    selectEpgChannel: 'EPG Kanal auswählen',
+    map: 'Zuordnen',
+    unmap: 'Lösen',
+    selectProviderFirst: 'Bitte zuerst Provider wählen',
+    autoMapConfirm: 'Alle nicht zugeordneten Kanäle automatisch zuordnen?',
+    autoMapSuccess: 'Auto-Mapping fertig: {count} Kanäle zugeordnet.',
+    mappingSaved: 'Zuordnung gespeichert',
+    mappingRemoved: 'Zuordnung entfernt'
   },
 
   fr: {
@@ -483,7 +521,26 @@ const translations = {
     password_changed_successfully: 'Mot de passe changé avec succès!',
     change_password_failed: 'Échec du changement de mot de passe',
     changing_password: 'Changement du mot de passe...',
-    missing_fields: 'Veuillez remplir tous les champs'
+    missing_fields: 'Veuillez remplir tous les champs',
+
+    // EPG Mapping
+    dashboard: 'Tableau de bord',
+    epgMapping: 'Cartographie EPG',
+    epgMappingTitle: 'Cartographie EPG',
+    autoMap: '⚡ Auto Map',
+    channelMappingList: 'Liste des Chaînes',
+    channelName: 'Nom de la Chaîne',
+    currentEpgId: 'ID EPG Actuel',
+    manualMapping: 'Cartographie Manuelle',
+    actions: 'Actions',
+    selectEpgChannel: 'Sélectionner Chaîne EPG',
+    map: 'Associer',
+    unmap: 'Dissocier',
+    selectProviderFirst: 'Veuillez d\'abord sélectionner un fournisseur',
+    autoMapConfirm: 'Associer automatiquement toutes les chaînes non associées ?',
+    autoMapSuccess: 'Auto-association terminée : {count} chaînes associées.',
+    mappingSaved: 'Association enregistrée',
+    mappingRemoved: 'Association supprimée'
   },
 
   el: {
@@ -634,7 +691,26 @@ const translations = {
     password_changed_successfully: 'Ο κωδικός άλλαξε επιτυχώς!',
     change_password_failed: 'Αποτυχία αλλαγής κωδικού',
     changing_password: 'Αλλαγή κωδικού...',
-    missing_fields: 'Παρακαλώ συμπληρώστε όλα τα πεδία'
+    missing_fields: 'Παρακαλώ συμπληρώστε όλα τα πεδία',
+
+    // EPG Mapping
+    dashboard: 'Ταμπλό',
+    epgMapping: 'Χαρτογράφηση EPG',
+    epgMappingTitle: 'Χαρτογράφηση EPG',
+    autoMap: '⚡ Αυτόματη Χαρτογράφηση',
+    channelMappingList: 'Λίστα Καναλιών',
+    channelName: 'Όνομα Καναλιού',
+    currentEpgId: 'Τρέχον EPG ID',
+    manualMapping: 'Χειροκίνητη Χαρτογράφηση',
+    actions: 'Ενέργειες',
+    selectEpgChannel: 'Επιλογή Καναλιού EPG',
+    map: 'Αντιστοίχιση',
+    unmap: 'Ακύρωση',
+    selectProviderFirst: 'Παρακαλώ επιλέξτε πρώτα έναν πάροχο',
+    autoMapConfirm: 'Αυτόματη αντιστοίχιση όλων των μη αντιστοιχισμένων καναλιών;',
+    autoMapSuccess: 'Η αυτόματη αντιστοίχιση ολοκληρώθηκε: {count} κανάλια.',
+    mappingSaved: 'Η αντιστοίχιση αποθηκεύτηκε',
+    mappingRemoved: 'Η αντιστοίχιση αφαιρέθηκε'
   }
 };
 

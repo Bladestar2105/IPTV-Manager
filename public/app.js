@@ -1202,11 +1202,313 @@ document.addEventListener('DOMContentLoaded', () => {
     epgBrowseSearch.addEventListener('input', renderAvailableEpgSources);
   }
   
+  // EPG Mapping Events
+  const epgMappingProviderSelect = document.getElementById('epg-mapping-provider-select');
+  if (epgMappingProviderSelect) {
+    epgMappingProviderSelect.addEventListener('change', loadEpgMappingChannels);
+  }
+
+  const autoMapBtn = document.getElementById('auto-map-btn');
+  if (autoMapBtn) {
+    autoMapBtn.addEventListener('click', handleAutoMap);
+  }
+
+  const epgMappingSearch = document.getElementById('epg-mapping-search');
+  if (epgMappingSearch) {
+    epgMappingSearch.addEventListener('input', renderEpgMappingChannels);
+  }
+
+  const epgSelectSearch = document.getElementById('epg-select-search');
+  if (epgSelectSearch) {
+    epgSelectSearch.addEventListener('input', filterEpgSelectionList);
+  }
+
   // Check authentication on page load
   checkAuthentication();
   
   console.log('✅ IPTV-Manager loaded with i18n & local assets');
 });
+
+// === View Management ===
+function switchView(viewName) {
+  // Hide all views
+  document.getElementById('view-dashboard').classList.add('d-none');
+  document.getElementById('view-epg-mapping').classList.add('d-none');
+
+  // Update nav active state
+  document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+
+  // Show selected view
+  if (viewName === 'dashboard') {
+    document.getElementById('view-dashboard').classList.remove('d-none');
+    document.getElementById('nav-dashboard').classList.add('active');
+  } else if (viewName === 'epg-mapping') {
+    document.getElementById('view-epg-mapping').classList.remove('d-none');
+    document.getElementById('nav-epg-mapping').classList.add('active');
+    loadEpgMappingProviders();
+  }
+}
+
+// === EPG Mapping Logic ===
+let epgMappingChannels = [];
+let availableEpgChannels = [];
+
+async function loadEpgMappingProviders() {
+  const providers = await fetchJSON('/api/providers');
+  const select = document.getElementById('epg-mapping-provider-select');
+  const currentVal = select.value;
+
+  select.innerHTML = `<option value="" data-i18n="selectProviderPlaceholder">${t('selectProviderPlaceholder')}</option>`;
+
+  providers.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    select.appendChild(opt);
+  });
+
+  if (currentVal) select.value = currentVal;
+}
+
+async function loadEpgMappingChannels() {
+  const providerId = document.getElementById('epg-mapping-provider-select').value;
+  const tbody = document.getElementById('epg-mapping-tbody');
+  const autoMapBtn = document.getElementById('auto-map-btn');
+
+  if (!providerId) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('selectProviderFirst')}</td></tr>`;
+    autoMapBtn.disabled = true;
+    epgMappingChannels = [];
+    return;
+  }
+
+  tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+  autoMapBtn.disabled = true;
+
+  try {
+    const [channels, mappings] = await Promise.all([
+      fetchJSON(`/api/providers/${providerId}/channels`),
+      fetchJSON(`/api/mapping/${providerId}`)
+    ]);
+
+    // Merge data
+    epgMappingChannels = channels.map(ch => ({
+      ...ch,
+      current_epg_id: ch.epg_channel_id,
+      manual_epg_id: mappings[ch.id] || null
+    }));
+
+    renderEpgMappingChannels();
+    autoMapBtn.disabled = false;
+
+    // Update stats
+    updateMappingStats();
+
+    // Preload available EPG channels for the modal
+    loadAvailableEpgChannels();
+
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+  }
+}
+
+function renderEpgMappingChannels() {
+  const tbody = document.getElementById('epg-mapping-tbody');
+  const search = document.getElementById('epg-mapping-search').value.toLowerCase();
+
+  const filtered = epgMappingChannels.filter(ch =>
+    ch.name.toLowerCase().includes(search) ||
+    (ch.manual_epg_id && ch.manual_epg_id.toLowerCase().includes(search)) ||
+    (ch.current_epg_id && ch.current_epg_id.toLowerCase().includes(search))
+  );
+
+  tbody.innerHTML = '';
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('noResults', {search: search})}</td></tr>`;
+    return;
+  }
+
+  // Render only first 100 for performance
+  const toRender = filtered.slice(0, 100);
+
+  toRender.forEach((ch, idx) => {
+    const tr = document.createElement('tr');
+
+    // Highlight manual mappings
+    if (ch.manual_epg_id) {
+      tr.classList.add('table-info');
+    }
+
+    const displayEpgId = ch.manual_epg_id || ch.current_epg_id || '<span class="text-muted">-</span>';
+    const manualDisplay = ch.manual_epg_id ? `<b>${ch.manual_epg_id}</b>` : '<span class="text-muted">-</span>';
+
+    tr.innerHTML = `
+      <td>${idx + 1}</td>
+      <td>
+        <div class="d-flex align-items-center">
+          ${ch.logo ? `<img src="${ch.logo}" width="24" height="24" class="me-2" onerror="this.style.display='none'">` : ''}
+          <span>${ch.name}</span>
+        </div>
+      </td>
+      <td>${displayEpgId}</td>
+      <td>${manualDisplay}</td>
+      <td>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-primary map-btn" data-id="${ch.id}">${t('map')}</button>
+          ${ch.manual_epg_id ? `<button class="btn btn-outline-danger unmap-btn" data-id="${ch.id}">${t('unmap')}</button>` : ''}
+        </div>
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // Add listeners
+  tbody.querySelectorAll('.map-btn').forEach(btn => {
+    btn.onclick = () => showEpgSelectionModal(Number(btn.dataset.id));
+  });
+
+  tbody.querySelectorAll('.unmap-btn').forEach(btn => {
+    btn.onclick = () => handleUnmap(Number(btn.dataset.id));
+  });
+
+  if (filtered.length > 100) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="5" class="text-center text-muted">${t('moreChannels', {count: filtered.length - 100})}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function updateMappingStats() {
+  const total = epgMappingChannels.length;
+  const mapped = epgMappingChannels.filter(ch => ch.manual_epg_id || ch.current_epg_id).length;
+  const manual = epgMappingChannels.filter(ch => ch.manual_epg_id).length;
+
+  const stats = document.getElementById('mapping-stats');
+  if (stats) {
+    stats.textContent = `Total: ${total} | Mapped: ${mapped} (${Math.round(mapped/total*100)}%) | Manual: ${manual}`;
+  }
+}
+
+async function loadAvailableEpgChannels() {
+  try {
+    availableEpgChannels = await fetchJSON('/api/epg/channels');
+  } catch (e) {
+    console.error('Failed to load EPG channels', e);
+  }
+}
+
+// === Auto Mapping ===
+async function handleAutoMap() {
+  const providerId = document.getElementById('epg-mapping-provider-select').value;
+  if (!providerId) return;
+
+  if (!confirm(t('autoMapConfirm'))) return;
+
+  const btn = document.getElementById('auto-map-btn');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ ...';
+
+  try {
+    const res = await fetchJSON('/api/mapping/auto', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider_id: providerId})
+    });
+
+    alert(t('autoMapSuccess', {count: res.matched}));
+    loadEpgMappingChannels();
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('autoMap');
+  }
+}
+
+// === Manual Mapping ===
+let currentMappingChannelId = null;
+
+function showEpgSelectionModal(channelId) {
+  currentMappingChannelId = channelId;
+  const modal = new bootstrap.Modal(document.getElementById('epg-select-modal'));
+
+  // Reset search
+  document.getElementById('epg-select-search').value = '';
+  filterEpgSelectionList();
+
+  modal.show();
+}
+
+function filterEpgSelectionList() {
+  const list = document.getElementById('epg-select-list');
+  const search = document.getElementById('epg-select-search').value.toLowerCase();
+
+  list.innerHTML = '';
+
+  const filtered = availableEpgChannels.filter(epg =>
+    epg.name.toLowerCase().includes(search) ||
+    epg.id.toLowerCase().includes(search)
+  );
+
+  // Limit to 100
+  const toRender = filtered.slice(0, 100);
+
+  if (toRender.length === 0) {
+    list.innerHTML = `<li class="list-group-item text-center text-muted">${t('noResults', {search: search})}</li>`;
+    return;
+  }
+
+  toRender.forEach(epg => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item list-group-item-action';
+    li.style.cursor = 'pointer';
+    li.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <strong>${epg.name}</strong> <br>
+          <small class="text-muted">${epg.id}</small>
+        </div>
+        ${epg.logo ? `<img src="${epg.logo}" height="30" onerror="this.style.display='none'">` : ''}
+      </div>
+    `;
+
+    li.onclick = () => selectEpgMapping(epg.id);
+    list.appendChild(li);
+  });
+}
+
+async function selectEpgMapping(epgId) {
+  if (!currentMappingChannelId) return;
+
+  try {
+    await fetchJSON('/api/mapping/manual', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        provider_channel_id: currentMappingChannelId,
+        epg_channel_id: epgId
+      })
+    });
+
+    bootstrap.Modal.getInstance(document.getElementById('epg-select-modal')).hide();
+    loadEpgMappingChannels();
+
+    // Optional: Toast or small notification
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  }
+}
+
+async function handleUnmap(channelId) {
+  try {
+    await fetchJSON(`/api/mapping/${channelId}`, {method: 'DELETE'});
+    loadEpgMappingChannels();
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  }
+}
 
 // Authentication Functions
 function showLoginModal() {
@@ -1237,6 +1539,7 @@ async function checkAuthentication() {
     await fetchJSON('/api/verify-token');
     
     // Show the main UI if token is valid
+    document.getElementById('main-navbar').style.display = 'block';
     document.getElementById('main-content').style.display = 'block';
     
     loadUsers();
@@ -1286,6 +1589,7 @@ async function handleLogin(event) {
     hideLoginModal();
     
     // Show the main UI after successful login
+    document.getElementById('main-navbar').style.display = 'block';
     document.getElementById('main-content').style.display = 'block';
     
     loadUsers();
@@ -1312,6 +1616,7 @@ function handleLogout() {
   selectedCategoryId = null;
   
   // Hide the main UI when logging out
+  document.getElementById('main-navbar').style.display = 'none';
   document.getElementById('main-content').style.display = 'none';
   
   showLoginModal();
