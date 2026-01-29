@@ -196,6 +196,9 @@ app.use(express.static(path.join(__dirname, '../public')));
 const db = new Database(path.join(DATA_DIR, 'db.sqlite'));
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
+// Performance tuning
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
 
 // DB Init
 try {
