@@ -132,7 +132,7 @@ app.use(helmet({
 // Rate limiting for authentication endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts
+  max: 100, // 100 attempts (Relaxed to allow DB-based custom blocking to take precedence)
   message: { error: 'Too many authentication attempts, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
