@@ -231,6 +231,25 @@ async function loadUsers() {
 
   // Populate provider user select
   updateProviderUserSelect(users);
+  updateExportUserSelect(users);
+}
+
+function updateExportUserSelect(users) {
+  const select = document.getElementById('export-user-select');
+  if (!select) return;
+  const currentVal = select.value;
+  // Keep the 'all' option and clear others
+  select.innerHTML = `<option value="all" data-i18n="allUsers">${t('allUsers')}</option>`;
+
+  users.forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.id;
+    opt.textContent = u.username;
+    select.appendChild(opt);
+  });
+  if (currentVal && (currentVal === 'all' || users.find(u => u.id == currentVal))) {
+      select.value = currentVal;
+  }
 }
 
 function updateProviderUserSelect(users) {
@@ -1475,6 +1494,106 @@ function renderAvailableEpgSources() {
   });
 }
 
+// === Import/Export Handlers ===
+async function handleExport(e) {
+    e.preventDefault();
+    const f = e.target;
+    const userId = f.user_id.value;
+    const password = f.password.value;
+
+    if (!password || password.length < 8) {
+        alert(t('password_too_short'));
+        return;
+    }
+
+    const btn = document.getElementById('export-btn');
+    btn.disabled = true;
+    btn.textContent = t('processing');
+
+    try {
+        const token = getToken();
+        // Construct URL
+        const url = `/api/export?user_id=${userId}&password=${encodeURIComponent(password)}`;
+
+        const response = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Export failed');
+        }
+
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        // Use filename from header or default
+        const contentDisp = response.headers.get('Content-Disposition');
+        let filename = `iptv_export_${Date.now()}.bin`;
+        if (contentDisp && contentDisp.indexOf('filename="') !== -1) {
+            filename = contentDisp.split('filename="')[1].split('"')[0];
+        }
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        alert(t('exportSuccess'));
+        f.reset();
+    } catch(e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = t('exportBtn');
+    }
+}
+
+async function handleImport(e) {
+    e.preventDefault();
+    const f = e.target;
+    const file = f.file.files[0];
+    const password = f.password.value;
+
+    if (!file) return;
+
+    if (!confirm(t('confirmImport'))) {
+        return;
+    }
+
+    const btn = document.getElementById('import-btn');
+    btn.disabled = true;
+    btn.textContent = t('processing');
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('password', password);
+
+    try {
+        const token = getToken();
+        const response = await fetch('/api/import', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+        });
+
+        const res = await response.json();
+        if (!response.ok) throw new Error(res.error || 'Import failed');
+
+        const stats = res.stats;
+        alert(`${t('importSuccess')}\n\nUsers: ${stats.users_imported} (Skipped: ${stats.users_skipped})\nProviders: ${stats.providers}\nCategories: ${stats.categories}\nChannels: ${stats.channels}`);
+
+        f.reset();
+        loadUsers();
+        loadProviders();
+    } catch(e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = t('importBtn');
+    }
+}
+
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
   // Seite übersetzen
@@ -1731,6 +1850,17 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
 
+  // Import/Export Forms
+  const exportForm = document.getElementById('export-form');
+  if (exportForm) {
+      exportForm.addEventListener('submit', handleExport);
+  }
+
+  const importForm = document.getElementById('import-form');
+  if (importForm) {
+      importForm.addEventListener('submit', handleImport);
+  }
+
   // Check authentication on page load
   checkAuthentication();
 
@@ -1752,6 +1882,7 @@ function switchView(viewName) {
   document.getElementById('view-epg-mapping').classList.add('d-none');
   document.getElementById('view-statistics').classList.add('d-none');
   document.getElementById('view-security').classList.add('d-none');
+  document.getElementById('view-import-export').classList.add('d-none');
 
   // Stop stats interval if running
   if (statsInterval) {
@@ -1779,6 +1910,10 @@ function switchView(viewName) {
     document.getElementById('view-security').classList.remove('d-none');
     document.getElementById('nav-security').classList.add('active');
     loadSecurity();
+  } else if (viewName === 'import-export') {
+    document.getElementById('view-import-export').classList.remove('d-none');
+    document.getElementById('nav-import-export').classList.add('active');
+    loadUsers(); // Ensure dropdown is populated
   }
 }
 

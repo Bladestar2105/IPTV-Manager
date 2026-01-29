@@ -32,6 +32,7 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **Live Statistics**: Real-time tracking of active streams and viewing statistics.
 - **Internationalization**: Full UI support for English, German, French, and Greek.
 - **M3U Playlist Generation**: Easy access to generated M3U playlist links for IPTV players.
+- **Import/Export**: Securely export and import data with password protection for migration or backup.
 
 ### Security
 - **🔐 Password Hashing**: Bcrypt-based password hashing.
@@ -196,6 +197,10 @@ The application will be available at `http://localhost:3000`.
 *   `POST /api/epg-sources/:id/update`: Update a specific EPG source.
 *   `POST /api/epg-sources/update-all`: Update all EPG sources.
 *   `GET /api/epg-sources/available`: Browse available online EPG sources.
+
+### Import/Export
+*   `GET /api/export`: Export data (params: `user_id`, `password`).
+*   `POST /api/import`: Import data (multipart form: `file`, `password`).
 
 ### Xtream Codes API
 The application provides an Xtream Codes compatible API for players:
