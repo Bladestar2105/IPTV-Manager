@@ -1787,8 +1787,17 @@ async function loadSecurity() {
     ]);
 
     // Render Settings
-    if (document.getElementById('setting-block-duration')) {
-        document.getElementById('setting-block-duration').value = settings.ip_block_duration || '3600';
+    if (document.getElementById('setting-admin-threshold')) {
+        document.getElementById('setting-admin-threshold').value = settings.admin_block_threshold || '5';
+    }
+    if (document.getElementById('setting-iptv-threshold')) {
+        document.getElementById('setting-iptv-threshold').value = settings.iptv_block_threshold || '10';
+    }
+    if (document.getElementById('setting-admin-duration')) {
+        document.getElementById('setting-admin-duration').value = settings.admin_block_duration || '3600';
+    }
+    if (document.getElementById('setting-iptv-duration')) {
+        document.getElementById('setting-iptv-duration').value = settings.iptv_block_duration || '3600';
     }
 
     // Render Logs

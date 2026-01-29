@@ -1010,12 +1010,13 @@ async function getXtreamUser(req) {
       WHERE ip = ? AND action IN ('login_failed', 'xtream_login_failed') AND timestamp > ?
     `).get(ip, failWindow).count;
 
-    if (failCount >= 10) { // Threshold 10 for streaming clients
+    const threshold = parseInt(getSetting('iptv_block_threshold', '10')) || 10;
+    if (failCount >= threshold) {
       // Check whitelist before blocking
       const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
 
       if (!whitelisted) {
-        const durationSetting = getSetting('ip_block_duration', '3600');
+        const durationSetting = getSetting('iptv_block_duration', '3600');
         const blockDuration = parseInt(durationSetting) || 3600;
         const expiresAt = now + blockDuration;
         db.prepare(`
@@ -1184,12 +1185,13 @@ app.post('/api/login', authLimiter, async (req, res) => {
       WHERE ip = ? AND action IN ('login_failed', 'xtream_login_failed') AND timestamp > ?
     `).get(ip, failWindow).count;
 
-    if (failCount >= 5) {
+    const threshold = parseInt(getSetting('admin_block_threshold', '5')) || 5;
+    if (failCount >= threshold) {
       // Check whitelist before blocking
       const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
 
       if (!whitelisted) {
-        const durationSetting = getSetting('ip_block_duration', '3600');
+        const durationSetting = getSetting('admin_block_duration', '3600');
         const blockDuration = parseInt(durationSetting) || 3600;
         const expiresAt = now + blockDuration;
         db.prepare(`

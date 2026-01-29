@@ -10,3 +10,12 @@ services:
     environment:
       - DATA_DIR=/data
       - NODE_ENV=production
+      # - TRUST_PROXY=true # Set to true if running behind a reverse proxy (e.g. Traefik, Nginx)
+      # - INITIAL_ADMIN_PASSWORD=change_me_on_first_login
+
+      # Security thresholds and durations are configurable via the Web UI (Security Tab).
+      # Defaults are:
+      # - Admin Block Threshold: 5 attempts
+      # - IPTV Block Threshold: 10 attempts
+      # - Admin Block Duration: 3600 seconds (1 hour)
+      # - IPTV Block Duration: 3600 seconds (1 hour)
