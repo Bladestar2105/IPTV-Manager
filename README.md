@@ -47,7 +47,49 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **npm**: 9.x or higher
 - **SQLite**: 3.x (included)
 
-## 🔧 Installation
+## 🐳 Docker Installation
+
+The easiest way to run IPTV-Manager is using Docker.
+
+### Using Docker Compose
+
+1.  Clone the repository or create a `docker-compose.yml` file:
+    ```yaml
+    services:
+      iptv-manager:
+        build: .
+        image: iptv-manager
+        container_name: iptv-manager
+        restart: unless-stopped
+        ports:
+          - "3000:3000"
+        volumes:
+          - ./data:/data
+        environment:
+          - DATA_DIR=/data
+    ```
+
+2.  Start the container:
+    ```bash
+    docker-compose up -d
+    ```
+
+### Using Docker Run
+
+```bash
+docker build -t iptv-manager .
+docker run -d \
+  --name iptv-manager \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v $(pwd)/data:/data \
+  -e DATA_DIR=/data \
+  iptv-manager
+```
+
+The application will be available at `http://localhost:3000`. Data (database, cache, keys) will be persisted in the `./data` directory.
+
+## 🔧 Manual Installation
 
 1.  Clone the repository:
     ```bash
