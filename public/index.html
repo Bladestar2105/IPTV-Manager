@@ -248,14 +248,31 @@
       <div class="card mb-4">
          <div class="card-header" data-i18n="settings">Settings</div>
          <div class="card-body">
-            <form id="security-settings-form" class="row align-items-end">
-               <div class="col-auto">
-                  <label class="form-label" data-i18n="ipBlockDuration">IP Block Duration (seconds)</label>
-                  <input type="number" class="form-control" name="ip_block_duration" id="setting-block-duration" placeholder="Seconds">
+            <form id="security-settings-form">
+               <div class="row mb-3">
+                  <div class="col-md-6">
+                     <label class="form-label" data-i18n="adminBlockThreshold">Admin Block Threshold (attempts)</label>
+                     <input type="number" class="form-control" name="admin_block_threshold" id="setting-admin-threshold" placeholder="5">
+                  </div>
+                  <div class="col-md-6">
+                     <label class="form-label" data-i18n="iptvBlockThreshold">IPTV Block Threshold (attempts)</label>
+                     <input type="number" class="form-control" name="iptv_block_threshold" id="setting-iptv-threshold" placeholder="10">
+                  </div>
                </div>
-               <div class="col-auto">
-                  <button class="btn btn-primary" type="submit" data-i18n="save">Save</button>
+               <div class="row mb-3">
+                  <div class="col-md-6">
+                     <label class="form-label" data-i18n="adminBlockDuration">Admin Block Duration (seconds)</label>
+                     <input type="number" class="form-control" name="admin_block_duration" id="setting-admin-duration" placeholder="3600">
+                  </div>
+                  <div class="col-md-6">
+                     <label class="form-label" data-i18n="iptvBlockDuration">IPTV Block Duration (seconds)</label>
+                     <input type="number" class="form-control" name="iptv_block_duration" id="setting-iptv-duration" placeholder="3600">
+                  </div>
                </div>
+               <!-- Hidden field to maintain backward compatibility if needed, or we can just ignore it -->
+               <!-- <input type="hidden" name="ip_block_duration" id="setting-block-duration"> -->
+
+               <button class="btn btn-primary" type="submit" data-i18n="save">Save</button>
             </form>
          </div>
       </div>
