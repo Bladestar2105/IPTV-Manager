@@ -57,6 +57,9 @@
           <li class="nav-item">
             <a class="nav-link" href="#" onclick="switchView('security'); return false;" id="nav-security" data-i18n="security">Security</a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#" onclick="switchView('import-export'); return false;" id="nav-import-export" data-i18n="importExport">Import/Export</a>
+          </li>
         </ul>
         <div class="d-flex align-items-center gap-2">
           <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto;">
@@ -349,6 +352,63 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- View: Import/Export -->
+    <div id="view-import-export" class="d-none">
+      <div class="row mt-4">
+        <!-- Export Card -->
+        <div class="col-md-6 mb-4">
+          <div class="card h-100">
+            <div class="card-header" data-i18n="exportData">Export Data</div>
+            <div class="card-body">
+              <p class="text-muted small" data-i18n="exportDescription">Export users, providers, and configurations to a secure file.</p>
+
+              <form id="export-form">
+                <div class="mb-3">
+                  <label class="form-label" data-i18n="selectUserExport">Select User to Export</label>
+                  <select class="form-select" id="export-user-select" name="user_id">
+                    <option value="all" data-i18n="allUsers">All Users</option>
+                    <!-- Populated by JS -->
+                  </select>
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label" data-i18n="encryptionPassword">Encryption Password</label>
+                  <input type="password" class="form-control" name="password" required minlength="8" data-i18n-placeholder="passwordPlaceholder">
+                  <div class="form-text" data-i18n="encryptionPasswordHint">This password will be required to decrypt and import the data.</div>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100" id="export-btn" data-i18n="exportBtn">Export Data</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Import Card -->
+        <div class="col-md-6 mb-4">
+          <div class="card h-100">
+            <div class="card-header" data-i18n="importData">Import Data</div>
+            <div class="card-body">
+              <p class="text-muted small" data-i18n="importDescription">Import data from a previously exported file.</p>
+
+              <form id="import-form">
+                <div class="mb-3">
+                  <label class="form-label" data-i18n="fileSelect">Select File</label>
+                  <input type="file" class="form-control" name="file" required accept=".bin">
+                </div>
+
+                <div class="mb-3">
+                  <label class="form-label" data-i18n="decryptionPassword">Decryption Password</label>
+                  <input type="password" class="form-control" name="password" required data-i18n-placeholder="passwordPlaceholder">
+                </div>
+
+                <button type="submit" class="btn btn-warning w-100" id="import-btn" data-i18n="importBtn">Import Data</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- View: Statistics -->

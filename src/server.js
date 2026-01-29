@@ -20,6 +20,8 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import multer from 'multer';
+import zlib from 'zlib';
 
 // Load environment variables
 dotenv.config();
@@ -102,6 +104,33 @@ function decrypt(text) {
   }
 }
 
+// Export/Import Encryption Helpers
+function encryptWithPassword(dataBuffer, password) {
+  const salt = crypto.randomBytes(16);
+  const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+  const iv = crypto.randomBytes(12); // GCM standard IV size
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+  const encrypted = Buffer.concat([cipher.update(dataBuffer), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  // Format: Salt(16) + IV(12) + Tag(16) + EncryptedData
+  return Buffer.concat([salt, iv, tag, encrypted]);
+}
+
+function decryptWithPassword(encryptedBuffer, password) {
+  const salt = encryptedBuffer.subarray(0, 16);
+  const iv = encryptedBuffer.subarray(16, 28);
+  const tag = encryptedBuffer.subarray(28, 44);
+  const data = encryptedBuffer.subarray(44);
+
+  const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+
+  return Buffer.concat([decipher.update(data), decipher.final()]);
+}
+
 // Create cache directories
 const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
@@ -110,6 +139,12 @@ const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
 // Ensure Cache Directories exist
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
+
+// Multer Setup for Import
+const upload = multer({ dest: path.join(DATA_DIR, 'temp_uploads') });
+if (!fs.existsSync(path.join(DATA_DIR, 'temp_uploads'))) {
+    fs.mkdirSync(path.join(DATA_DIR, 'temp_uploads'), { recursive: true });
+}
 
 // Security Middleware
 app.use(helmet({
@@ -3146,6 +3181,256 @@ app.delete('/api/security/whitelist/:id', authenticateToken, (req, res) => {
      }
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// === Import/Export API ===
+app.get('/api/export', authenticateToken, (req, res) => {
+  try {
+    const { user_id, password } = req.query;
+
+    if (!password) {
+      return res.status(400).json({error: 'Password required for encryption'});
+    }
+
+    const exportData = {
+      version: 1,
+      timestamp: Date.now(),
+      users: [],
+      providers: [],
+      categories: [],
+      channels: [],
+      mappings: [],
+      sync_configs: []
+    };
+
+    let usersToExport = [];
+    if (user_id && user_id !== 'all') {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(user_id));
+      if (!user) return res.status(404).json({error: 'User not found'});
+      usersToExport.push(user);
+    } else {
+      usersToExport = db.prepare('SELECT * FROM users').all();
+    }
+
+    // Collect Data
+    for (const user of usersToExport) {
+       exportData.users.push(user);
+
+       // Providers
+       const providers = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(user.id);
+       for (const p of providers) {
+          // Decrypt password so it can be re-encrypted on import
+          p.password = decrypt(p.password);
+          exportData.providers.push(p);
+
+          // Provider Channels
+          const channels = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ?').all(p.id);
+          exportData.channels.push(...channels);
+
+          // Mappings
+          const mappings = db.prepare('SELECT * FROM category_mappings WHERE provider_id = ?').all(p.id);
+          exportData.mappings.push(...mappings);
+
+          // Sync Configs
+          const syncs = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ?').all(p.id);
+          exportData.sync_configs.push(...syncs);
+       }
+
+       // User Categories
+       const categories = db.prepare('SELECT * FROM user_categories WHERE user_id = ?').all(user.id);
+       exportData.categories.push(...categories);
+
+       // User Channels (assignments)
+       // We need to fetch user channels linked to these categories
+       const userChannels = db.prepare(`
+         SELECT uc.*
+         FROM user_channels uc
+         JOIN user_categories cat ON cat.id = uc.user_category_id
+         WHERE cat.user_id = ?
+       `).all(user.id);
+       exportData.channels.push(...userChannels.map(uc => ({...uc, type: 'user_assignment'})));
+    }
+
+    // Compress
+    const jsonStr = JSON.stringify(exportData);
+    const compressed = zlib.gzipSync(jsonStr);
+
+    // Encrypt
+    const encrypted = encryptWithPassword(compressed, password);
+
+    res.setHeader('Content-Disposition', `attachment; filename="iptv_export_${Date.now()}.bin"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.send(encrypted);
+
+  } catch (e) {
+    console.error('Export error:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
+app.post('/api/import', authenticateToken, upload.single('file'), (req, res) => {
+  let tempPath = null;
+  try {
+    const { password } = req.body;
+    if (!req.file || !password) {
+      return res.status(400).json({error: 'File and password required'});
+    }
+
+    tempPath = req.file.path;
+    const encryptedData = fs.readFileSync(tempPath);
+
+    // Decrypt
+    let compressed;
+    try {
+      compressed = decryptWithPassword(encryptedData, password);
+    } catch (e) {
+      return res.status(400).json({error: 'Decryption failed. Wrong password?'});
+    }
+
+    // Decompress
+    const jsonStr = zlib.gunzipSync(compressed).toString('utf8');
+    const importData = JSON.parse(jsonStr);
+
+    if (!importData.version || !importData.users) {
+      return res.status(400).json({error: 'Invalid export file format'});
+    }
+
+    const stats = {
+      users_imported: 0,
+      users_skipped: 0,
+      providers: 0,
+      categories: 0,
+      channels: 0
+    };
+
+    db.transaction(() => {
+      // 1. Import Users
+      // ID Map to map old IDs to new IDs
+      const userIdMap = new Map();
+      const providerIdMap = new Map();
+      const categoryIdMap = new Map();
+      const providerChannelIdMap = new Map();
+
+      for (const user of importData.users) {
+        const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(user.username);
+        if (existing) {
+          console.log(`Skipping existing user: ${user.username}`);
+          stats.users_skipped++;
+          continue; // Skip existing user to avoid conflict
+        }
+
+        const info = db.prepare('INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)').run(user.username, user.password, user.is_active);
+        userIdMap.set(user.id, info.lastInsertRowid);
+        stats.users_imported++;
+      }
+
+      // 2. Import Providers
+      for (const p of importData.providers) {
+        const newUserId = userIdMap.get(p.user_id);
+        if (!newUserId) continue; // User was skipped or not found
+
+        // Re-encrypt password with local key
+        const newPassword = encrypt(p.password);
+
+        const info = db.prepare(`
+          INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(p.name, p.url, p.username, newPassword, p.epg_url, newUserId, p.epg_update_interval, p.epg_enabled);
+
+        providerIdMap.set(p.id, info.lastInsertRowid);
+        stats.providers++;
+      }
+
+      // 3. Import Provider Channels
+      // We filter channels that belong to imported providers
+      const provChannels = importData.channels.filter(c => !c.type && providerIdMap.has(c.provider_id));
+
+      const insertProvChannel = db.prepare(`
+        INSERT INTO provider_channels (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const ch of provChannels) {
+        const newProvId = providerIdMap.get(ch.provider_id);
+        const info = insertProvChannel.run(
+          newProvId,
+          ch.remote_stream_id,
+          ch.name,
+          ch.original_category_id,
+          ch.logo,
+          ch.stream_type,
+          ch.epg_channel_id,
+          ch.original_sort_order,
+          ch.tv_archive || 0,
+          ch.tv_archive_duration || 0
+        );
+        providerChannelIdMap.set(ch.id, info.lastInsertRowid);
+      }
+
+      // 4. Import User Categories
+      for (const cat of importData.categories) {
+        const newUserId = userIdMap.get(cat.user_id);
+        if (!newUserId) continue;
+
+        const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(newUserId, cat.name, cat.is_adult, cat.sort_order);
+        categoryIdMap.set(cat.id, info.lastInsertRowid);
+        stats.categories++;
+      }
+
+      // 5. Import Mappings
+      for (const m of importData.mappings) {
+        const newProvId = providerIdMap.get(m.provider_id);
+        const newUserId = userIdMap.get(m.user_id);
+        const newUserCatId = m.user_category_id ? categoryIdMap.get(m.user_category_id) : null;
+
+        if (newProvId && newUserId) {
+           db.prepare(`
+             INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+             VALUES (?, ?, ?, ?, ?, ?)
+           `).run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created);
+        }
+      }
+
+      // 6. Import Sync Configs
+      for (const s of importData.sync_configs) {
+        const newProvId = providerIdMap.get(s.provider_id);
+        const newUserId = userIdMap.get(s.user_id);
+
+        if (newProvId && newUserId) {
+          db.prepare(`
+            INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, last_sync, next_sync, auto_add_categories, auto_add_channels)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(newProvId, newUserId, s.enabled, s.sync_interval, 0, 0, s.auto_add_categories, s.auto_add_channels);
+        }
+      }
+
+      // 7. Import User Channel Assignments
+      const userAssignments = importData.channels.filter(c => c.type === 'user_assignment');
+      const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+
+      for (const ua of userAssignments) {
+        const newUserCatId = categoryIdMap.get(ua.user_category_id);
+        const newProvChannelId = providerChannelIdMap.get(ua.provider_channel_id);
+
+        if (newUserCatId && newProvChannelId) {
+          insertUserChannel.run(newUserCatId, newProvChannelId, ua.sort_order);
+          stats.channels++;
+        }
+      }
+
+    })();
+
+    res.json({success: true, stats});
+
+  } catch (e) {
+    console.error('Import error:', e);
+    res.status(500).json({error: e.message});
+  } finally {
+    // Cleanup temp file
+    if (tempPath && fs.existsSync(tempPath)) {
+      try { fs.unlinkSync(tempPath); } catch(e) {}
+    }
+  }
 });
 
 // Start

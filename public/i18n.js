@@ -279,7 +279,26 @@ const translations = {
     weekly: 'Weekly',
     autoAddNewCategories: 'Auto-add new categories',
     autoAddChannelsToCategories: 'Auto-add channels to categories',
-    saveConfiguration: 'Save Configuration'
+    saveConfiguration: 'Save Configuration',
+
+    // Import/Export
+    importExport: 'Import/Export',
+    exportData: 'Export Data',
+    importData: 'Import Data',
+    exportDescription: 'Export users, providers, and configurations to a secure file.',
+    importDescription: 'Import data from a previously exported file.',
+    selectUserExport: 'Select User to Export',
+    allUsers: 'All Users',
+    encryptionPassword: 'Encryption Password',
+    decryptionPassword: 'Decryption Password',
+    encryptionPasswordHint: 'This password will be required to decrypt and import the data.',
+    exportBtn: 'Export Data',
+    importBtn: 'Import Data',
+    fileSelect: 'Select File',
+    exportSuccess: '✅ Export successful',
+    importSuccess: '✅ Import successful',
+    confirmImport: 'Importing data will skip existing users but may add new providers/channels. Continue?',
+    processing: 'Processing...'
   },
   
   de: {
@@ -558,7 +577,26 @@ const translations = {
     weekly: 'Wöchentlich',
     autoAddNewCategories: 'Neue Kategorien automatisch hinzufügen',
     autoAddChannelsToCategories: 'Kanäle automatisch hinzufügen',
-    saveConfiguration: 'Konfiguration speichern'
+    saveConfiguration: 'Konfiguration speichern',
+
+    // Import/Export
+    importExport: 'Import/Export',
+    exportData: 'Daten exportieren',
+    importData: 'Daten importieren',
+    exportDescription: 'Benutzer, Provider und Einstellungen in eine sichere Datei exportieren.',
+    importDescription: 'Daten aus einer zuvor exportierten Datei importieren.',
+    selectUserExport: 'Benutzer auswählen',
+    allUsers: 'Alle Benutzer',
+    encryptionPassword: 'Verschlüsselungs-Passwort',
+    decryptionPassword: 'Entschlüsselungs-Passwort',
+    encryptionPasswordHint: 'Dieses Passwort wird zum Entschlüsseln und Importieren benötigt.',
+    exportBtn: 'Daten exportieren',
+    importBtn: 'Daten importieren',
+    fileSelect: 'Datei auswählen',
+    exportSuccess: '✅ Export erfolgreich',
+    importSuccess: '✅ Import erfolgreich',
+    confirmImport: 'Der Import überspringt vorhandene Benutzer. Fortfahren?',
+    processing: 'Verarbeite...'
   },
 
   fr: {
@@ -837,7 +875,26 @@ const translations = {
     weekly: 'Hebdomadaire',
     autoAddNewCategories: 'Ajouter auto. nouvelles catégories',
     autoAddChannelsToCategories: 'Ajouter auto. chaînes aux catégories',
-    saveConfiguration: 'Enregistrer la configuration'
+    saveConfiguration: 'Enregistrer la configuration',
+
+    // Import/Export
+    importExport: 'Import/Export',
+    exportData: 'Exporter Données',
+    importData: 'Importer Données',
+    exportDescription: 'Exporter utilisateurs, fournisseurs et configurations vers un fichier sécurisé.',
+    importDescription: 'Importer des données depuis un fichier précédemment exporté.',
+    selectUserExport: 'Sélectionner Utilisateur',
+    allUsers: 'Tous les utilisateurs',
+    encryptionPassword: 'Mot de passe de chiffrement',
+    decryptionPassword: 'Mot de passe de déchiffrement',
+    encryptionPasswordHint: 'Ce mot de passe sera requis pour déchiffrer et importer les données.',
+    exportBtn: 'Exporter Données',
+    importBtn: 'Importer Données',
+    fileSelect: 'Sélectionner Fichier',
+    exportSuccess: '✅ Export réussi',
+    importSuccess: '✅ Import réussi',
+    confirmImport: 'L\'importation ignorera les utilisateurs existants. Continuer ?',
+    processing: 'Traitement...'
   },
 
   el: {
@@ -1106,7 +1163,26 @@ const translations = {
     weekly: 'Εβδομαδιαία',
     autoAddNewCategories: 'Αυτόματη προσθήκη νέων κατηγοριών',
     autoAddChannelsToCategories: 'Αυτόματη προσθήκη καναλιών',
-    saveConfiguration: 'Αποθήκευση διαμόρφωσης'
+    saveConfiguration: 'Αποθήκευση διαμόρφωσης',
+
+    // Import/Export
+    importExport: 'Εισαγωγή/Εξαγωγή',
+    exportData: 'Εξαγωγή Δεδομένων',
+    importData: 'Εισαγωγή Δεδομένων',
+    exportDescription: 'Εξαγωγή χρηστών, παρόχων και ρυθμίσεων σε ασφαλές αρχείο.',
+    importDescription: 'Εισαγωγή δεδομένων από προηγουμένως εξαγόμενο αρχείο.',
+    selectUserExport: 'Επιλογή Χρήστη',
+    allUsers: 'Όλοι οι χρήστες',
+    encryptionPassword: 'Κωδικός Κρυπτογράφησης',
+    decryptionPassword: 'Κωδικός Αποκρυπτογράφησης',
+    encryptionPasswordHint: 'Αυτός ο κωδικός θα απαιτείται για την αποκρυπτογράφηση και εισαγωγή.',
+    exportBtn: 'Εξαγωγή Δεδομένων',
+    importBtn: 'Εισαγωγή Δεδομένων',
+    fileSelect: 'Επιλογή Αρχείου',
+    exportSuccess: '✅ Επιτυχής εξαγωγή',
+    importSuccess: '✅ Επιτυχής εισαγωγή',
+    confirmImport: 'Η εισαγωγή θα παραλείψει τους υπάρχοντες χρήστες. Συνέχεια;',
+    processing: 'Επεξεργασία...'
   }
 };
 
