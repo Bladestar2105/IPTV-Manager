@@ -27,8 +27,27 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
+
+// Trust Proxy Configuration
+if (process.env.TRUST_PROXY) {
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy.toLowerCase() === 'true') {
+    app.set('trust proxy', true);
+  } else if (trustProxy.toLowerCase() === 'false') {
+    app.set('trust proxy', false);
+  } else if (!isNaN(trustProxy)) {
+    app.set('trust proxy', parseInt(trustProxy));
+  } else {
+    // String (IPs, 'loopback', 'linklocal', etc.)
+    app.set('trust proxy', trustProxy);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../');
+
+// Ensure Data Directory exists
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // Security configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
@@ -88,8 +107,7 @@ const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
 // Picon caching removed - using direct URLs for better performance
 
-// Ensure Data Directory exists
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure Cache Directories exist
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
