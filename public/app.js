@@ -208,6 +208,13 @@ async function loadUsers() {
           document.getElementById('selected-user-label').innerHTML = `<em data-i18n="noUserSelected">${t('noUserSelected')}</em>`;
           document.getElementById('category-list').innerHTML = '';
           document.getElementById('user-channel-list').innerHTML = '';
+
+          // Reset headers
+          const availHeader = document.getElementById('available-channels-header');
+          if (availHeader) availHeader.textContent = t('available', {count: 0});
+          const assignedHeader = document.getElementById('assigned-channels-header');
+          if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
+
           if (categorySortable) { categorySortable.destroy(); categorySortable = null; }
           if (channelSortable) { channelSortable.destroy(); channelSortable = null; }
       }
@@ -531,28 +538,30 @@ function initCategorySortable() {
   const list = document.getElementById('category-list');
   if (!list || list.children.length === 0) return;
   
-  categorySortable = Sortable.create(list, {
-    animation: 150,
-    handle: '.drag-handle',
-    ghostClass: 'sortable-ghost',
-    dragClass: 'sortable-drag',
-    onEnd: async function(evt) {
-      const categoryIds = Array.from(list.children).map(li => Number(li.dataset.id));
-      
-      try {
-        await fetchJSON(`/api/users/${selectedUserId}/categories/reorder`, {
-          method: 'PUT',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({category_ids: categoryIds})
-        });
-        console.log('✅ Category order saved');
-      } catch (e) {
-        console.error('❌ Save error:', e);
-        alert(t('errorPrefix') + ' ' + e.message);
-        loadUserCategories();
+  try {
+    categorySortable = Sortable.create(list, {
+      animation: 150,
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      dragClass: 'sortable-drag',
+      onEnd: async function(evt) {
+        const categoryIds = Array.from(list.children).map(li => Number(li.dataset.id));
+
+        try {
+          await fetchJSON(`/api/users/${selectedUserId}/categories/reorder`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({category_ids: categoryIds})
+          });
+          console.log('✅ Category order saved');
+        } catch (e) {
+          console.error('❌ Save error:', e);
+          alert(t('errorPrefix') + ' ' + e.message);
+          loadUserCategories();
+        }
       }
-    }
-  });
+    });
+  } catch(e) { console.warn('Sortable init error', e); }
 }
 
 // === Provider Category Import ===
@@ -827,6 +836,10 @@ function renderProviderChannels() {
     ? providerChannelsCache.filter(ch => ch.name.toLowerCase().includes(search))
     : providerChannelsCache;
   
+  // Update Available Header
+  const availHeader = document.getElementById('available-channels-header');
+  if (availHeader) availHeader.textContent = t('available', {count: filtered.length});
+
   if (filtered.length === 0) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: search})}</li>`;
     return;
@@ -893,6 +906,10 @@ async function loadUserCategoryChannels() {
   const chans = await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels`);
   const list = document.getElementById('user-channel-list');
   list.innerHTML = '';
+
+  // Update Assigned Header
+  const assignedHeader = document.getElementById('assigned-channels-header');
+  if (assignedHeader) assignedHeader.textContent = t('assigned', {count: chans.length});
   
   if (chans.length === 0) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noChannels')}</li>`;
@@ -965,28 +982,30 @@ function initChannelSortable() {
   const list = document.getElementById('user-channel-list');
   if (!list || list.children.length === 0) return;
   
-  channelSortable = Sortable.create(list, {
-    animation: 150,
-    handle: '.drag-handle',
-    ghostClass: 'sortable-ghost',
-    dragClass: 'sortable-drag',
-    onEnd: async function(evt) {
-      const channelIds = Array.from(list.children).map(li => Number(li.dataset.id));
-      
-      try {
-        await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels/reorder`, {
-          method: 'PUT',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({channel_ids: channelIds})
-        });
-        console.log('✅ Channel order saved');
-      } catch (e) {
-        console.error('❌ Save error:', e);
-        alert(t('errorPrefix') + ' ' + e.message);
-        loadUserCategoryChannels();
+  try {
+    channelSortable = Sortable.create(list, {
+      animation: 150,
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      dragClass: 'sortable-drag',
+      onEnd: async function(evt) {
+        const channelIds = Array.from(list.children).map(li => Number(li.dataset.id));
+
+        try {
+          await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels/reorder`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({channel_ids: channelIds})
+          });
+          console.log('✅ Channel order saved');
+        } catch (e) {
+          console.error('❌ Save error:', e);
+          alert(t('errorPrefix') + ' ' + e.message);
+          loadUserCategoryChannels();
+        }
       }
-    }
-  });
+    });
+  } catch(e) { console.warn('Sortable init error', e); }
 }
 
 // === Form Handlers ===
@@ -1708,6 +1727,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Check authentication on page load
   checkAuthentication();
+
+  // Init Headers
+  const availHeader = document.getElementById('available-channels-header');
+  if (availHeader) availHeader.textContent = t('available', {count: 0});
+  const assignedHeader = document.getElementById('assigned-channels-header');
+  if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
   
   console.log('✅ IPTV-Manager loaded with i18n & local assets');
 });
