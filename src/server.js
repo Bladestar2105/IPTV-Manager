@@ -225,6 +225,8 @@ try {
       stream_type TEXT DEFAULT 'live',
       epg_channel_id TEXT DEFAULT '',
       original_sort_order INTEGER DEFAULT 0,
+      tv_archive INTEGER DEFAULT 0,
+      tv_archive_duration INTEGER DEFAULT 0,
       UNIQUE(provider_id, remote_stream_id)
     );
     
@@ -387,6 +389,7 @@ try {
   // Migrate providers schema
   migrateProvidersSchema();
   migrateChannelsSchema();
+  migrateChannelsSchemaExtended();
 
   // Migrate passwords
   migrateProviderPasswords();
@@ -430,6 +433,25 @@ function migrateChannelsSchema() {
     }
   } catch (e) {
     console.error('Channel Schema migration error:', e);
+  }
+}
+
+function migrateChannelsSchemaExtended() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(provider_channels)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('tv_archive')) {
+      db.exec('ALTER TABLE provider_channels ADD COLUMN tv_archive INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: tv_archive column added to provider_channels');
+    }
+
+    if (!columns.includes('tv_archive_duration')) {
+      db.exec('ALTER TABLE provider_channels ADD COLUMN tv_archive_duration INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: tv_archive_duration column added to provider_channels');
+    }
+  } catch (e) {
+    console.error('Channel Extended Schema migration error:', e);
   }
 }
 
@@ -551,13 +573,13 @@ async function performSync(providerId, userId, isManual = false) {
     // Prepare channel statements
     const insertChannel = db.prepare(`
       INSERT OR IGNORE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const updateChannel = db.prepare(`
       UPDATE provider_channels 
-      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?
+      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
     
@@ -644,6 +666,9 @@ async function performSync(providerId, userId, isManual = false) {
           const existingId = existingMap.get(sid);
           let provChannelId;
           
+          const tvArchive = Number(ch.tv_archive) === 1 ? 1 : 0;
+          const tvArchiveDuration = Number(ch.tv_archive_duration) || 0;
+
           if (existingId) {
             // Update existing channel - preserves ID and user_channels relationships
             updateChannel.run(
@@ -652,6 +677,8 @@ async function performSync(providerId, userId, isManual = false) {
               ch.stream_icon || '',
               ch.epg_channel_id || '',
               i, // original_sort_order
+              tvArchive,
+              tvArchiveDuration,
               providerId,
               sid
             );
@@ -667,7 +694,9 @@ async function performSync(providerId, userId, isManual = false) {
               ch.stream_icon || '',
               'live',
               ch.epg_channel_id || '',
-              i // original_sort_order
+              i, // original_sort_order
+              tvArchive,
+              tvArchiveDuration
             );
             channelsAdded++;
             provChannelId = info.lastInsertRowid;
@@ -1694,9 +1723,9 @@ app.get('/player_api.php', async (req, res) => {
           category_id: String(ch.user_category_id),
           category_ids: [Number(ch.user_category_id)],
           custom_sid: null,
-          tv_archive: 0,
+          tv_archive: ch.tv_archive || 0,
           direct_source: '',
-          tv_archive_duration: 0
+          tv_archive_duration: ch.tv_archive_duration || 0
         };
       });
       return res.json(result);
@@ -1899,6 +1928,111 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     
   } catch (e) {
     console.error('Stream proxy error:', e.message);
+    activeStreams.delete(connectionId);
+    if (!res.headersSent) {
+      res.sendStatus(500);
+    }
+  }
+});
+
+// === Timeshift Proxy ===
+app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (req, res) => {
+  const connectionId = crypto.randomUUID();
+
+  try {
+    const streamId = Number(req.params.stream_id || 0);
+    const duration = req.params.duration;
+    const start = req.params.start;
+
+    if (!streamId) return res.sendStatus(404);
+
+    const user = await getXtreamUser(req);
+    if (!user) return res.sendStatus(401);
+
+    const channel = db.prepare(`
+      SELECT
+        uc.id as user_channel_id,
+        pc.id as provider_channel_id,
+        pc.remote_stream_id,
+        pc.name,
+        p.url as provider_url,
+        p.username as provider_user,
+        p.password as provider_pass
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE uc.id = ? AND cat.user_id = ?
+    `).get(streamId, user.id);
+
+    if (!channel) return res.sendStatus(404);
+
+    // Track active stream (optional for timeshift? might be good to track)
+    const startTime = Date.now();
+    activeStreams.set(connectionId, {
+      id: connectionId,
+      user_id: user.id,
+      username: user.username,
+      channel_name: `${channel.name} (Timeshift)`,
+      start_time: startTime,
+      ip: req.ip
+    });
+
+    // Decrypt provider password
+    channel.provider_pass = decrypt(channel.provider_pass);
+
+    const base = channel.provider_url.replace(/\/+$/, '');
+    // Standard Xtream Timeshift URL: /timeshift/user/pass/duration/start/id.ts
+    const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.ts`;
+
+    // Fetch with optimized settings for streaming
+    const upstream = await fetch(remoteUrl, {
+      headers: {
+        'User-Agent': 'IPTV-Manager',
+        'Connection': 'keep-alive'
+      },
+      redirect: 'follow'
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      console.error(`Timeshift proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      activeStreams.delete(connectionId);
+      return res.sendStatus(502);
+    }
+
+    // Set optimal headers for streaming
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    upstream.body.pipe(res);
+
+    upstream.body.on('error', (err) => {
+      if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
+        console.error('Timeshift stream error:', err.message);
+      }
+      activeStreams.delete(connectionId);
+      if (!res.headersSent) {
+        res.sendStatus(502);
+      }
+    });
+
+    req.on('close', () => {
+      activeStreams.delete(connectionId);
+      if (upstream.body && !upstream.body.destroyed) {
+        upstream.body.destroy();
+      }
+    });
+
+  } catch (e) {
+    console.error('Timeshift proxy error:', e.message);
     activeStreams.delete(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
