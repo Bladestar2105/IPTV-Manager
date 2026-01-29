@@ -1,11 +1,10 @@
 services:
   iptv-manager:
-    build: ghcr.io/bladestar2105/iptv-manager:latest
-    image: iptv-manager
+    image: ghcr.io/bladestar2105/iptv-manager:latest
     container_name: iptv-manager
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "0.0.0.0:3000:3000"
     volumes:
       - ./data:/data
     environment:

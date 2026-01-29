@@ -51,18 +51,17 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 
 The easiest way to run IPTV-Manager is using Docker.
 
-### Using Docker Compose
+### Using Docker Compose (Recommended)
 
-1.  Clone the repository or create a `docker-compose.yml` file:
+1.  Create a `docker-compose.yml` file:
     ```yaml
     services:
       iptv-manager:
-        build: .
-        image: iptv-manager
+        image: ghcr.io/bladestar2105/iptv-manager:latest
         container_name: iptv-manager
         restart: unless-stopped
         ports:
-          - "3000:3000"
+          - "0.0.0.0:3000:3000"
         volumes:
           - ./data:/data
         environment:
@@ -74,7 +73,11 @@ The easiest way to run IPTV-Manager is using Docker.
     docker-compose up -d
     ```
 
-### Using Docker Run
+The application will be available at `http://localhost:3000` (or your server IP). Data (database, cache, keys) will be persisted in the `./data` directory.
+
+### Using Docker Run (Manual)
+
+If you prefer to build and run manually:
 
 ```bash
 docker build -t iptv-manager .
