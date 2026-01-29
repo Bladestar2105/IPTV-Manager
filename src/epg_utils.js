@@ -2,43 +2,47 @@ export function cleanName(name) {
   if (!name) return '';
   let cleaned = name.toLowerCase();
 
-  // Remove specific provider prefixes "WORD| "
+  // 1. Remove "Provider|" prefixes (generic)
   cleaned = cleaned.replace(/^[a-z0-9]+\|\s*/, '');
 
-  // Remove country codes at start
-  // Matches start, code, then word boundary/separator
-  cleaned = cleaned.replace(/^(uk|us|de|fr|it|es|pt|pl|tr|gr|nl|be|ch|at)\b\s*[:\|\-]?\s*/, '');
-  cleaned = cleaned.replace(/^(uk|us|de|fr|it|es|pt|pl|tr|gr|nl|be|ch|at)[:\|\-]\s*/, '');
+  // 2. Remove Country Codes / Prefixes
+  // Pattern: Start + (2-3 letters) + separator or brackets
+  cleaned = cleaned.replace(/^[\(\[][a-z]{2,3}[\)\]]\s*/, ''); // (US) Channel
+  cleaned = cleaned.replace(/^[a-z]{2,3}\s*[:\|\-]\s*/, ''); // US: Channel, UK - Channel
 
-  // Remove suffix noise
-  // ᴿᴬᵂ (U+1D3F U+1D2C U+1D42), ᴰᴱ (U+1D30 U+1D31)
+  // 3. Technical Suffixes (Global)
+  // HEVC, FHD, HD, SD, 4K, 8K, RAW, 50FPS, H265, UHD
+  cleaned = cleaned.replace(/\b(hevc|fhd|uhd|hd|sd|4k|8k|raw|50fps|h265|h264)\b/g, '');
+
+  // Remove common superscript/styling noise often found in IPTV (e.g. RAW, DE in superscript)
   cleaned = cleaned.replace(/[ᴿᴬᵂᴰᴱ]/g, '');
 
-  // Remove tech specs
-  cleaned = cleaned.replace(/\b(hevc|fhd|hd|sd|4k|8k|raw)\b/g, '');
+  // 4. Time shifts (Global)
+  cleaned = cleaned.replace(/[\+\-]\d+/g, '');
 
-  // Remove time shifts (+1, +24)
-  cleaned = cleaned.replace(/\+\d+/g, '');
+  // Clean trailing separators/spaces to ensure suffix checks work
+  cleaned = cleaned.replace(/[:\|\-_\.\s]+$/, '');
 
-  // Remove .de, .gr extension if at end
-  cleaned = cleaned.replace(/\.(de|gr)$/, '');
+  // 5. TLD Suffixes
+  // Remove .de, .gr, .uk, .com, .tv (if at end)
+  cleaned = cleaned.replace(/\.[a-z]{2,3}$/, '');
 
-  // Remove "-de" suffix if present as word boundary
-  cleaned = cleaned.replace(/\-de\b/, '');
+  // 6. -CC Suffix (hyphenated country code at end)
+  // "Channel-de" -> "Channel"
+  cleaned = cleaned.replace(/\-[a-z]{2}$/, '');
 
-  // Replace special chars with space (including +)
+  // 7. Cleanup special chars
+  // Replace dots, hyphens, underscores, pipes with space
   cleaned = cleaned.replace(/[\.\-\_\+\|]/g, ' ');
 
-  // Remove (text) and [text]
+  // 8. Brackets/Parentheses content
   cleaned = cleaned.replace(/\(.*\)/g, '');
   cleaned = cleaned.replace(/\[.*\]/g, '');
 
-  // Normalizations
-  cleaned = cleaned.replace(/\bkabel eins\b/, 'kabel 1');
-  cleaned = cleaned.replace(/\bii\b/, '2');
-  cleaned = cleaned.replace(/\biii\b/, '3');
-  // "plus" -> space
-  cleaned = cleaned.replace(/\bplus\b/g, ' ');
+  // 9. Common Normalizations
+  cleaned = cleaned.replace(/\bplus\b/g, ' '); // "Plus" -> Space
+  cleaned = cleaned.replace(/\b(ii)\b/g, '2'); // II -> 2
+  cleaned = cleaned.replace(/\b(iii)\b/g, '3'); // III -> 3
 
   // Remove extra spaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
