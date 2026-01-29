@@ -27,8 +27,27 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
+
+// Trust Proxy Configuration
+if (process.env.TRUST_PROXY) {
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy.toLowerCase() === 'true') {
+    app.set('trust proxy', true);
+  } else if (trustProxy.toLowerCase() === 'false') {
+    app.set('trust proxy', false);
+  } else if (!isNaN(trustProxy)) {
+    app.set('trust proxy', parseInt(trustProxy));
+  } else {
+    // String (IPs, 'loopback', 'linklocal', etc.)
+    app.set('trust proxy', trustProxy);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../');
+
+// Ensure Data Directory exists
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // Security configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
@@ -88,8 +107,7 @@ const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
 // Picon caching removed - using direct URLs for better performance
 
-// Ensure Data Directory exists
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure Cache Directories exist
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
@@ -114,7 +132,7 @@ app.use(helmet({
 // Rate limiting for authentication endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts
+  max: 100, // 100 attempts (Relaxed to allow DB-based custom blocking to take precedence)
   message: { error: 'Too many authentication attempts, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -167,6 +185,7 @@ app.use(async (req, res, next) => {
       } else {
         // Expired, remove it
         db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(blocked.id);
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_unblocked', 'Block expired', now);
       }
     }
   } catch (e) {
@@ -992,12 +1011,13 @@ async function getXtreamUser(req) {
       WHERE ip = ? AND action IN ('login_failed', 'xtream_login_failed') AND timestamp > ?
     `).get(ip, failWindow).count;
 
-    if (failCount >= 10) { // Threshold 10 for streaming clients
+    const threshold = parseInt(getSetting('iptv_block_threshold', '10')) || 10;
+    if (failCount >= threshold) {
       // Check whitelist before blocking
       const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
 
       if (!whitelisted) {
-        const durationSetting = getSetting('ip_block_duration', '3600');
+        const durationSetting = getSetting('iptv_block_duration', '3600');
         const blockDuration = parseInt(durationSetting) || 3600;
         const expiresAt = now + blockDuration;
         db.prepare(`
@@ -1005,6 +1025,7 @@ async function getXtreamUser(req) {
           ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
         `).run(ip, 'Too many failed Xtream login attempts', expiresAt);
 
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Too many failed Xtream logins (Threshold: ${threshold})`, now);
         console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed Xtream logins`);
       }
     }
@@ -1166,12 +1187,13 @@ app.post('/api/login', authLimiter, async (req, res) => {
       WHERE ip = ? AND action IN ('login_failed', 'xtream_login_failed') AND timestamp > ?
     `).get(ip, failWindow).count;
 
-    if (failCount >= 5) {
+    const threshold = parseInt(getSetting('admin_block_threshold', '5')) || 5;
+    if (failCount >= threshold) {
       // Check whitelist before blocking
       const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
 
       if (!whitelisted) {
-        const durationSetting = getSetting('ip_block_duration', '3600');
+        const durationSetting = getSetting('admin_block_duration', '3600');
         const blockDuration = parseInt(durationSetting) || 3600;
         const expiresAt = now + blockDuration;
         db.prepare(`
@@ -1179,6 +1201,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
           ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
         `).run(ip, 'Too many failed login attempts', expiresAt);
 
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Too many failed WebUI logins (Threshold: ${threshold})`, now);
         console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed logins`);
       }
     }
@@ -3058,6 +3081,8 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
       ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at, reason = excluded.reason
     `).run(ip, reason || 'Manual Block', expiresAt);
 
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Manual Block: ${reason || 'No reason'}`, now);
+
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -3065,11 +3090,22 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
 app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
   try {
     const id = req.params.id;
+    const now = Math.floor(Date.now() / 1000);
+    let ipToLog = id;
+
     // Check if it looks like an IP or ID
     if (id.includes('.') || id.includes(':')) {
-       db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(id);
+       const info = db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(id);
+       if (info.changes > 0) {
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(id, 'ip_unblocked', 'Manual Unblock', now);
+       }
     } else {
-       db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(id);
+       const entry = db.prepare('SELECT ip FROM blocked_ips WHERE id = ?').get(id);
+       if (entry) {
+          ipToLog = entry.ip;
+          db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(id);
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ipToLog, 'ip_unblocked', 'Manual Unblock', now);
+       }
     }
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -3089,7 +3125,12 @@ app.post('/api/security/whitelist', authenticateToken, (req, res) => {
 
     db.prepare('INSERT OR REPLACE INTO whitelisted_ips (ip, description) VALUES (?, ?)').run(ip, description || '');
     // Also remove from blocked if exists
-    db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(ip);
+    const info = db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(ip);
+
+    if (info.changes > 0) {
+        const now = Math.floor(Date.now() / 1000);
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_unblocked', 'Automatically unblocked due to whitelisting', now);
+    }
 
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
