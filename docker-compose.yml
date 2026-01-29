@@ -1,0 +1,13 @@
+services:
+  iptv-manager:
+    build: .
+    image: iptv-manager
+    container_name: iptv-manager
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - DATA_DIR=/data
+      - NODE_ENV=production

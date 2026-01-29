@@ -28,6 +28,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../');
 
 // Security configuration
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
@@ -37,7 +38,7 @@ const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 10;
 // Encryption Configuration
 let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 if (!ENCRYPTION_KEY) {
-  const keyFile = path.join(__dirname, '../secret.key');
+  const keyFile = path.join(DATA_DIR, 'secret.key');
   if (fs.existsSync(keyFile)) {
     ENCRYPTION_KEY = fs.readFileSync(keyFile, 'utf8').trim();
   } else {
@@ -83,10 +84,12 @@ function decrypt(text) {
 }
 
 // Create cache directories
-const CACHE_DIR = path.join(__dirname, '../cache');
+const CACHE_DIR = path.join(DATA_DIR, 'cache');
 const EPG_CACHE_DIR = path.join(CACHE_DIR, 'epg');
 // Picon caching removed - using direct URLs for better performance
 
+// Ensure Data Directory exists
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
@@ -190,7 +193,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 // app.use('/cache', express.static(path.join(__dirname, '../cache')));
 
 // DB
-const db = new Database(path.join(__dirname, '../db.sqlite'));
+const db = new Database(path.join(DATA_DIR, 'db.sqlite'));
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
 
