@@ -185,6 +185,7 @@ app.use(async (req, res, next) => {
       } else {
         // Expired, remove it
         db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(blocked.id);
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_unblocked', 'Block expired', now);
       }
     }
   } catch (e) {
@@ -1024,6 +1025,7 @@ async function getXtreamUser(req) {
           ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
         `).run(ip, 'Too many failed Xtream login attempts', expiresAt);
 
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Too many failed Xtream logins (Threshold: ${threshold})`, now);
         console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed Xtream logins`);
       }
     }
@@ -1199,6 +1201,7 @@ app.post('/api/login', authLimiter, async (req, res) => {
           ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at
         `).run(ip, 'Too many failed login attempts', expiresAt);
 
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Too many failed WebUI logins (Threshold: ${threshold})`, now);
         console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed logins`);
       }
     }
@@ -3078,6 +3081,8 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
       ON CONFLICT(ip) DO UPDATE SET expires_at = excluded.expires_at, reason = excluded.reason
     `).run(ip, reason || 'Manual Block', expiresAt);
 
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Manual Block: ${reason || 'No reason'}`, now);
+
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -3085,11 +3090,22 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
 app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
   try {
     const id = req.params.id;
+    const now = Math.floor(Date.now() / 1000);
+    let ipToLog = id;
+
     // Check if it looks like an IP or ID
     if (id.includes('.') || id.includes(':')) {
-       db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(id);
+       const info = db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(id);
+       if (info.changes > 0) {
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(id, 'ip_unblocked', 'Manual Unblock', now);
+       }
     } else {
-       db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(id);
+       const entry = db.prepare('SELECT ip FROM blocked_ips WHERE id = ?').get(id);
+       if (entry) {
+          ipToLog = entry.ip;
+          db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(id);
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ipToLog, 'ip_unblocked', 'Manual Unblock', now);
+       }
     }
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -3109,7 +3125,12 @@ app.post('/api/security/whitelist', authenticateToken, (req, res) => {
 
     db.prepare('INSERT OR REPLACE INTO whitelisted_ips (ip, description) VALUES (?, ?)').run(ip, description || '');
     // Also remove from blocked if exists
-    db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(ip);
+    const info = db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(ip);
+
+    if (info.changes > 0) {
+        const now = Math.floor(Date.now() / 1000);
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_unblocked', 'Automatically unblocked due to whitelisting', now);
+    }
 
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
