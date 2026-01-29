@@ -1,6 +1,6 @@
 services:
   iptv-manager:
-    build: .
+    build: ghcr.io/bladestar2105/iptv-manager:latest
     image: iptv-manager
     container_name: iptv-manager
     restart: unless-stopped
