@@ -22,6 +22,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import multer from 'multer';
 import zlib from 'zlib';
+import { cleanName, levenshtein } from './epg_utils.js';
 
 // Load environment variables
 dotenv.config();
@@ -2932,19 +2933,14 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
 
     const globalMap = new Map();
     for (const m of globalMappings) {
-        const clean = m.name.toLowerCase()
-         .replace(/\s+/g, ' ')
-         .replace(/^(uk|us|de|fr|it|es|pt|pl|tr|gr|nl|be|ch|at):?\s*/i, '')
-         .replace(/\(.*\)/g, '')
-         .replace(/\[.*\]/g, '')
-         .trim();
+        const clean = cleanName(m.name);
         if (clean) globalMap.set(clean, m.epg_channel_id);
     }
 
     const epgList = await loadAllEpgChannels();
     const epgChannels = new Map();
     for (const ch of epgList) {
-       if (ch.name) epgChannels.set(ch.name.toLowerCase(), ch.id);
+       if (ch.name) epgChannels.set(cleanName(ch.name), ch.id);
     }
 
     let matched = 0;
@@ -2957,19 +2953,15 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
     const updates = [];
 
     for (const ch of channels) {
-       const cleanName = ch.name.toLowerCase()
-         .replace(/\s+/g, ' ')
-         .replace(/^(uk|us|de|fr|it|es|pt|pl|tr|gr|nl|be|ch|at):?\s*/i, '')
-         .replace(/\(.*\)/g, '')
-         .replace(/\[.*\]/g, '')
-         .trim();
+       const cleaned = cleanName(ch.name);
+       if (!cleaned) continue;
 
        // 1. Try Global Map
-       let epgId = globalMap.get(cleanName);
+       let epgId = globalMap.get(cleaned);
 
        // 2. Try Exact Match
        if (!epgId) {
-         epgId = epgChannels.get(cleanName);
+         epgId = epgChannels.get(cleaned);
        }
 
        // 3. Fuzzy Match
@@ -2977,9 +2969,13 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
          // Fuzzy match with Levenshtein
          // Optimization: Only check channels with similar length
          for (const [epgName, id] of epgChannels.entries()) {
-           if (Math.abs(epgName.length - cleanName.length) > 3) continue;
+           // Optimization: length diff check
+           if (Math.abs(epgName.length - cleaned.length) > 3) continue;
 
-           if (levenshtein(cleanName, epgName) < 3) {
+           // Don't fuzzy match very short strings to avoid false positives
+           if (cleaned.length < 4) continue;
+
+           if (levenshtein(cleaned, epgName) < 3) {
               epgId = id;
               break;
            }
@@ -3005,24 +3001,6 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
     res.status(500).json({error: e.message});
   }
 });
-
-function levenshtein(a, b) {
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
-      }
-    }
-  }
-  return matrix[b.length][a.length];
-}
 
 // === Settings API ===
 app.get('/api/settings', authenticateToken, (req, res) => {
