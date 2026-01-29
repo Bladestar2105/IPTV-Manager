@@ -297,7 +297,7 @@ async function loadProviders(filterUserId = null) {
     const epgStatus = p.epg_enabled ? '✅' : '❌';
     const lastUpdate = p.epg_last_updated ? new Date(p.epg_last_updated * 1000).toLocaleString() : t('never');
     const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h) | ${t('lastEpgUpdate')}: ${lastUpdate}</small>` : '';
-    const ownerInfo = p.owner_name ? `<br><small class="text-primary">Owner: ${p.owner_name}</small>` : '';
+    const ownerInfo = p.owner_name ? `<br><small class="text-primary">${t('owner')}: ${p.owner_name}</small>` : '';
 
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
@@ -1248,7 +1248,7 @@ async function loadEpgSources() {
       info.innerHTML = `
         <strong>${source.name}</strong>
         <br><small class="text-muted">${source.url}</small>
-        <br><small>${enabledStatus} | Update: ${source.update_interval / 3600}h | Last: ${lastUpdate} ${isUpdating}</small>
+        <br><small>${enabledStatus} | ${t('updateInterval')}: ${source.update_interval / 3600}h | ${t('lastEpgUpdate')}: ${lastUpdate} ${isUpdating}</small>
       `;
       
       const btnGroup = document.createElement('div');
@@ -2134,7 +2134,12 @@ function updateMappingStats() {
 
   const stats = document.getElementById('mapping-stats');
   if (stats) {
-    stats.textContent = `Total: ${total} | Mapped: ${mapped} (${Math.round(mapped/total*100)}%) | Manual: ${manual}`;
+    stats.textContent = t('mappingStats', {
+        total: total,
+        mapped: mapped,
+        percent: Math.round(mapped/total*100),
+        manual: manual
+    });
   }
 }
 

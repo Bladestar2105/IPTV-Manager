@@ -10,6 +10,8 @@ const translations = {
     providerManagement: 'Provider Management',
     categoriesChannels: 'User Categories & Channels',
     xtreamLogin: 'Xtream Codes Login',
+    settings: 'Settings',
+    clientLogs: 'Client Logs',
     
     // User Section
     totalUsers: 'Total Users',
@@ -27,6 +29,7 @@ const translations = {
     providerPassword: 'Password',
     epgUrl: 'EPG URL (optional)',
     addProvider: 'Add Provider',
+    selectUserHint: 'Providers for selected user:',
     sync: 'Sync',
     syncing: 'Syncing...',
     syncSuccess: '✅ {added} added, {updated} updated, {categories} categories',
@@ -37,6 +40,10 @@ const translations = {
     lastSync: 'Last Sync',
     deleteProviderConfirm: 'Really delete provider "{name}"?',
     providerCreated: '✅ Provider created',
+    owner: 'Owner',
+    status: 'Status',
+    added: 'Added',
+    updated: 'Updated',
     
     // Category Section
     selectedUser: 'Selected User',
@@ -51,6 +58,9 @@ const translations = {
     categoryCreated: '✅ Category created',
     markedAsAdult: 'Marked as Adult',
     markAsAdult: 'Mark as Adult',
+    categories: 'Categories',
+    all: 'All',
+    del: 'Del',
     
     // Channel Section
     channelAssignment: 'Channel Assignment',
@@ -69,13 +79,14 @@ const translations = {
     noResults: '🔍 No results for "{search}"',
     moreChannels: '... and {count} more (refine search)',
     selectUserAndCategory: '⚠️ Please select user and category',
+    channels: 'Channels',
+    xtreamCodes: 'Xtream Codes',
     
     // Import Modal
     importCategoriesTitle: 'Import Provider Categories',
     searchCategories: '🔍 Search categories...',
     loadingCategories: 'Loading categories...',
     noCategoriesFound: 'No categories found',
-    channels: 'channels',
     importCategoryOnly: '📥 Category Only',
     importWithChannels: '📥 With Channels',
     close: 'Close',
@@ -101,6 +112,7 @@ const translations = {
     add: '+',
     browse: 'Browse',
     updateAll: 'Update All',
+    save: 'Save',
     
     // Loading states
     loading: 'Loading...',
@@ -185,6 +197,8 @@ const translations = {
     autoMapSuccess: 'Auto-mapping complete: {count} channels mapped.',
     mappingSaved: 'Mapping saved',
     mappingRemoved: 'Mapping removed',
+    configuration: 'Configuration',
+    mappingStats: 'Total: {total} | Mapped: {mapped} ({percent}%) | Manual: {manual}',
 
     // Statistics
     statistics: 'Statistics',
@@ -216,6 +230,10 @@ const translations = {
     hours: 'Hours',
     custom: 'Custom',
     reasonPlaceholder: 'Reason for whitelisting',
+    ipBlockDuration: 'IP Block Duration (seconds)',
+    level: 'Level',
+    message: 'Message',
+    clearLogs: 'Clear Logs',
 
     // Security View
     security: 'Security',
@@ -243,7 +261,19 @@ const translations = {
     noSelection: 'No items selected',
     editUser: 'Edit User',
     leaveBlankToKeep: 'Leave blank to keep current',
-    enableEpg: 'Enable EPG'
+    enableEpg: 'Enable EPG',
+
+    // Sync Configuration
+    enableAutomaticSync: 'Enable Automatic Sync',
+    syncInterval: 'Sync Interval',
+    hourly: 'Every Hour',
+    every_6_hours: 'Every 6 Hours',
+    every_12_hours: 'Every 12 Hours',
+    daily: 'Daily',
+    weekly: 'Weekly',
+    autoAddNewCategories: 'Auto-add new categories',
+    autoAddChannelsToCategories: 'Auto-add channels to categories',
+    saveConfiguration: 'Save Configuration'
   },
   
   de: {
@@ -253,6 +283,8 @@ const translations = {
     providerManagement: 'Provider-Verwaltung',
     categoriesChannels: 'User-Kategorien & Kanäle',
     xtreamLogin: 'Xtream Codes Login',
+    settings: 'Einstellungen',
+    clientLogs: 'Client-Protokolle',
     
     // User Section
     totalUsers: 'Anzahl User',
@@ -270,6 +302,7 @@ const translations = {
     providerPassword: 'Passwort',
     epgUrl: 'EPG URL (optional)',
     addProvider: 'Provider+',
+    selectUserHint: 'Provider für ausgewählten User:',
     sync: 'Sync',
     syncing: 'Sync...',
     syncSuccess: '✅ {added} hinzugefügt, {updated} aktualisiert, {categories} Kategorien',
@@ -280,6 +313,10 @@ const translations = {
     lastSync: 'Letzter Sync',
     deleteProviderConfirm: 'Provider "{name}" wirklich löschen?',
     providerCreated: '✅ Provider angelegt',
+    owner: 'Besitzer',
+    status: 'Status',
+    added: 'Hinzugefügt',
+    updated: 'Aktualisiert',
     
     // Category Section
     selectedUser: 'Ausgewählter User',
@@ -294,6 +331,9 @@ const translations = {
     categoryCreated: '✅ Kategorie angelegt',
     markedAsAdult: 'Als Adult markiert',
     markAsAdult: 'Als Adult markieren',
+    categories: 'Kategorien',
+    all: 'Alle',
+    del: 'Löschen',
     
     // Channel Section
     channelAssignment: 'Kanalzuordnung',
@@ -314,13 +354,14 @@ const translations = {
     noResults: '🔍 Keine Treffer für "{search}"',
     moreChannels: '... und {count} weitere (Suche verfeinern)',
     selectUserAndCategory: '⚠️ Bitte User und Kategorie wählen',
+    channels: 'Kanäle',
+    xtreamCodes: 'Xtream Codes',
     
     // Import Modal
     importCategoriesTitle: 'Provider-Kategorien importieren',
     searchCategories: '🔍 Kategorien durchsuchen...',
     loadingCategories: 'Kategorien werden geladen...',
     noCategoriesFound: 'Keine Kategorien gefunden',
-    channels: 'Kanäle',
     importCategoryOnly: '📥 Nur Kategorie',
     importWithChannels: '📥 Mit Kanälen',
     close: 'Schließen',
@@ -346,6 +387,7 @@ const translations = {
     add: '+',
     browse: 'Durchsuchen',
     updateAll: 'Alle aktualisieren',
+    save: 'Speichern',
     
     // Loading states
     loading: 'Lädt...',
@@ -430,6 +472,8 @@ const translations = {
     autoMapSuccess: 'Auto-Mapping fertig: {count} Kanäle zugeordnet.',
     mappingSaved: 'Zuordnung gespeichert',
     mappingRemoved: 'Zuordnung entfernt',
+    configuration: 'Konfiguration',
+    mappingStats: 'Gesamt: {total} | Zugeordnet: {mapped} ({percent}%) | Manuell: {manual}',
 
     // Statistics
     statistics: 'Statistiken',
@@ -461,6 +505,10 @@ const translations = {
     hours: 'Stunden',
     custom: 'Benutzerdefiniert',
     reasonPlaceholder: 'Grund für Whitelist',
+    ipBlockDuration: 'IP-Blockdauer (Sekunden)',
+    level: 'Level',
+    message: 'Nachricht',
+    clearLogs: 'Protokolle löschen',
 
     // Security View
     security: 'Sicherheit',
@@ -488,7 +536,19 @@ const translations = {
     noSelection: 'Keine Auswahl',
     editUser: 'User bearbeiten',
     leaveBlankToKeep: 'Leer lassen um aktuelles zu behalten',
-    enableEpg: 'EPG aktivieren'
+    enableEpg: 'EPG aktivieren',
+
+    // Sync Configuration
+    enableAutomaticSync: 'Automatischen Sync aktivieren',
+    syncInterval: 'Sync-Intervall',
+    hourly: 'Stündlich',
+    every_6_hours: 'Alle 6 Stunden',
+    every_12_hours: 'Alle 12 Stunden',
+    daily: 'Täglich',
+    weekly: 'Wöchentlich',
+    autoAddNewCategories: 'Neue Kategorien automatisch hinzufügen',
+    autoAddChannelsToCategories: 'Kanäle automatisch hinzufügen',
+    saveConfiguration: 'Konfiguration speichern'
   },
 
   fr: {
@@ -498,6 +558,8 @@ const translations = {
     providerManagement: 'Gestion des Fournisseurs',
     categoriesChannels: 'Catégories et Chaînes Utilisateur',
     xtreamLogin: 'Connexion Xtream Codes',
+    settings: 'Paramètres',
+    clientLogs: 'Journaux Client',
     
     // User Section
     totalUsers: 'Utilisateurs Totaux',
@@ -515,6 +577,7 @@ const translations = {
     providerPassword: 'Mot de passe',
     epgUrl: 'URL EPG (optionnel)',
     addProvider: 'Ajouter Fournisseur',
+    selectUserHint: 'Fournisseurs pour l\'utilisateur sélectionné :',
     sync: 'Synchro',
     syncing: 'Synchronisation...',
     syncSuccess: '✅ {added} ajoutées, {updated} mises à jour, {categories} catégories',
@@ -525,6 +588,10 @@ const translations = {
     lastSync: 'Dernière Synchro',
     deleteProviderConfirm: 'Supprimer vraiment le fournisseur "{name}" ?',
     providerCreated: '✅ Fournisseur créé',
+    owner: 'Propriétaire',
+    status: 'Statut',
+    added: 'Ajouté',
+    updated: 'Mis à jour',
     
     // Category Section
     selectedUser: 'Utilisateur Sélectionné',
@@ -539,6 +606,9 @@ const translations = {
     categoryCreated: '✅ Catégorie créée',
     markedAsAdult: 'Marqué comme Adulte',
     markAsAdult: 'Marquer comme Adulte',
+    categories: 'Catégories',
+    all: 'Tout',
+    del: 'Suppr',
     
     // Channel Section
     channelAssignment: 'Attribution des Chaînes',
@@ -557,13 +627,14 @@ const translations = {
     noResults: '🔍 Aucun résultat pour "{search}"',
     moreChannels: '... et {count} de plus (affiner la recherche)',
     selectUserAndCategory: '⚠️ Veuillez sélectionner utilisateur et catégorie',
+    channels: 'Chaînes',
+    xtreamCodes: 'Xtream Codes',
     
     // Import Modal
     importCategoriesTitle: 'Importer Catégories Fournisseur',
     searchCategories: '🔍 Rechercher catégories...',
     loadingCategories: 'Chargement des catégories...',
     noCategoriesFound: 'Aucune catégorie trouvée',
-    channels: 'chaînes',
     importCategoryOnly: '📥 Catégorie Seule',
     importWithChannels: '📥 Avec Chaînes',
     close: 'Fermer',
@@ -589,6 +660,7 @@ const translations = {
     add: '+',
     browse: 'Parcourir',
     updateAll: 'Tout mettre à jour',
+    save: 'Enregistrer',
     
     // Loading states
     loading: 'Chargement...',
@@ -673,6 +745,8 @@ const translations = {
     autoMapSuccess: 'Auto-association terminée : {count} chaînes associées.',
     mappingSaved: 'Association enregistrée',
     mappingRemoved: 'Association supprimée',
+    configuration: 'Configuration',
+    mappingStats: 'Total : {total} | Associé : {mapped} ({percent}%) | Manuel : {manual}',
 
     // Statistics
     statistics: 'Statistiques',
@@ -704,6 +778,10 @@ const translations = {
     hours: 'Heures',
     custom: 'Personnalisé',
     reasonPlaceholder: 'Raison de la liste blanche',
+    ipBlockDuration: 'Durée de blocage IP (secondes)',
+    level: 'Niveau',
+    message: 'Message',
+    clearLogs: 'Effacer les journaux',
 
     // Security View
     security: 'Sécurité',
@@ -731,7 +809,19 @@ const translations = {
     noSelection: 'Aucune sélection',
     editUser: 'Modifier Utilisateur',
     leaveBlankToKeep: 'Laisser vide pour conserver l\'actuel',
-    enableEpg: 'Activer EPG'
+    enableEpg: 'Activer EPG',
+
+    // Sync Configuration
+    enableAutomaticSync: 'Activer la synchronisation automatique',
+    syncInterval: 'Intervalle de synchronisation',
+    hourly: 'Chaque heure',
+    every_6_hours: 'Toutes les 6 heures',
+    every_12_hours: 'Toutes les 12 heures',
+    daily: 'Quotidien',
+    weekly: 'Hebdomadaire',
+    autoAddNewCategories: 'Ajouter auto. nouvelles catégories',
+    autoAddChannelsToCategories: 'Ajouter auto. chaînes aux catégories',
+    saveConfiguration: 'Enregistrer la configuration'
   },
 
   el: {
@@ -741,6 +831,8 @@ const translations = {
     providerManagement: 'Διαχείριση Παρόχων',
     categoriesChannels: 'Κατηγορίες & Κανάλια Χρήστη',
     xtreamLogin: 'Σύνδεση Xtream Codes',
+    settings: 'Ρυθμίσεις',
+    clientLogs: 'Αρχεία Πελάτη',
     
     // User Section
     totalUsers: 'Σύνολο Χρηστών',
@@ -758,6 +850,7 @@ const translations = {
     providerPassword: 'Κωδικός πρόσβασης',
     epgUrl: 'URL EPG (προαιρετικό)',
     addProvider: 'Προσθήκη Παρόχου',
+    selectUserHint: 'Πάροχοι για επιλεγμένο χρήστη:',
     sync: 'Συγχρονισμός',
     syncing: 'Συγχρονισμός...',
     syncSuccess: '✅ {added} προστέθηκαν, {updated} ενημερώθηκαν, {categories} κατηγορίες',
@@ -768,6 +861,10 @@ const translations = {
     lastSync: 'Τελευταίος Συγχρονισμός',
     deleteProviderConfirm: 'Διαγραφή παρόχου "{name}";',
     providerCreated: '✅ Πάροχος δημιουργήθηκε',
+    owner: 'Ιδιοκτήτης',
+    status: 'Κατάσταση',
+    added: 'Προστέθηκαν',
+    updated: 'Ενημερώθηκαν',
     
     // Category Section
     selectedUser: 'Επιλεγμένος Χρήστης',
@@ -782,6 +879,9 @@ const translations = {
     categoryCreated: '✅ Κατηγορία δημιουργήθηκε',
     markedAsAdult: 'Σημειώθηκε ως Ενήλικων',
     markAsAdult: 'Σημείωση ως Ενήλικων',
+    categories: 'Κατηγορίες',
+    all: 'Όλα',
+    del: 'Διαγ',
     
     // Channel Section
     channelAssignment: 'Ανάθεση Καναλιών',
@@ -800,13 +900,14 @@ const translations = {
     noResults: '🔍 Δεν βρέθηκαν αποτελέσματα για "{search}"',
     moreChannels: '... και {count} ακόμα (βελτιώστε την αναζήτηση)',
     selectUserAndCategory: '⚠️ Επιλέξτε χρήστη και κατηγορία',
+    channels: 'Κανάλια',
+    xtreamCodes: 'Xtream Codes',
     
     // Import Modal
     importCategoriesTitle: 'Εισαγωγή Κατηγοριών Παρόχου',
     searchCategories: '🔍 Αναζήτηση κατηγοριών...',
     loadingCategories: 'Φόρτωση κατηγοριών...',
     noCategoriesFound: 'Δεν βρέθηκαν κατηγορίες',
-    channels: 'κανάλια',
     importCategoryOnly: '📥 Μόνο Κατηγορία',
     importWithChannels: '📥 Με Κανάλια',
     close: 'Κλείσιμο',
@@ -832,6 +933,7 @@ const translations = {
     add: '+',
     browse: 'Περιήγηση',
     updateAll: 'Ενημέρωση όλων',
+    save: 'Αποθήκευση',
     
     // Loading states
     loading: 'Φόρτωση...',
@@ -906,6 +1008,8 @@ const translations = {
     autoMapSuccess: 'Η αυτόματη αντιστοίχιση ολοκληρώθηκε: {count} κανάλια.',
     mappingSaved: 'Η αντιστοίχιση αποθηκεύτηκε',
     mappingRemoved: 'Η αντιστοίχιση αφαιρέθηκε',
+    configuration: 'Διαμόρφωση',
+    mappingStats: 'Σύνολο: {total} | Αντιστοιχίστηκαν: {mapped} ({percent}%) | Χειροκίνητα: {manual}',
 
     // Statistics
     statistics: 'Στατιστικά',
@@ -937,6 +1041,10 @@ const translations = {
     hours: 'Ώρες',
     custom: 'Προσαρμοσμένο',
     reasonPlaceholder: 'Αιτιολογία για λευκή λίστα',
+    ipBlockDuration: 'Διάρκεια αποκλεισμού IP (δευτερόλεπτα)',
+    level: 'Επίπεδο',
+    message: 'Μήνυμα',
+    clearLogs: 'Εκκαθάριση Αρχείων',
 
     // Security View
     security: 'Ασφάλεια',
@@ -964,7 +1072,19 @@ const translations = {
     noSelection: 'Καμία επιλογή',
     editUser: 'Επεξεργασία Χρήστη',
     leaveBlankToKeep: 'Αφήστε κενό για να διατηρήσετε τον τρέχοντα',
-    enableEpg: 'Ενεργοποίηση EPG'
+    enableEpg: 'Ενεργοποίηση EPG',
+
+    // Sync Configuration
+    enableAutomaticSync: 'Ενεργοποίηση αυτόματου συγχρονισμού',
+    syncInterval: 'Διάστημα συγχρονισμού',
+    hourly: 'Κάθε ώρα',
+    every_6_hours: 'Κάθε 6 ώρες',
+    every_12_hours: 'Κάθε 12 ώρες',
+    daily: 'Καθημερινά',
+    weekly: 'Εβδομαδιαία',
+    autoAddNewCategories: 'Αυτόματη προσθήκη νέων κατηγοριών',
+    autoAddChannelsToCategories: 'Αυτόματη προσθήκη καναλιών',
+    saveConfiguration: 'Αποθήκευση διαμόρφωσης'
   }
 };
 

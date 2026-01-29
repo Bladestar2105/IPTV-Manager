@@ -98,6 +98,14 @@ The application will be available at `http://localhost:3000`.
 |:---:|:---:|
 | ![EPG Sources](docs/images/epg_sources.png) | ![EPG Browse](docs/images/epg_browse.png) |
 
+| EPG Mapping | Statistics |
+|:---:|:---:|
+| ![EPG Mapping](docs/images/epg_mapping.png) | ![Statistics](docs/images/statistics.png) |
+
+| Security |
+|:---:|
+| ![Security](docs/images/security.png) |
+
 ## 📚 API Documentation
 
 ### Authentication
