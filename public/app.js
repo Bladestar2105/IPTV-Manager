@@ -1695,12 +1695,18 @@ document.addEventListener('DOMContentLoaded', () => {
   if (settingsForm) {
       settingsForm.addEventListener('submit', async (e) => {
           e.preventDefault();
-          const duration = settingsForm.ip_block_duration.value;
           try {
+              const body = {
+                  admin_block_threshold: document.getElementById('setting-admin-threshold').value,
+                  iptv_block_threshold: document.getElementById('setting-iptv-threshold').value,
+                  admin_block_duration: document.getElementById('setting-admin-duration').value,
+                  iptv_block_duration: document.getElementById('setting-iptv-duration').value
+              };
+
               await fetchJSON('/api/settings', {
                   method: 'POST',
                   headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({ip_block_duration: duration})
+                  body: JSON.stringify(body)
               });
               alert(t('settingsSaved'));
           } catch(e) { alert(e.message); }
