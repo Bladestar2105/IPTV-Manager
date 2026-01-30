@@ -985,7 +985,7 @@ function renderProviderChannels(channels) {
       const btn = document.createElement('button');
       btn.id = 'btn-load-more-channels';
       btn.className = 'btn btn-sm btn-outline-primary w-100';
-      btn.textContent = t('loadMore') || 'Load More'; // fallback if key missing
+      btn.textContent = t('loadMore');
       btn.onclick = () => {
           channelPage++;
           loadProviderChannels(false);
@@ -1709,7 +1709,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.querySelectorAll('.category-type-filter').forEach(el => {
-      el.addEventListener('change', loadUserCategories);
+      el.addEventListener('change', (e) => {
+          loadUserCategories();
+          // Sync channel filter
+          const type = e.target.value;
+          const channelRadio = document.querySelector(`.channel-type-filter[value="${type}"]`);
+          if (channelRadio) {
+              channelRadio.checked = true;
+              loadProviderChannels();
+          }
+      });
   });
 
   // Bulk Import Events

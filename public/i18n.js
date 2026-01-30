@@ -61,6 +61,7 @@ const translations = {
     categories: 'Categories',
     all: 'All',
     del: 'Del',
+    newCategory: 'New Category',
     
     // Channel Section
     channelAssignment: 'Channel Assignment',
@@ -81,6 +82,7 @@ const translations = {
     noResults: '🔍 No results for "{search}"',
     moreChannels: '... and {count} more (refine search)',
     selectUserAndCategory: '⚠️ Please select user and category',
+    loadMore: 'Load More',
     channels: 'Channels',
     xtreamCodes: 'Xtream Codes',
     
@@ -364,6 +366,7 @@ const translations = {
     categories: 'Kategorien',
     all: 'Alle',
     del: 'Löschen',
+    newCategory: 'Neue Kategorie',
     
     // Channel Section
     channelAssignment: 'Kanalzuordnung',
@@ -384,6 +387,7 @@ const translations = {
     noResults: '🔍 Keine Treffer für "{search}"',
     moreChannels: '... und {count} weitere (Suche verfeinern)',
     selectUserAndCategory: '⚠️ Bitte User und Kategorie wählen',
+    loadMore: 'Mehr laden',
     channels: 'Kanäle',
     xtreamCodes: 'Xtream Codes',
     
@@ -667,6 +671,7 @@ const translations = {
     categories: 'Catégories',
     all: 'Tout',
     del: 'Suppr',
+    newCategory: 'Nouvelle Catégorie',
     
     // Channel Section
     channelAssignment: 'Attribution des Chaînes',
@@ -687,6 +692,7 @@ const translations = {
     noResults: '🔍 Aucun résultat pour "{search}"',
     moreChannels: '... et {count} de plus (affiner la recherche)',
     selectUserAndCategory: '⚠️ Veuillez sélectionner utilisateur et catégorie',
+    loadMore: 'Charger plus',
     channels: 'Chaînes',
     xtreamCodes: 'Xtream Codes',
     
@@ -970,6 +976,7 @@ const translations = {
     categories: 'Κατηγορίες',
     all: 'Όλα',
     del: 'Διαγ',
+    newCategory: 'Νέα Κατηγορία',
     
     // Channel Section
     channelAssignment: 'Ανάθεση Καναλιών',
@@ -990,6 +997,7 @@ const translations = {
     noResults: '🔍 Δεν βρέθηκαν αποτελέσματα για "{search}"',
     moreChannels: '... και {count} ακόμα (βελτιώστε την αναζήτηση)',
     selectUserAndCategory: '⚠️ Επιλέξτε χρήστη και κατηγορία',
+    loadMore: 'Φόρτωση περισσοτέρων',
     channels: 'Κανάλια',
     xtreamCodes: 'Xtream Codes',
     

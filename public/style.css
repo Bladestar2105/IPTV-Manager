@@ -495,3 +495,48 @@ span {
 .card-text {
   color: var(--tv-text-primary);
 }
+
+/* Fix visibility of mapped EPGs in dark mode */
+.table-info {
+  --bs-table-bg: rgba(30, 58, 138, 0.5) !important;
+  --bs-table-striped-bg: rgba(30, 58, 138, 0.6) !important;
+  background-color: var(--bs-table-bg) !important;
+  color: var(--tv-text-primary) !important;
+}
+
+.table-info > td,
+.table-info > th {
+  background-color: var(--bs-table-bg) !important;
+  color: var(--tv-text-primary) !important;
+  box-shadow: none !important;
+}
+
+.table-info:hover > td,
+.table-info:hover > th {
+   background-color: rgba(30, 58, 138, 0.7) !important;
+}
+
+/* Fix EPG Sources Box scrolling */
+#epg-sources-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Fix table-danger visibility in dark mode (used in Client Logs) */
+.table-danger {
+  --bs-table-bg: rgba(239, 68, 68, 0.25) !important;
+  --bs-table-striped-bg: rgba(239, 68, 68, 0.35) !important;
+  background-color: var(--bs-table-bg) !important;
+  color: var(--tv-text-primary) !important;
+}
+
+.table-danger > td,
+.table-danger > th {
+  background-color: transparent !important;
+  color: var(--tv-text-primary) !important;
+  box-shadow: none !important;
+}
+
+.table-danger:hover > td {
+   background-color: rgba(239, 68, 68, 0.4) !important;
+}
