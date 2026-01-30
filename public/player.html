@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IPTV Web Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="vendor/bootstrap.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+  <style>
+    body { padding: 0; margin: 0; overflow-x: hidden; background: #111; color: #eee; }
+    #player-container {
+      background: #000;
+      width: 100%;
+      height: 60vh;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    video { width: 100%; height: 100%; max-height: 60vh; }
+    #content-area { height: 40vh; overflow-y: auto; padding: 1rem; background: #111; }
+    .nav-tabs .nav-link { color: #aaa; border: 1px solid transparent; }
+    .nav-tabs .nav-link:hover { color: #fff; }
+    .nav-tabs .nav-link.active { color: #fff; background: #222; border-color: #444 #444 #222; }
+    .channel-item { cursor: pointer; transition: background 0.2s; border-color: #333 !important; }
+    .channel-item:hover { background: #222 !important; }
+    .channel-item.active { background: #1e3a8a !important; color: #fff; }
+    .channel-icon { width: 30px; height: 30px; object-fit: contain; margin-right: 10px; background: #000; }
+  </style>
+</head>
+<body>
+
+<div id="player-container">
+  <video id="video" controls autoplay></video>
+</div>
+
+<div id="content-area">
+  <ul class="nav nav-tabs mb-3" id="player-tabs">
+    <li class="nav-item"><a class="nav-link active" href="#" data-type="live">Live TV</a></li>
+    <li class="nav-item"><a class="nav-link" href="#" data-type="movie">Movies</a></li>
+    <li class="nav-item"><a class="nav-link" href="#" data-type="series">Series</a></li>
+  </ul>
+
+  <div class="row mb-2">
+     <div class="col-4">
+        <select id="category-select" class="form-select form-select-sm bg-dark text-light border-secondary">
+           <option value="">All Categories</option>
+        </select>
+     </div>
+     <div class="col-8">
+        <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Search...">
+     </div>
+  </div>
+
+  <div id="loading" class="text-center text-muted my-3" style="display:none;">Loading...</div>
+  <div id="stream-list" class="list-group list-group-flush"></div>
+</div>
+
+<script src="vendor/bootstrap.bundle.min.js"></script>
+<script src="vendor/hls.min.js"></script>
+<script>
+  const urlParams = new URLSearchParams(window.location.search);
+  const username = urlParams.get('username');
+  const password = urlParams.get('password');
+
+  if (!username || !password) {
+    document.body.innerHTML = '<div class="alert alert-danger m-4">Missing credentials in URL</div>';
+    throw new Error('Missing credentials');
+  }
+
+  let currentType = 'live';
+  let categories = [];
+  let streams = [];
+  let hls = null;
+  const video = document.getElementById('video');
+
+  // DOM Elements
+  const catSelect = document.getElementById('category-select');
+  const searchInput = document.getElementById('search-input');
+  const listEl = document.getElementById('stream-list');
+  const loadingEl = document.getElementById('loading');
+
+  async function fetchApi(action, extraParams = {}) {
+    const params = new URLSearchParams({
+      username: username,
+      password: password,
+      action: action,
+      ...extraParams
+    });
+
+    try {
+      const res = await fetch(`/player_api.php?${params.toString()}`);
+      if (!res.ok) throw new Error('API Error');
+      return res.json();
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  }
+
+  function initPlayer(url) {
+    if (Hls.isSupported()) {
+      if (hls) hls.destroy();
+      hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        video.play();
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+      video.addEventListener('loadedmetadata', function() {
+        video.play();
+      });
+    }
+  }
+
+  async function loadCategories() {
+    let action = 'get_live_categories';
+    if (currentType === 'movie') action = 'get_vod_categories';
+    if (currentType === 'series') action = 'get_series_categories';
+
+    categories = await fetchApi(action);
+
+    catSelect.innerHTML = '<option value="">All Categories</option>';
+    categories.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.category_id;
+      opt.textContent = c.category_name;
+      catSelect.appendChild(opt);
+    });
+  }
+
+  async function loadStreams() {
+    loadingEl.style.display = 'block';
+    listEl.innerHTML = '';
+
+    let action = 'get_live_streams';
+    if (currentType === 'movie') action = 'get_vod_streams';
+    if (currentType === 'series') action = 'get_series'; // Correct action for series list
+
+    streams = await fetchApi(action);
+    loadingEl.style.display = 'none';
+
+    renderStreams();
+  }
+
+  function renderStreams() {
+    const catId = catSelect.value;
+    const search = searchInput.value.toLowerCase();
+
+    const filtered = streams.filter(s => {
+      const matchesCat = !catId || s.category_id === catId;
+      const matchesSearch = !search || s.name.toLowerCase().includes(search);
+      return matchesCat && matchesSearch;
+    });
+
+    listEl.innerHTML = '';
+
+    // Limit rendering for performance
+    const toRender = filtered.slice(0, 100);
+
+    if (toRender.length === 0) {
+        listEl.innerHTML = '<div class="text-muted p-2">No results</div>';
+        return;
+    }
+
+    toRender.forEach(s => {
+      const a = document.createElement('a');
+      a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light';
+
+      const icon = s.stream_icon || s.cover || null;
+
+      const div = document.createElement('div');
+      div.className = 'd-flex align-items-center';
+
+      if (icon) {
+          const img = document.createElement('img');
+          img.src = icon;
+          img.className = 'channel-icon';
+          img.onerror = function() { this.style.display = 'none'; };
+          div.appendChild(img);
+      }
+
+      const span = document.createElement('span');
+      span.textContent = s.name;
+      div.appendChild(span);
+
+      a.appendChild(div);
+
+      a.onclick = () => playStream(s);
+      listEl.appendChild(a);
+    });
+  }
+
+  async function playStream(stream) {
+    // Highlight active
+    document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+    // This is hard to do efficiently without reference, but clicks are sparse
+    // We can just rely on user knowing what they clicked
+
+    let url = '';
+    const baseUrl = window.location.origin;
+
+    if (currentType === 'live') {
+      url = `${baseUrl}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${stream.stream_id}.m3u8`;
+      initPlayer(url);
+    } else if (currentType === 'movie') {
+      const ext = stream.container_extension || 'mp4';
+      url = `${baseUrl}/movie/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${stream.stream_id}.${ext}`;
+      // VOD often not HLS, but direct file. HLS.js might not handle MP4 directly if not fragmented?
+      // Browsers handle MP4 natively.
+      if (hls) { hls.destroy(); hls = null; }
+      video.src = url;
+      video.play();
+    } else if (currentType === 'series') {
+      // Fetch episodes
+      loadingEl.style.display = 'block';
+      loadingEl.textContent = 'Loading Episodes...';
+      listEl.innerHTML = ''; // Clear list to show episodes
+
+      const info = await fetchApi('get_series_info', { series_id: stream.series_id });
+      loadingEl.style.display = 'none';
+
+      if (info.episodes) {
+         renderEpisodes(info);
+      } else {
+         alert('No episodes found');
+         renderStreams(); // Go back
+      }
+      return; // Don't play yet
+    }
+  }
+
+  function renderEpisodes(seriesInfo) {
+    listEl.innerHTML = `<button class="btn btn-secondary btn-sm mb-2 w-100" onclick="renderStreams()">Back to Series List</button>`;
+
+    const episodes = seriesInfo.episodes;
+    // Episodes is an object grouped by season "1": [episodes...]
+
+    for (const season in episodes) {
+        const seasonHeader = document.createElement('div');
+        seasonHeader.className = 'p-2 bg-secondary text-white fw-bold';
+        seasonHeader.textContent = `Season ${season}`;
+        listEl.appendChild(seasonHeader);
+
+        episodes[season].forEach(ep => {
+            const a = document.createElement('a');
+            a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light ps-4';
+            a.textContent = `${ep.episode_num}. ${ep.title} (${ep.container_extension})`;
+
+            a.onclick = () => {
+                const ext = ep.container_extension || 'mp4';
+                // Series ID in our backend is complex, but get_series_info returns episodes with proper IDs for playback?
+                // Wait, server.js get_series_info logic:
+                // ep.id = (providerId * OFFSET + originalId).toString();
+                // Proxy: /series/:username/:password/:episode_id.:ext
+
+                const url = `${window.location.origin}/series/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ep.id}.${ext}`;
+
+                if (hls) { hls.destroy(); hls = null; }
+                video.src = url;
+                video.play();
+
+                document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+                a.classList.add('active');
+            };
+            listEl.appendChild(a);
+        });
+    }
+  }
+
+  // Events
+  document.querySelectorAll('#player-tabs .nav-link').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('#player-tabs .nav-link').forEach(l => l.classList.remove('active'));
+      e.target.classList.add('active');
+      currentType = e.target.dataset.type;
+
+      // Reset search/cat
+      catSelect.value = '';
+      searchInput.value = '';
+
+      loadCategories();
+      loadStreams();
+    });
+  });
+
+  catSelect.addEventListener('change', renderStreams);
+  searchInput.addEventListener('input', debounce(renderStreams, 500));
+
+  function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+  }
+
+  // Init
+  loadCategories();
+  loadStreams();
+
+</script>
+</body>
+</html>

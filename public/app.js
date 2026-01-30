@@ -286,6 +286,15 @@ async function loadUsers() {
     
     const btnGroup = document.createElement('div');
 
+    const playBtn = document.createElement('button');
+    playBtn.className = 'btn btn-sm btn-outline-success me-1';
+    playBtn.innerHTML = '▶️'; // Play icon
+    playBtn.title = t('openWebPlayer') || 'Open Web Player';
+    playBtn.onclick = () => {
+        const pass = u.plain_password || '';
+        window.open(`player.html?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}`, '_blank');
+    };
+
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     editBtn.innerHTML = '✏️'; // Edit icon
@@ -320,6 +329,7 @@ async function loadUsers() {
       loadUsers();
     };
     
+    btnGroup.appendChild(playBtn);
     btnGroup.appendChild(editBtn);
     btnGroup.appendChild(delBtn);
     li.appendChild(span);
@@ -1770,6 +1780,19 @@ async function handleImport(e) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
+  // Fix for tab switching issues (overlapping content)
+  const triggerTabList = [].slice.call(document.querySelectorAll('#user-tabs button'));
+  triggerTabList.forEach(function (triggerEl) {
+    triggerEl.addEventListener('shown.bs.tab', function (event) {
+      const targetId = triggerEl.getAttribute('data-bs-target');
+      document.querySelectorAll('#user-tab-content .tab-pane').forEach(pane => {
+          if ('#' + pane.id !== targetId) {
+              pane.classList.remove('show', 'active');
+          }
+      });
+    });
+  });
+
   // Seite übersetzen
   translatePage();
   
@@ -2414,7 +2437,7 @@ async function loadEpgMappingChannels() {
 
   try {
     const [channels, mappings] = await Promise.all([
-      fetchJSON(`/api/providers/${providerId}/channels`),
+      fetchJSON(`/api/providers/${providerId}/channels?type=live`),
       fetchJSON(`/api/mapping/${providerId}`)
     ]);
 
