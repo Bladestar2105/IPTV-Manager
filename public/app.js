@@ -164,6 +164,53 @@ function updateStatsCounters(type, value) {
 }
 
 // === User Management ===
+function generateUser() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let user = '';
+    let pass = '';
+    for (let i = 0; i < 9; i++) {
+        user += chars.charAt(Math.floor(Math.random() * chars.length));
+        pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    // Ensure user starts with letter
+    const letters = 'abcdefghijklmnopqrstuvwxyz';
+    user = letters.charAt(Math.floor(Math.random() * letters.length)) + user;
+    pass = letters.charAt(Math.floor(Math.random() * letters.length)) + pass;
+
+    const form = document.getElementById('user-form');
+    if (form) {
+        form.username.value = user;
+        form.password.value = pass;
+    }
+}
+
+function copyToClipboard(text) {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+        // Optional feedback
+    }).catch(err => console.error('Copy failed', err));
+}
+
+function copyAllXtreamCredentials() {
+    const url = document.getElementById('xtream-url').value;
+    const user = document.getElementById('xtream-user').value;
+    const pass = document.getElementById('xtream-pass').value;
+    const epg = document.getElementById('epg-url').value;
+    const m3u = document.getElementById('m3u-link').value;
+
+    const text = `### Credentials for "${user}" ###\n` +
+                 `URL: ${url}\n` +
+                 `USERNAME: ${user}\n` +
+                 `PASSWORD: ${pass}\n` +
+                 `EPG-URL: ${epg}\n` +
+                 `M3U-URL: ${m3u}\n` +
+                 `######`;
+
+    copyToClipboard(text);
+    alert(t('copiedToClipboard') || 'Copied to clipboard');
+}
+
 async function loadUsers() {
   const users = await fetchJSON('/api/users');
   updateStatsCounters('users', users.length);
@@ -181,15 +228,19 @@ async function loadUsers() {
       selectedUser = u;
       selectedUserId = u.id;
       document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${u.username} (id=${u.id})`;
-      document.getElementById('xtream-user').textContent = u.username;
-      document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
+
+      const baseUrl = window.location.origin;
+      const pass = u.plain_password || '********';
+
+      document.getElementById('xtream-url').value = baseUrl;
+      document.getElementById('xtream-user').value = u.username;
+      document.getElementById('xtream-pass').value = pass;
+      document.getElementById('epg-url').value = `${baseUrl}/xmltv.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}`;
 
       // Update M3U Link
       const m3uLinkEl = document.getElementById('m3u-link');
       if (m3uLinkEl) {
-          const baseUrl = window.location.origin;
-          // Use placeholder for password since we don't have the plain text
-          m3uLinkEl.textContent = `${baseUrl}/get.php?username=${encodeURIComponent(u.username)}&password=<PASSWORD>&type=m3u_plus&output=ts`;
+          m3uLinkEl.value = `${baseUrl}/get.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}&type=m3u_plus&output=ts`;
       }
 
       loadUserCategories();
@@ -1691,14 +1742,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Seite übersetzen
   translatePage();
   
-  document.getElementById('xtream-url').textContent = window.location.origin;
-  document.getElementById('xtream-pass').textContent = t('passwordPlaceholder');
-  document.getElementById('epg-url').textContent = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
+  document.getElementById('xtream-url').value = window.location.origin;
+  document.getElementById('xtream-user').value = '-';
+  document.getElementById('xtream-pass').value = t('passwordPlaceholder');
+  document.getElementById('epg-url').value = window.location.origin + '/xmltv.php?username=<USER>&password=<PASS>';
 
   const m3uLinkEl = document.getElementById('m3u-link');
   if (m3uLinkEl) {
       const baseUrl = window.location.origin;
-      m3uLinkEl.textContent = `${baseUrl}/get.php?username=DUMMY&password=DUMMY&type=m3u_plus&output=ts`;
+      m3uLinkEl.value = `${baseUrl}/get.php?username=DUMMY&password=DUMMY&type=m3u_plus&output=ts`;
   }
   
   const importBtn = document.getElementById('import-categories-btn');
@@ -1716,7 +1768,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.querySelectorAll('.channel-type-filter').forEach(el => {
-      el.addEventListener('change', loadProviderChannels);
+      el.addEventListener('change', (e) => {
+          loadProviderChannels();
+          // Sync category filter
+          const type = e.target.value;
+          const categoryRadio = document.querySelector(`.category-type-filter[value="${type}"]`);
+          if (categoryRadio && !categoryRadio.checked) {
+              categoryRadio.checked = true;
+              loadUserCategories();
+          }
+      });
   });
 
   document.querySelectorAll('.category-type-filter').forEach(el => {

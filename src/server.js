@@ -1214,8 +1214,15 @@ async function authUser(username, password) {
     const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(u);
     if (!user) return null;
     
-    // Compare password with hashed password
-    const isValid = await bcrypt.compare(p, user.password);
+    // Compare password
+    let isValid = false;
+    if (user.password && user.password.startsWith('$2b$')) {
+        isValid = await bcrypt.compare(p, user.password);
+    } else {
+        const decrypted = decrypt(user.password);
+        isValid = (decrypted === p);
+    }
+
     return isValid ? user : null;
   } catch (e) {
     console.error('authUser error:', e);
@@ -1269,7 +1276,20 @@ async function getXtreamUser(req) {
 // === API: Users ===
 app.get('/api/users', authenticateToken, (req, res) => {
   try {
-    res.json(db.prepare('SELECT id, username, is_active FROM users ORDER BY id').all());
+    const users = db.prepare('SELECT id, username, password, is_active FROM users ORDER BY id').all();
+    const result = users.map(u => {
+        let plain = null;
+        if (u.password && !u.password.startsWith('$2b$')) {
+            plain = decrypt(u.password);
+        }
+        return {
+            id: u.id,
+            username: u.username,
+            is_active: u.is_active,
+            plain_password: plain
+        };
+    });
+    res.json(result);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
@@ -1311,11 +1331,11 @@ app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
       });
     }
     
-    // Hash password
-    const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
+    // Encrypt password (reversible)
+    const encryptedPassword = encrypt(p);
     
     // Insert user
-    const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(u, hashedPassword);
+    const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(u, encryptedPassword);
     
     res.json({
       id: info.lastInsertRowid,
@@ -1357,9 +1377,9 @@ app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
         if (p.length < 8) {
             return res.status(400).json({ error: 'password_too_short' });
         }
-        const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
+        const encryptedPassword = encrypt(p);
         updates.push('password = ?');
-        params.push(hashedPassword);
+        params.push(encryptedPassword);
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update
