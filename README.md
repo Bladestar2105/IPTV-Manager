@@ -28,6 +28,7 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **Comprehensive Sync Logging**: Detailed logs of all sync operations.
 - **Category Import**: Import provider categories with or without channels.
 - **Bulk Import**: Select and import multiple provider categories at once.
+- **VOD & Series Support**: Full support for importing and proxying Movies (VOD) and TV Series.
 - **Adult Content Filtering**: Automatic detection and marking of adult content.
 - **Live Statistics**: Real-time tracking of active streams and viewing statistics.
 - **Internationalization**: Full UI support for English, German, French, and Greek.
@@ -204,8 +205,10 @@ The application will be available at `http://localhost:3000`.
 
 ### Xtream Codes API
 The application provides an Xtream Codes compatible API for players:
-*   `GET /player_api.php`: Main entry point for authentication and metadata.
-*   `GET /live/:username/:password/:stream_id.ts`: Stream proxy.
+*   `GET /player_api.php`: Main entry point for authentication and metadata (Live, VOD, Series).
+*   `GET /live/:username/:password/:stream_id.ts`: Live stream proxy.
+*   `GET /movie/:username/:password/:stream_id.:ext`: Movie stream proxy.
+*   `GET /series/:username/:password/:stream_id.:ext`: Series episode proxy.
 *   `GET /xmltv.php`: Combined XMLTV EPG.
 
 ## 📄 License

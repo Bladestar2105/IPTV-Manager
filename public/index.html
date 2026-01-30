@@ -187,6 +187,18 @@
                           </div>
                           <div class="col-md-7">
                              <h6 data-i18n="channels">Channels</h6>
+                             <div class="mb-2">
+                                <div class="btn-group btn-group-sm w-100" role="group">
+                                   <input type="radio" class="btn-check channel-type-filter" name="chan-filter-type" id="chan-filter-live" value="live" checked autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="chan-filter-live" data-i18n="typeLive">Live</label>
+
+                                   <input type="radio" class="btn-check channel-type-filter" name="chan-filter-type" id="chan-filter-movie" value="movie" autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="chan-filter-movie" data-i18n="typeMovie">Movies</label>
+
+                                   <input type="radio" class="btn-check channel-type-filter" name="chan-filter-type" id="chan-filter-series" value="series" autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="chan-filter-series" data-i18n="typeSeries">Series</label>
+                                </div>
+                             </div>
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
                              <input type="text" id="channel-search" class="form-control form-control-sm mb-2" data-i18n-placeholder="searchChannels" placeholder="Search..." disabled />
 
@@ -511,6 +523,20 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
+          <div class="mb-3 d-flex gap-2 justify-content-center">
+             <div class="form-check">
+               <input class="form-check-input import-type-radio" type="radio" name="import-type" id="import-type-live" value="live" checked>
+               <label class="form-check-label" for="import-type-live" data-i18n="typeLive">Live</label>
+             </div>
+             <div class="form-check">
+               <input class="form-check-input import-type-radio" type="radio" name="import-type" id="import-type-movie" value="movie">
+               <label class="form-check-label" for="import-type-movie" data-i18n="typeMovie">Movies</label>
+             </div>
+             <div class="form-check">
+               <input class="form-check-input import-type-radio" type="radio" name="import-type" id="import-type-series" value="series">
+               <label class="form-check-label" for="import-type-series" data-i18n="typeSeries">Series</label>
+             </div>
+          </div>
           <input type="text" id="category-import-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchCategories" placeholder="🔍 Search categories..." />
           <div class="d-flex justify-content-between mb-2">
              <div>

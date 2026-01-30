@@ -120,6 +120,11 @@ const translations = {
     loading: 'Loading...',
     saving: 'Saving...',
     
+    // Types
+    typeLive: 'Live',
+    typeMovie: 'Movies',
+    typeSeries: 'Series',
+
     // Authentication
     login: 'Login',
     logout: 'Logout',
@@ -418,6 +423,11 @@ const translations = {
     loading: 'Lädt...',
     saving: 'Speichert...',
     
+    // Types
+    typeLive: 'Live',
+    typeMovie: 'Filme',
+    typeSeries: 'Serien',
+
     // Authentication
     login: 'Anmelden',
     logout: 'Abmelden',
@@ -716,6 +726,11 @@ const translations = {
     loading: 'Chargement...',
     saving: 'Enregistrement...',
     
+    // Types
+    typeLive: 'Live',
+    typeMovie: 'Films',
+    typeSeries: 'Séries',
+
     // Authentication
     login: 'Connexion',
     logout: 'Déconnexion',
@@ -1013,6 +1028,11 @@ const translations = {
     // Loading states
     loading: 'Φόρτωση...',
     saving: 'Αποθήκευση...',
+
+    // Types
+    typeLive: 'Live',
+    typeMovie: 'Ταινίες',
+    typeSeries: 'Σειρές',
 
     // EPG Section
     epgSources: 'Πηγές EPG',
