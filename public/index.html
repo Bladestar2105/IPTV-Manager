@@ -171,6 +171,18 @@
                        <div class="row">
                           <div class="col-md-5">
                              <h6 data-i18n="categories">Categories</h6>
+                             <div class="mb-2">
+                                <div class="btn-group btn-group-sm w-100" role="group">
+                                   <input type="radio" class="btn-check category-type-filter" name="cat-filter-type" id="cat-filter-live" value="live" checked autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="cat-filter-live" data-i18n="typeLive">Live</label>
+
+                                   <input type="radio" class="btn-check category-type-filter" name="cat-filter-type" id="cat-filter-movie" value="movie" autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="cat-filter-movie" data-i18n="typeMovie">Movies</label>
+
+                                   <input type="radio" class="btn-check category-type-filter" name="cat-filter-type" id="cat-filter-series" value="series" autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="cat-filter-series" data-i18n="typeSeries">Series</label>
+                                </div>
+                             </div>
                              <form id="category-form" class="input-group input-group-sm mb-2">
                                 <input class="form-control" name="name" placeholder="New Category" required />
                                 <button class="btn btn-outline-secondary" type="submit">+</button>

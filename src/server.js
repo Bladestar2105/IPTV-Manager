@@ -313,7 +313,8 @@ try {
       user_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       sort_order INTEGER DEFAULT 0,
-      is_adult INTEGER DEFAULT 0
+      is_adult INTEGER DEFAULT 0,
+      type TEXT DEFAULT 'live'
     );
     
     CREATE TABLE IF NOT EXISTS user_channels (
@@ -454,6 +455,7 @@ try {
   migrateChannelsSchemaExtended();
   migrateCategoriesSchema();
   migrateChannelsSchemaV2();
+  migrateUserCategoriesType();
 
   // Migrate passwords
   migrateProviderPasswords();
@@ -583,6 +585,38 @@ function migrateChannelsSchemaV2() {
     }
   } catch (e) {
     console.error('Channel Schema V2 migration error:', e);
+  }
+}
+
+function migrateUserCategoriesType() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(user_categories)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('type')) {
+      db.exec("ALTER TABLE user_categories ADD COLUMN type TEXT DEFAULT 'live'");
+      console.log('✅ DB Migration: type column added to user_categories');
+
+      // Backfill type from mappings
+      const stmt = db.prepare(`
+        UPDATE user_categories
+        SET type = (
+          SELECT category_type
+          FROM category_mappings
+          WHERE category_mappings.user_category_id = user_categories.id
+          LIMIT 1
+        )
+        WHERE EXISTS (
+          SELECT 1
+          FROM category_mappings
+          WHERE category_mappings.user_category_id = user_categories.id
+        )
+      `);
+      const info = stmt.run();
+      console.log(`✅ DB Migration: Backfilled type for ${info.changes} user categories`);
+    }
+  } catch (e) {
+    console.error('User Categories Type migration error:', e);
   }
 }
 
@@ -803,7 +837,7 @@ async function performSync(providerId, userId, isManual = false) {
           const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
           const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
-          const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder);
+          const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder, catType);
           const newCategoryId = catInfo.lastInsertRowid;
 
           // Create new mapping (only for new categories)
@@ -1732,7 +1766,7 @@ app.post('/api/providers/:providerId/import-category', authenticateToken, async 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(user_id);
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
-    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder);
+    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder, catType);
     const newCategoryId = catInfo.lastInsertRowid;
 
     // Update or Create Mapping
@@ -1797,7 +1831,7 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
     let totalChannels = 0;
     let totalCategories = 0;
 
-    const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)');
+    const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
     const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 
@@ -1811,7 +1845,7 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
         const isAdult = isAdultCategory(cat.name) ? 1 : 0;
         maxSort++;
 
-        const catInfo = insertUserCategory.run(user_id, cat.name, isAdult, maxSort);
+        const catInfo = insertUserCategory.run(user_id, cat.name, isAdult, maxSort, catType);
         const newCategoryId = catInfo.lastInsertRowid;
         totalCategories++;
 
@@ -1872,18 +1906,19 @@ app.get('/api/users/:userId/categories', authenticateToken, (req, res) => {
 
 app.post('/api/users/:userId/categories', authenticateToken, (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, type } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
     
     const userId = Number(req.params.userId);
     const isAdult = isAdultCategory(name) ? 1 : 0;
+    const catType = type || 'live';
     
     // Höchste sort_order finden
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
     
-    const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder);
-    res.json({id: info.lastInsertRowid, is_adult: isAdult});
+    const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
+    res.json({id: info.lastInsertRowid, is_adult: isAdult, type: catType});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
@@ -3914,7 +3949,9 @@ app.post('/api/import', authenticateToken, upload.single('file'), (req, res) => 
         const newUserId = userIdMap.get(cat.user_id);
         if (!newUserId) continue;
 
-        const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(newUserId, cat.name, cat.is_adult, cat.sort_order);
+        // Check for type in export data, default to live
+        const catType = cat.type || 'live';
+        const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(newUserId, cat.name, cat.is_adult, cat.sort_order, catType);
         categoryIdMap.set(cat.id, info.lastInsertRowid);
         stats.categories++;
       }
