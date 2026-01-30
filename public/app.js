@@ -473,6 +473,17 @@ async function loadUserCategories() {
   list.innerHTML = '';
   selectedCategoryId = null;
 
+  // Reset Assigned List
+  const userChanList = document.getElementById('user-channel-list');
+  if (userChanList) userChanList.innerHTML = '';
+
+  const assignedHeader = document.getElementById('assigned-channels-header');
+  if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
+
+  const chanSelectAll = document.getElementById('chan-select-all-toggle');
+  if (chanSelectAll) chanSelectAll.checked = false;
+  updateChanBulkDeleteBtn();
+
   const typeRadio = document.querySelector('.category-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
 
