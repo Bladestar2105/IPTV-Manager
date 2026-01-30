@@ -445,6 +445,8 @@ try {
   migrateProvidersSchema();
   migrateChannelsSchema();
   migrateChannelsSchemaExtended();
+  migrateCategoriesSchema();
+  migrateChannelsSchemaV2();
 
   // Migrate passwords
   migrateProviderPasswords();
@@ -507,6 +509,73 @@ function migrateChannelsSchemaExtended() {
     }
   } catch (e) {
     console.error('Channel Extended Schema migration error:', e);
+  }
+}
+
+function migrateCategoriesSchema() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(category_mappings)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('category_type')) {
+       console.log('🔄 Migrating category_mappings table schema...');
+
+       db.transaction(() => {
+           // Rename old table
+           db.prepare("ALTER TABLE category_mappings RENAME TO category_mappings_old").run();
+
+           // Create new table with new constraint and column
+           db.prepare(`
+            CREATE TABLE category_mappings (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              provider_id INTEGER NOT NULL,
+              user_id INTEGER NOT NULL,
+              provider_category_id INTEGER NOT NULL,
+              provider_category_name TEXT NOT NULL,
+              user_category_id INTEGER,
+              auto_created INTEGER DEFAULT 0,
+              category_type TEXT DEFAULT 'live',
+              UNIQUE(provider_id, user_id, provider_category_id, category_type),
+              FOREIGN KEY (provider_id) REFERENCES providers(id),
+              FOREIGN KEY (user_id) REFERENCES users(id),
+              FOREIGN KEY (user_category_id) REFERENCES user_categories(id)
+            )
+           `).run();
+
+           // Copy data
+           db.prepare(`
+             INSERT INTO category_mappings (id, provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+             SELECT id, provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, 'live'
+             FROM category_mappings_old
+           `).run();
+
+           // Drop old table
+           db.prepare("DROP TABLE category_mappings_old").run();
+       })();
+
+       console.log('✅ category_mappings table migrated');
+    }
+  } catch (e) {
+    console.error('Category Schema migration error:', e);
+  }
+}
+
+function migrateChannelsSchemaV2() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(provider_channels)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('metadata')) {
+      db.exec('ALTER TABLE provider_channels ADD COLUMN metadata TEXT');
+      console.log('✅ DB Migration: metadata column added to provider_channels');
+    }
+
+    if (!columns.includes('mime_type')) {
+      db.exec('ALTER TABLE provider_channels ADD COLUMN mime_type TEXT');
+      console.log('✅ DB Migration: mime_type column added to provider_channels');
+    }
+  } catch (e) {
+    console.error('Channel Schema V2 migration error:', e);
   }
 }
 
@@ -576,36 +645,95 @@ async function performSync(providerId, userId, isManual = false) {
     
     console.log(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
     
-    // Fetch channels from provider
+    // Fetch Data from Provider
     const xtream = createXtreamClient(provider);
-    let channels = [];
+    const baseUrl = provider.url.replace(/\/+$/, '');
+    const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
     
-    try { 
-      channels = await xtream.getChannels(); 
-    } catch {
-      try { 
-        channels = await xtream.getLiveStreams(); 
-      } catch {
-        const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_streams`;
-        const resp = await fetch(apiUrl);
-        channels = resp.ok ? await resp.json() : [];
-      }
-    }
-    
-    // Fetch categories from provider
-    let providerCategories = [];
+    let allChannels = [];
+    let allCategories = [];
+
+    // 1. Live
     try {
-      const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_categories`;
-      const resp = await fetch(apiUrl);
-      if (resp.ok) {
-        providerCategories = await resp.json();
-      }
-    } catch (e) {
-      console.error('Failed to fetch categories:', e);
-    }
+       let liveChans = [];
+       try { liveChans = await xtream.getChannels(); }
+       catch {
+          const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`);
+          liveChans = resp.ok ? await resp.json() : [];
+       }
+       // Normalize
+       if (Array.isArray(liveChans)) {
+         liveChans.forEach(c => {
+           c.stream_type = 'live';
+           c.category_type = 'live';
+           allChannels.push(c);
+         });
+       }
+
+       const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_categories`);
+       if(respCat.ok) {
+          const cats = await respCat.json();
+          if (Array.isArray(cats)) {
+            cats.forEach(c => { c.category_type = 'live'; allCategories.push(c); });
+          }
+       }
+    } catch(e) { console.error('Live sync error:', e); }
+
+    // 2. Movies (VOD)
+    try {
+       console.log('Fetching VOD streams...');
+       const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`);
+       if(resp.ok) {
+         const vods = await resp.json();
+         console.log(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
+         if (Array.isArray(vods)) {
+            vods.forEach(c => {
+                c.stream_type = 'movie';
+                c.category_type = 'movie';
+                allChannels.push(c);
+            });
+         }
+       } else {
+         console.error(`VOD fetch failed: ${resp.status}`);
+       }
+
+       const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_vod_categories`);
+       if(respCat.ok) {
+          const cats = await respCat.json();
+          if (Array.isArray(cats)) {
+             cats.forEach(c => { c.category_type = 'movie'; allCategories.push(c); });
+          }
+       }
+    } catch(e) { console.error('VOD sync error:', e); }
+
+    // 3. Series
+    try {
+       const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_series`);
+       if(resp.ok) {
+         const series = await resp.json();
+         if (Array.isArray(series)) {
+            series.forEach(c => {
+                c.stream_type = 'series';
+                c.category_type = 'series';
+                // Map series fields to common format
+                c.stream_id = c.series_id;
+                c.stream_icon = c.cover;
+                allChannels.push(c);
+            });
+         }
+       }
+
+       const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_series_categories`);
+       if(respCat.ok) {
+          const cats = await respCat.json();
+          if (Array.isArray(cats)) {
+             cats.forEach(c => { c.category_type = 'series'; allCategories.push(c); });
+          }
+       }
+    } catch(e) { console.error('Series sync error:', e); }
     
     // Process categories and create mappings
-    const categoryMap = new Map();
+    const categoryMap = new Map(); // Map<String, Int> -> "catId_type" -> userCatId
     
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
     const allMappings = db.prepare(`
@@ -616,25 +744,25 @@ async function performSync(providerId, userId, isManual = false) {
     const isFirstSync = allMappings.length === 0;
     
     // Create lookup map and populate initial categoryMap
-    const mappingLookup = new Map();
+    const mappingLookup = new Map(); // Key: "catId_type"
     for (const m of allMappings) {
-      const pCatId = Number(m.provider_category_id);
-      mappingLookup.set(pCatId, m);
+      const key = `${m.provider_category_id}_${m.category_type || 'live'}`;
+      mappingLookup.set(key, m);
       if (m.user_category_id) {
-        categoryMap.set(pCatId, m.user_category_id);
+        categoryMap.set(key, m.user_category_id);
       }
     }
     
     // Prepare channel statements
     const insertChannel = db.prepare(`
       INSERT OR IGNORE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const updateChannel = db.prepare(`
       UPDATE provider_channels 
-      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?
+      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
     
@@ -648,12 +776,14 @@ async function performSync(providerId, userId, isManual = false) {
     // Execute all DB operations in a single transaction
     db.transaction(() => {
       // 1. Process Categories
-      for (const provCat of providerCategories) {
+      for (const provCat of allCategories) {
         const catId = Number(provCat.category_id);
         const catName = provCat.category_name;
+        const catType = provCat.category_type || 'live';
+        const lookupKey = `${catId}_${catType}`;
 
         // Check if mapping exists using lookup
-        let mapping = mappingLookup.get(catId);
+        let mapping = mappingLookup.get(lookupKey);
 
         // Auto-create categories if:
         // 1. No mapping exists AND not first sync AND auto_add enabled
@@ -671,69 +801,89 @@ async function performSync(providerId, userId, isManual = false) {
 
           // Create new mapping (only for new categories)
           db.prepare(`
-            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-            VALUES (?, ?, ?, ?, ?, 1)
-          `).run(providerId, userId, catId, catName, newCategoryId);
+            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+          `).run(providerId, userId, catId, catName, newCategoryId, catType);
 
-          categoryMap.set(catId, newCategoryId);
+          categoryMap.set(lookupKey, newCategoryId);
 
           // Update lookup to prevent duplicates in current run
-          mappingLookup.set(catId, {
+          mappingLookup.set(lookupKey, {
             provider_id: providerId,
             user_id: userId,
             provider_category_id: catId,
             provider_category_name: catName,
             user_category_id: newCategoryId,
-            auto_created: 1
+            auto_created: 1,
+            category_type: catType
           });
 
           categoriesAdded++;
-          console.log(`  ✅ Created category: ${catName} (id=${newCategoryId})`);
+          console.log(`  ✅ Created category: ${catName} (${catType}) (id=${newCategoryId})`);
         } else if (!mapping && isFirstSync) {
-          // First sync: Create mapping without user category (user will create/import manually)
+          // First sync: Create mapping without user category
           db.prepare(`
-            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-            VALUES (?, ?, ?, ?, NULL, 0)
-          `).run(providerId, userId, catId, catName);
+            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+            VALUES (?, ?, ?, ?, NULL, 0, ?)
+          `).run(providerId, userId, catId, catName, catType);
 
           // Update lookup to prevent duplicates in current run
-          mappingLookup.set(catId, {
+          mappingLookup.set(lookupKey, {
             provider_id: providerId,
             user_id: userId,
             provider_category_id: catId,
             provider_category_name: catName,
             user_category_id: null,
-            auto_created: 0
+            auto_created: 0,
+            category_type: catType
           });
 
-          console.log(`  📋 Registered category: ${catName} (no auto-create on first sync)`);
-        } else if (mapping && mapping.user_category_id) {
-          // Already handled by initial population of categoryMap
+          console.log(`  📋 Registered category: ${catName} (${catType})`);
         }
       }
 
       // 2. Process Channels
-      const channelList = channels || [];
-      for (let i = 0; i < channelList.length; i++) {
-        const ch = channelList[i];
-        const sid = Number(ch.stream_id || ch.id || 0);
+      for (let i = 0; i < allChannels.length; i++) {
+        const ch = allChannels[i];
+        const sid = Number(ch.stream_id || ch.series_id || ch.id || 0);
         if (sid > 0) {
           const existingId = existingMap.get(sid);
           let provChannelId;
           
           const tvArchive = Number(ch.tv_archive) === 1 ? 1 : 0;
           const tvArchiveDuration = Number(ch.tv_archive_duration) || 0;
+          const streamType = ch.stream_type || 'live';
+          const mimeType = ch.container_extension || '';
+
+          // Construct metadata
+          const meta = {};
+          if(ch.plot) meta.plot = ch.plot;
+          if(ch.cast) meta.cast = ch.cast;
+          if(ch.director) meta.director = ch.director;
+          if(ch.genre) meta.genre = ch.genre;
+          if(ch.releaseDate) meta.releaseDate = ch.releaseDate;
+          if(ch.rating) meta.rating = ch.rating;
+          if(ch.rating_5based) meta.rating_5based = ch.rating_5based;
+          if(ch.backdrop_path) meta.backdrop_path = ch.backdrop_path;
+          if(ch.youtube_trailer) meta.youtube_trailer = ch.youtube_trailer;
+          if(ch.episode_run_time) meta.episode_run_time = ch.episode_run_time;
+          if(ch.added) meta.added = ch.added;
+
+          const metaStr = JSON.stringify(meta);
 
           if (existingId) {
             // Update existing channel - preserves ID and user_channels relationships
             updateChannel.run(
               ch.name || 'Unknown',
               Number(ch.category_id || 0),
-              ch.stream_icon || '',
+              ch.stream_icon || ch.cover || '',
               ch.epg_channel_id || '',
               i, // original_sort_order
               tvArchive,
               tvArchiveDuration,
+              streamType,
+              metaStr,
+              mimeType,
               providerId,
               sid
             );
@@ -746,12 +896,14 @@ async function performSync(providerId, userId, isManual = false) {
               sid,
               ch.name || 'Unknown',
               Number(ch.category_id || 0),
-              ch.stream_icon || '',
-              'live',
+              ch.stream_icon || ch.cover || '',
+              streamType,
               ch.epg_channel_id || '',
               i, // original_sort_order
               tvArchive,
-              tvArchiveDuration
+              tvArchiveDuration,
+              metaStr,
+              mimeType
             );
             channelsAdded++;
             provChannelId = info.lastInsertRowid;
@@ -760,7 +912,10 @@ async function performSync(providerId, userId, isManual = false) {
           // Auto-add to user categories if enabled
           if (config && config.auto_add_channels) {
             const catId = Number(ch.category_id || 0);
-            const userCatId = categoryMap.get(catId);
+            const catType = ch.category_type || 'live';
+            const lookupKey = `${catId}_${catType}`;
+
+            const userCatId = categoryMap.get(lookupKey);
             
             if (userCatId) {
               // Check if already added
@@ -1427,7 +1582,18 @@ app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
 
 app.get('/api/providers/:id/channels', authenticateToken, (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ? ORDER BY original_sort_order ASC, name ASC').all(Number(req.params.id));
+    const { type } = req.query;
+    let query = 'SELECT * FROM provider_channels WHERE provider_id = ?';
+    const params = [Number(req.params.id)];
+
+    if (type) {
+        query += ' AND stream_type = ?';
+        params.push(type);
+    }
+
+    query += ' ORDER BY original_sort_order ASC, name ASC';
+
+    const rows = db.prepare(query).all(...params);
     res.json(rows);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -1436,6 +1602,8 @@ app.get('/api/providers/:id/channels', authenticateToken, (req, res) => {
 app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const type = req.query.type || 'live'; // 'live', 'movie', 'series'
+
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!provider) return res.status(404).json({error: 'Provider not found'});
 
@@ -1443,9 +1611,15 @@ app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => 
     provider.password = decrypt(provider.password);
 
     let categories = [];
+    const baseUrl = provider.url.replace(/\/+$/, '');
+    const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
+    let action = 'get_live_categories';
+
+    if(type === 'movie') action = 'get_vod_categories';
+    if(type === 'series') action = 'get_series_categories';
     
     try {
-      const apiUrl = `${provider.url.replace(/\/+$/, '')}/player_api.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}&action=get_live_categories`;
+      const apiUrl = `${baseUrl}/player_api.php?${authParams}&action=${action}`;
       const resp = await fetch(apiUrl);
       if (resp.ok) {
         categories = await resp.json();
@@ -1454,14 +1628,21 @@ app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => 
       console.error('Failed to fetch categories:', e);
     }
 
+    // Note: We need to filter local counts by stream_type to match the requested category type
+    // This is an approximation since original_category_id isn't unique across types usually.
+    // However, provider_channels now has stream_type.
+    let streamType = 'live';
+    if(type === 'movie') streamType = 'movie';
+    if(type === 'series') streamType = 'series';
+
     const localCats = db.prepare(`
       SELECT DISTINCT original_category_id, 
              COUNT(*) as channel_count
       FROM provider_channels 
-      WHERE provider_id = ? AND original_category_id > 0
+      WHERE provider_id = ? AND stream_type = ? AND original_category_id > 0
       GROUP BY original_category_id
       ORDER BY channel_count DESC
-    `).all(id);
+    `).all(id, streamType);
 
     const localCatsMap = new Map();
     for (const l of localCats) {
@@ -1476,7 +1657,8 @@ app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => 
         category_id: cat.category_id,
         category_name: cat.category_name,
         channel_count: local ? local.channel_count : 0,
-        is_adult: isAdult
+        is_adult: isAdult,
+        category_type: type
       };
     });
 
@@ -1491,7 +1673,8 @@ app.get('/api/providers/:id/categories', authenticateToken, async (req, res) => 
 app.post('/api/providers/:providerId/import-category', authenticateToken, async (req, res) => {
   try {
     const providerId = Number(req.params.providerId);
-    const { user_id, category_id, category_name, import_channels } = req.body;
+    const { user_id, category_id, category_name, import_channels, type } = req.body;
+    const catType = type || 'live';
     
     if (!user_id || !category_id || !category_name) {
       return res.status(400).json({error: 'Missing required fields'});
@@ -1508,19 +1691,23 @@ app.post('/api/providers/:providerId/import-category', authenticateToken, async 
 
     // Update or Create Mapping
     db.prepare(`
-      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-      VALUES (?, ?, ?, ?, ?, 0)
-      ON CONFLICT(provider_id, user_id, provider_category_id)
+      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+      ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
       DO UPDATE SET user_category_id = excluded.user_category_id
-    `).run(providerId, user_id, Number(category_id), category_name, newCategoryId);
+    `).run(providerId, user_id, Number(category_id), category_name, newCategoryId, catType);
 
     if (import_channels) {
+      let streamType = 'live';
+      if(catType === 'movie') streamType = 'movie';
+      if(catType === 'series') streamType = 'series';
+
       // Use original_sort_order for correct import order
       const channels = db.prepare(`
         SELECT id FROM provider_channels 
-        WHERE provider_id = ? AND original_category_id = ?
+        WHERE provider_id = ? AND original_category_id = ? AND stream_type = ?
         ORDER BY original_sort_order ASC, name ASC
-      `).all(providerId, Number(category_id));
+      `).all(providerId, Number(category_id), streamType);
 
       const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
       
@@ -1574,6 +1761,7 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
       for (const cat of categories) {
         if (!cat.id || !cat.name) continue;
 
+        const catType = cat.type || 'live';
         const isAdult = isAdultCategory(cat.name) ? 1 : 0;
         maxSort++;
 
@@ -1583,19 +1771,23 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
 
         // Update or Create Mapping
         db.prepare(`
-          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-          VALUES (?, ?, ?, ?, ?, 0)
-          ON CONFLICT(provider_id, user_id, provider_category_id)
+          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+          VALUES (?, ?, ?, ?, ?, 0, ?)
+          ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
           DO UPDATE SET user_category_id = excluded.user_category_id
-        `).run(providerId, user_id, Number(cat.id), cat.name, newCategoryId);
+        `).run(providerId, user_id, Number(cat.id), cat.name, newCategoryId, catType);
 
         let channelsImported = 0;
         if (cat.import_channels) {
+          let streamType = 'live';
+          if(catType === 'movie') streamType = 'movie';
+          if(catType === 'series') streamType = 'series';
+
           const channels = db.prepare(`
             SELECT id FROM provider_channels
-            WHERE provider_id = ? AND original_category_id = ?
+            WHERE provider_id = ? AND original_category_id = ? AND stream_type = ?
             ORDER BY original_sort_order ASC, name ASC
-          `).all(providerId, Number(cat.id));
+          `).all(providerId, Number(cat.id), streamType);
 
           channels.forEach((ch, idx) => {
             insertChannel.run(newCategoryId, ch.id, idx);
@@ -1760,14 +1952,36 @@ app.get('/player_api.php', async (req, res) => {
       });
     }
 
-    if (action === 'get_live_categories') {
-      const cats = db.prepare('SELECT * FROM user_categories WHERE user_id = ? ORDER BY sort_order').all(user.id);
-      const result = cats.map(c => ({
+    // Helper to get categories containing specific stream type
+    const getUserCategoriesByType = (type) => {
+      // Optimization: If we just return all categories, it works, but better to filter
+      // returning categories that have at least one channel of that type
+      const cats = db.prepare(`
+        SELECT DISTINCT cat.*
+        FROM user_categories cat
+        JOIN user_channels uc ON uc.user_category_id = cat.id
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        WHERE cat.user_id = ? AND pc.stream_type = ?
+        ORDER BY cat.sort_order
+      `).all(user.id, type);
+
+      return cats.map(c => ({
         category_id: String(c.id),
         category_name: c.name,
         parent_id: 0
       }));
-      return res.json(result);
+    };
+
+    if (action === 'get_live_categories') {
+      return res.json(getUserCategoriesByType('live'));
+    }
+
+    if (action === 'get_vod_categories') {
+      return res.json(getUserCategoriesByType('movie'));
+    }
+
+    if (action === 'get_series_categories') {
+      return res.json(getUserCategoriesByType('series'));
     }
 
     if (action === 'get_live_streams') {
@@ -1778,14 +1992,12 @@ app.get('/player_api.php', async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-        WHERE cat.user_id = ?
+        WHERE cat.user_id = ? AND pc.stream_type = 'live'
         ORDER BY uc.sort_order
       `).all(user.id);
 
       const result = rows.map((ch, i) => {
-        // Use direct picon URL - no caching needed
         let iconUrl = ch.logo || '';
-        
         return {
           num: i + 1,
           name: ch.name,
@@ -1806,8 +2018,124 @@ app.get('/player_api.php', async (req, res) => {
       return res.json(result);
     }
 
-    if (['get_vod_categories', 'get_series_categories', 'get_vod_streams', 'get_series'].includes(action)) {
-      return res.json([]);
+    if (action === 'get_vod_streams') {
+      const rows = db.prepare(`
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE cat.user_id = ? AND pc.stream_type = 'movie'
+        ORDER BY uc.sort_order
+      `).all(user.id);
+
+      const result = rows.map((ch, i) => {
+        let meta = {};
+        try { meta = JSON.parse(ch.metadata || '{}'); } catch(e){}
+
+        return {
+          num: i + 1,
+          name: ch.name,
+          stream_type: 'movie',
+          stream_id: Number(ch.user_channel_id),
+          stream_icon: ch.logo || '',
+          rating: meta.rating || '',
+          rating_5based: meta.rating_5based || 0,
+          added: meta.added || now.toString(),
+          category_id: String(ch.user_category_id),
+          container_extension: ch.mime_type || 'mp4',
+          custom_sid: null,
+          direct_source: ''
+        };
+      });
+      return res.json(result);
+    }
+
+    if (action === 'get_series') {
+      const rows = db.prepare(`
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE cat.user_id = ? AND pc.stream_type = 'series'
+        ORDER BY uc.sort_order
+      `).all(user.id);
+
+      const result = rows.map((ch, i) => {
+        let meta = {};
+        try { meta = JSON.parse(ch.metadata || '{}'); } catch(e){}
+
+        return {
+          num: i + 1,
+          name: ch.name,
+          series_id: Number(ch.user_channel_id),
+          cover: ch.logo || '',
+          plot: meta.plot || '',
+          cast: meta.cast || '',
+          director: meta.director || '',
+          genre: meta.genre || '',
+          releaseDate: meta.releaseDate || '',
+          last_modified: meta.added || now.toString(),
+          rating: meta.rating || '',
+          rating_5based: meta.rating_5based || 0,
+          backdrop_path: meta.backdrop_path || [],
+          youtube_trailer: meta.youtube_trailer || '',
+          episode_run_time: meta.episode_run_time || '',
+          category_id: String(ch.user_category_id)
+        };
+      });
+      return res.json(result);
+    }
+
+    if (action === 'get_series_info') {
+      const seriesId = Number(req.query.series_id);
+      if (!seriesId) return res.json({});
+
+      // 1. Get local series info
+      const channel = db.prepare(`
+        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE uc.id = ? AND cat.user_id = ?
+      `).get(seriesId, user.id);
+
+      if (!channel) return res.json({});
+
+      // 2. Fetch remote info
+      const provPass = decrypt(channel.password);
+      const baseUrl = channel.url.replace(/\/+$/, '');
+      const remoteSeriesId = channel.remote_stream_id;
+
+      try {
+        const resp = await fetch(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_series_info&series_id=${remoteSeriesId}`);
+        if (!resp.ok) return res.json({});
+
+        const data = await resp.json();
+
+        // 3. Rewrite Episode IDs
+        const OFFSET = 1000000000;
+        const providerId = channel.provider_id;
+
+        if (data.episodes) {
+           for (const seasonKey in data.episodes) {
+              const episodes = data.episodes[seasonKey];
+              if (Array.isArray(episodes)) {
+                 episodes.forEach(ep => {
+                    const originalId = Number(ep.id);
+                    // Encode: providerId * OFFSET + originalId
+                    ep.id = (providerId * OFFSET + originalId).toString();
+                 });
+              }
+           }
+        }
+
+        return res.json(data);
+
+      } catch(e) {
+         console.error('get_series_info error:', e);
+         return res.json({});
+      }
     }
 
     res.status(400).json([]);
@@ -1886,7 +2214,7 @@ async function cachePicon(originalUrl, channelName) {
 }
 
 // === Stream Proxy ===
-app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
+app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:stream_id.m3u8'], async (req, res) => {
   const connectionId = crypto.randomUUID();
 
   try {
@@ -1946,7 +2274,8 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     channel.provider_pass = decrypt(channel.provider_pass);
 
     const base = channel.provider_url.replace(/\/+$/, '');
-    const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.ts`;
+    const ext = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
+    const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
     
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
@@ -2007,6 +2336,179 @@ app.get('/live/:username/:password/:stream_id.ts', async (req, res) => {
     if (!res.headersSent) {
       res.sendStatus(500);
     }
+  }
+});
+
+// === Movie Proxy ===
+app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
+  const connectionId = crypto.randomUUID();
+
+  try {
+    const streamId = Number(req.params.stream_id || 0);
+    const ext = req.params.ext;
+
+    if (!streamId) return res.sendStatus(404);
+
+    const user = await getXtreamUser(req);
+    if (!user) return res.sendStatus(401);
+
+    const channel = db.prepare(`
+      SELECT
+        uc.id as user_channel_id,
+        pc.id as provider_channel_id,
+        pc.remote_stream_id,
+        pc.name,
+        p.url as provider_url,
+        p.username as provider_user,
+        p.password as provider_pass
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE uc.id = ? AND cat.user_id = ?
+    `).get(streamId, user.id);
+
+    if (!channel) return res.sendStatus(404);
+
+    // Track active stream
+    const startTime = Date.now();
+    activeStreams.set(connectionId, {
+      id: connectionId,
+      user_id: user.id,
+      username: user.username,
+      channel_name: `${channel.name} (VOD)`,
+      start_time: startTime,
+      ip: req.ip
+    });
+
+    // Update statistics in DB
+    const now = Math.floor(startTime / 1000);
+    const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
+    if (existingStat) {
+      db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
+    } else {
+      db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
+    }
+
+    // Decrypt provider password
+    channel.provider_pass = decrypt(channel.provider_pass);
+
+    const base = channel.provider_url.replace(/\/+$/, '');
+    const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+
+    // Fetch
+    const upstream = await fetch(remoteUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Connection': 'keep-alive'
+      },
+      redirect: 'follow'
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      activeStreams.delete(connectionId);
+      return res.sendStatus(502);
+    }
+
+    // Pass headers
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    upstream.body.pipe(res);
+
+    upstream.body.on('error', (err) => {
+      console.error('Movie stream error:', err.message);
+      activeStreams.delete(connectionId);
+    });
+
+    req.on('close', () => {
+      activeStreams.delete(connectionId);
+      if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
+    });
+
+  } catch (e) {
+    console.error('Movie proxy error:', e.message);
+    activeStreams.delete(connectionId);
+    if (!res.headersSent) res.sendStatus(500);
+  }
+});
+
+// === Series Episode Proxy ===
+app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
+  const connectionId = crypto.randomUUID();
+
+  try {
+    const epIdRaw = Number(req.params.episode_id || 0);
+    const ext = req.params.ext;
+
+    if (!epIdRaw) return res.sendStatus(404);
+
+    const user = await getXtreamUser(req);
+    if (!user) return res.sendStatus(401);
+
+    // Decode Episode ID
+    const OFFSET = 1000000000;
+    const providerId = Math.floor(epIdRaw / OFFSET);
+    const remoteEpisodeId = epIdRaw % OFFSET;
+
+    if (!providerId || !remoteEpisodeId) return res.sendStatus(404);
+
+    // Get Provider
+    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+    if (!provider) return res.sendStatus(404);
+
+    // Track active stream
+    const startTime = Date.now();
+    activeStreams.set(connectionId, {
+      id: connectionId,
+      user_id: user.id,
+      username: user.username,
+      channel_name: `Series Episode ${remoteEpisodeId}`,
+      start_time: startTime,
+      ip: req.ip
+    });
+
+    provider.password = decrypt(provider.password);
+
+    const base = provider.url.replace(/\/+$/, '');
+    const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
+
+    // Fetch
+    const upstream = await fetch(remoteUrl, {
+      headers: { 'User-Agent': 'IPTV-Manager' },
+      redirect: 'follow'
+    });
+
+    if (!upstream.ok || !upstream.body) {
+      console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      activeStreams.delete(connectionId);
+      return res.sendStatus(502);
+    }
+
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    upstream.body.pipe(res);
+
+    upstream.body.on('error', (err) => {
+      console.error('Series stream error:', err.message);
+      activeStreams.delete(connectionId);
+    });
+
+    req.on('close', () => {
+      activeStreams.delete(connectionId);
+      if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
+    });
+
+  } catch (e) {
+    console.error('Series proxy error:', e.message);
+    activeStreams.delete(connectionId);
+    if (!res.headersSent) res.sendStatus(500);
   }
 });
 

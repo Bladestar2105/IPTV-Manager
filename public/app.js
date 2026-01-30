@@ -600,15 +600,20 @@ async function loadProviderCategories() {
     return;
   }
 
+  const typeRadio = document.querySelector('.import-type-radio:checked');
+  const type = typeRadio ? typeRadio.value : 'live';
+
   const modalEl = document.getElementById('importCategoryModal');
   const list = document.getElementById('provider-categories-list');
   list.innerHTML = `<li class="list-group-item text-muted">${t('loadingCategories')}</li>`;
   
-  const modal = new bootstrap.Modal(modalEl);
-  modal.show();
+  if (!modalEl.classList.contains('show')) {
+      const modal = new bootstrap.Modal(modalEl);
+      modal.show();
+  }
 
   try {
-    providerCategories = await fetchJSON(`/api/providers/${providerId}/categories`);
+    providerCategories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
     renderProviderCategories();
   } catch (e) {
     console.error('❌ Error:', e);
@@ -716,10 +721,14 @@ async function importSelectedCategories(withChannels) {
     return;
   }
 
+  const typeRadio = document.querySelector('.import-type-radio:checked');
+  const type = typeRadio ? typeRadio.value : 'live';
+
   const categories = Array.from(checkboxes).map(cb => ({
     id: cb.value,
     name: cb.dataset.name,
-    import_channels: withChannels
+    import_channels: withChannels,
+    type: type
   }));
 
   if (!confirm(t('importCategories') + ` (${categories.length})?`)) return;
@@ -774,6 +783,9 @@ async function importCategory(cat, withChannels) {
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
 
+  const typeRadio = document.querySelector('.import-type-radio:checked');
+  const type = typeRadio ? typeRadio.value : 'live';
+
   try {
     const result = await fetchJSON(`/api/providers/${providerId}/import-category`, {
       method: 'POST',
@@ -782,7 +794,8 @@ async function importCategory(cat, withChannels) {
         user_id: selectedUserId,
         category_id: cat.category_id,
         category_name: cat.category_name,
-        import_channels: withChannels
+        import_channels: withChannels,
+        type: type
       })
     });
 
@@ -824,11 +837,14 @@ async function loadProviderChannels() {
     return;
   }
   
+  const typeRadio = document.querySelector('.channel-type-filter:checked');
+  const type = typeRadio ? typeRadio.value : 'live';
+
   list.innerHTML = `<li class="list-group-item text-muted">${t('loadingChannels')}</li>`;
   searchInput.disabled = true;
   
   try {
-    const chans = await fetchJSON(`/api/providers/${providerId}/channels`);
+    const chans = await fetchJSON(`/api/providers/${providerId}/channels?type=${type}`);
     providerChannelsCache = chans;
     searchInput.disabled = false;
     searchInput.value = '';
@@ -1618,6 +1634,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (catSearch) {
     catSearch.addEventListener('input', renderProviderCategories);
   }
+
+  document.querySelectorAll('.import-type-radio').forEach(el => {
+      el.addEventListener('change', loadProviderCategories);
+  });
+
+  document.querySelectorAll('.channel-type-filter').forEach(el => {
+      el.addEventListener('change', loadProviderChannels);
+  });
 
   // Bulk Import Events
   const btnSelectAll = document.getElementById('cat-select-all');
