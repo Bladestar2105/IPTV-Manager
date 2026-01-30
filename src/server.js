@@ -157,6 +157,8 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "http:", "https:"],
       connectSrc: ["'self'", "http:", "https:"],
+      mediaSrc: ["'self'", "blob:", "http:", "https:"],
+      workerSrc: ["'self'", "blob:"],
       frameSrc: ["'self'"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: null,
