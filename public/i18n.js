@@ -102,6 +102,8 @@ const translations = {
     url: 'URL',
     epgUrlLabel: 'EPG URL',
     passwordPlaceholder: '<Your Password>',
+    copyAll: 'Copy All Credentials',
+    copiedToClipboard: 'Copied to clipboard',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Please select a user first',
@@ -407,6 +409,8 @@ const translations = {
     url: 'URL',
     epgUrlLabel: 'EPG URL',
     passwordPlaceholder: '<dein Passwort>',
+    copyAll: 'Alle Zugangsdaten kopieren',
+    copiedToClipboard: 'In die Zwischenablage kopiert',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Bitte zuerst einen User auswählen',
@@ -712,6 +716,8 @@ const translations = {
     url: 'URL',
     epgUrlLabel: 'URL EPG',
     passwordPlaceholder: '<Votre Mot de Passe>',
+    copyAll: 'Copier tous les identifiants',
+    copiedToClipboard: 'Copié dans le presse-papiers',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Veuillez d\'abord sélectionner un utilisateur',
@@ -1017,6 +1023,8 @@ const translations = {
     url: 'URL',
     epgUrlLabel: 'URL EPG',
     passwordPlaceholder: '<Ο Κωδικός σας>',
+    copyAll: 'Αντιγραφή όλων των διαπιστευτηρίων',
+    copiedToClipboard: 'Αντιγράφηκε στο πρόχειρο',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
