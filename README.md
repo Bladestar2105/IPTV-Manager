@@ -34,9 +34,11 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **Internationalization**: Full UI support for English, German, French, and Greek.
 - **M3U Playlist Generation**: Easy access to generated M3U playlist links for IPTV players.
 - **Import/Export**: Securely export and import data with password protection for migration or backup.
+- **User Generator**: One-click generation of users with secure, random credentials.
+- **Enhanced Xtream Credentials**: View and copy all Xtream Codes credentials (URL, Username, Password, EPG) with plaintext passwords and "Copy All" functionality.
 
 ### Security
-- **🔐 Password Hashing**: Bcrypt-based password hashing.
+- **🔐 Password Hashing**: Bcrypt-based password hashing (legacy) and secure reversible encryption (for credential display).
 - **🎫 JWT Authentication**: Token-based authentication with configurable expiration.
 - **🛡️ Rate Limiting**: Protection against brute force attacks.
 - **🔒 Security Headers**: Helmet.js for comprehensive security headers.
@@ -149,9 +151,9 @@ The application will be available at `http://localhost:3000`.
 |:---:|:---:|
 | ![EPG Mapping](docs/images/epg_mapping.png) | ![Statistics](docs/images/statistics.png) |
 
-| Security |
-|:---:|
-| ![Security](docs/images/security.png) |
+| Security | Xtream Credentials |
+|:---:|:---:|
+| ![Security](docs/images/security.png) | ![Xtream Credentials](docs/images/xtream_view.png) |
 
 ## 📚 API Documentation
 

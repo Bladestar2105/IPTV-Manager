@@ -123,8 +123,9 @@
             <div class="card-body">
                <form id="user-form" class="row g-2 mb-3">
                   <div class="col-4"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" placeholder="Username" required /></div>
-                  <div class="col-4"><input class="form-control form-control-sm" name="password" type="password" data-i18n-placeholder="password" placeholder="Password" required /></div>
-                  <div class="col-4"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
+                  <div class="col-4"><input class="form-control form-control-sm" name="password" type="text" data-i18n-placeholder="password" placeholder="Password" required /></div>
+                  <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
+                  <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" onclick="generateUser()" title="Generate Random">⚡</button></div>
                </form>
                <ul id="user-list" class="list-group list-group-flush" style="max-height: 400px; overflow-y: auto;"></ul>
             </div>
@@ -236,16 +237,48 @@
 
                     <!-- Xtream Codes Tab -->
                     <div class="tab-pane fade" id="tab-xtream">
-                       <p><strong data-i18n="url">URL</strong>: <code id="xtream-url"></code></p>
-                       <p><strong data-i18n="username">Username</strong>: <code id="xtream-user">-</code></p>
-                       <p><strong data-i18n="password">Password</strong>: <code id="xtream-pass">-</code></p>
-                       <p><strong data-i18n="epgUrlLabel">EPG URL</strong>: <code id="epg-url"></code></p>
-                       <hr>
-                       <label class="form-label" data-i18n="m3uLink">M3U Link</label>
-                       <div class="input-group">
-                          <code id="m3u-link" class="form-control">-</code>
-                          <button class="btn btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('m3u-link').textContent)">📋</button>
+                       <div class="mb-2">
+                          <label class="form-label small fw-bold" data-i18n="url">URL</label>
+                          <div class="input-group input-group-sm">
+                             <input type="text" class="form-control" id="xtream-url" readonly>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-url').value)">📋</button>
+                          </div>
                        </div>
+
+                       <div class="row g-2 mb-2">
+                          <div class="col-md-6">
+                             <label class="form-label small fw-bold" data-i18n="username">Username</label>
+                             <div class="input-group input-group-sm">
+                                <input type="text" class="form-control" id="xtream-user" readonly>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-user').value)">📋</button>
+                             </div>
+                          </div>
+                          <div class="col-md-6">
+                             <label class="form-label small fw-bold" data-i18n="password">Password</label>
+                             <div class="input-group input-group-sm">
+                                <input type="text" class="form-control" id="xtream-pass" readonly>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-pass').value)">📋</button>
+                             </div>
+                          </div>
+                       </div>
+
+                       <div class="mb-2">
+                          <label class="form-label small fw-bold" data-i18n="epgUrlLabel">EPG URL</label>
+                          <div class="input-group input-group-sm">
+                             <input type="text" class="form-control" id="epg-url" readonly>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('epg-url').value)">📋</button>
+                          </div>
+                       </div>
+
+                       <div class="mb-3">
+                          <label class="form-label small fw-bold" data-i18n="m3uLink">M3U Link</label>
+                          <div class="input-group input-group-sm">
+                             <input type="text" class="form-control" id="m3u-link" readonly>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('m3u-link').value)">📋</button>
+                          </div>
+                       </div>
+
+                       <button class="btn btn-primary w-100" onclick="copyAllXtreamCredentials()" data-i18n="copyAll">Copy All Credentials</button>
                     </div>
                  </div>
               </div>
