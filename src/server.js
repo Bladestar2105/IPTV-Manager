@@ -436,6 +436,13 @@ try {
       stack TEXT
     );
   `);
+
+  // Indexes for performance
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_pc_prov_type ON provider_channels(provider_id, stream_type);
+    CREATE INDEX IF NOT EXISTS idx_pc_name ON provider_channels(name);
+  `);
+
   console.log("✅ Database OK");
   
   // Create default admin user if no users exist
@@ -1582,9 +1589,48 @@ app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
 
 app.get('/api/providers/:id/channels', authenticateToken, (req, res) => {
   try {
-    const { type } = req.query;
+    const { type, page, limit, search } = req.query;
+    const providerId = Number(req.params.id);
+
+    // Pagination Logic
+    if (page || limit || search) {
+      const pageNum = parseInt(page) || 1;
+      const limitNum = parseInt(limit) || 50;
+      const offset = (pageNum - 1) * limitNum;
+      const searchTerm = (search || '').trim().toLowerCase();
+
+      let baseQuery = 'FROM provider_channels WHERE provider_id = ?';
+      const params = [providerId];
+
+      if (type) {
+        baseQuery += ' AND stream_type = ?';
+        params.push(type);
+      }
+
+      if (searchTerm) {
+        baseQuery += ' AND lower(name) LIKE ?';
+        params.push(`%${searchTerm}%`);
+      }
+
+      // Get Total Count
+      const countQuery = `SELECT COUNT(*) as count ${baseQuery}`;
+      const total = db.prepare(countQuery).get(...params).count;
+
+      // Get Data
+      const dataQuery = `SELECT * ${baseQuery} ORDER BY original_sort_order ASC, name ASC LIMIT ? OFFSET ?`;
+      const rows = db.prepare(dataQuery).all(...params, limitNum, offset);
+
+      return res.json({
+        channels: rows,
+        total: total,
+        page: pageNum,
+        limit: limitNum
+      });
+    }
+
+    // Legacy Behavior (Fetch All)
     let query = 'SELECT * FROM provider_channels WHERE provider_id = ?';
-    const params = [Number(req.params.id)];
+    const params = [providerId];
 
     if (type) {
         query += ' AND stream_type = ?';
