@@ -290,9 +290,20 @@ async function loadUsers() {
     playBtn.className = 'btn btn-sm btn-outline-success me-1';
     playBtn.innerHTML = '▶️'; // Play icon
     playBtn.title = t('openWebPlayer') || 'Open Web Player';
-    playBtn.onclick = () => {
-        const pass = u.plain_password || '';
-        window.open(`player.html?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}`, '_blank');
+    playBtn.onclick = async () => {
+        try {
+            playBtn.disabled = true;
+            const res = await fetchJSON('/api/player/token', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: u.id})
+            });
+            window.open(`player.html?token=${encodeURIComponent(res.token)}`, '_blank');
+        } catch(e) {
+            alert(t('errorPrefix') + ' ' + e.message);
+        } finally {
+            playBtn.disabled = false;
+        }
     };
 
     const editBtn = document.createElement('button');
