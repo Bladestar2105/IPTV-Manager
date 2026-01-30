@@ -1506,6 +1506,14 @@ app.post('/api/providers/:providerId/import-category', authenticateToken, async 
     const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order) VALUES (?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder);
     const newCategoryId = catInfo.lastInsertRowid;
 
+    // Update or Create Mapping
+    db.prepare(`
+      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+      VALUES (?, ?, ?, ?, ?, 0)
+      ON CONFLICT(provider_id, user_id, provider_category_id)
+      DO UPDATE SET user_category_id = excluded.user_category_id
+    `).run(providerId, user_id, Number(category_id), category_name, newCategoryId);
+
     if (import_channels) {
       // Use original_sort_order for correct import order
       const channels = db.prepare(`
@@ -1572,6 +1580,14 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
         const catInfo = insertUserCategory.run(user_id, cat.name, isAdult, maxSort);
         const newCategoryId = catInfo.lastInsertRowid;
         totalCategories++;
+
+        // Update or Create Mapping
+        db.prepare(`
+          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
+          VALUES (?, ?, ?, ?, ?, 0)
+          ON CONFLICT(provider_id, user_id, provider_category_id)
+          DO UPDATE SET user_category_id = excluded.user_category_id
+        `).run(providerId, user_id, Number(cat.id), cat.name, newCategoryId);
 
         let channelsImported = 0;
         if (cat.import_channels) {
