@@ -286,6 +286,26 @@ async function loadUsers() {
     
     const btnGroup = document.createElement('div');
 
+    const playBtn = document.createElement('button');
+    playBtn.className = 'btn btn-sm btn-outline-success me-1';
+    playBtn.innerHTML = '▶️'; // Play icon
+    playBtn.title = t('openWebPlayer') || 'Open Web Player';
+    playBtn.onclick = async () => {
+        try {
+            playBtn.disabled = true;
+            const res = await fetchJSON('/api/player/token', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: u.id})
+            });
+            window.open(`player.html?token=${encodeURIComponent(res.token)}`, '_blank');
+        } catch(e) {
+            alert(t('errorPrefix') + ' ' + e.message);
+        } finally {
+            playBtn.disabled = false;
+        }
+    };
+
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     editBtn.innerHTML = '✏️'; // Edit icon
@@ -320,6 +340,7 @@ async function loadUsers() {
       loadUsers();
     };
     
+    btnGroup.appendChild(playBtn);
     btnGroup.appendChild(editBtn);
     btnGroup.appendChild(delBtn);
     li.appendChild(span);
@@ -1770,6 +1791,19 @@ async function handleImport(e) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
+  // Fix for tab switching issues (overlapping content)
+  const triggerTabList = [].slice.call(document.querySelectorAll('#user-tabs button'));
+  triggerTabList.forEach(function (triggerEl) {
+    triggerEl.addEventListener('shown.bs.tab', function (event) {
+      const targetId = triggerEl.getAttribute('data-bs-target');
+      document.querySelectorAll('#user-tab-content .tab-pane').forEach(pane => {
+          if ('#' + pane.id !== targetId) {
+              pane.classList.remove('show', 'active');
+          }
+      });
+    });
+  });
+
   // Seite übersetzen
   translatePage();
   
@@ -2414,7 +2448,7 @@ async function loadEpgMappingChannels() {
 
   try {
     const [channels, mappings] = await Promise.all([
-      fetchJSON(`/api/providers/${providerId}/channels`),
+      fetchJSON(`/api/providers/${providerId}/channels?type=live`),
       fetchJSON(`/api/mapping/${providerId}`)
     ]);
 

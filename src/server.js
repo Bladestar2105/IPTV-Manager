@@ -301,6 +301,14 @@ try {
       created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
     
+    CREATE TABLE IF NOT EXISTS temporary_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      expires_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -1234,9 +1242,23 @@ async function authUser(username, password) {
 async function getXtreamUser(req) {
   const username = (req.params.username || req.query.username || '').trim();
   const password = (req.params.password || req.query.password || '').trim();
-  const user = await authUser(username, password);
+  const token = (req.query.token || '').trim();
 
-  if (!user && username) {
+  let user = null;
+
+  if (token) {
+    const now = Math.floor(Date.now() / 1000);
+    const valid = db.prepare('SELECT user_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
+    if (valid) {
+      user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(valid.user_id);
+    }
+  }
+
+  if (!user) {
+    user = await authUser(username, password);
+  }
+
+  if (!user && username && !token) {
     const ip = req.ip;
     const now = Math.floor(Date.now() / 1000);
 
@@ -1272,6 +1294,31 @@ async function getXtreamUser(req) {
 
   return user;
 }
+
+// === API: Player Token ===
+app.post('/api/player/token', authenticateToken, (req, res) => {
+  try {
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({error: 'user_id required'});
+
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
+    if (!user) return res.status(404).json({error: 'User not found'});
+
+    const token = crypto.randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = now + 21600; // 6 hours
+
+    db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at) VALUES (?, ?, ?)')
+      .run(token, user_id, expiresAt);
+
+    // Cleanup old tokens
+    db.prepare('DELETE FROM temporary_tokens WHERE expires_at < ?').run(now);
+
+    res.json({token});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+});
 
 // === API: Users ===
 app.get('/api/users', authenticateToken, (req, res) => {

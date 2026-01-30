@@ -307,7 +307,21 @@ const translations = {
     exportSuccess: '✅ Export successful',
     importSuccess: '✅ Import successful',
     confirmImport: 'Importing data will skip existing users but may add new providers/channels. Continue?',
-    processing: 'Processing...'
+    processing: 'Processing...',
+
+    // Player
+    openWebPlayer: 'Open Web Player',
+    playerTitle: 'IPTV Web Player',
+    liveTV: 'Live TV',
+    movies: 'Movies',
+    series: 'Series',
+    allCategories: 'All Categories',
+    searchPlaceholder: 'Search...',
+    season: 'Season',
+    episode: 'Episode',
+    backToSeries: 'Back to Series List',
+    noEpisodesFound: 'No episodes found',
+    missingCredentials: 'Missing credentials'
   },
   
   de: {
@@ -614,7 +628,21 @@ const translations = {
     exportSuccess: '✅ Export erfolgreich',
     importSuccess: '✅ Import erfolgreich',
     confirmImport: 'Der Import überspringt vorhandene Benutzer. Fortfahren?',
-    processing: 'Verarbeite...'
+    processing: 'Verarbeite...',
+
+    // Player
+    openWebPlayer: 'Web-Player öffnen',
+    playerTitle: 'IPTV Web Player',
+    liveTV: 'Live TV',
+    movies: 'Filme',
+    series: 'Serien',
+    allCategories: 'Alle Kategorien',
+    searchPlaceholder: 'Suche...',
+    season: 'Staffel',
+    episode: 'Episode',
+    backToSeries: 'Zurück zur Serienliste',
+    noEpisodesFound: 'Keine Episoden gefunden',
+    missingCredentials: 'Zugangsdaten fehlen'
   },
 
   fr: {
@@ -921,7 +949,21 @@ const translations = {
     exportSuccess: '✅ Export réussi',
     importSuccess: '✅ Import réussi',
     confirmImport: 'L\'importation ignorera les utilisateurs existants. Continuer ?',
-    processing: 'Traitement...'
+    processing: 'Traitement...',
+
+    // Player
+    openWebPlayer: 'Ouvrir le lecteur Web',
+    playerTitle: 'Lecteur Web IPTV',
+    liveTV: 'Télévision en direct',
+    movies: 'Films',
+    series: 'Séries',
+    allCategories: 'Toutes les catégories',
+    searchPlaceholder: 'Rechercher...',
+    season: 'Saison',
+    episode: 'Épisode',
+    backToSeries: 'Retour à la liste des séries',
+    noEpisodesFound: 'Aucun épisode trouvé',
+    missingCredentials: 'Identifiants manquants'
   },
 
   el: {
@@ -1218,7 +1260,21 @@ const translations = {
     exportSuccess: '✅ Επιτυχής εξαγωγή',
     importSuccess: '✅ Επιτυχής εισαγωγή',
     confirmImport: 'Η εισαγωγή θα παραλείψει τους υπάρχοντες χρήστες. Συνέχεια;',
-    processing: 'Επεξεργασία...'
+    processing: 'Επεξεργασία...',
+
+    // Player
+    openWebPlayer: 'Άνοιγμα Web Player',
+    playerTitle: 'IPTV Web Player',
+    liveTV: 'Ζωντανή TV',
+    movies: 'Ταινίες',
+    series: 'Σειρές',
+    allCategories: 'Όλες οι κατηγορίες',
+    searchPlaceholder: 'Αναζήτηση...',
+    season: 'Σεζόν',
+    episode: 'Επεισόδιο',
+    backToSeries: 'Πίσω στη λίστα σειρών',
+    noEpisodesFound: 'Δεν βρέθηκαν επεισόδια',
+    missingCredentials: 'Λείπουν διαπιστευτήρια'
   }
 };
 
