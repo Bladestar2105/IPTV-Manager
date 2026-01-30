@@ -473,7 +473,18 @@ async function loadUserCategories() {
   list.innerHTML = '';
   selectedCategoryId = null;
 
-  cats.forEach(c => {
+  const typeRadio = document.querySelector('.category-type-filter:checked');
+  const type = typeRadio ? typeRadio.value : 'live';
+
+  // Filter categories by type (and handle legacy ones defaulting to 'live' if null, though backend sets default)
+  const filtered = cats.filter(c => (c.type || 'live') === type);
+
+  if (filtered.length === 0) {
+      list.innerHTML = `<li class="list-group-item text-muted small">${t('noResults', {search: ''})}</li>`;
+      return;
+  }
+
+  filtered.forEach(c => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = c.id;
@@ -1168,11 +1179,15 @@ document.getElementById('category-form').addEventListener('submit', async e => {
     return;
   }
   const f = e.target;
+
+  const typeRadio = document.querySelector('.category-type-filter:checked');
+  const type = typeRadio ? typeRadio.value : 'live';
+
   try {
     await fetchJSON(`/api/users/${selectedUserId}/categories`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name: f.name.value})
+      body: JSON.stringify({name: f.name.value, type: type})
     });
     f.reset();
     loadUserCategories();
@@ -1691,6 +1706,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.channel-type-filter').forEach(el => {
       el.addEventListener('change', loadProviderChannels);
+  });
+
+  document.querySelectorAll('.category-type-filter').forEach(el => {
+      el.addEventListener('change', loadUserCategories);
   });
 
   // Bulk Import Events
