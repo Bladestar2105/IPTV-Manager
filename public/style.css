@@ -495,3 +495,15 @@ span {
 .card-text {
   color: var(--tv-text-primary);
 }
+/* Fix visibility of mapped EPGs in dark mode */
+.table-info,
+.table-info > td,
+.table-info > th {
+  background-color: rgba(31, 165, 250, 0.2) !important;
+  color: var(--tv-text-primary) !important;
+}
+
+.table-info:hover > td,
+.table-info:hover > th {
+   background-color: rgba(31, 165, 250, 0.3) !important;
+}
