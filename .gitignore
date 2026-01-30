@@ -5,3 +5,5 @@ secret.key
 cache/
 *.log
 .DS_Store
+db.sqlite-shm
+db.sqlite-wal

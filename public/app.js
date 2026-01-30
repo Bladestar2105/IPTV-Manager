@@ -95,9 +95,25 @@ async function fetchJSON(url, options = {}) {
 let selectedUser = null;
 let selectedUserId = null;
 let selectedCategoryId = null;
-let providerChannelsCache = [];
 let categorySortable = null;
 let channelSortable = null;
+
+// Pagination State
+let channelPage = 1;
+let channelLimit = 50;
+let channelSearch = '';
+let channelTotal = 0;
+let isLoadingChannels = false;
+
+// Utility: Debounce
+function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    const context = this;
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(context, args), wait);
+  };
+}
 
 // i18n: Seite übersetzen
 function translatePage() {
@@ -823,7 +839,7 @@ async function importCategory(cat, withChannels) {
 }
 
 // === Channel Management ===
-async function loadProviderChannels() {
+async function loadProviderChannels(reset = true) {
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
   const searchInput = document.getElementById('channel-search');
@@ -833,57 +849,78 @@ async function loadProviderChannels() {
     list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
     searchInput.disabled = true;
     searchInput.value = '';
-    providerChannelsCache = [];
     return;
   }
+
+  if (reset) {
+    channelPage = 1;
+    // Keep search if it was triggered by search input logic, but if called from provider change, search is usually cleared?
+    // Let's assume the caller handles setting channelSearch global if needed.
+    // If we want to clear search on provider change:
+    if (!searchInput.value) channelSearch = '';
+
+    list.innerHTML = `<li class="list-group-item text-muted">${t('loadingChannels')}</li>`;
+  }
+
+  searchInput.disabled = false;
+  await fetchProviderChannels(reset);
+}
+
+async function fetchProviderChannels(reset) {
+  const select = document.getElementById('channel-provider-select');
+  const providerId = select.value;
+  const list = document.getElementById('provider-channel-list');
   
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
 
-  list.innerHTML = `<li class="list-group-item text-muted">${t('loadingChannels')}</li>`;
-  searchInput.disabled = true;
+  isLoadingChannels = true;
   
   try {
-    const chans = await fetchJSON(`/api/providers/${providerId}/channels?type=${type}`);
-    providerChannelsCache = chans;
-    searchInput.disabled = false;
-    searchInput.value = '';
-    renderProviderChannels();
-  } catch (e) {
-    list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
+    const url = `/api/providers/${providerId}/channels?type=${type}&page=${channelPage}&limit=${channelLimit}&search=${encodeURIComponent(channelSearch)}`;
+    const res = await fetchJSON(url);
+
+    isLoadingChannels = false;
+
+    // Handle Response (supports new object structure and legacy array)
+    let channels = [];
+    if (Array.isArray(res)) {
+        channels = res;
+        channelTotal = res.length;
+    } else {
+        channels = res.channels;
+        channelTotal = res.total;
+    }
+
+    if (reset) list.innerHTML = '';
+    renderProviderChannels(channels);
+
+  } catch(e) {
+    isLoadingChannels = false;
+    if (reset) {
+        list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
+    }
     console.error('Channel load error:', e);
   }
 }
 
-function renderProviderChannels() {
+function renderProviderChannels(channels) {
   const list = document.getElementById('provider-channel-list');
-  const searchInput = document.getElementById('channel-search');
-  const search = searchInput.value.toLowerCase().trim();
   
-  list.innerHTML = '';
-  
-  if (!providerChannelsCache || providerChannelsCache.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">${t('noChannelsAvailable')}</li>`;
-    return;
-  }
-  
-  const filtered = search 
-    ? providerChannelsCache.filter(ch => ch.name.toLowerCase().includes(search))
-    : providerChannelsCache;
-  
-  // Update Available Header
+  // Update Header
   const availHeader = document.getElementById('available-channels-header');
-  if (availHeader) availHeader.textContent = t('available', {count: filtered.length});
+  if (availHeader) availHeader.textContent = t('available', {count: channelTotal});
 
-  if (filtered.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: search})}</li>`;
+  // Remove existing "Load More" or "Loading" indicators if appending
+  const oldLoadMore = document.getElementById('btn-load-more-channels');
+  if (oldLoadMore) oldLoadMore.parentElement.remove();
+
+  if (channels.length === 0 && list.children.length === 0) {
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: channelSearch})}</li>`;
     return;
   }
   
-  const displayCount = Math.min(filtered.length, 100);
-  
-  for (let i = 0; i < displayCount; i++) {
-    const ch = filtered[i];
+  channels.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     
@@ -926,13 +963,25 @@ function renderProviderChannels() {
     
     li.appendChild(btn);
     list.appendChild(li);
-  }
+  });
   
-  if (filtered.length > 100) {
-    const li = document.createElement('li');
-    li.className = 'list-group-item text-muted text-center';
-    li.textContent = t('moreChannels', {count: filtered.length - 100});
-    list.appendChild(li);
+  // Check if we need "Load More" button
+  const currentCount = list.children.length; // Approximate
+  if (currentCount < channelTotal) {
+      const li = document.createElement('li');
+      li.className = 'list-group-item text-center p-2';
+
+      const btn = document.createElement('button');
+      btn.id = 'btn-load-more-channels';
+      btn.className = 'btn btn-sm btn-outline-primary w-100';
+      btn.textContent = t('loadMore') || 'Load More'; // fallback if key missing
+      btn.onclick = () => {
+          channelPage++;
+          loadProviderChannels(false);
+      };
+
+      li.appendChild(btn);
+      list.appendChild(li);
   }
 }
 
@@ -1135,9 +1184,10 @@ document.getElementById('category-form').addEventListener('submit', async e => {
 
 // === Event Handlers ===
 document.getElementById('channel-provider-select').addEventListener('change', loadProviderChannels);
-document.getElementById('channel-search').addEventListener('input', () => {
-  renderProviderChannels();
-});
+document.getElementById('channel-search').addEventListener('input', debounce((e) => {
+  channelSearch = e.target.value.trim();
+  loadProviderChannels(true);
+}, 500));
 
 // === Sync Configuration Management ===
 let currentSyncConfig = null;
