@@ -24,7 +24,7 @@ import multer from 'multer';
 import zlib from 'zlib';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
-import { cleanName, levenshtein } from './epg_utils.js';
+import { cleanName, levenshtein, parseEpgXml } from './epg_utils.js';
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -1330,6 +1330,54 @@ app.post('/api/player/token', authenticateToken, (req, res) => {
 app.get('/api/epg/now', authenticateToken, (req, res) => {
   // Stub for now - full implementation requires DB storage of programs
   res.json([]);
+});
+
+app.get('/api/epg/schedule', authenticateToken, async (req, res) => {
+  try {
+    const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200); // Default: Now - 2h
+    const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);   // Default: Now + 24h
+
+    // Collect EPG files
+    const epgFiles = [];
+
+    // Providers
+    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    for (const p of providers) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${p.id}.xml`);
+      if (fs.existsSync(cacheFile)) epgFiles.push(cacheFile);
+    }
+
+    // Custom Sources
+    const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
+    for (const s of sources) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_${s.id}.xml`);
+      if (fs.existsSync(cacheFile)) epgFiles.push(cacheFile);
+    }
+
+    const schedule = {}; // channel_id -> [programs]
+
+    const promises = epgFiles.map(file => {
+      return parseEpgXml(file, (prog) => {
+        // Check overlap
+        if (prog.stop < start || prog.start > end) return;
+
+        if (!schedule[prog.channel_id]) schedule[prog.channel_id] = [];
+        schedule[prog.channel_id].push({
+          start: prog.start,
+          stop: prog.stop,
+          title: prog.title,
+          desc: prog.desc || ''
+        });
+      }).catch(e => console.error(`Error parsing ${file}:`, e.message));
+    });
+
+    await Promise.all(promises);
+
+    res.json(schedule);
+  } catch (e) {
+    console.error('EPG Schedule error:', e);
+    res.status(500).json({error: e.message});
+  }
 });
 
 // === API: Users ===
