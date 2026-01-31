@@ -29,6 +29,8 @@
     .channel-item:hover { background: #222 !important; }
     .channel-item.active { background: #1e3a8a !important; color: #fff; }
     .channel-icon { width: 30px; height: 30px; object-fit: contain; margin-right: 10px; background: #000; }
+    .epg-info { font-size: 0.8rem; color: #aaa; margin-top: 2px; }
+    .channel-item.active .epg-info { color: #ccc; }
   </style>
 </head>
 <body>
@@ -82,6 +84,7 @@
   let allChannels = []; // Store parsed M3U channels
   let categories = [];
   let streams = [];
+  let epgNow = {}; // Store current programs by channel_id
   let hls = null;
   let flvPlayer = null;
   const video = document.getElementById('video');
@@ -123,11 +126,26 @@
       let apiUrl = `/api/player/playlist?${getAuthParams()}`;
 
       try {
-          const res = await fetch(apiUrl);
+          // Parallel fetch: playlist and epg/now
+          const [res, epgRes] = await Promise.all([
+              fetch(apiUrl),
+              fetch(`/api/epg/now?${getAuthParams()}`)
+          ]);
+
           if (!res.ok) throw new Error('Playlist Fetch Error');
           const text = await res.text();
           allChannels = parseM3U(text);
           console.log(`Loaded ${allChannels.length} channels`);
+
+          // Process EPG Now
+          if (epgRes.ok) {
+              const epgData = await epgRes.json();
+              if (Array.isArray(epgData)) {
+                  epgData.forEach(p => {
+                      epgNow[p.channel_id] = p;
+                  });
+              }
+          }
 
           updateCategories();
           loadStreams();
@@ -172,6 +190,7 @@
                       if (key === 'group-title') currentItem.group = cleanVal;
                       if (key === 'tvg-logo') currentItem.logo = cleanVal;
                       if (key === 'tvg-id') currentItem.epg_id = cleanVal;
+                      if (key === 'plot') currentItem.plot = cleanVal;
                   });
               }
           } else if (line.startsWith('#')) {
@@ -353,9 +372,36 @@
           div.appendChild(img);
       }
 
-      const span = document.createElement('span');
+      const divText = document.createElement('div');
+      divText.style.overflow = 'hidden';
+
+      const span = document.createElement('div');
+      span.className = 'fw-bold text-truncate';
       span.textContent = s.name;
-      div.appendChild(span);
+      divText.appendChild(span);
+
+      // Add Metadata / EPG
+      if (s.type === 'movie' && s.plot) {
+           const plot = document.createElement('div');
+           plot.className = 'epg-info text-truncate';
+           plot.textContent = s.plot;
+           divText.appendChild(plot);
+      } else if (s.type === 'live' && s.epg_id && epgNow[s.epg_id]) {
+           const prog = epgNow[s.epg_id];
+           const epg = document.createElement('div');
+           epg.className = 'epg-info text-truncate';
+
+           // Format time
+           const formatTime = (ts) => {
+             const d = new Date(ts * 1000);
+             return d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+           };
+
+           epg.textContent = `${formatTime(prog.start)} - ${formatTime(prog.stop)} ${prog.title}`;
+           divText.appendChild(epg);
+      }
+
+      div.appendChild(divText);
 
       a.appendChild(div);
 
