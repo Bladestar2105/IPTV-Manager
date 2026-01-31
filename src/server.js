@@ -1245,6 +1245,29 @@ async function authUser(username, password) {
   }
 }
 
+function isSafeUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    const hostname = parsed.hostname;
+
+    // Block Localhost and Loopback
+    if (hostname === 'localhost' || hostname === '0.0.0.0') return false;
+    if (hostname.startsWith('127.')) return false;
+    if (hostname === '::1' || hostname === '::') return false;
+
+    // Block Cloud Metadata
+    if (hostname === '169.254.169.254') return false;
+    if (hostname === 'metadata.google.internal') return false;
+
+    // Protocol check
+    if (!parsed.protocol.startsWith('http')) return false;
+
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Helper for Xtream endpoints
 async function getXtreamUser(req) {
   const username = (req.params.username || req.query.username || '').trim();
@@ -2743,11 +2766,9 @@ app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:p
     if (!targetUrl) return res.sendStatus(400);
 
     // Validate URL
-    try {
-      const parsed = new URL(targetUrl);
-      if (!parsed.protocol.startsWith('http')) throw new Error('Invalid protocol');
-    } catch (e) {
-      return res.sendStatus(400);
+    if (!isSafeUrl(targetUrl)) {
+      console.warn(`🛡️ SSRF Attempt Blocked: ${targetUrl} (IP: ${req.ip})`);
+      return res.status(403).send('Access Denied: Unsafe URL');
     }
 
     const upstream = await fetch(targetUrl, {
