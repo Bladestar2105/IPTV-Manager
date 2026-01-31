@@ -2444,6 +2444,39 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
       return res.sendStatus(502);
     }
 
+    // Handle M3U8 Playlists (Rewrite URLs)
+    if (ext === 'm3u8') {
+      const text = await upstream.text();
+      const baseUrl = remoteUrl;
+      const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+
+      const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
+        const line = match.trim();
+        if (!line) return match;
+        try {
+          const absoluteUrl = new URL(line, baseUrl).toString();
+          const encoded = encodeURIComponent(absoluteUrl);
+          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?url=${encoded}${tokenParam}`;
+        } catch (e) {
+          return match;
+        }
+      }).replace(/URI="([^"]+)"/g, (match, p1) => {
+        try {
+          const absoluteUrl = new URL(p1, baseUrl).toString();
+          const encoded = encodeURIComponent(absoluteUrl);
+          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?url=${encoded}${tokenParam}"`;
+        } catch (e) {
+          return match;
+        }
+      });
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.send(newText);
+
+      activeStreams.delete(connectionId);
+      return;
+    }
+
     // Set optimal headers for streaming
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Connection', 'keep-alive');
@@ -2486,6 +2519,50 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     if (!res.headersSent) {
       res.sendStatus(500);
     }
+  }
+});
+
+// === HLS Segment Proxy ===
+app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:password/seg.key'], async (req, res) => {
+  try {
+    const user = await getXtreamUser(req);
+    if (!user) return res.sendStatus(401);
+
+    const targetUrl = req.query.url;
+    if (!targetUrl) return res.sendStatus(400);
+
+    // Validate URL
+    try {
+      const parsed = new URL(targetUrl);
+      if (!parsed.protocol.startsWith('http')) throw new Error('Invalid protocol');
+    } catch (e) {
+      return res.sendStatus(400);
+    }
+
+    const upstream = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'IPTV-Manager',
+        'Connection': 'keep-alive'
+      },
+      redirect: 'follow'
+    });
+
+    if (!upstream.ok) {
+       // Forward status
+       return res.sendStatus(upstream.status);
+    }
+
+    // Forward headers
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    upstream.body.pipe(res);
+  } catch (e) {
+    console.error('Segment proxy error:', e.message);
+    if (!res.headersSent) res.sendStatus(500);
   }
 });
 
