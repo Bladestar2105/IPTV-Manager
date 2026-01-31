@@ -192,7 +192,6 @@
   <ul class="nav nav-pills me-3" id="player-tabs">
       <li class="nav-item"><a class="nav-link active py-1" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
       <li class="nav-item"><a class="nav-link py-1" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
-      <li class="nav-item"><a class="nav-link py-1" href="#" data-type="series" data-i18n="series">Series</a></li>
   </ul>
 
   <select id="category-select" class="form-select form-select-sm bg-dark text-light border-secondary me-2" style="width: 180px;">
@@ -564,6 +563,9 @@
 
       sidebarEl.appendChild(fragmentSidebar);
       epgRowsEl.appendChild(fragmentRows);
+
+      // Reset height to allow shrinking if fewer channels
+      currentTimeIndicator.style.height = '';
   }
 
   function updateCurrentTimeLine() {
@@ -572,7 +574,9 @@
       if (offset >= 0) {
           const left = (offset / 60) * PIXELS_PER_MINUTE;
           currentTimeIndicator.style.left = left + 'px';
-          currentTimeIndicator.style.height = epgGridEl.scrollHeight + 'px';
+          // Calculate height from content, not container scrollHeight (which might be stale)
+          const contentHeight = Math.max(epgRowsEl.offsetHeight + timeHeaderEl.offsetHeight, epgGridEl.scrollHeight);
+          currentTimeIndicator.style.height = contentHeight + 'px';
       }
   }
 
