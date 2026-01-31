@@ -239,7 +239,7 @@ app.use('/api', (req, res, next) => {
   // Allow CORS preflight
   if (req.method === 'OPTIONS') return next();
   // Public endpoints
-  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs') return next();
+  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs' || req.path === '/player/playlist') return next();
 
   authenticateToken(req, res, next);
 });
@@ -2292,6 +2292,46 @@ app.get('/player_api.php', async (req, res) => {
   } catch (e) {
     console.error('player_api error:', e);
     res.status(500).json([]);
+  }
+});
+
+// === Remote Playlist Proxy ===
+app.get('/api/player/playlist', async (req, res) => {
+  try {
+    const user = await getXtreamUser(req);
+    if (!user) return res.status(401).send('Unauthorized');
+
+    const providers = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(user.id);
+    if (providers.length === 0) return res.send('#EXTM3U\n');
+
+    let playlist = '#EXTM3U\n';
+
+    for (const p of providers) {
+      try {
+        p.password = decrypt(p.password);
+        const baseUrl = p.url.replace(/\/+$/, '');
+        // Default to HLS output for web player compatibility
+        const m3uUrl = `${baseUrl}/get.php?username=${encodeURIComponent(p.username)}&password=${encodeURIComponent(p.password)}&type=m3u_plus&output=m3u8`;
+
+        const resp = await fetch(m3uUrl);
+        if (resp.ok) {
+           let text = await resp.text();
+           // Remove #EXTM3U header from subsequent playlists
+           if (text.startsWith('#EXTM3U')) {
+              text = text.substring(7).trim();
+           }
+           playlist += text + '\n';
+        }
+      } catch (e) {
+        console.error(`Failed to fetch playlist for provider ${p.id}:`, e);
+      }
+    }
+
+    res.setHeader('Content-Type', 'audio/x-mpegurl');
+    res.send(playlist);
+  } catch (e) {
+    console.error('Playlist proxy error:', e);
+    res.status(500).send('#EXTM3U\n');
   }
 });
 
