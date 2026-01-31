@@ -324,7 +324,8 @@ const translations = {
     missingCredentials: 'Missing credentials',
     maximize: 'Maximize',
     minimize: 'Minimize',
-    playbackError: 'Playback Error: Codec might not be supported'
+    playbackError: 'Playback Error: Codec might not be supported',
+    transcodeAudio: 'Fix Audio (Transcode)'
   },
   
   de: {
@@ -648,7 +649,8 @@ const translations = {
     missingCredentials: 'Zugangsdaten fehlen',
     maximize: 'Maximieren',
     minimize: 'Minimieren',
-    playbackError: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt'
+    playbackError: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt',
+    transcodeAudio: 'Audio reparieren (Transcode)'
   },
 
   fr: {
@@ -972,7 +974,8 @@ const translations = {
     missingCredentials: 'Identifiants manquants',
     maximize: 'Agrandir',
     minimize: 'Réduire',
-    playbackError: 'Erreur de lecture: Codec peut ne pas être supporté'
+    playbackError: 'Erreur de lecture: Codec peut ne pas être supporté',
+    transcodeAudio: 'Réparer Audio (Transcodage)'
   },
 
   el: {
@@ -1286,7 +1289,8 @@ const translations = {
     missingCredentials: 'Λείπουν διαπιστευτήρια',
     maximize: 'Μεγιστοποίηση',
     minimize: 'Ελαχιστοποίηση',
-    playbackError: 'Σφάλμα αναπαραγωγής: Το Codec ενδέχεται να μην υποστηρίζεται'
+    playbackError: 'Σφάλμα αναπαραγωγής: Το Codec ενδέχεται να μην υποστηρίζεται',
+    transcodeAudio: 'Διόρθωση Ήχου (Transcode)'
   }
 };
 

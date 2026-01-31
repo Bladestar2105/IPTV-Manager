@@ -38,6 +38,11 @@
 </div>
 
 <div id="content-area">
+  <div class="form-check form-switch mb-2 pt-2">
+    <input class="form-check-input" type="checkbox" id="transcode-switch">
+    <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio (Transcode)</label>
+  </div>
+
   <ul class="nav nav-tabs mb-3" id="player-tabs">
     <li class="nav-item"><a class="nav-link active" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
     <li class="nav-item"><a class="nav-link" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
@@ -175,7 +180,12 @@
               if (currentItem.name) {
                   currentItem.url = line;
                   // Detect type
-                  if (line.includes('/movie/') || line.endsWith('.mp4') || line.endsWith('.mkv')) {
+                  if (line.includes('/movie/')) {
+                      currentItem.type = 'movie';
+                  } else if (line.includes('/series/')) {
+                      currentItem.type = 'series';
+                  } else if (line.endsWith('.mp4') || line.endsWith('.mkv')) {
+                      // Fallback for files without explicit path structure
                       currentItem.type = 'movie';
                   } else {
                       currentItem.type = 'live';
@@ -319,6 +329,21 @@
     });
   }
 
+  const transcodeSwitch = document.getElementById('transcode-switch');
+
+  // Load saved transcode state
+  const savedTranscode = localStorage.getItem('transcode_enabled') === 'true';
+  transcodeSwitch.checked = savedTranscode;
+
+  transcodeSwitch.addEventListener('change', () => {
+      localStorage.setItem('transcode_enabled', transcodeSwitch.checked);
+      // Reload current stream if playing
+      const currentStream = streams.find(s => s.url === video.dataset.currentUrl); // This logic might need refinement if we don't store current stream object well
+      // But simpler: just let user re-select channel or keep it simple.
+      // Better: we don't have easy access to the currently playing stream object unless we store it.
+      // Let's just store the pref. Next channel click will use it.
+  });
+
   async function playStream(stream) {
     // The stream.url from the playlist is already a local proxy URL (e.g. /live/token/auth/123.m3u8?token=...)
     // However, if the token was not embedded in the playlist (e.g. auth via cookie/header), we might need to append it.
@@ -335,6 +360,13 @@
         url += `${separator}token=${encodeURIComponent(token)}`;
     }
 
+    // Append transcode param if enabled
+    if (transcodeSwitch.checked && url.includes('.ts')) {
+        const separator = url.includes('?') ? '&' : '?';
+        url += `${separator}transcode=true`;
+    }
+
+    video.dataset.currentUrl = stream.url; // Store original URL to re-identify if needed
     initPlayer(url);
   }
 
