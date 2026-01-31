@@ -361,51 +361,50 @@
       const a = document.createElement('a');
       a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light';
 
+      const row = document.createElement('div');
+      row.className = 'row w-100 align-items-center m-0';
+
+      // Left Column: Icon + Name
+      const colLeft = document.createElement('div');
+      colLeft.className = 'col-7 d-flex align-items-center overflow-hidden ps-0';
+
       const icon = s.logo || null;
-
-      const div = document.createElement('div');
-      div.className = 'd-flex align-items-center';
-
       if (icon) {
           const img = document.createElement('img');
           img.src = icon;
           img.className = 'channel-icon';
           img.onerror = function() { this.style.display = 'none'; };
-          div.appendChild(img);
+          colLeft.appendChild(img);
       }
 
-      const divText = document.createElement('div');
-      divText.style.overflow = 'hidden';
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'fw-bold text-truncate';
+      nameDiv.textContent = s.name;
+      colLeft.appendChild(nameDiv);
 
-      const span = document.createElement('div');
-      span.className = 'fw-bold text-truncate';
-      span.textContent = s.name;
-      divText.appendChild(span);
+      row.appendChild(colLeft);
+
+      // Right Column: EPG / Info
+      const colRight = document.createElement('div');
+      colRight.className = 'col-5 text-truncate text-end text-muted small pe-0';
 
       // Add Metadata / EPG
       if (s.type === 'movie' && s.plot) {
-           const plot = document.createElement('div');
-           plot.className = 'epg-info text-truncate';
-           plot.textContent = s.plot;
-           divText.appendChild(plot);
+           colRight.textContent = s.plot;
       } else if (s.type === 'live' && s.epg_id && epgNow[s.epg_id]) {
            const prog = epgNow[s.epg_id];
-           const epg = document.createElement('div');
-           epg.className = 'epg-info text-truncate';
-
            // Format time
            const formatTime = (ts) => {
              const d = new Date(ts * 1000);
              return d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
            };
-
-           epg.textContent = `${formatTime(prog.start)} - ${formatTime(prog.stop)} ${prog.title}`;
-           divText.appendChild(epg);
+           colRight.textContent = `${formatTime(prog.start)} - ${formatTime(prog.stop)} ${prog.title}`;
+      } else {
+           colRight.innerHTML = '&nbsp;';
       }
 
-      div.appendChild(divText);
-
-      a.appendChild(div);
+      row.appendChild(colRight);
+      a.appendChild(row);
 
       a.onclick = (e) => {
           // Highlight active
