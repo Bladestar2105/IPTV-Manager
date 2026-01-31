@@ -2318,7 +2318,7 @@ app.get('/api/player/playlist', async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       JOIN providers p ON p.id = pc.provider_id
-      WHERE cat.user_id = ?
+      WHERE cat.user_id = ? AND pc.stream_type != 'series'
       ORDER BY uc.sort_order
     `).all(user.id);
 
