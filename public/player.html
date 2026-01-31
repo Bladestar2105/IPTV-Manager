@@ -280,23 +280,22 @@
   }
 
   async function playStream(stream) {
-    const baseUrl = window.location.origin;
+    // The stream.url from the playlist is already a local proxy URL (e.g. /live/token/auth/123.m3u8?token=...)
+    // However, if the token was not embedded in the playlist (e.g. auth via cookie/header), we might need to append it.
+    // Given the server implementation embeds the token if passed, we can likely trust stream.url.
+    // But to be safe and robust:
 
-    // Construct Proxy URL using the generic segment proxy
-    // We pass the upstream URL as 'url' param
-    // We pass the token as 'token' param so the proxy can authenticate the request
-    const encodedUrl = encodeURIComponent(stream.url);
-    const authToken = token ? encodeURIComponent(token) : '';
+    let url = stream.url;
 
-    // Use dummy user/pass 'token/auth' in path as required by the route pattern
-    // Append &token=... to auth the request
-    let proxyUrl = `${baseUrl}/live/segment/token/auth/seg.ts?url=${encodedUrl}`;
-    if (authToken) {
-        proxyUrl += `&token=${authToken}`;
+    // If the URL is relative or matches our origin, it's local.
+    // If it's local and we have a token but the URL doesn't, append it.
+
+    if (token && !url.includes('token=')) {
+        const separator = url.includes('?') ? '&' : '?';
+        url += `${separator}token=${encodeURIComponent(token)}`;
     }
 
-    // Attempt to play
-    initPlayer(proxyUrl);
+    initPlayer(url);
   }
 
   function renderEpisodes(seriesInfo) {
