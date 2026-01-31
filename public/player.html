@@ -40,25 +40,27 @@
 </div>
 
 <div id="content-area">
-  <div class="form-check form-switch mb-2 pt-2">
-    <input class="form-check-input" type="checkbox" id="transcode-switch">
-    <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio (Transcode)</label>
-  </div>
+  <div id="sticky-controls" style="position: sticky; top: 60vh; z-index: 990; background: #111; padding-top: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid #222;">
+    <div class="form-check form-switch mb-2">
+      <input class="form-check-input" type="checkbox" id="transcode-switch">
+      <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio (Transcode)</label>
+    </div>
 
-  <ul class="nav nav-tabs mb-3" id="player-tabs">
-    <li class="nav-item"><a class="nav-link active" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
-  </ul>
+    <ul class="nav nav-tabs mb-3" id="player-tabs">
+      <li class="nav-item"><a class="nav-link active" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
+      <li class="nav-item"><a class="nav-link" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
+    </ul>
 
-  <div class="row mb-2">
-     <div class="col-4">
-        <select id="category-select" class="form-select form-select-sm bg-dark text-light border-secondary">
-           <option value="" data-i18n="allCategories">All Categories</option>
-        </select>
-     </div>
-     <div class="col-8">
-        <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
-     </div>
+    <div class="row mb-2">
+       <div class="col-4">
+          <select id="category-select" class="form-select form-select-sm bg-dark text-light border-secondary">
+             <option value="" data-i18n="allCategories">All Categories</option>
+          </select>
+       </div>
+       <div class="col-8">
+          <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
+       </div>
+    </div>
   </div>
 
   <div id="loading" class="text-center text-muted my-3" style="display:none;" data-i18n="loading">Loading...</div>
