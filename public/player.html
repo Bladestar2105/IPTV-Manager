@@ -564,6 +564,9 @@
 
       sidebarEl.appendChild(fragmentSidebar);
       epgRowsEl.appendChild(fragmentRows);
+
+      // Reset height to allow shrinking if fewer channels
+      currentTimeIndicator.style.height = '';
   }
 
   function updateCurrentTimeLine() {
@@ -572,7 +575,9 @@
       if (offset >= 0) {
           const left = (offset / 60) * PIXELS_PER_MINUTE;
           currentTimeIndicator.style.left = left + 'px';
-          currentTimeIndicator.style.height = epgGridEl.scrollHeight + 'px';
+          // Calculate height from content, not container scrollHeight (which might be stale)
+          const contentHeight = Math.max(epgRowsEl.offsetHeight + timeHeaderEl.offsetHeight, epgGridEl.scrollHeight);
+          currentTimeIndicator.style.height = contentHeight + 'px';
       }
   }
 
