@@ -7,30 +7,174 @@
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
   <style>
-    body { padding: 0; margin: 0; overflow-x: hidden; background: #111; color: #eee; }
+    body { padding: 0; margin: 0; overflow: hidden; background: #111; color: #eee; height: 100vh; display: flex; flex-direction: column; }
     #player-container {
       background: #000;
       width: 100%;
       height: 60vh;
+      position: relative;
+      flex-shrink: 0;
+    }
+    video { width: 100%; height: 100%; }
+
+    #controls-bar {
+      height: 50px;
+      background: #111;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      padding: 0 1rem;
+      flex-shrink: 0;
+    }
+
+    /* Timeline Layout */
+    #timeline-view {
+      flex-grow: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+      background: #1a1a1a;
+    }
+
+    /* List Layout (VOD) */
+    #list-view {
+      flex-grow: 1;
+      overflow-y: auto;
+      background: #111;
+      display: none;
+    }
+
+    #channel-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      overflow: hidden; /* Scroll synced via JS */
+      border-right: 1px solid #333;
+      background: #0a0a0a;
+      margin-top: 30px; /* Offset for header */
+    }
+
+    #epg-grid {
+      flex-grow: 1;
+      overflow: auto;
+      position: relative;
+    }
+
+    #time-header {
+      height: 30px;
+      background: #222;
       position: sticky;
       top: 0;
-      z-index: 1000;
+      z-index: 20;
+      border-bottom: 1px solid #444;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .time-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: #444;
+      font-size: 10px;
+      padding-left: 2px;
+      color: #aaa;
+    }
+
+    .channel-row {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      border-bottom: 1px solid #222;
+      cursor: pointer;
+      background: #0a0a0a;
+      transition: background 0.2s;
+    }
+    .channel-row:hover, .channel-row.active {
+      background: #222;
+    }
+    .channel-row img {
+      width: 30px;
+      height: 30px;
+      object-fit: contain;
+      margin-right: 10px;
+    }
+    .channel-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: bold;
+      font-size: 0.9rem;
+    }
+
+    .epg-row {
+      height: 50px;
+      position: relative;
+      border-bottom: 1px solid #2a2a2a;
+      background: #1a1a1a;
+    }
+
+    .program-bar {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      background: #333;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 12px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      color: #ccc;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+    .program-bar:hover {
+      background: #444;
+      color: #fff;
+      border-color: #666;
+      z-index: 10;
+    }
+    .program-bar.current {
+      background: #1e3a8a;
+      border-color: #3b82f6;
+    }
+    .program-title { font-weight: bold; margin-left: 5px; }
+    .program-time { font-size: 10px; color: #999; flex-shrink: 0; }
+
+    .current-time-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: rgba(255, 0, 0, 0.6);
+      z-index: 15;
+      pointer-events: none;
+    }
+
+    /* List View Items */
+    .vod-item {
+        cursor: pointer;
+        transition: background 0.2s;
+        border-color: #333 !important;
+    }
+    .vod-item:hover { background: #222 !important; }
+    .vod-item.active { background: #1e3a8a !important; color: #fff; }
+
+    /* Loading Overlay */
+    #loading-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
       display: flex;
       align-items: center;
       justify-content: center;
+      z-index: 1000;
+      color: #fff;
     }
-    video { width: 100%; height: 100%; max-height: 60vh; }
-    #content-area { height: 40vh; display: flex; flex-direction: column; padding: 1rem; background: #111; }
-    #stream-list { overflow-y: auto; flex-grow: 1; min-height: 0; }
-    .nav-tabs .nav-link { color: #aaa; border: 1px solid transparent; }
-    .nav-tabs .nav-link:hover { color: #fff; }
-    .nav-tabs .nav-link.active { color: #fff; background: #222; border-color: #444 #444 #222; }
-    .channel-item { cursor: pointer; transition: background 0.2s; border-color: #333 !important; }
-    .channel-item:hover { background: #222 !important; }
-    .channel-item.active { background: #1e3a8a !important; color: #fff; }
-    .channel-icon { width: 30px; height: 30px; object-fit: contain; margin-right: 10px; background: #000; }
-    .epg-info { font-size: 0.8rem; color: #aaa; margin-top: 2px; }
-    .channel-item.active .epg-info { color: #ccc; }
   </style>
 </head>
 <body>
@@ -39,33 +183,38 @@
   <video id="video" controls autoplay></video>
 </div>
 
-<div id="content-area">
-  <div id="sticky-controls" style="position: sticky; top: 60vh; z-index: 990; background: #111; padding-top: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid #222;">
-    <div class="form-check form-switch mb-2">
-      <input class="form-check-input" type="checkbox" id="transcode-switch">
-      <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio (Transcode)</label>
-    </div>
-
-    <ul class="nav nav-tabs mb-3" id="player-tabs">
-      <li class="nav-item"><a class="nav-link active" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
-      <li class="nav-item"><a class="nav-link" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
-    </ul>
-
-    <div class="row mb-2">
-       <div class="col-4">
-          <select id="category-select" class="form-select form-select-sm bg-dark text-light border-secondary">
-             <option value="" data-i18n="allCategories">All Categories</option>
-          </select>
-       </div>
-       <div class="col-8">
-          <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
-       </div>
-    </div>
+<div id="controls-bar">
+  <div class="form-check form-switch me-3">
+    <input class="form-check-input" type="checkbox" id="transcode-switch">
+    <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio</label>
   </div>
 
-  <div id="loading" class="text-center text-muted my-3" style="display:none;" data-i18n="loading">Loading...</div>
-  <div id="stream-list" class="list-group list-group-flush"></div>
+  <ul class="nav nav-pills me-3" id="player-tabs">
+      <li class="nav-item"><a class="nav-link active py-1" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
+      <li class="nav-item"><a class="nav-link py-1" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
+      <li class="nav-item"><a class="nav-link py-1" href="#" data-type="series" data-i18n="series">Series</a></li>
+  </ul>
+
+  <select id="category-select" class="form-select form-select-sm bg-dark text-light border-secondary me-2" style="width: 180px;">
+     <option value="" data-i18n="allCategories">All Categories</option>
+  </select>
+
+  <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary me-2" style="width: 150px;" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
+
+  <div class="ms-auto text-muted small" id="clock">00:00</div>
 </div>
+
+<div id="timeline-view">
+  <div id="channel-sidebar"></div>
+  <div id="epg-grid">
+    <div id="time-header"></div>
+    <div id="epg-rows"></div>
+    <div id="current-time-indicator" class="current-time-line"></div>
+  </div>
+  <div id="loading-overlay" style="display: none;">Loading EPG...</div>
+</div>
+
+<div id="list-view" class="list-group list-group-flush"></div>
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/hls.min.js"></script>
@@ -83,77 +232,88 @@
   }
 
   let currentType = 'live';
-  let allChannels = []; // Store parsed M3U channels
-  let categories = [];
-  let streams = [];
-  let epgNow = {}; // Store current programs by channel_id
+  let allChannels = [];
+  let currentChannels = [];
+  let epgSchedule = {}; // channel_id -> [programs]
   let hls = null;
   let flvPlayer = null;
   const video = document.getElementById('video');
 
+  // Timeline Config
+  const PIXELS_PER_MINUTE = 4; // 240px per hour
+  const ROW_HEIGHT = 50;
+  let timelineStart = Math.floor(Date.now() / 1000) - 3600; // Start 1 hour ago
+  timelineStart = timelineStart - (timelineStart % 3600); // Round to hour
+
   // DOM Elements
   const catSelect = document.getElementById('category-select');
   const searchInput = document.getElementById('search-input');
-  const listEl = document.getElementById('stream-list');
-  const loadingEl = document.getElementById('loading');
+  const sidebarEl = document.getElementById('channel-sidebar');
+  const epgGridEl = document.getElementById('epg-grid');
+  const epgRowsEl = document.getElementById('epg-rows');
+  const timeHeaderEl = document.getElementById('time-header');
+  const loadingEl = document.getElementById('loading-overlay');
+  const currentTimeIndicator = document.getElementById('current-time-indicator');
+  const timelineView = document.getElementById('timeline-view');
+  const listView = document.getElementById('list-view');
 
   function translatePage() {
     document.querySelectorAll('[data-i18n]').forEach(el => {
       const key = el.getAttribute('data-i18n');
       el.textContent = t(key);
     });
-    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-      const key = el.getAttribute('data-i18n-placeholder');
-      el.placeholder = t(key);
-    });
     document.title = t('playerTitle');
   }
-
-  // Initial translation
   translatePage();
 
+  // Clock
+  setInterval(() => {
+    document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+    if (currentType === 'live') updateCurrentTimeLine();
+  }, 60000);
+
   function getAuthParams() {
-      if (token) {
-          return `token=${encodeURIComponent(token)}`;
-      } else {
-          return `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-      }
+      if (token) return `token=${encodeURIComponent(token)}`;
+      return `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
   }
 
-  async function loadPlaylist() {
-      loadingEl.style.display = 'block';
-      loadingEl.textContent = t('loading');
-      listEl.innerHTML = '';
-
-      let apiUrl = `/api/player/playlist?${getAuthParams()}`;
+  async function init() {
+      loadingEl.style.display = 'flex';
 
       try {
-          // Parallel fetch: playlist and epg/now
-          const [res, epgRes] = await Promise.all([
-              fetch(apiUrl),
-              fetch(`/api/epg/now?${getAuthParams()}`)
-          ]);
-
+          // 1. Fetch Playlist
+          const res = await fetch(`/api/player/playlist?${getAuthParams()}`);
           if (!res.ok) throw new Error('Playlist Fetch Error');
           const text = await res.text();
           allChannels = parseM3U(text);
           console.log(`Loaded ${allChannels.length} channels`);
 
-          // Process EPG Now
+          // 2. Fetch EPG Schedule (Now - 2h to Now + 12h)
+          const start = Math.floor(Date.now() / 1000) - 7200;
+          const end = start + (14 * 3600);
+          const epgRes = await fetch(`/api/epg/schedule?start=${start}&end=${end}&${getAuthParams()}`);
           if (epgRes.ok) {
-              const epgData = await epgRes.json();
-              if (Array.isArray(epgData)) {
-                  epgData.forEach(p => {
-                      epgNow[p.channel_id] = p;
-                  });
-              }
+              epgSchedule = await epgRes.json();
           }
 
           updateCategories();
-          loadStreams();
+          renderView();
+
+          // Scroll to current time (center it roughly) if live
+          if (currentType === 'live') {
+              const now = Math.floor(Date.now() / 1000);
+              const offset = (now - timelineStart) / 60 * PIXELS_PER_MINUTE;
+              epgGridEl.scrollLeft = Math.max(0, offset - (epgGridEl.clientWidth / 2));
+
+              epgGridEl.addEventListener('scroll', () => {
+                  sidebarEl.scrollTop = epgGridEl.scrollTop;
+              });
+              updateCurrentTimeLine();
+          }
+
       } catch (e) {
           console.error(e);
-          listEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+          alert('Error loading data: ' + e.message);
       } finally {
           loadingEl.style.display = 'none';
       }
@@ -170,7 +330,7 @@
 
           if (line.startsWith('#EXTINF:')) {
               const info = line.substring(8);
-              const commaIndex = info.lastIndexOf(','); // Last comma separates attrs from title
+              const commaIndex = info.lastIndexOf(',');
               let attrs = '';
               let title = '';
 
@@ -183,7 +343,6 @@
 
               currentItem = { name: title, group: 'Uncategorized', logo: '' };
 
-              // Basic attribute parsing
               const matches = attrs.match(/([a-zA-Z0-9-]+)="([^"]*)"/g);
               if (matches) {
                   matches.forEach(m => {
@@ -195,22 +354,13 @@
                       if (key === 'plot') currentItem.plot = cleanVal;
                   });
               }
-          } else if (line.startsWith('#')) {
-              // Ignore
-          } else {
+          } else if (!line.startsWith('#')) {
               if (currentItem.name) {
                   currentItem.url = line;
-                  // Detect type
-                  if (line.includes('/movie/')) {
-                      currentItem.type = 'movie';
-                  } else if (line.includes('/series/')) {
-                      currentItem.type = 'series';
-                  } else if (line.endsWith('.mp4') || line.endsWith('.mkv')) {
-                      // Fallback for files without explicit path structure
-                      currentItem.type = 'movie';
-                  } else {
-                      currentItem.type = 'live';
-                  }
+                  if (line.includes('/movie/')) currentItem.type = 'movie';
+                  else if (line.includes('/series/')) currentItem.type = 'series';
+                  else currentItem.type = 'live';
+
                   result.push(currentItem);
                   currentItem = {};
               }
@@ -221,13 +371,10 @@
 
   function updateCategories() {
       const groups = new Set();
-      // Filter channels by current type before extracting categories
       allChannels.forEach(c => {
-          if (c.type === currentType && c.group) {
-              groups.add(c.group);
-          }
+          if (c.type === currentType && c.group) groups.add(c.group);
       });
-      categories = Array.from(groups).sort();
+      const categories = Array.from(groups).sort();
 
       catSelect.innerHTML = `<option value="">${t('allCategories')}</option>`;
       categories.forEach(c => {
@@ -238,8 +385,234 @@
       });
   }
 
-  function initPlayer(url, type = 'live') {
-    // Destroy previous instances
+  function renderView() {
+      if (currentType === 'live') {
+          timelineView.style.display = 'flex';
+          listView.style.display = 'none';
+          renderTimeline();
+      } else {
+          timelineView.style.display = 'none';
+          listView.style.display = 'block';
+          renderList();
+      }
+  }
+
+  function renderList() {
+      const catId = catSelect.value;
+      const search = searchInput.value.toLowerCase();
+
+      const filtered = allChannels.filter(s => {
+          if (s.type !== currentType) return false;
+          const matchesCat = !catId || s.group === catId;
+          const matchesSearch = !search || s.name.toLowerCase().includes(search);
+          return matchesCat && matchesSearch;
+      });
+
+      listView.innerHTML = '';
+      const toRender = filtered.slice(0, 100);
+
+      if (toRender.length === 0) {
+          listView.innerHTML = `<div class="text-muted p-3">${t('noResults', {search: search})}</div>`;
+          return;
+      }
+
+      toRender.forEach(s => {
+          const a = document.createElement('a');
+          a.className = 'list-group-item list-group-item-action vod-item bg-dark text-light';
+
+          const div = document.createElement('div');
+          div.className = 'd-flex align-items-center';
+
+          if (s.logo) {
+              const img = document.createElement('img');
+              img.src = s.logo;
+              img.className = 'channel-icon';
+              img.style.width = '40px';
+              img.style.marginRight = '10px';
+              img.onerror = () => img.style.display = 'none';
+              div.appendChild(img);
+          }
+
+          const info = document.createElement('div');
+          info.style.overflow = 'hidden';
+
+          const name = document.createElement('div');
+          name.className = 'fw-bold text-truncate';
+          name.textContent = s.name;
+          info.appendChild(name);
+
+          if (s.plot) {
+              const plot = document.createElement('div');
+              plot.className = 'small text-muted text-truncate';
+              plot.textContent = s.plot;
+              info.appendChild(plot);
+          }
+
+          div.appendChild(info);
+          a.appendChild(div);
+
+          a.onclick = () => {
+              document.querySelectorAll('.vod-item').forEach(el => el.classList.remove('active'));
+              a.classList.add('active');
+              playStream(s);
+          };
+
+          listView.appendChild(a);
+      });
+  }
+
+  function renderTimeline() {
+      const catId = catSelect.value;
+      const search = searchInput.value.toLowerCase();
+
+      currentChannels = allChannels.filter(s => {
+          if (s.type !== 'live') return false;
+          const matchesCat = !catId || s.group === catId;
+          const matchesSearch = !search || s.name.toLowerCase().includes(search);
+          return matchesCat && matchesSearch;
+      });
+
+      sidebarEl.innerHTML = '';
+      epgRowsEl.innerHTML = '';
+      timeHeaderEl.innerHTML = '';
+
+      const headerWidth = 24 * 60 * PIXELS_PER_MINUTE; // 24h width
+      timeHeaderEl.style.width = headerWidth + 'px';
+
+      for (let i = 0; i < 24; i++) {
+          const t = timelineStart + (i * 3600);
+          const date = new Date(t * 1000);
+          const marker = document.createElement('div');
+          marker.className = 'time-marker';
+          marker.style.left = (i * 60 * PIXELS_PER_MINUTE) + 'px';
+          marker.textContent = date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          timeHeaderEl.appendChild(marker);
+      }
+
+      const fragmentSidebar = document.createDocumentFragment();
+      const fragmentRows = document.createDocumentFragment();
+      const renderLimit = 200;
+      const channelsToRender = currentChannels.slice(0, renderLimit);
+
+      channelsToRender.forEach(ch => {
+          // Sidebar Item
+          const rowDiv = document.createElement('div');
+          rowDiv.className = 'channel-row';
+          if (ch.logo) {
+              const img = document.createElement('img');
+              img.src = ch.logo;
+              img.onerror = () => img.style.display = 'none';
+              rowDiv.appendChild(img);
+          }
+          const nameSpan = document.createElement('div');
+          nameSpan.className = 'channel-name';
+          nameSpan.textContent = ch.name;
+          rowDiv.appendChild(nameSpan);
+
+          rowDiv.onclick = () => {
+              document.querySelectorAll('.channel-row').forEach(el => el.classList.remove('active'));
+              rowDiv.classList.add('active');
+              playStream(ch);
+          };
+
+          fragmentSidebar.appendChild(rowDiv);
+
+          // EPG Row
+          const epgRow = document.createElement('div');
+          epgRow.className = 'epg-row';
+          epgRow.style.width = headerWidth + 'px';
+
+          const programs = epgSchedule[ch.epg_id] || [];
+          programs.forEach(prog => {
+              const startOffset = Math.max(0, prog.start - timelineStart);
+              const duration = prog.stop - prog.start;
+
+              if (startOffset + duration < 0) return;
+
+              const left = (startOffset / 60) * PIXELS_PER_MINUTE;
+              const width = (duration / 60) * PIXELS_PER_MINUTE;
+
+              const bar = document.createElement('div');
+              bar.className = 'program-bar';
+              const now = Math.floor(Date.now() / 1000);
+              if (prog.start <= now && prog.stop >= now) bar.classList.add('current');
+
+              bar.style.left = left + 'px';
+              bar.style.width = Math.max(1, width - 2) + 'px'; // -2 for margin
+
+              const timeStr = new Date(prog.start * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+              // Safe DOM construction (XSS Fix)
+              const timeSpan = document.createElement('span');
+              timeSpan.className = 'program-time';
+              timeSpan.textContent = timeStr;
+
+              const titleSpan = document.createElement('span');
+              titleSpan.className = 'program-title';
+              titleSpan.textContent = prog.title;
+
+              bar.appendChild(timeSpan);
+              bar.appendChild(titleSpan);
+
+              bar.title = `${prog.title}\n${new Date(prog.start * 1000).toLocaleString()} - ${new Date(prog.stop * 1000).toLocaleString()}\n${prog.desc}`;
+
+              epgRow.appendChild(bar);
+          });
+
+          fragmentRows.appendChild(epgRow);
+      });
+
+      sidebarEl.appendChild(fragmentSidebar);
+      epgRowsEl.appendChild(fragmentRows);
+  }
+
+  function updateCurrentTimeLine() {
+      const now = Math.floor(Date.now() / 1000);
+      const offset = now - timelineStart;
+      if (offset >= 0) {
+          const left = (offset / 60) * PIXELS_PER_MINUTE;
+          currentTimeIndicator.style.left = left + 'px';
+          currentTimeIndicator.style.height = epgGridEl.scrollHeight + 'px';
+      }
+  }
+
+  // Player Logic
+  const transcodeSwitch = document.getElementById('transcode-switch');
+  const savedTranscode = localStorage.getItem('transcode_enabled') === 'true';
+  transcodeSwitch.checked = savedTranscode;
+
+  transcodeSwitch.addEventListener('change', () => {
+      localStorage.setItem('transcode_enabled', transcodeSwitch.checked);
+      let currentUrl = video.dataset.currentUrl;
+      if (currentUrl) {
+          if (transcodeSwitch.checked) {
+              if (!currentUrl.includes('transcode=true')) {
+                  const separator = currentUrl.includes('?') ? '&' : '?';
+                  currentUrl += `${separator}transcode=true`;
+              }
+          } else {
+              currentUrl = currentUrl.replace(/[?&]transcode=true/, '');
+          }
+          initPlayer(currentUrl, currentType);
+      }
+  });
+
+  function playStream(stream) {
+      let url = stream.url;
+      if (token && !url.includes('token=')) {
+          const separator = url.includes('?') ? '&' : '?';
+          url += `${separator}token=${encodeURIComponent(token)}`;
+      }
+      if (transcodeSwitch.checked && url.includes('.ts')) {
+          const separator = url.includes('?') ? '&' : '?';
+          url += `${separator}transcode=true`;
+      }
+
+      video.dataset.currentUrl = url;
+      initPlayer(url, stream.type || 'live');
+  }
+
+  function initPlayer(url, type) {
     if (flvPlayer) {
         if (flvPlayer._mediaElement) flvPlayer.detachMediaElement();
         flvPlayer.destroy();
@@ -250,10 +623,7 @@
         hls = null;
     }
 
-    const isHls = url.includes('.m3u8');
-    const isTs = url.includes('.ts');
-
-    if (isTs && mpegts.isSupported()) {
+    if (url.includes('.ts') && mpegts.isSupported()) {
         const isLive = (type === 'live');
         flvPlayer = mpegts.createPlayer({
             type: 'mpegts',
@@ -264,17 +634,13 @@
         flvPlayer.attachMediaElement(video);
         flvPlayer.load();
 
-        // Error handling for AC-3 or other issues
+        // Error Handling Logic (Restored)
         flvPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
             console.warn('Mpegts Error:', errorType, errorDetail, errorInfo);
             if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-                // Check if we can auto-fix this by enabling transcoding
                 const transcodeSwitch = document.getElementById('transcode-switch');
-
                 if (transcodeSwitch && !transcodeSwitch.checked) {
-                    console.log('Playback error detected. Attempting auto-fix via transcoding...');
-
-                    // Show notification
+                    console.log('Playback error detected. Auto-fixing...');
                     const toast = document.createElement('div');
                     toast.className = 'alert alert-info position-absolute top-0 start-0 m-3';
                     toast.style.zIndex = '1002';
@@ -282,18 +648,10 @@
                     document.getElementById('player-container').appendChild(toast);
                     setTimeout(() => toast.remove(), 3000);
 
-                    // Enable transcoding and reload
                     transcodeSwitch.checked = true;
                     localStorage.setItem('transcode_enabled', 'true');
 
-                    // Small delay to ensure user sees message, then reload
                     setTimeout(() => {
-                        // Re-trigger playStream with the current stream object logic
-                        // Since we don't have the stream object handy here, we can reload the player with the stored URL
-                        // but we need to append the transcode param.
-                        // Ideally, re-call playStream if we had the object.
-                        // Let's rely on the URL logic in initPlayer or better, capture the current URL.
-
                         let currentUrl = video.dataset.currentUrl;
                         if (currentUrl) {
                              if (!currentUrl.includes('transcode=')) {
@@ -303,21 +661,18 @@
                              initPlayer(currentUrl, type);
                         }
                     }, 1000);
-                    return;
+                } else {
+                    const toast = document.createElement('div');
+                    toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
+                    toast.textContent = t('playbackError') || 'Playback Error';
+                    document.getElementById('player-container').appendChild(toast);
+                    setTimeout(() => toast.remove(), 5000);
                 }
-
-                // If it's a decoding error (like AC-3) and we tried fixing or can't fix
-                const toast = document.createElement('div');
-                toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
-                toast.style.zIndex = '1002';
-                toast.textContent = t('playbackError') || 'Playback Error: Codec might not be supported';
-                document.getElementById('player-container').appendChild(toast);
-                setTimeout(() => toast.remove(), 5000);
             }
         });
 
         flvPlayer.play().catch(e => console.error(e));
-    } else if (Hls.isSupported() && isHls) {
+    } else if (Hls.isSupported() && url.includes('.m3u8')) {
       hls = new Hls();
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -325,157 +680,12 @@
         video.play();
       });
     } else {
-      // Direct playback (MP4 or Safari HLS)
       video.src = url;
       video.play();
     }
   }
 
-  async function loadStreams() {
-      renderStreams();
-  }
-
-  function renderStreams() {
-    const catId = catSelect.value;
-    const search = searchInput.value.toLowerCase();
-
-    const filtered = allChannels.filter(s => {
-      // Filter by type
-      const matchesType = s.type === currentType;
-      // Use group for category filtering
-      const matchesCat = !catId || s.group === catId;
-      const matchesSearch = !search || s.name.toLowerCase().includes(search);
-      return matchesType && matchesCat && matchesSearch;
-    });
-
-    listEl.innerHTML = '';
-
-    const toRender = filtered.slice(0, 100);
-
-    if (toRender.length === 0) {
-        listEl.innerHTML = `<div class="text-muted p-2">${t('noResults', {search: search})}</div>`;
-        return;
-    }
-
-    toRender.forEach(s => {
-      const a = document.createElement('a');
-      a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light';
-
-      const icon = s.logo || null;
-
-      const div = document.createElement('div');
-      div.className = 'd-flex align-items-center';
-
-      if (icon) {
-          const img = document.createElement('img');
-          img.src = icon;
-          img.className = 'channel-icon';
-          img.onerror = function() { this.style.display = 'none'; };
-          div.appendChild(img);
-      }
-
-      const divText = document.createElement('div');
-      divText.style.overflow = 'hidden';
-
-      const span = document.createElement('div');
-      span.className = 'fw-bold text-truncate';
-      span.textContent = s.name;
-      divText.appendChild(span);
-
-      // Add Metadata / EPG
-      if (s.type === 'movie' && s.plot) {
-           const plot = document.createElement('div');
-           plot.className = 'epg-info text-truncate';
-           plot.textContent = s.plot;
-           divText.appendChild(plot);
-      } else if (s.type === 'live' && s.epg_id && epgNow[s.epg_id]) {
-           const prog = epgNow[s.epg_id];
-           const epg = document.createElement('div');
-           epg.className = 'epg-info text-truncate';
-
-           // Format time
-           const formatTime = (ts) => {
-             const d = new Date(ts * 1000);
-             return d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-           };
-
-           epg.textContent = `${formatTime(prog.start)} - ${formatTime(prog.stop)} ${prog.title}`;
-           divText.appendChild(epg);
-      }
-
-      div.appendChild(divText);
-
-      a.appendChild(div);
-
-      a.onclick = (e) => {
-          // Highlight active
-          document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
-          a.classList.add('active');
-          playStream(s);
-      };
-      listEl.appendChild(a);
-    });
-  }
-
-  const transcodeSwitch = document.getElementById('transcode-switch');
-
-  // Load saved transcode state
-  const savedTranscode = localStorage.getItem('transcode_enabled') === 'true';
-  transcodeSwitch.checked = savedTranscode;
-
-  transcodeSwitch.addEventListener('change', () => {
-      localStorage.setItem('transcode_enabled', transcodeSwitch.checked);
-
-      // Reload current stream if playing
-      let currentUrl = video.dataset.currentUrl;
-      if (currentUrl) {
-          // Add or remove transcode parameter
-          if (transcodeSwitch.checked) {
-              if (!currentUrl.includes('transcode=true')) {
-                  const separator = currentUrl.includes('?') ? '&' : '?';
-                  currentUrl += `${separator}transcode=true`;
-              }
-          } else {
-              currentUrl = currentUrl.replace(/[?&]transcode=true/, '');
-              // Clean up potentially dangling '?' or '&' if needed, but simplistic replace works for our query params structure
-          }
-
-          video.dataset.currentUrl = currentUrl;
-          // We need to retrieve the type from somewhere to persist it during toggle
-          // The video.dataset.currentType can store it
-          initPlayer(currentUrl, video.dataset.currentType || 'live');
-      }
-  });
-
-  async function playStream(stream) {
-    // The stream.url from the playlist is already a local proxy URL (e.g. /live/token/auth/123.m3u8?token=...)
-    // However, if the token was not embedded in the playlist (e.g. auth via cookie/header), we might need to append it.
-    // Given the server implementation embeds the token if passed, we can likely trust stream.url.
-    // But to be safe and robust:
-
-    let url = stream.url;
-
-    // If the URL is relative or matches our origin, it's local.
-    // If it's local and we have a token but the URL doesn't, append it.
-
-    if (token && !url.includes('token=')) {
-        const separator = url.includes('?') ? '&' : '?';
-        url += `${separator}token=${encodeURIComponent(token)}`;
-    }
-
-    // Append transcode param if enabled
-    if (transcodeSwitch.checked && url.includes('.ts')) {
-        const separator = url.includes('?') ? '&' : '?';
-        url += `${separator}transcode=true`;
-    }
-
-    // Store the fully constructed, authenticated URL for reloads
-    video.dataset.currentUrl = url;
-    video.dataset.currentType = stream.type || 'live';
-    initPlayer(url, stream.type);
-  }
-
-  // Events
+  // Event Listeners
   document.querySelectorAll('#player-tabs .nav-link').forEach(link => {
     link.addEventListener('click', (e) => {
       e.preventDefault();
@@ -487,12 +697,19 @@
       searchInput.value = '';
 
       updateCategories();
-      loadStreams();
+      renderView();
     });
   });
 
-  catSelect.addEventListener('change', renderStreams);
-  searchInput.addEventListener('input', debounce(renderStreams, 500));
+  catSelect.addEventListener('change', () => {
+      if (currentType === 'live') renderTimeline();
+      else renderList();
+  });
+
+  searchInput.addEventListener('input', debounce(() => {
+      if (currentType === 'live') renderTimeline();
+      else renderList();
+  }, 500));
 
   function debounce(func, wait) {
     let timeout;
@@ -502,9 +719,7 @@
     };
   }
 
-  // Init
-  loadPlaylist();
-
+  init();
 </script>
 </body>
 </html>
