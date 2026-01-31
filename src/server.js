@@ -2511,39 +2511,60 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     if (ext === 'ts' && req.query.transcode === 'true') {
       console.log(`🎬 Starting transcoding for stream ${streamId}`);
 
-      // Headers for MPEG-TS
-      res.setHeader('Content-Type', 'video/mp2t');
-      res.setHeader('Connection', 'keep-alive');
-
-      const command = ffmpeg(remoteUrl)
-        .inputOptions([
-          '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          '-re' // Read input at native frame rate
-        ])
-        .outputOptions([
-          '-c:v copy', // Copy video stream (fast)
-          '-c:a aac',  // Transcode audio to AAC
-          '-f mpegts'  // Output format
-        ])
-        .on('error', (err) => {
-          if (err.message && !err.message.includes('Output stream closed')) {
-             console.error('FFmpeg error:', err.message);
-          }
-          activeStreams.delete(connectionId);
-        })
-        .on('end', () => {
-          console.log('FFmpeg stream ended');
-          activeStreams.delete(connectionId);
+      try {
+        // Fetch stream first to ensure connection (mimicking standard proxy behavior)
+        const upstream = await fetch(remoteUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Connection': 'keep-alive'
+          },
+          redirect: 'follow'
         });
 
-      command.pipe(res, { end: true });
+        if (!upstream.ok) {
+           console.error(`Transcode upstream fetch error: ${upstream.status}`);
+           activeStreams.delete(connectionId);
+           return res.sendStatus(upstream.status);
+        }
 
-      req.on('close', () => {
-        command.kill('SIGKILL');
+        // Headers for MPEG-TS
+        res.setHeader('Content-Type', 'video/mp2t');
+        res.setHeader('Connection', 'keep-alive');
+
+        // Pipe fetch body (stream) to ffmpeg
+        const command = ffmpeg(upstream.body)
+          .inputFormat('mpegts')
+          .outputOptions([
+            '-c:v copy', // Copy video stream (fast)
+            '-c:a aac',  // Transcode audio to AAC
+            '-f mpegts'  // Output format
+          ])
+          .on('error', (err) => {
+            if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
+               console.error('FFmpeg error:', err.message);
+            }
+            activeStreams.delete(connectionId);
+          })
+          .on('end', () => {
+            console.log('FFmpeg stream ended');
+            activeStreams.delete(connectionId);
+          });
+
+        command.pipe(res, { end: true });
+
+        req.on('close', () => {
+          command.kill('SIGKILL');
+          activeStreams.delete(connectionId);
+          // Optional: destroy upstream body if needed, though fetch body usually cleans up
+        });
+
+        return;
+
+      } catch (e) {
+        console.error('Transcode setup error:', e.message);
         activeStreams.delete(connectionId);
-      });
-
-      return;
+        return res.sendStatus(500);
+      }
     }
 
     // Fetch with optimized settings for streaming
