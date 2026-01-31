@@ -22,7 +22,12 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import multer from 'multer';
 import zlib from 'zlib';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
 import { cleanName, levenshtein } from './epg_utils.js';
+
+// Set ffmpeg path
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Load environment variables
 dotenv.config();
@@ -2502,6 +2507,45 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     const ext = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
     
+    // Handle Transcoding if requested (only for .ts)
+    if (ext === 'ts' && req.query.transcode === 'true') {
+      console.log(`🎬 Starting transcoding for stream ${streamId}`);
+
+      // Headers for MPEG-TS
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Connection', 'keep-alive');
+
+      const command = ffmpeg(remoteUrl)
+        .inputOptions([
+          '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          '-re' // Read input at native frame rate
+        ])
+        .outputOptions([
+          '-c:v copy', // Copy video stream (fast)
+          '-c:a aac',  // Transcode audio to AAC
+          '-f mpegts'  // Output format
+        ])
+        .on('error', (err) => {
+          if (err.message && !err.message.includes('Output stream closed')) {
+             console.error('FFmpeg error:', err.message);
+          }
+          activeStreams.delete(connectionId);
+        })
+        .on('end', () => {
+          console.log('FFmpeg stream ended');
+          activeStreams.delete(connectionId);
+        });
+
+      command.pipe(res, { end: true });
+
+      req.on('close', () => {
+        command.kill('SIGKILL');
+        activeStreams.delete(connectionId);
+      });
+
+      return;
+    }
+
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
