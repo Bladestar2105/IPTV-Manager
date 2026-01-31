@@ -244,7 +244,7 @@ app.use('/api', (req, res, next) => {
   // Allow CORS preflight
   if (req.method === 'OPTIONS') return next();
   // Public endpoints
-  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs' || req.path === '/player/playlist') return next();
+  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs' || req.path === '/player/playlist' || req.path === '/epg/schedule') return next();
 
   authenticateToken(req, res, next);
 });
@@ -1332,8 +1332,22 @@ app.get('/api/epg/now', authenticateToken, (req, res) => {
   res.json([]);
 });
 
-app.get('/api/epg/schedule', authenticateToken, async (req, res) => {
+app.get('/api/epg/schedule', async (req, res) => {
   try {
+    // Authenticate (JWT or Player Token)
+    let user = null;
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+       try {
+         const token = authHeader.split(' ')[1];
+         user = jwt.verify(token, JWT_SECRET);
+       } catch(e) {}
+    }
+    if (!user) {
+       user = await getXtreamUser(req);
+    }
+    if (!user) return res.status(401).json({error: 'Unauthorized'});
+
     const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200); // Default: Now - 2h
     const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);   // Default: Now + 24h
 
@@ -2365,10 +2379,12 @@ app.get('/api/player/playlist', async (req, res) => {
         uc.id as user_channel_id,
         pc.name,
         pc.logo,
+        pc.epg_channel_id,
         pc.remote_stream_id,
         pc.stream_type,
         pc.mime_type,
         cat.name as category_name,
+        map.epg_channel_id as manual_epg_id,
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_password
@@ -2376,6 +2392,7 @@ app.get('/api/player/playlist', async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       JOIN providers p ON p.id = pc.provider_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND pc.stream_type != 'series'
       ORDER BY uc.sort_order
     `).all(user.id);
@@ -2414,8 +2431,9 @@ app.get('/api/player/playlist', async (req, res) => {
       const safeGroup = group.replace(/"/g, '');
       const safeLogo = logo.replace(/"/g, '');
       const safeName = name.replace(/,/g, ' ');
+      const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
-      playlist += `#EXTINF:-1 tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${name}\n`;
+      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${name}\n`;
       playlist += `${streamUrl}\n`;
     }
 
