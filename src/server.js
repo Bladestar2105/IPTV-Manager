@@ -2764,25 +2764,43 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
 
     // Fetch
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Connection': 'keep-alive'
+    };
+
+    if (req.headers.range) {
+        headers['Range'] = req.headers.range;
+    }
+
     const upstream = await fetch(remoteUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Connection': 'keep-alive'
-      },
+      headers,
       redirect: 'follow'
     });
 
     if (!upstream.ok || !upstream.body) {
-      console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
-      activeStreams.delete(connectionId);
-      return res.sendStatus(502);
+      if (upstream.status !== 200 && upstream.status !== 206) {
+          console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+          activeStreams.delete(connectionId);
+          return res.sendStatus(502);
+      }
     }
+
+    // Forward status (200 or 206)
+    res.status(upstream.status);
 
     // Pass headers
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
+
     const contentLength = upstream.headers.get('content-length');
     if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    const contentRange = upstream.headers.get('content-range');
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+
+    const acceptRanges = upstream.headers.get('accept-ranges');
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
 
     upstream.body.pipe(res);
 
@@ -2844,24 +2862,41 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
     const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
 
     // Fetch
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Connection': 'keep-alive'
+    };
+
+    if (req.headers.range) {
+        headers['Range'] = req.headers.range;
+    }
+
     const upstream = await fetch(remoteUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Connection': 'keep-alive'
-      },
+      headers,
       redirect: 'follow'
     });
 
     if (!upstream.ok || !upstream.body) {
-      console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
-      activeStreams.delete(connectionId);
-      return res.sendStatus(502);
+      if (upstream.status !== 200 && upstream.status !== 206) {
+          console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+          activeStreams.delete(connectionId);
+          return res.sendStatus(502);
+      }
     }
+
+    // Forward status
+    res.status(upstream.status);
 
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
     const contentLength = upstream.headers.get('content-length');
     if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    const contentRange = upstream.headers.get('content-range');
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+
+    const acceptRanges = upstream.headers.get('accept-ranges');
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
 
     upstream.body.pipe(res);
 

@@ -217,9 +217,10 @@
       });
   }
 
-  function initPlayer(url) {
+  function initPlayer(url, type = 'live') {
     // Destroy previous instances
     if (flvPlayer) {
+        if (flvPlayer._mediaElement) flvPlayer.detachMediaElement();
         flvPlayer.destroy();
         flvPlayer = null;
     }
@@ -232,10 +233,11 @@
     const isTs = url.includes('.ts');
 
     if (isTs && mpegts.isSupported()) {
+        const isLive = (type === 'live');
         flvPlayer = mpegts.createPlayer({
             type: 'mpegts',
             url: url,
-            isLive: true,
+            isLive: isLive,
             cors: true
         });
         flvPlayer.attachMediaElement(video);
@@ -277,7 +279,7 @@
                                 const separator = currentUrl.includes('?') ? '&' : '?';
                                 currentUrl += `${separator}transcode=true`;
                              }
-                             initPlayer(currentUrl);
+                             initPlayer(currentUrl, type);
                         }
                     }, 1000);
                     return;
@@ -391,7 +393,9 @@
           }
 
           video.dataset.currentUrl = currentUrl;
-          initPlayer(currentUrl);
+          // We need to retrieve the type from somewhere to persist it during toggle
+          // The video.dataset.currentType can store it
+          initPlayer(currentUrl, video.dataset.currentType || 'live');
       }
   });
 
@@ -419,7 +423,8 @@
 
     // Store the fully constructed, authenticated URL for reloads
     video.dataset.currentUrl = url;
-    initPlayer(url);
+    video.dataset.currentType = stream.type || 'live';
+    initPlayer(url, stream.type);
   }
 
   // Events
