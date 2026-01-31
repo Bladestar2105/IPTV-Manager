@@ -60,6 +60,7 @@
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/hls.min.js"></script>
+<script src="vendor/mpegts.min.js"></script>
 <script src="i18n.js"></script>
 <script>
   const urlParams = new URLSearchParams(window.location.search);
@@ -77,6 +78,7 @@
   let categories = [];
   let streams = [];
   let hls = null;
+  let flvPlayer = null;
   const video = document.getElementById('video');
 
   // DOM Elements
@@ -207,10 +209,30 @@
   }
 
   function initPlayer(url) {
-    const isHls = url.includes('.m3u8');
+    // Destroy previous instances
+    if (flvPlayer) {
+        flvPlayer.destroy();
+        flvPlayer = null;
+    }
+    if (hls) {
+        hls.destroy();
+        hls = null;
+    }
 
-    if (Hls.isSupported() && isHls) {
-      if (hls) hls.destroy();
+    const isHls = url.includes('.m3u8');
+    const isTs = url.includes('.ts');
+
+    if (isTs && mpegts.isSupported()) {
+        flvPlayer = mpegts.createPlayer({
+            type: 'mpegts',
+            url: url,
+            isLive: true,
+            cors: true
+        });
+        flvPlayer.attachMediaElement(video);
+        flvPlayer.load();
+        flvPlayer.play().catch(e => console.error(e));
+    } else if (Hls.isSupported() && isHls) {
       hls = new Hls();
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -219,7 +241,6 @@
       });
     } else {
       // Direct playback (MP4 or Safari HLS)
-      if (hls) { hls.destroy(); hls = null; }
       video.src = url;
       video.play();
     }

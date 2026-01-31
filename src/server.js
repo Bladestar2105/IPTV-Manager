@@ -2343,7 +2343,8 @@ app.get('/api/player/playlist', async (req, res) => {
          ext = ch.mime_type || 'mp4';
       } else {
          // Live
-         ext = 'm3u8';
+         // Default to TS for better compatibility with mpegts.js and to bypass flaky HLS upstream
+         ext = 'ts';
       }
 
       // Construct SECURE local proxy URL
