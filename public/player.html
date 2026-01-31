@@ -245,7 +245,45 @@
         flvPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
             console.warn('Mpegts Error:', errorType, errorDetail, errorInfo);
             if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-                // If it's a decoding error (like AC-3), we can't do much but warn the user
+                // Check if we can auto-fix this by enabling transcoding
+                const transcodeSwitch = document.getElementById('transcode-switch');
+
+                if (transcodeSwitch && !transcodeSwitch.checked) {
+                    console.log('Playback error detected. Attempting auto-fix via transcoding...');
+
+                    // Show notification
+                    const toast = document.createElement('div');
+                    toast.className = 'alert alert-info position-absolute top-0 start-0 m-3';
+                    toast.style.zIndex = '1002';
+                    toast.textContent = t('autoFixingAudio') || 'Playback Error. Enabling audio fix...';
+                    document.getElementById('player-container').appendChild(toast);
+                    setTimeout(() => toast.remove(), 3000);
+
+                    // Enable transcoding and reload
+                    transcodeSwitch.checked = true;
+                    localStorage.setItem('transcode_enabled', 'true');
+
+                    // Small delay to ensure user sees message, then reload
+                    setTimeout(() => {
+                        // Re-trigger playStream with the current stream object logic
+                        // Since we don't have the stream object handy here, we can reload the player with the stored URL
+                        // but we need to append the transcode param.
+                        // Ideally, re-call playStream if we had the object.
+                        // Let's rely on the URL logic in initPlayer or better, capture the current URL.
+
+                        let currentUrl = video.dataset.currentUrl;
+                        if (currentUrl) {
+                             if (!currentUrl.includes('transcode=')) {
+                                const separator = currentUrl.includes('?') ? '&' : '?';
+                                currentUrl += `${separator}transcode=true`;
+                             }
+                             initPlayer(currentUrl);
+                        }
+                    }, 1000);
+                    return;
+                }
+
+                // If it's a decoding error (like AC-3) and we tried fixing or can't fix
                 const toast = document.createElement('div');
                 toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
                 toast.style.zIndex = '1002';
@@ -337,11 +375,24 @@
 
   transcodeSwitch.addEventListener('change', () => {
       localStorage.setItem('transcode_enabled', transcodeSwitch.checked);
+
       // Reload current stream if playing
-      const currentStream = streams.find(s => s.url === video.dataset.currentUrl); // This logic might need refinement if we don't store current stream object well
-      // But simpler: just let user re-select channel or keep it simple.
-      // Better: we don't have easy access to the currently playing stream object unless we store it.
-      // Let's just store the pref. Next channel click will use it.
+      let currentUrl = video.dataset.currentUrl;
+      if (currentUrl) {
+          // Add or remove transcode parameter
+          if (transcodeSwitch.checked) {
+              if (!currentUrl.includes('transcode=true')) {
+                  const separator = currentUrl.includes('?') ? '&' : '?';
+                  currentUrl += `${separator}transcode=true`;
+              }
+          } else {
+              currentUrl = currentUrl.replace(/[?&]transcode=true/, '');
+              // Clean up potentially dangling '?' or '&' if needed, but simplistic replace works for our query params structure
+          }
+
+          video.dataset.currentUrl = currentUrl;
+          initPlayer(currentUrl);
+      }
   });
 
   async function playStream(stream) {
@@ -366,7 +417,8 @@
         url += `${separator}transcode=true`;
     }
 
-    video.dataset.currentUrl = stream.url; // Store original URL to re-identify if needed
+    // Store the fully constructed, authenticated URL for reloads
+    video.dataset.currentUrl = url;
     initPlayer(url);
   }
 

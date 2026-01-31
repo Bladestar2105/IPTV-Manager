@@ -325,7 +325,8 @@ const translations = {
     maximize: 'Maximize',
     minimize: 'Minimize',
     playbackError: 'Playback Error: Codec might not be supported',
-    transcodeAudio: 'Fix Audio (Transcode)'
+    transcodeAudio: 'Fix Audio (Transcode)',
+    autoFixingAudio: 'Playback Error. Enabling audio fix...'
   },
   
   de: {
@@ -650,7 +651,8 @@ const translations = {
     maximize: 'Maximieren',
     minimize: 'Minimieren',
     playbackError: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt',
-    transcodeAudio: 'Audio reparieren (Transcode)'
+    transcodeAudio: 'Audio reparieren (Transcode)',
+    autoFixingAudio: 'Wiedergabefehler. Aktiviere Audio-Fix...'
   },
 
   fr: {
@@ -975,7 +977,8 @@ const translations = {
     maximize: 'Agrandir',
     minimize: 'Réduire',
     playbackError: 'Erreur de lecture: Codec peut ne pas être supporté',
-    transcodeAudio: 'Réparer Audio (Transcodage)'
+    transcodeAudio: 'Réparer Audio (Transcodage)',
+    autoFixingAudio: 'Erreur de lecture. Activation correction audio...'
   },
 
   el: {
@@ -1290,7 +1293,8 @@ const translations = {
     maximize: 'Μεγιστοποίηση',
     minimize: 'Ελαχιστοποίηση',
     playbackError: 'Σφάλμα αναπαραγωγής: Το Codec ενδέχεται να μην υποστηρίζεται',
-    transcodeAudio: 'Διόρθωση Ήχου (Transcode)'
+    transcodeAudio: 'Διόρθωση Ήχου (Transcode)',
+    autoFixingAudio: 'Σφάλμα αναπαραγωγής. Ενεργοποίηση διόρθωσης ήχου...'
   }
 };
 
