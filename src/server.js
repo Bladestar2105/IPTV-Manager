@@ -2504,7 +2504,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Connection': 'keep-alive'
       },
       // Don't follow redirects automatically for better control
@@ -2615,7 +2615,7 @@ app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:p
 
     const upstream = await fetch(targetUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Connection': 'keep-alive'
       },
       redirect: 'follow'
@@ -2779,7 +2779,10 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
 
     // Fetch
     const upstream = await fetch(remoteUrl, {
-      headers: { 'User-Agent': 'IPTV-Manager' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Connection': 'keep-alive'
+      },
       redirect: 'follow'
     });
 
@@ -2866,7 +2869,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Connection': 'keep-alive'
       },
       redirect: 'follow'

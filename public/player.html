@@ -172,8 +172,14 @@
           } else {
               if (currentItem.name) {
                   currentItem.url = line;
-                  // Detect type? Default to live.
-                  currentItem.type = 'live';
+                  // Detect type
+                  if (line.includes('/movie/') || line.endsWith('.mp4') || line.endsWith('.mkv')) {
+                      currentItem.type = 'movie';
+                  } else if (line.includes('/series/')) {
+                      currentItem.type = 'series';
+                  } else {
+                      currentItem.type = 'live';
+                  }
                   result.push(currentItem);
                   currentItem = {};
               }
@@ -185,6 +191,8 @@
   function processCategories() {
       const groups = new Set();
       allChannels.forEach(c => {
+          // Only include categories relevant to current type?
+          // Or all? Let's show all for now, or maybe filter in render.
           if (c.group) groups.add(c.group);
       });
       categories = Array.from(groups).sort();
@@ -199,7 +207,9 @@
   }
 
   function initPlayer(url) {
-    if (Hls.isSupported()) {
+    const isHls = url.includes('.m3u8');
+
+    if (Hls.isSupported() && isHls) {
       if (hls) hls.destroy();
       hls = new Hls();
       hls.loadSource(url);
@@ -207,11 +217,11 @@
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
         video.play();
       });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    } else {
+      // Direct playback (MP4 or Safari HLS)
+      if (hls) { hls.destroy(); hls = null; }
       video.src = url;
-      video.addEventListener('loadedmetadata', function() {
-        video.play();
-      });
+      video.play();
     }
   }
 
@@ -229,12 +239,12 @@
     const search = searchInput.value.toLowerCase();
 
     const filtered = allChannels.filter(s => {
+      // Filter by type
+      const matchesType = s.type === currentType;
       // Use group for category filtering
       const matchesCat = !catId || s.group === catId;
       const matchesSearch = !search || s.name.toLowerCase().includes(search);
-      // Optional: Filter by type if heuristic available, otherwise show all in 'live' tab
-      // For now, we assume everything is in the list
-      return matchesCat && matchesSearch;
+      return matchesType && matchesCat && matchesSearch;
     });
 
     listEl.innerHTML = '';
