@@ -119,6 +119,9 @@ const translations = {
     browse: 'Browse',
     updateAll: 'Update All',
     save: 'Save',
+    generateRandomUser: 'Generate Random User',
+    copyToClipboardAction: 'Copy to Clipboard',
+    deleteAction: 'Delete',
     
     // Loading states
     loading: 'Loading...',
@@ -445,6 +448,9 @@ const translations = {
     browse: 'Durchsuchen',
     updateAll: 'Alle aktualisieren',
     save: 'Speichern',
+    generateRandomUser: 'Zufälligen Benutzer generieren',
+    copyToClipboardAction: 'In die Zwischenablage kopieren',
+    deleteAction: 'Löschen',
     
     // Loading states
     loading: 'Lädt...',
@@ -771,6 +777,9 @@ const translations = {
     browse: 'Parcourir',
     updateAll: 'Tout mettre à jour',
     save: 'Enregistrer',
+    generateRandomUser: 'Générer un utilisateur aléatoire',
+    copyToClipboardAction: 'Copier dans le presse-papier',
+    deleteAction: 'Supprimer',
     
     // Loading states
     loading: 'Chargement...',
@@ -1097,6 +1106,9 @@ const translations = {
     browse: 'Περιήγηση',
     updateAll: 'Ενημέρωση όλων',
     save: 'Αποθήκευση',
+    generateRandomUser: 'Δημιουργία τυχαίου χρήστη',
+    copyToClipboardAction: 'Αντιγραφή στο πρόχειρο',
+    deleteAction: 'Διαγραφή',
     
     // Loading states
     loading: 'Φόρτωση...',

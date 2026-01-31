@@ -128,6 +128,12 @@ function translatePage() {
     const key = el.getAttribute('data-i18n-placeholder');
     el.placeholder = t(key);
   });
+
+  // ARIA Labels übersetzen
+  document.querySelectorAll('[data-i18n-label]').forEach(el => {
+    const key = el.getAttribute('data-i18n-label');
+    el.setAttribute('aria-label', t(key));
+  });
   
   // HTML title
   document.title = t('title');
@@ -290,6 +296,7 @@ async function loadUsers() {
     playBtn.className = 'btn btn-sm btn-outline-success me-1';
     playBtn.innerHTML = '▶️'; // Play icon
     playBtn.title = t('openWebPlayer') || 'Open Web Player';
+    playBtn.setAttribute('aria-label', t('openWebPlayer') || 'Open Web Player');
     playBtn.onclick = async () => {
         try {
             playBtn.disabled = true;
@@ -309,11 +316,13 @@ async function loadUsers() {
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     editBtn.innerHTML = '✏️'; // Edit icon
+    editBtn.setAttribute('aria-label', t('editUser') || t('edit'));
     editBtn.onclick = () => showEditUserModal(u);
 
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
+    delBtn.setAttribute('aria-label', t('deleteAction'));
     delBtn.onclick = async () => {
       if (!confirm(t('deleteUserConfirm', {name: u.username}))) return;
       await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
@@ -453,6 +462,7 @@ async function loadProviders(filterUserId = null) {
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     editBtn.innerHTML = '✏️';
+    editBtn.setAttribute('aria-label', t('edit'));
     editBtn.onclick = () => prepareEditProvider(p);
 
     const syncBtn = document.createElement('button');
@@ -488,17 +498,20 @@ async function loadProviders(filterUserId = null) {
     configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     configBtn.innerHTML = '⚙️';
     configBtn.title = t('syncConfig');
+    configBtn.setAttribute('aria-label', t('syncConfig'));
     configBtn.onclick = () => showSyncConfigModal(p.id);
     
     const logsBtn = document.createElement('button');
     logsBtn.className = 'btn btn-sm btn-outline-info me-1';
     logsBtn.innerHTML = '📊';
     logsBtn.title = t('syncLogs');
+    logsBtn.setAttribute('aria-label', t('syncLogs'));
     logsBtn.onclick = () => showSyncLogs(p.id);
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
+    delBtn.setAttribute('aria-label', t('deleteAction'));
     delBtn.onclick = async () => {
       if (!confirm(t('deleteProviderConfirm', {name: p.name}))) return;
       await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
@@ -673,6 +686,7 @@ async function loadUserCategories() {
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
+    delBtn.setAttribute('aria-label', t('deleteAction'));
     delBtn.onclick = async () => {
       if (!confirm(t('deleteCategoryConfirm', {name: c.name}))) return;
       await fetchJSON(`/api/user-categories/${c.id}`, {method: 'DELETE'});
@@ -1170,6 +1184,7 @@ async function loadUserCategoryChannels() {
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger ms-2';
     delBtn.textContent = t('delete');
+    delBtn.setAttribute('aria-label', t('deleteAction'));
     delBtn.onclick = async () => {
       await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
       loadUserCategoryChannels();
@@ -1492,6 +1507,7 @@ async function loadEpgSources() {
       updateBtn.className = 'btn btn-sm btn-outline-info';
       updateBtn.innerHTML = '🔄';
       updateBtn.title = t('updateNow');
+      updateBtn.setAttribute('aria-label', t('updateNow'));
       updateBtn.disabled = source.is_updating;
       updateBtn.onclick = async () => {
         updateBtn.disabled = true;
@@ -1516,6 +1532,7 @@ async function loadEpgSources() {
         editBtn.className = 'btn btn-sm btn-outline-secondary';
         editBtn.innerHTML = '✏️';
         editBtn.title = t('edit');
+        editBtn.setAttribute('aria-label', t('edit'));
         editBtn.onclick = () => showEditEpgSourceModal(source);
         
         const toggleBtn = document.createElement('button');
@@ -1533,6 +1550,7 @@ async function loadEpgSources() {
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-danger';
         delBtn.textContent = '🗑';
+        delBtn.setAttribute('aria-label', t('deleteAction'));
         delBtn.onclick = async () => {
           if (!confirm(t('confirmDeleteEpgSource', {name: source.name}))) return;
           await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
