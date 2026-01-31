@@ -155,6 +155,10 @@ The application will be available at `http://localhost:3000`.
 |:---:|:---:|
 | ![Security](docs/images/security.png) | ![Xtream Credentials](docs/images/xtream_view.png) |
 
+| Web Player |
+|:---:|
+| ![Web Player](docs/images/web_player.png) |
+
 ## 📚 API Documentation
 
 ### Authentication

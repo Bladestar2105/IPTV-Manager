@@ -321,7 +321,12 @@ const translations = {
     episode: 'Episode',
     backToSeries: 'Back to Series List',
     noEpisodesFound: 'No episodes found',
-    missingCredentials: 'Missing credentials'
+    missingCredentials: 'Missing credentials',
+    maximize: 'Maximize',
+    minimize: 'Minimize',
+    playbackError: 'Playback Error: Codec might not be supported',
+    transcodeAudio: 'Fix Audio (Transcode)',
+    autoFixingAudio: 'Playback Error. Enabling audio fix...'
   },
   
   de: {
@@ -642,7 +647,12 @@ const translations = {
     episode: 'Episode',
     backToSeries: 'Zurück zur Serienliste',
     noEpisodesFound: 'Keine Episoden gefunden',
-    missingCredentials: 'Zugangsdaten fehlen'
+    missingCredentials: 'Zugangsdaten fehlen',
+    maximize: 'Maximieren',
+    minimize: 'Minimieren',
+    playbackError: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt',
+    transcodeAudio: 'Audio reparieren (Transcode)',
+    autoFixingAudio: 'Wiedergabefehler. Aktiviere Audio-Fix...'
   },
 
   fr: {
@@ -963,7 +973,12 @@ const translations = {
     episode: 'Épisode',
     backToSeries: 'Retour à la liste des séries',
     noEpisodesFound: 'Aucun épisode trouvé',
-    missingCredentials: 'Identifiants manquants'
+    missingCredentials: 'Identifiants manquants',
+    maximize: 'Agrandir',
+    minimize: 'Réduire',
+    playbackError: 'Erreur de lecture: Codec peut ne pas être supporté',
+    transcodeAudio: 'Réparer Audio (Transcodage)',
+    autoFixingAudio: 'Erreur de lecture. Activation correction audio...'
   },
 
   el: {
@@ -1274,7 +1289,12 @@ const translations = {
     episode: 'Επεισόδιο',
     backToSeries: 'Πίσω στη λίστα σειρών',
     noEpisodesFound: 'Δεν βρέθηκαν επεισόδια',
-    missingCredentials: 'Λείπουν διαπιστευτήρια'
+    missingCredentials: 'Λείπουν διαπιστευτήρια',
+    maximize: 'Μεγιστοποίηση',
+    minimize: 'Ελαχιστοποίηση',
+    playbackError: 'Σφάλμα αναπαραγωγής: Το Codec ενδέχεται να μην υποστηρίζεται',
+    transcodeAudio: 'Διόρθωση Ήχου (Transcode)',
+    autoFixingAudio: 'Σφάλμα αναπαραγωγής. Ενεργοποίηση διόρθωσης ήχου...'
   }
 };
 

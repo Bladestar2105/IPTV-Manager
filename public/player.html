@@ -34,13 +34,18 @@
 
 <div id="player-container">
   <video id="video" controls autoplay></video>
+  <button id="maximize-btn" class="btn btn-sm btn-dark position-absolute top-0 end-0 m-2" style="z-index: 1001; opacity: 0.7;" data-i18n="maximize">Maximize</button>
 </div>
 
 <div id="content-area">
+  <div class="form-check form-switch mb-2 pt-2">
+    <input class="form-check-input" type="checkbox" id="transcode-switch">
+    <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio (Transcode)</label>
+  </div>
+
   <ul class="nav nav-tabs mb-3" id="player-tabs">
     <li class="nav-item"><a class="nav-link active" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
     <li class="nav-item"><a class="nav-link" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-type="series" data-i18n="series">Series</a></li>
   </ul>
 
   <div class="row mb-2">
@@ -124,7 +129,7 @@
           allChannels = parseM3U(text);
           console.log(`Loaded ${allChannels.length} channels`);
 
-          processCategories();
+          updateCategories();
           loadStreams();
       } catch (e) {
           console.error(e);
@@ -175,10 +180,13 @@
               if (currentItem.name) {
                   currentItem.url = line;
                   // Detect type
-                  if (line.includes('/movie/') || line.endsWith('.mp4') || line.endsWith('.mkv')) {
+                  if (line.includes('/movie/')) {
                       currentItem.type = 'movie';
                   } else if (line.includes('/series/')) {
                       currentItem.type = 'series';
+                  } else if (line.endsWith('.mp4') || line.endsWith('.mkv')) {
+                      // Fallback for files without explicit path structure
+                      currentItem.type = 'movie';
                   } else {
                       currentItem.type = 'live';
                   }
@@ -190,12 +198,13 @@
       return result;
   }
 
-  function processCategories() {
+  function updateCategories() {
       const groups = new Set();
+      // Filter channels by current type before extracting categories
       allChannels.forEach(c => {
-          // Only include categories relevant to current type?
-          // Or all? Let's show all for now, or maybe filter in render.
-          if (c.group) groups.add(c.group);
+          if (c.type === currentType && c.group) {
+              groups.add(c.group);
+          }
       });
       categories = Array.from(groups).sort();
 
@@ -231,6 +240,59 @@
         });
         flvPlayer.attachMediaElement(video);
         flvPlayer.load();
+
+        // Error handling for AC-3 or other issues
+        flvPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+            console.warn('Mpegts Error:', errorType, errorDetail, errorInfo);
+            if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
+                // Check if we can auto-fix this by enabling transcoding
+                const transcodeSwitch = document.getElementById('transcode-switch');
+
+                if (transcodeSwitch && !transcodeSwitch.checked) {
+                    console.log('Playback error detected. Attempting auto-fix via transcoding...');
+
+                    // Show notification
+                    const toast = document.createElement('div');
+                    toast.className = 'alert alert-info position-absolute top-0 start-0 m-3';
+                    toast.style.zIndex = '1002';
+                    toast.textContent = t('autoFixingAudio') || 'Playback Error. Enabling audio fix...';
+                    document.getElementById('player-container').appendChild(toast);
+                    setTimeout(() => toast.remove(), 3000);
+
+                    // Enable transcoding and reload
+                    transcodeSwitch.checked = true;
+                    localStorage.setItem('transcode_enabled', 'true');
+
+                    // Small delay to ensure user sees message, then reload
+                    setTimeout(() => {
+                        // Re-trigger playStream with the current stream object logic
+                        // Since we don't have the stream object handy here, we can reload the player with the stored URL
+                        // but we need to append the transcode param.
+                        // Ideally, re-call playStream if we had the object.
+                        // Let's rely on the URL logic in initPlayer or better, capture the current URL.
+
+                        let currentUrl = video.dataset.currentUrl;
+                        if (currentUrl) {
+                             if (!currentUrl.includes('transcode=')) {
+                                const separator = currentUrl.includes('?') ? '&' : '?';
+                                currentUrl += `${separator}transcode=true`;
+                             }
+                             initPlayer(currentUrl);
+                        }
+                    }, 1000);
+                    return;
+                }
+
+                // If it's a decoding error (like AC-3) and we tried fixing or can't fix
+                const toast = document.createElement('div');
+                toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
+                toast.style.zIndex = '1002';
+                toast.textContent = t('playbackError') || 'Playback Error: Codec might not be supported';
+                document.getElementById('player-container').appendChild(toast);
+                setTimeout(() => toast.remove(), 5000);
+            }
+        });
+
         flvPlayer.play().catch(e => console.error(e));
     } else if (Hls.isSupported() && isHls) {
       hls = new Hls();
@@ -244,11 +306,6 @@
       video.src = url;
       video.play();
     }
-  }
-
-  // Legacy stubs or updates
-  async function loadCategories() {
-      // No-op, handled in loadPlaylist/processCategories
   }
 
   async function loadStreams() {
@@ -310,6 +367,34 @@
     });
   }
 
+  const transcodeSwitch = document.getElementById('transcode-switch');
+
+  // Load saved transcode state
+  const savedTranscode = localStorage.getItem('transcode_enabled') === 'true';
+  transcodeSwitch.checked = savedTranscode;
+
+  transcodeSwitch.addEventListener('change', () => {
+      localStorage.setItem('transcode_enabled', transcodeSwitch.checked);
+
+      // Reload current stream if playing
+      let currentUrl = video.dataset.currentUrl;
+      if (currentUrl) {
+          // Add or remove transcode parameter
+          if (transcodeSwitch.checked) {
+              if (!currentUrl.includes('transcode=true')) {
+                  const separator = currentUrl.includes('?') ? '&' : '?';
+                  currentUrl += `${separator}transcode=true`;
+              }
+          } else {
+              currentUrl = currentUrl.replace(/[?&]transcode=true/, '');
+              // Clean up potentially dangling '?' or '&' if needed, but simplistic replace works for our query params structure
+          }
+
+          video.dataset.currentUrl = currentUrl;
+          initPlayer(currentUrl);
+      }
+  });
+
   async function playStream(stream) {
     // The stream.url from the playlist is already a local proxy URL (e.g. /live/token/auth/123.m3u8?token=...)
     // However, if the token was not embedded in the playlist (e.g. auth via cookie/header), we might need to append it.
@@ -326,43 +411,15 @@
         url += `${separator}token=${encodeURIComponent(token)}`;
     }
 
-    initPlayer(url);
-  }
-
-  function renderEpisodes(seriesInfo) {
-    listEl.innerHTML = `<button class="btn btn-secondary btn-sm mb-2 w-100" onclick="renderStreams()">${t('backToSeries')}</button>`;
-
-    const episodes = seriesInfo.episodes;
-
-    for (const season in episodes) {
-        const seasonHeader = document.createElement('div');
-        seasonHeader.className = 'p-2 bg-secondary text-white fw-bold';
-        seasonHeader.textContent = `${t('season')} ${season}`;
-        listEl.appendChild(seasonHeader);
-
-        episodes[season].forEach(ep => {
-            const a = document.createElement('a');
-            a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light ps-4';
-            a.textContent = `${ep.episode_num}. ${ep.title} (${ep.container_extension})`;
-
-            a.onclick = () => {
-                const ext = ep.container_extension || 'mp4';
-                const authQuery = token ? `?token=${encodeURIComponent(token)}` : '';
-                const pathUser = token ? 'token' : encodeURIComponent(username);
-                const pathPass = token ? 'auth' : encodeURIComponent(password);
-
-                const url = `${window.location.origin}/series/${pathUser}/${pathPass}/${ep.id}.${ext}${authQuery}`;
-
-                if (hls) { hls.destroy(); hls = null; }
-                video.src = url;
-                video.play();
-
-                document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
-                a.classList.add('active');
-            };
-            listEl.appendChild(a);
-        });
+    // Append transcode param if enabled
+    if (transcodeSwitch.checked && url.includes('.ts')) {
+        const separator = url.includes('?') ? '&' : '?';
+        url += `${separator}transcode=true`;
     }
+
+    // Store the fully constructed, authenticated URL for reloads
+    video.dataset.currentUrl = url;
+    initPlayer(url);
   }
 
   // Events
@@ -376,9 +433,33 @@
       catSelect.value = '';
       searchInput.value = '';
 
-      loadCategories();
+      updateCategories();
       loadStreams();
     });
+  });
+
+  // Maximize Logic
+  const maximizeBtn = document.getElementById('maximize-btn');
+  const playerContainer = document.getElementById('player-container');
+
+  maximizeBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        playerContainer.requestFullscreen().catch(err => {
+            console.error(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement) {
+          maximizeBtn.textContent = t('minimize') || 'Minimize';
+          maximizeBtn.setAttribute('data-i18n', 'minimize');
+      } else {
+          maximizeBtn.textContent = t('maximize') || 'Maximize';
+          maximizeBtn.setAttribute('data-i18n', 'maximize');
+      }
   });
 
   catSelect.addEventListener('change', renderStreams);
