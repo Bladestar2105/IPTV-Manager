@@ -73,6 +73,7 @@
   }
 
   let currentType = 'live';
+  let allChannels = []; // Store parsed M3U channels
   let categories = [];
   let streams = [];
   let hls = null;
@@ -107,30 +108,108 @@
       }
   }
 
-  async function fetchApi(action, extraParams = {}) {
-    const params = new URLSearchParams(extraParams);
-    params.append('action', action);
+  async function loadPlaylist() {
+      loadingEl.style.display = 'block';
+      loadingEl.textContent = t('loading');
+      listEl.innerHTML = '';
 
-    // Auth params appended manually to ensure correct encoding/handling or just append to URLSearchParams
-    if (token) {
-        params.append('token', token);
-    } else {
-        params.append('username', username);
-        params.append('password', password);
-    }
+      let apiUrl = `/api/player/playlist?${getAuthParams()}`;
 
-    try {
-      const res = await fetch(`/player_api.php?${params.toString()}`);
-      if (!res.ok) throw new Error('API Error');
-      return res.json();
-    } catch (e) {
-      console.error(e);
-      return [];
-    }
+      try {
+          const res = await fetch(apiUrl);
+          if (!res.ok) throw new Error('Playlist Fetch Error');
+          const text = await res.text();
+          allChannels = parseM3U(text);
+          console.log(`Loaded ${allChannels.length} channels`);
+
+          processCategories();
+          loadStreams();
+      } catch (e) {
+          console.error(e);
+          listEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+      } finally {
+          loadingEl.style.display = 'none';
+      }
+  }
+
+  function parseM3U(content) {
+      const lines = content.split('\n');
+      const result = [];
+      let currentItem = {};
+
+      for (let line of lines) {
+          line = line.trim();
+          if (!line) continue;
+
+          if (line.startsWith('#EXTINF:')) {
+              const info = line.substring(8);
+              const commaIndex = info.lastIndexOf(','); // Last comma separates attrs from title
+              let attrs = '';
+              let title = '';
+
+              if (commaIndex !== -1) {
+                  attrs = info.substring(0, commaIndex);
+                  title = info.substring(commaIndex + 1).trim();
+              } else {
+                  attrs = info;
+              }
+
+              currentItem = { name: title, group: 'Uncategorized', logo: '' };
+
+              // Basic attribute parsing
+              const matches = attrs.match(/([a-zA-Z0-9-]+)="([^"]*)"/g);
+              if (matches) {
+                  matches.forEach(m => {
+                      const [key, val] = m.split('=');
+                      const cleanVal = val.replace(/"/g, '');
+                      if (key === 'group-title') currentItem.group = cleanVal;
+                      if (key === 'tvg-logo') currentItem.logo = cleanVal;
+                      if (key === 'tvg-id') currentItem.epg_id = cleanVal;
+                  });
+              }
+          } else if (line.startsWith('#')) {
+              // Ignore
+          } else {
+              if (currentItem.name) {
+                  currentItem.url = line;
+                  // Detect type
+                  if (line.includes('/movie/') || line.endsWith('.mp4') || line.endsWith('.mkv')) {
+                      currentItem.type = 'movie';
+                  } else if (line.includes('/series/')) {
+                      currentItem.type = 'series';
+                  } else {
+                      currentItem.type = 'live';
+                  }
+                  result.push(currentItem);
+                  currentItem = {};
+              }
+          }
+      }
+      return result;
+  }
+
+  function processCategories() {
+      const groups = new Set();
+      allChannels.forEach(c => {
+          // Only include categories relevant to current type?
+          // Or all? Let's show all for now, or maybe filter in render.
+          if (c.group) groups.add(c.group);
+      });
+      categories = Array.from(groups).sort();
+
+      catSelect.innerHTML = `<option value="">${t('allCategories')}</option>`;
+      categories.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c;
+          opt.textContent = c;
+          catSelect.appendChild(opt);
+      });
   }
 
   function initPlayer(url) {
-    if (Hls.isSupported()) {
+    const isHls = url.includes('.m3u8');
+
+    if (Hls.isSupported() && isHls) {
       if (hls) hls.destroy();
       hls = new Hls();
       hls.loadSource(url);
@@ -138,52 +217,34 @@
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
         video.play();
       });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    } else {
+      // Direct playback (MP4 or Safari HLS)
+      if (hls) { hls.destroy(); hls = null; }
       video.src = url;
-      video.addEventListener('loadedmetadata', function() {
-        video.play();
-      });
+      video.play();
     }
   }
 
+  // Legacy stubs or updates
   async function loadCategories() {
-    let action = 'get_live_categories';
-    if (currentType === 'movie') action = 'get_vod_categories';
-    if (currentType === 'series') action = 'get_series_categories';
-
-    categories = await fetchApi(action);
-
-    catSelect.innerHTML = `<option value="">${t('allCategories')}</option>`;
-    categories.forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c.category_id;
-      opt.textContent = c.category_name;
-      catSelect.appendChild(opt);
-    });
+      // No-op, handled in loadPlaylist/processCategories
   }
 
   async function loadStreams() {
-    loadingEl.style.display = 'block';
-    listEl.innerHTML = '';
-
-    let action = 'get_live_streams';
-    if (currentType === 'movie') action = 'get_vod_streams';
-    if (currentType === 'series') action = 'get_series';
-
-    streams = await fetchApi(action);
-    loadingEl.style.display = 'none';
-
-    renderStreams();
+      renderStreams();
   }
 
   function renderStreams() {
     const catId = catSelect.value;
     const search = searchInput.value.toLowerCase();
 
-    const filtered = streams.filter(s => {
-      const matchesCat = !catId || s.category_id === catId;
+    const filtered = allChannels.filter(s => {
+      // Filter by type
+      const matchesType = s.type === currentType;
+      // Use group for category filtering
+      const matchesCat = !catId || s.group === catId;
       const matchesSearch = !search || s.name.toLowerCase().includes(search);
-      return matchesCat && matchesSearch;
+      return matchesType && matchesCat && matchesSearch;
     });
 
     listEl.innerHTML = '';
@@ -199,7 +260,7 @@
       const a = document.createElement('a');
       a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light';
 
-      const icon = s.stream_icon || s.cover || null;
+      const icon = s.logo || null;
 
       const div = document.createElement('div');
       div.className = 'd-flex align-items-center';
@@ -218,47 +279,33 @@
 
       a.appendChild(div);
 
-      a.onclick = () => playStream(s);
+      a.onclick = (e) => {
+          // Highlight active
+          document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+          a.classList.add('active');
+          playStream(s);
+      };
       listEl.appendChild(a);
     });
   }
 
   async function playStream(stream) {
-    document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+    // The stream.url from the playlist is already a local proxy URL (e.g. /live/token/auth/123.m3u8?token=...)
+    // However, if the token was not embedded in the playlist (e.g. auth via cookie/header), we might need to append it.
+    // Given the server implementation embeds the token if passed, we can likely trust stream.url.
+    // But to be safe and robust:
 
-    let url = '';
-    const baseUrl = window.location.origin;
-    const authQuery = token ? `?token=${encodeURIComponent(token)}` : '';
-    // If token, use dummy user/pass in path. If not, use real ones.
-    const pathUser = token ? 'token' : encodeURIComponent(username);
-    const pathPass = token ? 'auth' : encodeURIComponent(password);
+    let url = stream.url;
 
-    if (currentType === 'live') {
-      url = `${baseUrl}/live/${pathUser}/${pathPass}/${stream.stream_id}.m3u8${authQuery}`;
-      initPlayer(url);
-    } else if (currentType === 'movie') {
-      const ext = stream.container_extension || 'mp4';
-      url = `${baseUrl}/movie/${pathUser}/${pathPass}/${stream.stream_id}.${ext}${authQuery}`;
+    // If the URL is relative or matches our origin, it's local.
+    // If it's local and we have a token but the URL doesn't, append it.
 
-      if (hls) { hls.destroy(); hls = null; }
-      video.src = url;
-      video.play();
-    } else if (currentType === 'series') {
-      loadingEl.style.display = 'block';
-      loadingEl.textContent = t('loading');
-      listEl.innerHTML = '';
-
-      const info = await fetchApi('get_series_info', { series_id: stream.series_id });
-      loadingEl.style.display = 'none';
-
-      if (info.episodes) {
-         renderEpisodes(info);
-      } else {
-         alert(t('noEpisodesFound'));
-         renderStreams();
-      }
-      return;
+    if (token && !url.includes('token=')) {
+        const separator = url.includes('?') ? '&' : '?';
+        url += `${separator}token=${encodeURIComponent(token)}`;
     }
+
+    initPlayer(url);
   }
 
   function renderEpisodes(seriesInfo) {
@@ -325,8 +372,7 @@
   }
 
   // Init
-  loadCategories();
-  loadStreams();
+  loadPlaylist();
 
 </script>
 </body>
