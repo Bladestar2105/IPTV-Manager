@@ -1327,6 +1327,11 @@ app.post('/api/player/token', authenticateToken, (req, res) => {
   }
 });
 
+app.get('/api/epg/now', authenticateToken, (req, res) => {
+  // Stub for now - full implementation requires DB storage of programs
+  res.json([]);
+});
+
 // === API: Users ===
 app.get('/api/users', authenticateToken, (req, res) => {
   try {
