@@ -34,13 +34,13 @@
 
 <div id="player-container">
   <video id="video" controls autoplay></video>
+  <button id="maximize-btn" class="btn btn-sm btn-dark position-absolute top-0 end-0 m-2" style="z-index: 1001; opacity: 0.7;" data-i18n="maximize">Maximize</button>
 </div>
 
 <div id="content-area">
   <ul class="nav nav-tabs mb-3" id="player-tabs">
     <li class="nav-item"><a class="nav-link active" href="#" data-type="live" data-i18n="liveTV">Live TV</a></li>
     <li class="nav-item"><a class="nav-link" href="#" data-type="movie" data-i18n="movies">Movies</a></li>
-    <li class="nav-item"><a class="nav-link" href="#" data-type="series" data-i18n="series">Series</a></li>
   </ul>
 
   <div class="row mb-2">
@@ -124,7 +124,7 @@
           allChannels = parseM3U(text);
           console.log(`Loaded ${allChannels.length} channels`);
 
-          processCategories();
+          updateCategories();
           loadStreams();
       } catch (e) {
           console.error(e);
@@ -177,8 +177,6 @@
                   // Detect type
                   if (line.includes('/movie/') || line.endsWith('.mp4') || line.endsWith('.mkv')) {
                       currentItem.type = 'movie';
-                  } else if (line.includes('/series/')) {
-                      currentItem.type = 'series';
                   } else {
                       currentItem.type = 'live';
                   }
@@ -190,12 +188,13 @@
       return result;
   }
 
-  function processCategories() {
+  function updateCategories() {
       const groups = new Set();
+      // Filter channels by current type before extracting categories
       allChannels.forEach(c => {
-          // Only include categories relevant to current type?
-          // Or all? Let's show all for now, or maybe filter in render.
-          if (c.group) groups.add(c.group);
+          if (c.type === currentType && c.group) {
+              groups.add(c.group);
+          }
       });
       categories = Array.from(groups).sort();
 
@@ -231,6 +230,21 @@
         });
         flvPlayer.attachMediaElement(video);
         flvPlayer.load();
+
+        // Error handling for AC-3 or other issues
+        flvPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+            console.warn('Mpegts Error:', errorType, errorDetail, errorInfo);
+            if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
+                // If it's a decoding error (like AC-3), we can't do much but warn the user
+                const toast = document.createElement('div');
+                toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
+                toast.style.zIndex = '1002';
+                toast.textContent = t('playbackError') || 'Playback Error: Codec might not be supported';
+                document.getElementById('player-container').appendChild(toast);
+                setTimeout(() => toast.remove(), 5000);
+            }
+        });
+
         flvPlayer.play().catch(e => console.error(e));
     } else if (Hls.isSupported() && isHls) {
       hls = new Hls();
@@ -244,11 +258,6 @@
       video.src = url;
       video.play();
     }
-  }
-
-  // Legacy stubs or updates
-  async function loadCategories() {
-      // No-op, handled in loadPlaylist/processCategories
   }
 
   async function loadStreams() {
@@ -329,42 +338,6 @@
     initPlayer(url);
   }
 
-  function renderEpisodes(seriesInfo) {
-    listEl.innerHTML = `<button class="btn btn-secondary btn-sm mb-2 w-100" onclick="renderStreams()">${t('backToSeries')}</button>`;
-
-    const episodes = seriesInfo.episodes;
-
-    for (const season in episodes) {
-        const seasonHeader = document.createElement('div');
-        seasonHeader.className = 'p-2 bg-secondary text-white fw-bold';
-        seasonHeader.textContent = `${t('season')} ${season}`;
-        listEl.appendChild(seasonHeader);
-
-        episodes[season].forEach(ep => {
-            const a = document.createElement('a');
-            a.className = 'list-group-item list-group-item-action channel-item bg-dark text-light ps-4';
-            a.textContent = `${ep.episode_num}. ${ep.title} (${ep.container_extension})`;
-
-            a.onclick = () => {
-                const ext = ep.container_extension || 'mp4';
-                const authQuery = token ? `?token=${encodeURIComponent(token)}` : '';
-                const pathUser = token ? 'token' : encodeURIComponent(username);
-                const pathPass = token ? 'auth' : encodeURIComponent(password);
-
-                const url = `${window.location.origin}/series/${pathUser}/${pathPass}/${ep.id}.${ext}${authQuery}`;
-
-                if (hls) { hls.destroy(); hls = null; }
-                video.src = url;
-                video.play();
-
-                document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
-                a.classList.add('active');
-            };
-            listEl.appendChild(a);
-        });
-    }
-  }
-
   // Events
   document.querySelectorAll('#player-tabs .nav-link').forEach(link => {
     link.addEventListener('click', (e) => {
@@ -376,9 +349,33 @@
       catSelect.value = '';
       searchInput.value = '';
 
-      loadCategories();
+      updateCategories();
       loadStreams();
     });
+  });
+
+  // Maximize Logic
+  const maximizeBtn = document.getElementById('maximize-btn');
+  const playerContainer = document.getElementById('player-container');
+
+  maximizeBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        playerContainer.requestFullscreen().catch(err => {
+            console.error(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement) {
+          maximizeBtn.textContent = t('minimize') || 'Minimize';
+          maximizeBtn.setAttribute('data-i18n', 'minimize');
+      } else {
+          maximizeBtn.textContent = t('maximize') || 'Maximize';
+          maximizeBtn.setAttribute('data-i18n', 'maximize');
+      }
   });
 
   catSelect.addEventListener('change', renderStreams);
