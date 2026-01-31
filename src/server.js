@@ -239,7 +239,7 @@ app.use('/api', (req, res, next) => {
   // Allow CORS preflight
   if (req.method === 'OPTIONS') return next();
   // Public endpoints
-  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs') return next();
+  if (req.path === '/login' || req.path === '/login/' || req.path === '/client-logs' || req.path === '/player/playlist') return next();
 
   authenticateToken(req, res, next);
 });
@@ -2295,6 +2295,81 @@ app.get('/player_api.php', async (req, res) => {
   }
 });
 
+// === Local User Playlist Generator ===
+app.get('/api/player/playlist', async (req, res) => {
+  try {
+    const user = await getXtreamUser(req);
+    if (!user) return res.status(401).send('Unauthorized');
+
+    // Fetch user's channels from local DB
+    const channels = db.prepare(`
+      SELECT
+        uc.id as user_channel_id,
+        pc.name,
+        pc.logo,
+        pc.remote_stream_id,
+        pc.stream_type,
+        pc.mime_type,
+        cat.name as category_name,
+        p.url as provider_url,
+        p.username as provider_user,
+        p.password as provider_password
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE cat.user_id = ? AND pc.stream_type != 'series'
+      ORDER BY uc.sort_order
+    `).all(user.id);
+
+    let playlist = '#EXTM3U\n';
+    const host = `${req.protocol}://${req.get('host')}`;
+    const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
+
+    for (const ch of channels) {
+      const group = ch.category_name || 'Uncategorized';
+      const logo = ch.logo || '';
+      const name = ch.name || 'Unknown';
+
+      // Determine extension and path based on stream type
+      let ext = 'ts';
+      let typePath = 'live';
+
+      if (ch.stream_type === 'movie') {
+         typePath = 'movie';
+         ext = ch.mime_type || 'mp4';
+      } else if (ch.stream_type === 'series') {
+         typePath = 'series'; // Note: Series usually need episode lookup, but if mapping 1:1 user_channel to stream, we use /series/ endpoint logic
+         ext = ch.mime_type || 'mp4';
+      } else {
+         // Live
+         // Default to TS for better compatibility with mpegts.js and to bypass flaky HLS upstream
+         ext = 'ts';
+      }
+
+      // Construct SECURE local proxy URL
+      // We use dummy user/pass 'token/auth' because we rely on the token param or headers
+      // The stream_id here is the USER channel ID (uc.id), which the proxy resolves to provider credentials
+      const streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
+
+      // Escape metadata for M3U
+      const safeGroup = group.replace(/"/g, '');
+      const safeLogo = logo.replace(/"/g, '');
+      const safeName = name.replace(/,/g, ' ');
+
+      playlist += `#EXTINF:-1 tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${name}\n`;
+      playlist += `${streamUrl}\n`;
+    }
+
+    res.setHeader('Content-Type', 'audio/x-mpegurl');
+    res.send(playlist);
+
+  } catch (e) {
+    console.error('Playlist generation error:', e);
+    res.status(500).send('#EXTM3U\n');
+  }
+});
+
 // === M3U Playlist API ===
 app.get('/get.php', async (req, res) => {
   try {
@@ -2430,7 +2505,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Connection': 'keep-alive'
       },
       // Don't follow redirects automatically for better control
@@ -2541,7 +2616,7 @@ app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:p
 
     const upstream = await fetch(targetUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Connection': 'keep-alive'
       },
       redirect: 'follow'
@@ -2705,7 +2780,10 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
 
     // Fetch
     const upstream = await fetch(remoteUrl, {
-      headers: { 'User-Agent': 'IPTV-Manager' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Connection': 'keep-alive'
+      },
       redirect: 'follow'
     });
 
@@ -2792,7 +2870,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
       headers: {
-        'User-Agent': 'IPTV-Manager',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Connection': 'keep-alive'
       },
       redirect: 'follow'
