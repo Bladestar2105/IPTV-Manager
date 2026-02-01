@@ -343,7 +343,15 @@ const translations = {
     '2fa_enabled_success': '2FA Enabled Successfully',
     '2fa_disabled_success': '2FA Disabled',
     confirm_disable_2fa: 'Disable 2FA?',
-    '2fa_enabled': '2FA is enabled'
+    '2fa_enabled': '2FA is enabled',
+    webui_access: 'Web UI Access',
+    modeProvider: 'By Provider',
+    modeCategory: 'By Category',
+    selectUser: 'Select User',
+    selectCategory: 'Select Category',
+    selectCategoryPlaceholder: '-- Select Category --',
+    selectUserFirst: 'Please select a user first',
+    select_options_to_load: 'Select options above to load channels'
   },
   
   de: {
@@ -686,7 +694,15 @@ const translations = {
     '2fa_enabled_success': '2FA erfolgreich aktiviert',
     '2fa_disabled_success': '2FA deaktiviert',
     confirm_disable_2fa: '2FA wirklich deaktivieren?',
-    '2fa_enabled': '2FA ist aktiviert'
+    '2fa_enabled': '2FA ist aktiviert',
+    webui_access: 'Web UI Zugriff',
+    modeProvider: 'Nach Provider',
+    modeCategory: 'Nach Kategorie',
+    selectUser: 'Benutzer wählen',
+    selectCategory: 'Kategorie wählen',
+    selectCategoryPlaceholder: '-- Kategorie wählen --',
+    selectUserFirst: 'Bitte zuerst einen Benutzer wählen',
+    select_options_to_load: 'Bitte Optionen wählen'
   },
 
   fr: {
@@ -1029,7 +1045,15 @@ const translations = {
     '2fa_enabled_success': '2FA activé avec succès',
     '2fa_disabled_success': '2FA désactivé',
     confirm_disable_2fa: 'Désactiver 2FA ?',
-    '2fa_enabled': '2FA est activé'
+    '2fa_enabled': '2FA est activé',
+    webui_access: 'Accès Web UI',
+    modeProvider: 'Par Fournisseur',
+    modeCategory: 'Par Catégorie',
+    selectUser: 'Sélectionner Utilisateur',
+    selectCategory: 'Sélectionner Catégorie',
+    selectCategoryPlaceholder: '-- Sélectionner Catégorie --',
+    selectUserFirst: 'Veuillez d\'abord sélectionner un utilisateur',
+    select_options_to_load: 'Sélectionnez les options pour charger'
   },
 
   el: {
@@ -1362,7 +1386,15 @@ const translations = {
     '2fa_enabled_success': 'Το 2FA ενεργοποιήθηκε',
     '2fa_disabled_success': 'Το 2FA απενεργοποιήθηκε',
     confirm_disable_2fa: 'Απενεργοποίηση 2FA;',
-    '2fa_enabled': 'Το 2FA είναι ενεργό'
+    '2fa_enabled': 'Το 2FA είναι ενεργό',
+    webui_access: 'Πρόσβαση Web UI',
+    modeProvider: 'Ανά Πάροχο',
+    modeCategory: 'Ανά Κατηγορία',
+    selectUser: 'Επιλογή Χρήστη',
+    selectCategory: 'Επιλογή Κατηγορίας',
+    selectCategoryPlaceholder: '-- Επιλέξτε Κατηγορία --',
+    selectUserFirst: 'Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
+    select_options_to_load: 'Επιλέξτε επιλογές για φόρτωση'
   }
 };
 
