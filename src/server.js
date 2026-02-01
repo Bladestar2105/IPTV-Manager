@@ -3435,9 +3435,10 @@ app.get('/api/statistics', authenticateToken, async (req, res) => {
 });
 
 async function generateConsolidatedEpg() {
+  const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+  const tempFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
+
   try {
-    const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
-    const tempFile = path.join(EPG_CACHE_DIR, 'epg.xml.tmp');
     const writeStream = createWriteStream(tempFile);
 
     const epgFiles = [];
@@ -3469,11 +3470,21 @@ async function generateConsolidatedEpg() {
     writeStream.write('</tv>');
     writeStream.end();
 
-    await new Promise(resolve => writeStream.on('finish', resolve));
+    await new Promise((resolve, reject) => {
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+    });
+
     await fs.promises.rename(tempFile, consolidatedFile);
     console.log('✅ Consolidated EPG regenerated');
   } catch (e) {
     console.error('Failed to regenerate consolidated EPG:', e);
+    // Cleanup temp file if it exists
+    try {
+        if (fs.existsSync(tempFile)) await fs.promises.unlink(tempFile);
+    } catch (cleanupErr) {
+        console.error('Failed to clean up temp file:', cleanupErr);
+    }
   }
 }
 
@@ -3924,7 +3935,7 @@ app.put('/api/user-categories/:id/adult', authenticateToken, (req, res) => {
 });
 
 // EPG Update Function
-async function updateEpgSource(sourceId) {
+async function updateEpgSource(sourceId, skipRegenerate = false) {
   const source = db.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
   if (!source) throw new Error('EPG source not found');
   
@@ -3947,7 +3958,11 @@ async function updateEpgSource(sourceId) {
     db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
     
     console.log(`✅ EPG updated: ${source.name} (${(epgData.length / 1024 / 1024).toFixed(2)} MB)`);
-    await generateConsolidatedEpg();
+
+    if (!skipRegenerate) {
+        await generateConsolidatedEpg();
+    }
+
     return { success: true, size: epgData.length };
   } catch (e) {
     console.error(`❌ EPG update failed: ${source.name}`, e.message);
@@ -4130,7 +4145,7 @@ app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
     // Update regular EPG sources in parallel
     const sourcePromises = sources.map(async (source) => {
       try {
-        await updateEpgSource(source.id);
+        await updateEpgSource(source.id, true);
         return {id: source.id, success: true};
       } catch (e) {
         return {id: source.id, success: false, error: e.message};
