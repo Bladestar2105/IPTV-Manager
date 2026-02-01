@@ -3401,7 +3401,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
 });
 
 // === Statistics API ===
-app.get('/api/statistics', authenticateToken, (req, res) => {
+app.get('/api/statistics', authenticateToken, async (req, res) => {
   try {
     // Top Channels
     const topChannels = db.prepare(`
