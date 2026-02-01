@@ -2801,6 +2801,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
         streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip);
 
         // Update stats
+        const startTime = Date.now();
         const now = Math.floor(startTime / 1000);
         const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
         if (existingStat) {
@@ -2896,6 +2897,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     streamManager.add(connectionId, user, channel.name, req.ip);
 
     // Update statistics in DB
+    const startTime = Date.now();
     const now = Math.floor(startTime / 1000);
     const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
     if (existingStat) {
@@ -3143,6 +3145,7 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
     streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip);
 
     // Update statistics in DB
+    const startTime = Date.now();
     const now = Math.floor(startTime / 1000);
     const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
     if (existingStat) {
@@ -3240,6 +3243,7 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
     if (!provider) return res.sendStatus(404);
 
     // Track active stream
+    const startTime = Date.now(); // Note: Series proxy logic used startTime for stats implicitly? Checking usage below.
     streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip);
 
     provider.password = decrypt(provider.password);
@@ -3336,6 +3340,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
     if (!channel) return res.sendStatus(404);
 
     // Track active stream (optional for timeshift? might be good to track)
+    const startTime = Date.now();
     streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip);
 
     // Decrypt provider password
