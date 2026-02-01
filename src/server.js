@@ -27,8 +27,10 @@ import ffmpegPath from 'ffmpeg-static';
 import cluster from 'cluster';
 import os from 'os';
 import { Worker } from 'worker_threads';
+import { createClient } from 'redis';
 import { cleanName, levenshtein, parseEpgXml } from './epg_utils.js';
 import { parseM3u } from './playlist_parser.js';
+import streamManager from './stream_manager.js';
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -726,32 +728,23 @@ try {
 // Sync Scheduler
 let syncIntervals = new Map();
 
-// Stream Manager (DB based)
-const StreamManager = {
-  add: (id, user, channelName, ip) => {
+// Initialize Stream Manager
+let redisClient = null;
+if (process.env.REDIS_URL) {
+  (async () => {
     try {
-        db.prepare(`
-          INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(id, user.id, user.username, channelName, Date.now(), ip, process.pid);
-    } catch(e) { console.error('StreamManager add error:', e.message); }
-  },
-  remove: (id) => {
-    try {
-        db.prepare('DELETE FROM current_streams WHERE id = ?').run(id);
-    } catch(e) { /* ignore */ }
-  },
-  cleanupUser: (userId, ip) => {
-    try {
-        db.prepare('DELETE FROM current_streams WHERE user_id = ? AND ip = ?').run(userId, ip);
-    } catch(e) { console.error('StreamManager cleanup error:', e.message); }
-  },
-  getAll: () => {
-    try {
-        return db.prepare('SELECT * FROM current_streams').all();
-    } catch(e) { return []; }
-  }
-};
+      redisClient = createClient({ url: process.env.REDIS_URL });
+      redisClient.on('error', (err) => console.error('Redis Client Error', err));
+      await redisClient.connect();
+      streamManager.init(db, redisClient);
+    } catch (e) {
+      console.error('Failed to connect to Redis, falling back to SQLite:', e);
+      streamManager.init(db, null);
+    }
+  })();
+} else {
+  streamManager.init(db, null);
+}
 
 function calculateNextSync(interval) {
   const now = Math.floor(Date.now() / 1000);
@@ -2805,7 +2798,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
 
     // Track active stream (only for manifest)
     if (relativePath.endsWith('.mpd')) {
-        StreamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip);
+        streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip);
 
         // Update stats
         const now = Math.floor(startTime / 1000);
@@ -2825,7 +2818,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
 
     if (!upstream.ok) {
        console.error(`MPD proxy error: ${upstream.status} for ${upstreamUrl}`);
-       StreamManager.remove(connectionId);
+       streamManager.remove(connectionId);
        return res.sendStatus(upstream.status);
     }
 
@@ -2842,7 +2835,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
         res.setHeader('Content-Type', 'application/dash+xml');
         res.send(newText);
 
-        StreamManager.remove(connectionId);
+        streamManager.remove(connectionId);
         return;
     }
 
@@ -2855,13 +2848,13 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
     upstream.body.pipe(res);
 
     req.on('close', () => {
-       StreamManager.remove(connectionId);
+       streamManager.remove(connectionId);
        if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
     });
 
   } catch (e) {
     console.error('MPD proxy error:', e);
-    StreamManager.remove(connectionId);
+    streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
 });
@@ -2897,10 +2890,10 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     if (!channel) return res.sendStatus(404);
 
     // Cleanup existing streams for this user/ip (Fast-Tapping Fix)
-    StreamManager.cleanupUser(user.id, req.ip);
+    streamManager.cleanupUser(user.id, req.ip);
 
     // Track active stream
-    StreamManager.add(connectionId, user, channel.name, req.ip);
+    streamManager.add(connectionId, user, channel.name, req.ip);
 
     // Update statistics in DB
     const now = Math.floor(startTime / 1000);
@@ -2934,7 +2927,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
 
         if (!upstream.ok) {
            console.error(`Transcode upstream fetch error: ${upstream.status}`);
-           StreamManager.remove(connectionId);
+           streamManager.remove(connectionId);
            return res.sendStatus(upstream.status);
         }
 
@@ -2954,18 +2947,18 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
             if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                console.error('FFmpeg error:', err.message);
             }
-            StreamManager.remove(connectionId);
+            streamManager.remove(connectionId);
           })
           .on('end', () => {
             console.log('FFmpeg stream ended');
-            StreamManager.remove(connectionId);
+            streamManager.remove(connectionId);
           });
 
         command.pipe(res, { end: true });
 
         req.on('close', () => {
           command.kill('SIGKILL');
-          StreamManager.remove(connectionId);
+          streamManager.remove(connectionId);
           // Optional: destroy upstream body if needed, though fetch body usually cleans up
         });
 
@@ -2973,7 +2966,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
 
       } catch (e) {
         console.error('Transcode setup error:', e.message);
-        StreamManager.remove(connectionId);
+        streamManager.remove(connectionId);
         return res.sendStatus(500);
       }
     }
@@ -2991,7 +2984,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     
     if (!upstream.ok || !upstream.body) {
       console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       return res.sendStatus(502);
     }
 
@@ -3024,7 +3017,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.send(newText);
 
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       return;
     }
 
@@ -3050,7 +3043,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Stream error:', err.message);
       }
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       if (!res.headersSent) {
         res.sendStatus(502);
       }
@@ -3058,7 +3051,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     
     // Handle client disconnect gracefully
     req.on('close', () => {
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       if (upstream.body && !upstream.body.destroyed) {
         upstream.body.destroy();
       }
@@ -3066,7 +3059,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     
   } catch (e) {
     console.error('Stream proxy error:', e.message);
-    StreamManager.remove(connectionId);
+    streamManager.remove(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
     }
@@ -3147,7 +3140,7 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     // Track active stream
-    StreamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip);
+    streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip);
 
     // Update statistics in DB
     const now = Math.floor(startTime / 1000);
@@ -3182,7 +3175,7 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
     if (!upstream.ok || !upstream.body) {
       if (upstream.status !== 200 && upstream.status !== 206) {
           console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
-          StreamManager.remove(connectionId);
+          streamManager.remove(connectionId);
           return res.sendStatus(502);
       }
     }
@@ -3207,17 +3200,17 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
 
     upstream.body.on('error', (err) => {
       console.error('Movie stream error:', err.message);
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
     });
 
     req.on('close', () => {
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
     });
 
   } catch (e) {
     console.error('Movie proxy error:', e.message);
-    StreamManager.remove(connectionId);
+    streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
 });
@@ -3247,7 +3240,7 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
     if (!provider) return res.sendStatus(404);
 
     // Track active stream
-    StreamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip);
+    streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip);
 
     provider.password = decrypt(provider.password);
 
@@ -3272,7 +3265,7 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
     if (!upstream.ok || !upstream.body) {
       if (upstream.status !== 200 && upstream.status !== 206) {
           console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
-          StreamManager.remove(connectionId);
+          streamManager.remove(connectionId);
           return res.sendStatus(502);
       }
     }
@@ -3295,17 +3288,17 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
 
     upstream.body.on('error', (err) => {
       console.error('Series stream error:', err.message);
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
     });
 
     req.on('close', () => {
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
     });
 
   } catch (e) {
     console.error('Series proxy error:', e.message);
-    StreamManager.remove(connectionId);
+    streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
 });
@@ -3343,7 +3336,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
     if (!channel) return res.sendStatus(404);
 
     // Track active stream (optional for timeshift? might be good to track)
-    StreamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip);
+    streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip);
 
     // Decrypt provider password
     channel.provider_pass = decrypt(channel.provider_pass);
@@ -3363,7 +3356,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
 
     if (!upstream.ok || !upstream.body) {
       console.error(`Timeshift proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       return res.sendStatus(502);
     }
 
@@ -3385,14 +3378,14 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Timeshift stream error:', err.message);
       }
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       if (!res.headersSent) {
         res.sendStatus(500);
       }
     });
 
     req.on('close', () => {
-      StreamManager.remove(connectionId);
+      streamManager.remove(connectionId);
       if (upstream.body && !upstream.body.destroyed) {
         upstream.body.destroy();
       }
@@ -3400,7 +3393,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
 
   } catch (e) {
     console.error('Timeshift proxy error:', e.message);
-    StreamManager.remove(connectionId);
+    streamManager.remove(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
     }
@@ -3420,7 +3413,8 @@ app.get('/api/statistics', authenticateToken, (req, res) => {
     `).all();
 
     // Active Streams
-    const streams = StreamManager.getAll().map(s => ({
+    const allStreams = await streamManager.getAll();
+    const streams = allStreams.map(s => ({
       ...s,
       duration: Math.floor((Date.now() - s.start_time) / 1000)
     }));
