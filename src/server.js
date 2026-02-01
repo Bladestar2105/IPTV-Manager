@@ -2464,9 +2464,10 @@ app.get('/api/user-categories/:catId/channels', authenticateToken, (req, res) =>
     }
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, pc.*
+      SELECT uc.id as user_channel_id, pc.*, map.epg_channel_id as manual_epg_id
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE uc.user_category_id = ?
       ORDER BY uc.sort_order
     `).all(catId);

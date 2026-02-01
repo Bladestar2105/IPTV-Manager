@@ -2000,6 +2000,19 @@ document.addEventListener('DOMContentLoaded', () => {
     epgMappingProviderSelect.addEventListener('change', loadEpgMappingChannels);
   }
 
+  const epgMappingCategorySelect = document.getElementById('epg-mapping-category-select');
+  if (epgMappingCategorySelect) {
+      epgMappingCategorySelect.addEventListener('change', loadEpgMappingChannels);
+  }
+
+  // Mode Switcher Events
+  document.querySelectorAll('input[name="epg-mode"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+          epgMappingMode = e.target.value;
+          renderEpgMappingControls();
+      });
+  });
+
   const autoMapBtn = document.getElementById('auto-map-btn');
   if (autoMapBtn) {
     autoMapBtn.addEventListener('click', handleAutoMap);
@@ -2200,7 +2213,7 @@ function switchView(viewName) {
   } else if (viewName === 'epg-mapping') {
     document.getElementById('view-epg-mapping').classList.remove('d-none');
     document.getElementById('nav-epg-mapping').classList.add('active');
-    loadEpgMappingProviders();
+    renderEpgMappingControls();
   } else if (viewName === 'statistics') {
     document.getElementById('view-statistics').classList.remove('d-none');
     document.getElementById('nav-statistics').classList.add('active');
@@ -2474,10 +2487,46 @@ function formatDuration(sec) {
 // === EPG Mapping Logic ===
 let epgMappingChannels = [];
 let availableEpgChannels = [];
+let epgMappingMode = 'provider'; // 'provider' or 'category'
+
+function renderEpgMappingControls() {
+    const isAdmin = currentUser && currentUser.is_admin;
+    const providerContainer = document.getElementById('epg-mapping-provider-container');
+    const categoryContainer = document.getElementById('epg-mapping-category-container');
+    const switcher = document.getElementById('epg-mode-switcher');
+
+    // Switcher Visibility
+    if (switcher) switcher.style.display = isAdmin ? 'block' : 'none';
+
+    // Force mode for non-admin
+    if (!isAdmin) epgMappingMode = 'category';
+
+    // Show/Hide Containers
+    if (epgMappingMode === 'provider') {
+        if (providerContainer) providerContainer.style.display = 'block';
+        if (categoryContainer) categoryContainer.style.display = 'none';
+        loadEpgMappingProviders();
+    } else {
+        if (providerContainer) providerContainer.style.display = 'none';
+        if (categoryContainer) categoryContainer.style.display = 'block';
+
+        // User Select Visibility (Admin only)
+        const userSelectContainer = document.getElementById('epg-category-user-select-container');
+        if (userSelectContainer) userSelectContainer.style.display = isAdmin ? 'block' : 'none';
+
+        loadEpgMappingUsersAndCategories();
+    }
+
+    // Clear table
+    document.getElementById('epg-mapping-tbody').innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('select_options_to_load')}</td></tr>`;
+    epgMappingChannels = [];
+    updateMappingStats();
+}
 
 async function loadEpgMappingProviders() {
   const providers = await fetchJSON('/api/providers');
   const select = document.getElementById('epg-mapping-provider-select');
+  if(!select) return;
   const currentVal = select.value;
 
   select.innerHTML = `<option value="" data-i18n="selectProviderPlaceholder">${t('selectProviderPlaceholder')}</option>`;
@@ -2492,46 +2541,126 @@ async function loadEpgMappingProviders() {
   if (currentVal) select.value = currentVal;
 }
 
+async function loadEpgMappingUsersAndCategories() {
+    const userSelect = document.getElementById('epg-mapping-user-select');
+    const catSelect = document.getElementById('epg-mapping-category-select');
+    const isAdmin = currentUser && currentUser.is_admin;
+
+    // Populate Users if Admin
+    if (isAdmin && userSelect && userSelect.children.length === 0) {
+        const users = await fetchJSON('/api/users');
+        userSelect.innerHTML = `<option value="">${t('selectUserPlaceholder')}</option>`;
+        users.forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.id;
+            opt.textContent = u.username;
+            userSelect.appendChild(opt);
+        });
+
+        // Auto-select first user or current selection logic if needed
+        // For now, let admin select manually.
+        userSelect.onchange = () => loadEpgCategoriesForMapping(userSelect.value);
+    } else if (!isAdmin) {
+        // Non-admin: Load categories for self immediately
+        loadEpgCategoriesForMapping(currentUser.id);
+    }
+}
+
+async function loadEpgCategoriesForMapping(userId) {
+    const catSelect = document.getElementById('epg-mapping-category-select');
+    if (!catSelect) return;
+
+    catSelect.innerHTML = `<option value="">${t('loading')}</option>`;
+
+    if (!userId) {
+        catSelect.innerHTML = `<option value="">${t('selectUserFirst')}</option>`;
+        return;
+    }
+
+    try {
+        const cats = await fetchJSON(`/api/users/${userId}/categories`);
+        catSelect.innerHTML = `<option value="">${t('selectCategoryPlaceholder')}</option>`;
+
+        const liveCats = cats.filter(c => !c.type || c.type === 'live');
+
+        liveCats.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name;
+            catSelect.appendChild(opt);
+        });
+    } catch(e) {
+        catSelect.innerHTML = `<option value="">${t('error')}</option>`;
+    }
+}
+
 async function loadEpgMappingChannels() {
-  const providerId = document.getElementById('epg-mapping-provider-select').value;
   const tbody = document.getElementById('epg-mapping-tbody');
   const autoMapBtn = document.getElementById('auto-map-btn');
 
-  if (!providerId) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('selectProviderFirst')}</td></tr>`;
-    autoMapBtn.disabled = true;
-    epgMappingChannels = [];
-    return;
+  // Determine source based on mode
+  if (epgMappingMode === 'provider') {
+      const providerId = document.getElementById('epg-mapping-provider-select').value;
+      if (!providerId) return; // Wait for selection
+
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+      if(autoMapBtn) autoMapBtn.disabled = true;
+
+      try {
+        const [channels, mappings] = await Promise.all([
+          fetchJSON(`/api/providers/${providerId}/channels?type=live`),
+          fetchJSON(`/api/mapping/${providerId}`)
+        ]);
+
+        epgMappingChannels = channels.map(ch => ({
+          ...ch,
+          current_epg_id: ch.epg_channel_id,
+          manual_epg_id: mappings[ch.id] || null
+        }));
+
+        finishLoadingMapping();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+      }
+  } else {
+      // Category Mode
+      const catSelect = document.getElementById('epg-mapping-category-select');
+      const catId = catSelect.value;
+      if (!catId) return;
+
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+      if(autoMapBtn) autoMapBtn.style.display = 'none';
+
+      try {
+          const channels = await fetchJSON(`/api/user-categories/${catId}/channels`);
+          // Backend now returns manual_epg_id in the response
+          epgMappingChannels = channels.map(ch => ({
+              id: ch.id, // This is provider_channel_id (pc.id) based on backend query
+              name: ch.name,
+              logo: ch.logo,
+              current_epg_id: ch.epg_channel_id,
+              manual_epg_id: ch.manual_epg_id || null
+          }));
+
+          finishLoadingMapping();
+      } catch(e) {
+          tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+      }
   }
+}
 
-  tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
-  autoMapBtn.disabled = true;
-
-  try {
-    const [channels, mappings] = await Promise.all([
-      fetchJSON(`/api/providers/${providerId}/channels?type=live`),
-      fetchJSON(`/api/mapping/${providerId}`)
-    ]);
-
-    // Merge data
-    epgMappingChannels = channels.map(ch => ({
-      ...ch,
-      current_epg_id: ch.epg_channel_id,
-      manual_epg_id: mappings[ch.id] || null
-    }));
-
+function finishLoadingMapping() {
     renderEpgMappingChannels();
-    autoMapBtn.disabled = false;
-
-    // Update stats
     updateMappingStats();
-
-    // Preload available EPG channels for the modal
     loadAvailableEpgChannels();
 
-  } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
-  }
+    const autoMapBtn = document.getElementById('auto-map-btn');
+    if (autoMapBtn && epgMappingMode === 'provider') {
+        autoMapBtn.disabled = false;
+        autoMapBtn.style.display = 'inline-block';
+    } else if (autoMapBtn) {
+        autoMapBtn.style.display = 'none';
+    }
 }
 
 function renderEpgMappingChannels() {

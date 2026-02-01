@@ -520,22 +520,55 @@
     <!-- View: EPG Mapping -->
     <div id="view-epg-mapping" class="d-none">
       <h3 data-i18n="configuration" class="mt-4">Configuration</h3>
-      <div class="row align-items-end mb-4">
-        <div class="col-md-5">
-          <label class="form-label" data-i18n="selectProvider">Select Provider</label>
-          <select id="epg-mapping-provider-select" class="form-select">
-            <option value="" data-i18n="selectProviderPlaceholder">-- Select Provider --</option>
-          </select>
-        </div>
-        <div class="col-md-7 text-end">
-          <div class="d-flex justify-content-end align-items-center gap-3">
-             <div class="form-check" id="only-used-container" style="display:none;">
-               <input class="form-check-input" type="checkbox" id="epg-only-used">
-               <label class="form-check-label" for="epg-only-used" data-i18n="only_used_channels">Only used channels</label>
-             </div>
-             <button id="auto-map-btn" class="btn btn-warning" disabled data-i18n="autoMap">⚡ Auto Map</button>
+
+      <!-- Mode Switcher -->
+      <div class="mb-3" id="epg-mode-switcher" style="display:none;">
+         <div class="btn-group" role="group">
+            <input type="radio" class="btn-check" name="epg-mode" id="epg-mode-provider" value="provider" checked>
+            <label class="btn btn-outline-primary" for="epg-mode-provider" data-i18n="modeProvider">By Provider</label>
+
+            <input type="radio" class="btn-check" name="epg-mode" id="epg-mode-category" value="category">
+            <label class="btn btn-outline-primary" for="epg-mode-category" data-i18n="modeCategory">By Category</label>
+         </div>
+      </div>
+
+      <!-- Provider Controls -->
+      <div id="epg-mapping-provider-container">
+          <div class="row align-items-end mb-4">
+            <div class="col-md-5">
+              <label class="form-label" data-i18n="selectProvider">Select Provider</label>
+              <select id="epg-mapping-provider-select" class="form-select">
+                <option value="" data-i18n="selectProviderPlaceholder">-- Select Provider --</option>
+              </select>
+            </div>
+            <div class="col-md-7 text-end">
+              <div class="d-flex justify-content-end align-items-center gap-3">
+                 <div class="form-check" id="only-used-container" style="display:none;">
+                   <input class="form-check-input" type="checkbox" id="epg-only-used">
+                   <label class="form-check-label" for="epg-only-used" data-i18n="only_used_channels">Only used channels</label>
+                 </div>
+                 <button id="auto-map-btn" class="btn btn-warning" disabled data-i18n="autoMap">⚡ Auto Map</button>
+              </div>
+            </div>
           </div>
-        </div>
+      </div>
+
+      <!-- Category Controls -->
+      <div id="epg-mapping-category-container" style="display:none;">
+          <div class="row align-items-end mb-4">
+            <div class="col-md-4" id="epg-category-user-select-container">
+               <label class="form-label" data-i18n="selectUser">Select User</label>
+               <select id="epg-mapping-user-select" class="form-select">
+                  <!-- Populated by JS -->
+               </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" data-i18n="selectCategory">Select Category</label>
+              <select id="epg-mapping-category-select" class="form-select">
+                <option value="" data-i18n="selectCategoryPlaceholder">-- Select Category --</option>
+              </select>
+            </div>
+          </div>
       </div>
 
       <div class="d-flex justify-content-between align-items-center mb-2">
