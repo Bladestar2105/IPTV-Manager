@@ -125,7 +125,7 @@
                   <div class="col-4"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" placeholder="Username" required /></div>
                   <div class="col-4"><input class="form-control form-control-sm" name="password" type="text" data-i18n-placeholder="password" placeholder="Password" required /></div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
-                  <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" onclick="generateUser()" title="Generate Random">⚡</button></div>
+                  <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" onclick="generateUser()" title="Generate Random" data-i18n-label="generateRandomUser">⚡</button></div>
                </form>
                <ul id="user-list" class="list-group list-group-flush" style="max-height: 400px; overflow-y: auto;"></ul>
             </div>
@@ -186,7 +186,7 @@
                              </div>
                              <form id="category-form" class="input-group input-group-sm mb-2">
                                 <input class="form-control" name="name" data-i18n-placeholder="newCategory" placeholder="New Category" required />
-                                <button class="btn btn-outline-secondary" type="submit">+</button>
+                                <button class="btn btn-outline-secondary" type="submit" data-i18n-label="addCategory">+</button>
                              </form>
                              <div class="d-flex justify-content-between align-items-center mb-1">
                                 <div class="form-check form-check-sm">
@@ -241,7 +241,7 @@
                           <label class="form-label small fw-bold" data-i18n="url">URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="xtream-url" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-url').value)">📋</button>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-url').value)" data-i18n-label="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -250,14 +250,14 @@
                              <label class="form-label small fw-bold" data-i18n="username">Username</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-user" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-user').value)">📋</button>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-user').value)" data-i18n-label="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                           <div class="col-md-6">
                              <label class="form-label small fw-bold" data-i18n="password">Password</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-pass" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-pass').value)">📋</button>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-pass').value)" data-i18n-label="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                        </div>
@@ -266,7 +266,7 @@
                           <label class="form-label small fw-bold" data-i18n="epgUrlLabel">EPG URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="epg-url" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('epg-url').value)">📋</button>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('epg-url').value)" data-i18n-label="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -274,7 +274,7 @@
                           <label class="form-label small fw-bold" data-i18n="m3uLink">M3U Link</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="m3u-link" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('m3u-link').value)">📋</button>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('m3u-link').value)" data-i18n-label="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -290,7 +290,7 @@
          <div class="card-header d-flex justify-content-between align-items-center">
             <span data-i18n="epgSources">EPG Sources</span>
             <div>
-               <button id="add-epg-source-btn" class="btn btn-sm btn-primary">+</button>
+               <button id="add-epg-source-btn" class="btn btn-sm btn-primary" data-i18n-label="addEpgSource">+</button>
                <button id="browse-epg-sources-btn" class="btn btn-sm btn-secondary" data-i18n="browse">Browse</button>
                <button id="update-all-epg-btn" class="btn btn-sm btn-info" data-i18n="updateAll">Update All</button>
             </div>
