@@ -92,6 +92,7 @@ async function fetchJSON(url, options = {}) {
   return res.json();
 }
 
+let currentUser = null;
 let selectedUser = null;
 let selectedUserId = null;
 let selectedCategoryId = null;
@@ -249,6 +250,30 @@ function copyAllXtreamCredentials() {
 }
 
 async function loadUsers() {
+  if (!currentUser || !currentUser.is_admin) {
+      // If user, fake load themselves as selected
+      const user = {
+          id: currentUser.id,
+          username: currentUser.username,
+          plain_password: '***'
+      };
+
+      // Auto-select
+      selectedUser = user;
+      selectedUserId = user.id;
+      document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${user.username}`;
+
+      loadUserCategories();
+      loadProviders(user.id);
+
+      // Hide user list and management
+      document.getElementById('user-list').innerHTML = `<li class="list-group-item text-muted">${t('managed_by_admin')}</li>`;
+
+      // Update dummy export select
+      updateExportUserSelect([user]);
+      return;
+  }
+
   const users = await fetchJSON('/api/users');
   updateStatsCounters('users', users.length);
   const list = document.getElementById('user-list');
@@ -350,8 +375,10 @@ async function loadUsers() {
     };
     
     btnGroup.appendChild(playBtn);
-    btnGroup.appendChild(editBtn);
-    btnGroup.appendChild(delBtn);
+    if (currentUser && currentUser.is_admin) {
+        btnGroup.appendChild(editBtn);
+        btnGroup.appendChild(delBtn);
+    }
     li.appendChild(span);
     li.appendChild(btnGroup);
     list.appendChild(li);
@@ -399,6 +426,9 @@ function showEditUserModal(user) {
   document.getElementById('edit-user-id').value = user.id;
   document.getElementById('edit-user-username').value = user.username;
   document.getElementById('edit-user-password').value = '';
+  // Checkbox handling: default to true if undefined/null (legacy users), else use value
+  const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
+  document.getElementById('edit-user-webui-access').checked = webuiAccess;
   modal.show();
 }
 
@@ -407,8 +437,9 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const id = document.getElementById('edit-user-id').value;
   const username = document.getElementById('edit-user-username').value;
   const password = document.getElementById('edit-user-password').value;
+  const webuiAccess = document.getElementById('edit-user-webui-access').checked;
 
-  const body = { username };
+  const body = { username, webui_access: webuiAccess };
   if (password) body.password = password;
 
   try {
@@ -439,6 +470,12 @@ async function loadProviders(filterUserId = null) {
   const section = document.getElementById('provider-section');
   if (section) section.style.display = targetUserId ? 'block' : 'none';
 
+  // Hide "Add Provider" button for non-admins
+  const addProviderBtn = document.getElementById('add-provider-btn');
+  if (addProviderBtn) {
+      addProviderBtn.style.display = (currentUser && currentUser.is_admin) ? 'block' : 'none';
+  }
+
   // Filter for display
   const providersToRender = targetUserId
       ? providers.filter(p => p.user_id == targetUserId)
@@ -458,71 +495,75 @@ async function loadProviders(filterUserId = null) {
     row.innerHTML = `<div><strong>${p.name}</strong> <small>(${p.url})</small>${ownerInfo}${epgInfo}</div>`;
     
     const btnGroup = document.createElement('div');
+    const isAdmin = currentUser && currentUser.is_admin;
     
-    const editBtn = document.createElement('button');
-    editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    editBtn.innerHTML = '✏️';
-    editBtn.setAttribute('aria-label', t('edit'));
-    editBtn.onclick = () => prepareEditProvider(p);
+    if (isAdmin) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+        editBtn.innerHTML = '✏️';
+        editBtn.setAttribute('aria-label', t('edit'));
+        editBtn.onclick = () => prepareEditProvider(p);
+        btnGroup.appendChild(editBtn);
 
-    const syncBtn = document.createElement('button');
-    syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
-    syncBtn.textContent = t('sync');
-    syncBtn.onclick = async () => {
-      if (!selectedUserId) {
-        alert(t('pleaseSelectUserFirst'));
-        return;
-      }
-      syncBtn.disabled = true;
-      syncBtn.textContent = t('syncing');
-      try {
-        const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({user_id: selectedUserId})
-        });
-        alert(t('syncSuccess', {
-          added: res.channels_added,
-          updated: res.channels_updated,
-          categories: res.categories_added
-        }));
-      } catch (e) {
-        alert(t('errorPrefix') + ' ' + e.message);
-      } finally {
-        syncBtn.disabled = false;
+        const syncBtn = document.createElement('button');
+        syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
         syncBtn.textContent = t('sync');
-      }
-    };
+        syncBtn.onclick = async () => {
+          if (!selectedUserId) {
+            alert(t('pleaseSelectUserFirst'));
+            return;
+          }
+          syncBtn.disabled = true;
+          syncBtn.textContent = t('syncing');
+          try {
+            const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({user_id: selectedUserId})
+            });
+            alert(t('syncSuccess', {
+              added: res.channels_added,
+              updated: res.channels_updated,
+              categories: res.categories_added
+            }));
+          } catch (e) {
+            alert(t('errorPrefix') + ' ' + e.message);
+          } finally {
+            syncBtn.disabled = false;
+            syncBtn.textContent = t('sync');
+          }
+        };
+        btnGroup.appendChild(syncBtn);
+
+        const configBtn = document.createElement('button');
+        configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+        configBtn.innerHTML = '⚙️';
+        configBtn.title = t('syncConfig');
+        configBtn.setAttribute('aria-label', t('syncConfig'));
+        configBtn.onclick = () => showSyncConfigModal(p.id);
+        btnGroup.appendChild(configBtn);
+
+        const logsBtn = document.createElement('button');
+        logsBtn.className = 'btn btn-sm btn-outline-info me-1';
+        logsBtn.innerHTML = '📊';
+        logsBtn.title = t('syncLogs');
+        logsBtn.setAttribute('aria-label', t('syncLogs'));
+        logsBtn.onclick = () => showSyncLogs(p.id);
+        btnGroup.appendChild(logsBtn);
+    }
     
-    const configBtn = document.createElement('button');
-    configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    configBtn.innerHTML = '⚙️';
-    configBtn.title = t('syncConfig');
-    configBtn.setAttribute('aria-label', t('syncConfig'));
-    configBtn.onclick = () => showSyncConfigModal(p.id);
-    
-    const logsBtn = document.createElement('button');
-    logsBtn.className = 'btn btn-sm btn-outline-info me-1';
-    logsBtn.innerHTML = '📊';
-    logsBtn.title = t('syncLogs');
-    logsBtn.setAttribute('aria-label', t('syncLogs'));
-    logsBtn.onclick = () => showSyncLogs(p.id);
-    
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = t('delete');
-    delBtn.setAttribute('aria-label', t('deleteAction'));
-    delBtn.onclick = async () => {
-      if (!confirm(t('deleteProviderConfirm', {name: p.name}))) return;
-      await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
-      loadProviders();
-    };
-    
-    btnGroup.appendChild(editBtn);
-    btnGroup.appendChild(syncBtn);
-    btnGroup.appendChild(configBtn);
-    btnGroup.appendChild(logsBtn);
-    btnGroup.appendChild(delBtn);
+    if (isAdmin) {
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-sm btn-danger';
+        delBtn.textContent = t('delete');
+        delBtn.setAttribute('aria-label', t('deleteAction'));
+        delBtn.onclick = async () => {
+          if (!confirm(t('deleteProviderConfirm', {name: p.name}))) return;
+          await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
+          loadProviders();
+        };
+        btnGroup.appendChild(delBtn);
+    }
     row.appendChild(btnGroup);
     li.appendChild(row);
     list.appendChild(li);
@@ -1472,6 +1513,8 @@ async function showSyncLogs(providerId) {
 let availableEpgSources = [];
 
 async function loadEpgSources() {
+  if (!currentUser || !currentUser.is_admin) return;
+
   try {
     const sources = await fetchJSON('/api/epg-sources');
     updateStatsCounters('epg', sources.length);
@@ -2594,11 +2637,13 @@ async function handleAutoMap() {
   btn.disabled = true;
   btn.innerHTML = '⏳ ...';
 
+  const onlyUsed = document.getElementById('epg-only-used') ? document.getElementById('epg-only-used').checked : false;
+
   try {
     const res = await fetchJSON('/api/mapping/auto', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({provider_id: providerId})
+      body: JSON.stringify({provider_id: providerId, only_used: onlyUsed})
     });
 
     alert(t('autoMapSuccess', {count: res.matched}));
@@ -2720,8 +2765,12 @@ async function checkAuthentication() {
   }
   
   try {
-    await fetchJSON('/api/verify-token');
+    const res = await fetchJSON('/api/verify-token');
+    currentUser = res.user;
     
+    // Apply role-based UI
+    applyPermissions();
+
     // Show the main UI if token is valid
     document.getElementById('main-navbar').style.display = 'block';
     document.getElementById('main-content').style.display = 'block';
@@ -2737,13 +2786,51 @@ async function checkAuthentication() {
   }
 }
 
+function applyPermissions() {
+    if (!currentUser) return;
+    const isAdmin = currentUser.is_admin;
+
+    // Hide EPG "Only used" checkbox for non-admins
+    const onlyUsedContainer = document.getElementById('only-used-container');
+    if (onlyUsedContainer) {
+        onlyUsedContainer.style.display = isAdmin ? 'block' : 'none';
+    }
+
+    // Hide Add User form
+    const userForm = document.getElementById('user-form');
+    if (userForm) {
+        userForm.style.display = isAdmin ? 'flex' : 'none';
+    }
+
+    // Hide Navigation Items
+    const idsToHide = ['nav-statistics', 'nav-security', 'nav-import-export'];
+    idsToHide.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.parentElement.style.display = isAdmin ? 'block' : 'none';
+    });
+
+    // Hide Stats Bar
+    const statsBar = document.getElementById('dashboard-stats-bar');
+    if (statsBar) {
+        statsBar.style.display = isAdmin ? 'flex' : 'none';
+    }
+
+    // Hide EPG Sources Card
+    const epgCard = document.getElementById('epg-sources-card');
+    if (epgCard) {
+        epgCard.style.display = isAdmin ? 'block' : 'none';
+    }
+}
+
 async function handleLogin(event) {
   event.preventDefault();
   
   const username = document.getElementById('login-username').value;
   const password = document.getElementById('login-password').value;
+  const otpCode = document.getElementById('login-otp').value;
   const loginBtn = document.getElementById('login-btn');
   const errorDiv = document.getElementById('login-error');
+  const otpGroup = document.getElementById('login-otp-group');
   
   if (!username || !password) {
     errorDiv.textContent = t('missing_credentials');
@@ -2756,21 +2843,36 @@ async function handleLogin(event) {
   errorDiv.style.display = 'none';
   
   try {
+    const body = { username, password };
+    if (otpCode) body.otp_code = otpCode;
+
     const response = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify(body)
     });
     
+    const data = await response.json();
+
+    if (response.status === 401 && data.require_otp) {
+        // Show OTP field
+        otpGroup.style.display = 'block';
+        document.getElementById('login-otp').focus();
+        // Hide error if any previous
+        errorDiv.style.display = 'none';
+        // Allow retry
+        throw new Error('otp_required'); // Custom error to stop flow but keep UI open
+    }
+
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'login_failed');
+      throw new Error(data.error || 'login_failed');
     }
     
-    const data = await response.json();
     setToken(data.token);
+    currentUser = data.user;
     
     hideLoginModal();
+    applyPermissions();
     
     // Show the main UI after successful login
     document.getElementById('main-navbar').style.display = 'block';
@@ -2783,14 +2885,85 @@ async function handleLogin(event) {
     // Clear form
     document.getElementById('login-username').value = '';
     document.getElementById('login-password').value = '';
+    document.getElementById('login-otp').value = '';
+    otpGroup.style.display = 'none';
     
   } catch (error) {
-    errorDiv.textContent = t(error.message) || t('login_failed');
-    errorDiv.style.display = 'block';
+    if (error.message === 'otp_required') {
+       // Just stop, UI is updated
+    } else {
+       errorDiv.textContent = t(error.message) || t('login_failed');
+       errorDiv.style.display = 'block';
+    }
   } finally {
     loginBtn.disabled = false;
     loginBtn.textContent = t('login');
   }
+}
+
+// === OTP Functions ===
+async function showOtpModal() {
+    const modal = new bootstrap.Modal(document.getElementById('otp-modal'));
+    modal.show();
+
+    // Reset UI
+    document.getElementById('otp-setup-step-1').style.display = 'none';
+    document.getElementById('otp-status-active').style.display = 'none';
+    document.getElementById('otp-verify-input').value = '';
+
+    if (currentUser && currentUser.otp_enabled) {
+        document.getElementById('otp-status-active').style.display = 'block';
+    } else {
+        document.getElementById('otp-setup-step-1').style.display = 'block';
+        // Generate new secret
+        try {
+            const res = await fetchJSON('/api/auth/otp/generate', { method: 'POST' });
+            const img = document.getElementById('otp-qr-code');
+            img.src = res.qrCodeUrl;
+            img.style.display = 'inline-block';
+            document.getElementById('otp-secret-text').textContent = `Secret: ${res.secret}`;
+            document.getElementById('otp-modal').dataset.secret = res.secret;
+        } catch(e) {
+            alert(t('errorPrefix') + ' ' + e.message);
+        }
+    }
+}
+
+async function verifyAndEnableOtp() {
+    const token = document.getElementById('otp-verify-input').value;
+    const secret = document.getElementById('otp-modal').dataset.secret;
+
+    if (!token || !secret) return;
+
+    try {
+        await fetchJSON('/api/auth/otp/verify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ token, secret })
+        });
+
+        alert(t('2fa_enabled_success') || '2FA Enabled Successfully');
+        currentUser.otp_enabled = true;
+
+        // Hide modal
+        bootstrap.Modal.getInstance(document.getElementById('otp-modal')).hide();
+    } catch(e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    }
+}
+
+async function disableOtp() {
+    if (!confirm(t('confirm_disable_2fa') || 'Disable 2FA?')) return;
+
+    try {
+        await fetchJSON('/api/auth/otp/disable', { method: 'POST' });
+        currentUser.otp_enabled = false;
+        // Hide modal
+        bootstrap.Modal.getInstance(document.getElementById('otp-modal')).hide();
+        alert(t('2fa_disabled_success') || '2FA Disabled');
+    } catch(e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    }
 }
 
 function handleLogout() {
