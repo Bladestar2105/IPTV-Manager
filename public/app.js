@@ -470,6 +470,12 @@ async function loadProviders(filterUserId = null) {
   const section = document.getElementById('provider-section');
   if (section) section.style.display = targetUserId ? 'block' : 'none';
 
+  // Hide "Add Provider" button for non-admins
+  const addProviderBtn = document.getElementById('add-provider-btn');
+  if (addProviderBtn) {
+      addProviderBtn.style.display = (currentUser && currentUser.is_admin) ? 'block' : 'none';
+  }
+
   // Filter for display
   const providersToRender = targetUserId
       ? providers.filter(p => p.user_id == targetUserId)
@@ -545,7 +551,7 @@ async function loadProviders(filterUserId = null) {
         logsBtn.onclick = () => showSyncLogs(p.id);
         btnGroup.appendChild(logsBtn);
     }
-
+    
     if (isAdmin) {
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-danger';
@@ -1507,6 +1513,8 @@ async function showSyncLogs(providerId) {
 let availableEpgSources = [];
 
 async function loadEpgSources() {
+  if (!currentUser || !currentUser.is_admin) return;
+
   try {
     const sources = await fetchJSON('/api/epg-sources');
     updateStatsCounters('epg', sources.length);
