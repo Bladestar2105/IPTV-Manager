@@ -26,6 +26,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import cluster from 'cluster';
 import os from 'os';
+import { Worker } from 'worker_threads';
 import { cleanName, levenshtein, parseEpgXml } from './epg_utils.js';
 import { parseM3u } from './playlist_parser.js';
 
@@ -4118,9 +4119,9 @@ app.get('/api/epg-sources/available', authenticateToken, async (req, res) => {
 });
 
 // === EPG Mapping APIs ===
-async function loadAllEpgChannels() {
+// Helper to get EPG files list (Reused by worker and API)
+function getEpgFiles() {
   const epgFiles = [];
-
   const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
   for (const provider of providers) {
     const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
@@ -4128,7 +4129,6 @@ async function loadAllEpgChannels() {
       epgFiles.push({ file: cacheFile, source: `Provider ${provider.id}` });
     }
   }
-
   const sources = db.prepare('SELECT id, name FROM epg_sources WHERE enabled = 1').all();
   for (const source of sources) {
     const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
@@ -4136,7 +4136,12 @@ async function loadAllEpgChannels() {
       epgFiles.push({ file: cacheFile, source: source.name });
     }
   }
+  return epgFiles;
+}
 
+// Deprecated in favor of worker, but kept for /api/epg/channels listing which is lightweight enough (no fuzzy matching)
+async function loadAllEpgChannels() {
+  const epgFiles = getEpgFiles();
   const allChannels = [];
   const seenIds = new Set();
 
@@ -4231,71 +4236,46 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
 
     if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
 
-    // Load Global Mappings (from other providers)
+    // Load Global Mappings (from other providers) for Worker
     const globalMappings = db.prepare(`
       SELECT pc.name, map.epg_channel_id
       FROM epg_channel_mappings map
       JOIN provider_channels pc ON pc.id = map.provider_channel_id
     `).all();
 
-    const globalMap = new Map();
-    for (const m of globalMappings) {
-        const clean = cleanName(m.name);
-        if (clean) globalMap.set(clean, m.epg_channel_id);
+    // Get EPG Files list
+    const epgFiles = getEpgFiles();
+
+    // Spawn Worker
+    const worker = new Worker(path.join(__dirname, 'epg_worker.js'), {
+      workerData: {
+        channels,
+        epgFiles,
+        globalMappings
+      }
+    });
+
+    const result = await new Promise((resolve, reject) => {
+      worker.on('message', resolve);
+      worker.on('error', reject);
+      worker.on('exit', (code) => {
+        if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
+      });
+    });
+
+    if (!result.success) {
+      throw new Error(result.error || 'Worker failed');
     }
 
-    const epgList = await loadAllEpgChannels();
-    const epgChannels = new Map();
-    for (const ch of epgList) {
-       if (ch.name) epgChannels.set(cleanName(ch.name), ch.id);
-    }
+    const { updates, matched } = result;
 
-    let matched = 0;
-    const insert = db.prepare(`
-      INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
-      VALUES (?, ?)
-      ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
-    `);
+    if (updates && updates.length > 0) {
+      const insert = db.prepare(`
+        INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
+        VALUES (?, ?)
+        ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
+      `);
 
-    const updates = [];
-
-    for (const ch of channels) {
-       const cleaned = cleanName(ch.name);
-       if (!cleaned) continue;
-
-       // 1. Try Global Map
-       let epgId = globalMap.get(cleaned);
-
-       // 2. Try Exact Match
-       if (!epgId) {
-         epgId = epgChannels.get(cleaned);
-       }
-
-       // 3. Fuzzy Match
-       if (!epgId) {
-         // Fuzzy match with Levenshtein
-         // Optimization: Only check channels with similar length
-         for (const [epgName, id] of epgChannels.entries()) {
-           // Optimization: length diff check
-           if (Math.abs(epgName.length - cleaned.length) > 3) continue;
-
-           // Don't fuzzy match very short strings to avoid false positives
-           if (cleaned.length < 4) continue;
-
-           if (levenshtein(cleaned, epgName) < 3) {
-              epgId = id;
-              break;
-           }
-         }
-       }
-
-       if (epgId) {
-         updates.push({pid: ch.id, eid: epgId});
-         matched++;
-       }
-    }
-
-    if (updates.length > 0) {
       db.transaction(() => {
         for (const u of updates) {
           insert.run(u.pid, u.eid);
@@ -4305,6 +4285,7 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
 
     res.json({success: true, matched});
   } catch (e) {
+    console.error('EPG Auto-Map Error:', e);
     res.status(500).json({error: e.message});
   }
 });
