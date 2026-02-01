@@ -45,6 +45,11 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **🚪 Login System**: Secure login modal with session management.
 - **🚫 IP Blocking**: Configurable blocking duration (1h to 24h or custom) and whitelisting with reasons.
 
+### Performance & Scalability
+- **🔥 Multi-Core Optimization**: Automatically utilizes all available CPU cores via Node.js Clustering.
+- **⚡ Redis Support (Optional)**: Can be configured to use Redis for tracking active streams instead of SQLite, recommended for high-load environments (>500 concurrent users).
+- **🧵 Worker Threads**: CPU-intensive tasks like EPG fuzzy mapping are offloaded to separate threads to keep the API responsive.
+
 ## 📋 Requirements
 
 - **Node.js**: 20.x or higher
@@ -70,6 +75,7 @@ The easiest way to run IPTV-Manager is using Docker.
           - ./data:/data
         environment:
           - DATA_DIR=/data
+          # - REDIS_URL=redis://redis:6379  # Optional: Enable Redis for high performance
     ```
 
 2.  Start the container:
@@ -92,6 +98,11 @@ docker run -d \
   -v $(pwd)/data:/data \
   -e DATA_DIR=/data \
   iptv-manager
+```
+
+To enable Redis support manually:
+```bash
+docker run -d ... -e REDIS_URL=redis://127.0.0.1:6379 ...
 ```
 
 The application will be available at `http://localhost:3000`. Data (database, cache, keys) will be persisted in the `./data` directory.
