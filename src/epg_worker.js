@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
-import { cleanName, levenshtein, getSimilarity } from './epg_utils.js';
+import { cleanName, levenshtein, getSimilarity, parseEpgChannels } from './epg_utils.js';
 
 async function run() {
   const { channels, epgFiles, globalMappings } = workerData;
@@ -13,24 +13,12 @@ async function run() {
 
     for (const item of epgFiles) {
       try {
-        const content = await fs.promises.readFile(item.file, 'utf8');
-        const channelRegex = /<channel id="([^"]+)">([\s\S]*?)<\/channel>/g;
-        let match;
-        while ((match = channelRegex.exec(content)) !== null) {
-          const id = match[1];
-          if (seenIds.has(id)) continue;
-
-          const inner = match[2];
-          const nameMatch = inner.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
-
-          if (nameMatch) {
-             allEpgChannels.push({
-               id: id,
-               name: nameMatch[1]
-             });
-             seenIds.add(id);
+        await parseEpgChannels(item.file, (channel) => {
+          if (!seenIds.has(channel.id)) {
+            allEpgChannels.push(channel);
+            seenIds.add(channel.id);
           }
-        }
+        });
       } catch (e) {
         // Ignore file errors in worker
       }
