@@ -329,7 +329,21 @@ const translations = {
     minimize: 'Minimize',
     playbackError: 'Playback Error: Codec might not be supported',
     transcodeAudio: 'Fix Audio (Transcode)',
-    autoFixingAudio: 'Playback Error. Enabling audio fix...'
+    autoFixingAudio: 'Playback Error. Enabling audio fix...',
+
+    // OTP / Permissions
+    managed_by_admin: 'Managed by Admin',
+    otp_required: '2FA Code Required',
+    otp_code: '2FA Code',
+    setup_2fa: 'Setup 2FA',
+    disable_2fa: 'Disable 2FA',
+    scan_qr: 'Scan the QR code with your authenticator app',
+    verify: 'Verify',
+    only_used_channels: 'Only used channels',
+    '2fa_enabled_success': '2FA Enabled Successfully',
+    '2fa_disabled_success': '2FA Disabled',
+    confirm_disable_2fa: 'Disable 2FA?',
+    '2fa_enabled': '2FA is enabled'
   },
   
   de: {
@@ -658,7 +672,21 @@ const translations = {
     minimize: 'Minimieren',
     playbackError: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt',
     transcodeAudio: 'Audio reparieren (Transcode)',
-    autoFixingAudio: 'Wiedergabefehler. Aktiviere Audio-Fix...'
+    autoFixingAudio: 'Wiedergabefehler. Aktiviere Audio-Fix...',
+
+    // OTP / Permissions
+    managed_by_admin: 'Wird vom Admin verwaltet',
+    otp_required: '2FA Code erforderlich',
+    otp_code: '2FA Code',
+    setup_2fa: '2FA Einrichten',
+    disable_2fa: '2FA Deaktivieren',
+    scan_qr: 'Scannen Sie den QR-Code mit Ihrer Authenticator-App',
+    verify: 'Überprüfen',
+    only_used_channels: 'Nur genutzte Kanäle',
+    '2fa_enabled_success': '2FA erfolgreich aktiviert',
+    '2fa_disabled_success': '2FA deaktiviert',
+    confirm_disable_2fa: '2FA wirklich deaktivieren?',
+    '2fa_enabled': '2FA ist aktiviert'
   },
 
   fr: {
@@ -987,7 +1015,21 @@ const translations = {
     minimize: 'Réduire',
     playbackError: 'Erreur de lecture: Codec peut ne pas être supporté',
     transcodeAudio: 'Réparer Audio (Transcodage)',
-    autoFixingAudio: 'Erreur de lecture. Activation correction audio...'
+    autoFixingAudio: 'Erreur de lecture. Activation correction audio...',
+
+    // OTP / Permissions
+    managed_by_admin: 'Géré par l\'administrateur',
+    otp_required: 'Code 2FA requis',
+    otp_code: 'Code 2FA',
+    setup_2fa: 'Configurer 2FA',
+    disable_2fa: 'Désactiver 2FA',
+    scan_qr: 'Scannez le code QR avec votre application',
+    verify: 'Vérifier',
+    only_used_channels: 'Chaînes utilisées uniquement',
+    '2fa_enabled_success': '2FA activé avec succès',
+    '2fa_disabled_success': '2FA désactivé',
+    confirm_disable_2fa: 'Désactiver 2FA ?',
+    '2fa_enabled': '2FA est activé'
   },
 
   el: {
@@ -1306,7 +1348,21 @@ const translations = {
     minimize: 'Ελαχιστοποίηση',
     playbackError: 'Σφάλμα αναπαραγωγής: Το Codec ενδέχεται να μην υποστηρίζεται',
     transcodeAudio: 'Διόρθωση Ήχου (Transcode)',
-    autoFixingAudio: 'Σφάλμα αναπαραγωγής. Ενεργοποίηση διόρθωσης ήχου...'
+    autoFixingAudio: 'Σφάλμα αναπαραγωγής. Ενεργοποίηση διόρθωσης ήχου...',
+
+    // OTP / Permissions
+    managed_by_admin: 'Διαχειρίζεται από τον Διαχειριστή',
+    otp_required: 'Απαιτείται κωδικός 2FA',
+    otp_code: 'Κωδικός 2FA',
+    setup_2fa: 'Ρύθμιση 2FA',
+    disable_2fa: 'Απενεργοποίηση 2FA',
+    scan_qr: 'Σαρώστε τον κωδικό QR',
+    verify: 'Επαλήθευση',
+    only_used_channels: 'Μόνο χρησιμοποιούμενα κανάλια',
+    '2fa_enabled_success': 'Το 2FA ενεργοποιήθηκε',
+    '2fa_disabled_success': 'Το 2FA απενεργοποιήθηκε',
+    confirm_disable_2fa: 'Απενεργοποίηση 2FA;',
+    '2fa_enabled': 'Το 2FA είναι ενεργό'
   }
 };
 

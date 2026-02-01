@@ -31,6 +31,8 @@ import { createClient } from 'redis';
 import { cleanName, levenshtein, parseEpgXml } from './epg_utils.js';
 import { parseM3u } from './playlist_parser.js';
 import streamManager from './stream_manager.js';
+import { authenticator } from 'otplib';
+import QRCode from 'qrcode';
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -500,6 +502,8 @@ if (cluster.isPrimary) {
   migrateCategoriesSchema();
   migrateChannelsSchemaV2();
   migrateUserCategoriesType();
+  migrateOtpSchema();
+  migrateWebUiAccess();
 
     // Migrate passwords
     migrateProviderPasswords();
@@ -692,6 +696,44 @@ function migrateUserCategoriesType() {
     }
   } catch (e) {
     console.error('User Categories Type migration error:', e);
+  }
+}
+
+function migrateOtpSchema() {
+  try {
+    const adminTable = db.prepare("PRAGMA table_info(admin_users)").all();
+    const adminCols = adminTable.map(c => c.name);
+
+    if (!adminCols.includes('otp_secret')) {
+      db.exec('ALTER TABLE admin_users ADD COLUMN otp_secret TEXT');
+      db.exec('ALTER TABLE admin_users ADD COLUMN otp_enabled INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: OTP columns added to admin_users');
+    }
+
+    const userTable = db.prepare("PRAGMA table_info(users)").all();
+    const userCols = userTable.map(c => c.name);
+
+    if (!userCols.includes('otp_secret')) {
+      db.exec('ALTER TABLE users ADD COLUMN otp_secret TEXT');
+      db.exec('ALTER TABLE users ADD COLUMN otp_enabled INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: OTP columns added to users');
+    }
+  } catch (e) {
+    console.error('OTP Schema migration error:', e);
+  }
+}
+
+function migrateWebUiAccess() {
+  try {
+    const userTable = db.prepare("PRAGMA table_info(users)").all();
+    const userCols = userTable.map(c => c.name);
+
+    if (!userCols.includes('webui_access')) {
+      db.exec('ALTER TABLE users ADD COLUMN webui_access INTEGER DEFAULT 1');
+      console.log('✅ DB Migration: webui_access column added to users');
+    }
+  } catch (e) {
+    console.error('WebUI Access Schema migration error:', e);
   }
 }
 
@@ -1326,7 +1368,9 @@ function generateToken(user) {
     { 
       id: user.id, 
       username: user.username,
-      is_active: user.is_active 
+      is_active: user.is_active,
+      is_admin: user.is_admin,
+      role: user.is_admin ? 'admin' : 'user'
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
@@ -1575,7 +1619,8 @@ app.get('/api/epg/schedule', async (req, res) => {
 // === API: Users ===
 app.get('/api/users', authenticateToken, (req, res) => {
   try {
-    const users = db.prepare('SELECT id, username, password, is_active FROM users ORDER BY id').all();
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const users = db.prepare('SELECT id, username, password, is_active, webui_access FROM users ORDER BY id').all();
     const result = users.map(u => {
         let plain = null;
         if (u.password && !u.password.startsWith('$2b$')) {
@@ -1585,6 +1630,7 @@ app.get('/api/users', authenticateToken, (req, res) => {
             id: u.id,
             username: u.username,
             is_active: u.is_active,
+            webui_access: u.webui_access,
             plain_password: plain
         };
     });
@@ -1594,7 +1640,8 @@ app.get('/api/users', authenticateToken, (req, res) => {
 
 app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const { username, password, webui_access } = req.body;
     
     // Validation
     if (!username || !password) {
@@ -1634,7 +1681,7 @@ app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
     const encryptedPassword = encrypt(p);
     
     // Insert user
-    const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(u, encryptedPassword);
+    const info = db.prepare('INSERT INTO users (username, password, webui_access) VALUES (?, ?, ?)').run(u, encryptedPassword, webui_access !== undefined ? (webui_access ? 1 : 0) : 1);
     
     res.json({
       id: info.lastInsertRowid,
@@ -1647,8 +1694,9 @@ app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
 
 app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password } = req.body;
+    const { username, password, webui_access } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -1681,6 +1729,11 @@ app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
         params.push(encryptedPassword);
     }
 
+    if (webui_access !== undefined) {
+        updates.push('webui_access = ?');
+        params.push(webui_access ? 1 : 0);
+    }
+
     if (updates.length === 0) return res.json({success: true}); // Nothing to update
 
     params.push(id);
@@ -1698,30 +1751,72 @@ app.post('/api/login', authLimiter, async (req, res) => {
   const now = Math.floor(Date.now() / 1000);
 
   try {
-    const { username, password } = req.body;
+    const { username, password, otp_code } = req.body;
     
     if (!username || !password) {
       return res.status(400).json({error: 'missing_credentials'});
     }
     
-    // Check admin_users table for WebGUI login
-    const admin = db.prepare('SELECT * FROM admin_users WHERE username = ? AND is_active = 1').get(username);
+    // 1. Check admin_users
+    let user = db.prepare('SELECT *, 1 as is_admin FROM admin_users WHERE username = ? AND is_active = 1').get(username);
+    let table = 'admin_users';
+
+    // 2. Check users if not found in admin
+    if (!user) {
+        user = db.prepare('SELECT *, 0 as is_admin FROM users WHERE username = ? AND is_active = 1').get(username);
+        table = 'users';
+    }
     
-    if (admin) {
-      const isValid = await bcrypt.compare(password, admin.password);
+    if (user) {
+      // Check WebUI Access for normal users
+      if (!user.is_admin && user.webui_access === 0) {
+          // Log Attempt
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_denied', `User: ${username} (WebUI Access Disabled)`, now);
+          return res.status(403).json({ error: 'access_denied_webui' });
+      }
+
+      // Check Password
+      let isValid = false;
+      if (user.password && user.password.startsWith('$2b$')) {
+          isValid = await bcrypt.compare(password, user.password);
+      } else {
+          // Legacy/Xtream password (encrypted or plaintext)
+          // Usually encrypted in `users` table via `encrypt(password)`
+          // But `authUser` function decrypts it. Let's replicate logic.
+          const decrypted = decrypt(user.password);
+          isValid = (decrypted === password);
+      }
+
       if (isValid) {
-        const token = generateToken(admin);
+        // Check OTP
+        if (user.otp_enabled) {
+            if (!otp_code) {
+                return res.status(401).json({ error: 'otp_required', require_otp: true });
+            }
+            // Verify OTP
+            const isValidOtp = authenticator.verify({ token: otp_code, secret: user.otp_secret });
+            if (!isValidOtp) {
+                // Log failure?
+                return res.status(401).json({ error: 'invalid_otp' });
+            }
+        }
+
+        // Convert to boolean for consistency
+        user.is_admin = !!user.is_admin;
+
+        const token = generateToken(user);
 
         // Log Success
-        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_success', `User: ${username}`, now);
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_success', `User: ${username} (${table})`, now);
 
         return res.json({
           token,
           user: {
-            id: admin.id,
-            username: admin.username,
-            is_active: admin.is_active,
-            is_admin: true
+            id: user.id,
+            username: user.username,
+            is_active: user.is_active,
+            is_admin: user.is_admin,
+            otp_enabled: !!user.otp_enabled
           },
           expiresIn: JWT_EXPIRES_IN
         });
@@ -1772,11 +1867,57 @@ app.get('/api/verify-token', authenticateToken, (req, res) => {
   });
 });
 
+// === OTP Endpoints ===
+app.post('/api/auth/otp/generate', authenticateToken, async (req, res) => {
+    try {
+        const secret = authenticator.generateSecret();
+        const user = req.user;
+        const serviceName = 'IPTV-Manager';
+
+        const otpauth = authenticator.keyuri(user.username, serviceName, secret);
+
+        const qrCodeUrl = await QRCode.toDataURL(otpauth);
+
+        // Don't save secret yet, only on verification
+        res.json({ secret, qrCodeUrl });
+    } catch(e) {
+        res.status(500).json({error: e.message});
+    }
+});
+
+app.post('/api/auth/otp/verify', authenticateToken, (req, res) => {
+    try {
+        const { token, secret } = req.body;
+        const isValid = authenticator.verify({ token, secret });
+
+        if (!isValid) return res.status(400).json({error: 'invalid_otp'});
+
+        // Save secret and enable OTP
+        const table = req.user.is_admin ? 'admin_users' : 'users';
+        db.prepare(`UPDATE ${table} SET otp_secret = ?, otp_enabled = 1 WHERE id = ?`).run(secret, req.user.id);
+
+        res.json({success: true});
+    } catch(e) {
+        res.status(500).json({error: e.message});
+    }
+});
+
+app.post('/api/auth/otp/disable', authenticateToken, (req, res) => {
+    try {
+        const table = req.user.is_admin ? 'admin_users' : 'users';
+        db.prepare(`UPDATE ${table} SET otp_secret = NULL, otp_enabled = 0 WHERE id = ?`).run(req.user.id);
+        res.json({success: true});
+    } catch(e) {
+        res.status(500).json({error: e.message});
+    }
+});
+
 // Change password endpoint
 app.post('/api/change-password', authenticateToken, authLimiter, async (req, res) => {
   try {
     const { oldPassword, newPassword, confirmPassword } = req.body;
     const userId = req.user.id;
+    const isAdmin = req.user.is_admin;
     
     // Validation
     if (!oldPassword || !newPassword || !confirmPassword) {
@@ -1791,25 +1932,45 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
       return res.status(400).json({error: 'password_too_short'});
     }
     
-    // Get admin user
-    const admin = db.prepare('SELECT * FROM admin_users WHERE id = ?').get(userId);
-    if (!admin) {
+    // Determine table
+    const table = isAdmin ? 'admin_users' : 'users';
+
+    // Get user
+    const user = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(userId);
+    if (!user) {
       return res.status(404).json({error: 'user_not_found'});
     }
     
     // Verify old password
-    const isValidOldPassword = await bcrypt.compare(oldPassword, admin.password);
+    let isValidOldPassword = false;
+    if (user.password.startsWith('$2b$')) {
+        isValidOldPassword = await bcrypt.compare(oldPassword, user.password);
+    } else {
+        const decrypted = decrypt(user.password);
+        isValidOldPassword = (decrypted === oldPassword);
+    }
+
     if (!isValidOldPassword) {
       return res.status(401).json({error: 'invalid_old_password'});
     }
     
-    // Hash new password
-    const hashedNewPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    // Hash new password?
+    // If it's admin, we use bcrypt. If it's regular user, we use reversible encryption (for Xtream/M3U)
+    // Wait, the prompt says "They can also change their IPTV user password."
+    // Users table passwords usually MUST be reversible for M3U generation.
+    // Admin table uses bcrypt.
+
+    let newPasswordStored;
+    if (isAdmin) {
+        newPasswordStored = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    } else {
+        newPasswordStored = encrypt(newPassword);
+    }
     
     // Update password
-    db.prepare('UPDATE admin_users SET password = ? WHERE id = ?').run(hashedNewPassword, userId);
+    db.prepare(`UPDATE ${table} SET password = ? WHERE id = ?`).run(newPasswordStored, userId);
     
-    console.log(`✅ Password changed for admin: ${admin.username}`);
+    console.log(`✅ Password changed for ${isAdmin ? 'admin' : 'user'}: ${user.username}`);
     
     res.json({
       success: true,
@@ -1824,7 +1985,13 @@ app.post('/api/change-password', authenticateToken, authLimiter, async (req, res
 // === API: Providers ===
 app.get('/api/providers', authenticateToken, (req, res) => {
   try {
-    const { user_id } = req.query;
+    let { user_id } = req.query;
+
+    // Non-admins can only see their own providers
+    if (!req.user.is_admin) {
+        user_id = req.user.id;
+    }
+
     let query = `
       SELECT p.*, u.username as owner_name
       FROM providers p
@@ -1861,6 +2028,7 @@ app.get('/api/providers', authenticateToken, (req, res) => {
 
 app.post('/api/providers', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
 
@@ -1920,6 +2088,11 @@ app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
     
     if (!user_id) {
       return res.status(400).json({error: 'user_id required'});
+    }
+
+    // Check permission - Only Admin can sync
+    if (!req.user.is_admin) {
+        return res.status(403).json({error: 'Access denied'});
     }
     
     const result = await performSync(id, user_id, true);
@@ -2079,6 +2252,13 @@ app.post('/api/providers/:providerId/import-category', authenticateToken, async 
       return res.status(400).json({error: 'Missing required fields'});
     }
 
+    // Permission check
+    if (!req.user.is_admin) {
+        if (Number(user_id) !== req.user.id) return res.status(403).json({error: 'Access denied'});
+        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+        if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     const isAdult = isAdultCategory(category_name) ? 1 : 0;
 
     // Höchste sort_order finden
@@ -2144,6 +2324,13 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
 
     if (!user_id || !Array.isArray(categories) || categories.length === 0) {
       return res.status(400).json({error: 'Missing required fields or invalid categories'});
+    }
+
+    // Permission check
+    if (!req.user.is_admin) {
+        if (Number(user_id) !== req.user.id) return res.status(403).json({error: 'Access denied'});
+        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+        if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
     }
 
     const results = [];
@@ -2219,7 +2406,9 @@ app.post('/api/providers/:providerId/import-categories', authenticateToken, asyn
 // === API: User Categories ===
 app.get('/api/users/:userId/categories', authenticateToken, (req, res) => {
   try {
-    res.json(db.prepare('SELECT * FROM user_categories WHERE user_id = ? ORDER BY sort_order').all(Number(req.params.userId)));
+    const userId = Number(req.params.userId);
+    if (!req.user.is_admin && req.user.id !== userId) return res.status(403).json({error: 'Access denied'});
+    res.json(db.prepare('SELECT * FROM user_categories WHERE user_id = ? ORDER BY sort_order').all(userId));
   } catch (e) { res.status(500).json({error: e.message}); }
 });
 
@@ -2229,6 +2418,7 @@ app.post('/api/users/:userId/categories', authenticateToken, (req, res) => {
     if (!name) return res.status(400).json({error: 'name required'});
     
     const userId = Number(req.params.userId);
+    if (!req.user.is_admin && req.user.id !== userId) return res.status(403).json({error: 'Access denied'});
     const isAdult = isAdultCategory(name) ? 1 : 0;
     const catType = type || 'live';
     
@@ -2244,6 +2434,9 @@ app.post('/api/users/:userId/categories', authenticateToken, (req, res) => {
 // Kategorien neu sortieren
 app.put('/api/users/:userId/categories/reorder', authenticateToken, (req, res) => {
   try {
+    const userId = Number(req.params.userId);
+    if (!req.user.is_admin && req.user.id !== userId) return res.status(403).json({error: 'Access denied'});
+
     const { category_ids } = req.body; // Array von IDs in neuer Reihenfolge
     if (!Array.isArray(category_ids)) return res.status(400).json({error: 'category_ids must be array'});
     
@@ -2251,6 +2444,7 @@ app.put('/api/users/:userId/categories/reorder', authenticateToken, (req, res) =
     
     db.transaction(() => {
       category_ids.forEach((catId, index) => {
+        // Optional: Verify ownership of each catId
         update.run(index, catId);
       });
     })();
@@ -2263,13 +2457,20 @@ app.put('/api/users/:userId/categories/reorder', authenticateToken, (req, res) =
 
 app.get('/api/user-categories/:catId/channels', authenticateToken, (req, res) => {
   try {
+    const catId = Number(req.params.catId);
+    if (!req.user.is_admin) {
+        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, pc.*
+      SELECT uc.id as user_channel_id, pc.*, map.epg_channel_id as manual_epg_id
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE uc.user_category_id = ?
       ORDER BY uc.sort_order
-    `).all(Number(req.params.catId));
+    `).all(catId);
     res.json(rows);
   } catch (e) { res.status(500).json({error: e.message}); }
 });
@@ -2277,6 +2478,11 @@ app.get('/api/user-categories/:catId/channels', authenticateToken, (req, res) =>
 app.post('/api/user-categories/:catId/channels', authenticateToken, (req, res) => {
   try {
     const catId = Number(req.params.catId);
+    if (!req.user.is_admin) {
+        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
     
@@ -2292,6 +2498,12 @@ app.post('/api/user-categories/:catId/channels', authenticateToken, (req, res) =
 // Kanäle neu sortieren
 app.put('/api/user-categories/:catId/channels/reorder', authenticateToken, (req, res) => {
   try {
+    const catId = Number(req.params.catId);
+    if (!req.user.is_admin) {
+        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     const { channel_ids } = req.body; // Array von user_channel IDs in neuer Reihenfolge
     if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
     
@@ -3409,6 +3621,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
 // === Statistics API ===
 app.get('/api/statistics', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     // Top Channels
     const topChannels = db.prepare(`
       SELECT ss.views, ss.last_viewed, pc.name, pc.logo
@@ -3556,6 +3769,7 @@ app.get('/xmltv.php', async (req, res) => {
 // === DELETE APIs ===
 app.delete('/api/providers/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
 
     db.transaction(() => {
@@ -3576,6 +3790,10 @@ app.delete('/api/providers/:id', authenticateToken, (req, res) => {
 app.delete('/api/user-categories/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!req.user.is_admin) {
+        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
     
     // Delete in correct order to avoid foreign key constraints
     // 1. Delete channels in this category
@@ -3601,6 +3819,10 @@ app.post('/api/user-categories/bulk-delete', authenticateToken, (req, res) => {
 
     db.transaction(() => {
       for (const id of ids) {
+         if (!req.user.is_admin) {
+             const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+             if (!cat || cat.user_id !== req.user.id) throw new Error('Access denied');
+         }
          db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
          db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
          db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
@@ -3616,6 +3838,21 @@ app.post('/api/user-channels/bulk-delete', authenticateToken, (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
+    // Verify ownership if not admin
+    if (!req.user.is_admin) {
+        const placeholders = ids.map(() => '?').join(',');
+        const channels = db.prepare(`
+            SELECT cat.user_id
+            FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.id IN (${placeholders})
+        `).all(...ids);
+
+        for (const ch of channels) {
+            if (ch.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+        }
+    }
+
     const placeholders = ids.map(() => '?').join(',');
     db.prepare(`DELETE FROM user_channels WHERE id IN (${placeholders})`).run(...ids);
 
@@ -3626,6 +3863,17 @@ app.post('/api/user-channels/bulk-delete', authenticateToken, (req, res) => {
 app.delete('/api/user-channels/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+
+    if (!req.user.is_admin) {
+        const channel = db.prepare(`
+            SELECT cat.user_id
+            FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.id = ?
+        `).get(id);
+        if (!channel || channel.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
     res.json({success: true});
   } catch (e) {
@@ -3635,6 +3883,7 @@ app.delete('/api/user-channels/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
 
     db.transaction(() => {
@@ -3845,6 +4094,11 @@ app.put('/api/category-mappings/:id', authenticateToken, (req, res) => {
 app.put('/api/user-categories/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!req.user.is_admin) {
+        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
     
@@ -3858,6 +4112,7 @@ app.put('/api/user-categories/:id', authenticateToken, (req, res) => {
 
 app.put('/api/providers/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
     if (!name || !url || !username || !password) {
@@ -3926,6 +4181,11 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
 app.put('/api/user-categories/:id/adult', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!req.user.is_admin) {
+        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     const { is_adult } = req.body;
     db.prepare('UPDATE user_categories SET is_adult = ? WHERE id = ?').run(is_adult ? 1 : 0, id);
     res.json({success: true});
@@ -3974,6 +4234,7 @@ async function updateEpgSource(sourceId, skipRegenerate = false) {
 // === EPG Sources APIs ===
 app.get('/api/epg-sources', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
     
     // Add provider EPG sources
@@ -4010,6 +4271,7 @@ app.get('/api/epg-sources', authenticateToken, (req, res) => {
 
 app.post('/api/epg-sources', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
     
@@ -4032,6 +4294,7 @@ app.post('/api/epg-sources', authenticateToken, (req, res) => {
 
 app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     const { name, url, enabled, update_interval } = req.body;
     
@@ -4070,6 +4333,7 @@ app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     
     // Delete cache file
@@ -4088,6 +4352,7 @@ app.delete('/api/epg-sources/:id', authenticateToken, (req, res) => {
 // Update single EPG source
 app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = req.params.id;
     
     // Check if it's a provider EPG
@@ -4122,6 +4387,7 @@ app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
 // Update all EPG sources
 app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
     const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
     
@@ -4259,6 +4525,17 @@ app.post('/api/mapping/manual', authenticateToken, (req, res) => {
     const { provider_channel_id, epg_channel_id } = req.body;
     if (!provider_channel_id || !epg_channel_id) return res.status(400).json({error: 'missing fields'});
 
+    if (!req.user.is_admin) {
+        // Check if channel belongs to user's categories
+        const used = db.prepare(`
+            SELECT 1 FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.provider_channel_id = ? AND cat.user_id = ?
+        `).get(Number(provider_channel_id), req.user.id);
+
+        if (!used) return res.status(403).json({error: 'Access denied: Channel not in your categories'});
+    }
+
     db.prepare(`
       INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
       VALUES (?, ?)
@@ -4274,6 +4551,16 @@ app.post('/api/mapping/manual', authenticateToken, (req, res) => {
 app.delete('/api/mapping/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!req.user.is_admin) {
+        // Check if channel belongs to user's categories
+        const used = db.prepare(`
+            SELECT 1 FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.provider_channel_id = ? AND cat.user_id = ?
+        `).get(id, req.user.id);
+
+        if (!used) return res.status(403).json({error: 'Access denied: Channel not in your categories'});
+    }
     db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
     res.json({success: true});
   } catch (e) {
@@ -4295,16 +4582,32 @@ app.get('/api/mapping/:providerId', authenticateToken, (req, res) => {
 
 app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
   try {
-    const { provider_id } = req.body;
+    const { provider_id, only_used } = req.body;
     if (!provider_id) return res.status(400).json({error: 'provider_id required'});
 
-    // Get unmapped channels
-    const channels = db.prepare(`
+    let query = `
       SELECT pc.id, pc.name, pc.epg_channel_id
       FROM provider_channels pc
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE pc.provider_id = ? AND map.id IS NULL
-    `).all(Number(provider_id));
+    `;
+    const params = [Number(provider_id)];
+
+    if (!req.user.is_admin) {
+        // User: Only own used channels
+        query += ` AND pc.id IN (
+            SELECT uc.provider_channel_id
+            FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE cat.user_id = ?
+        )`;
+        params.push(req.user.id);
+    } else if (only_used) {
+        // Admin: Only used channels (by anyone)
+        query += ` AND pc.id IN (SELECT provider_channel_id FROM user_channels)`;
+    }
+
+    const channels = db.prepare(query).all(...params);
 
     if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
 
@@ -4415,6 +4718,7 @@ app.delete('/api/client-logs', authenticateToken, (req, res) => {
 // === Security API ===
 app.get('/api/security/logs', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const logs = db.prepare('SELECT * FROM security_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
     res.json(logs);
@@ -4423,6 +4727,7 @@ app.get('/api/security/logs', authenticateToken, (req, res) => {
 
 app.delete('/api/security/logs', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     db.prepare('DELETE FROM security_logs').run();
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -4430,6 +4735,7 @@ app.delete('/api/security/logs', authenticateToken, (req, res) => {
 
 app.get('/api/security/blocked', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const ips = db.prepare('SELECT * FROM blocked_ips ORDER BY created_at DESC').all();
     res.json(ips);
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -4437,6 +4743,7 @@ app.get('/api/security/blocked', authenticateToken, (req, res) => {
 
 app.post('/api/security/block', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { ip, reason, duration } = req.body; // duration in seconds
     if (!ip) return res.status(400).json({error: 'ip required'});
 
@@ -4462,6 +4769,7 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
 
 app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = req.params.id;
     const now = Math.floor(Date.now() / 1000);
     let ipToLog = id;
@@ -4486,6 +4794,7 @@ app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
 
 app.get('/api/security/whitelist', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const ips = db.prepare('SELECT * FROM whitelisted_ips ORDER BY created_at DESC').all();
     res.json(ips);
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -4493,6 +4802,7 @@ app.get('/api/security/whitelist', authenticateToken, (req, res) => {
 
 app.post('/api/security/whitelist', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { ip, description } = req.body;
     if (!ip) return res.status(400).json({error: 'ip required'});
 
@@ -4511,6 +4821,7 @@ app.post('/api/security/whitelist', authenticateToken, (req, res) => {
 
 app.delete('/api/security/whitelist/:id', authenticateToken, (req, res) => {
   try {
+     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
      const id = req.params.id;
      if (id.includes('.') || id.includes(':')) {
         db.prepare('DELETE FROM whitelisted_ips WHERE ip = ?').run(id);
@@ -4524,6 +4835,7 @@ app.delete('/api/security/whitelist/:id', authenticateToken, (req, res) => {
 // === Import/Export API ===
 app.get('/api/export', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { user_id, password } = req.query;
 
     if (!password) {
@@ -4607,6 +4919,7 @@ app.get('/api/export', authenticateToken, (req, res) => {
 });
 
 app.post('/api/import', authenticateToken, upload.single('file'), (req, res) => {
+  if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
   let tempPath = null;
   try {
     const { password } = req.body;

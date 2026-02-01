@@ -69,6 +69,7 @@
             <option value="el">🇬🇷 Ελληνικά</option>
           </select>
           <button class="btn btn-outline-info btn-sm" onclick="showChangePasswordModal()" data-i18n="change_password">Change Password</button>
+          <button class="btn btn-outline-warning btn-sm" onclick="showOtpModal()" data-i18n="setup_2fa">2FA</button>
           <button class="btn btn-outline-secondary btn-sm" onclick="handleLogout()" data-i18n="logout">Logout</button>
         </div>
       </div>
@@ -80,7 +81,7 @@
     <!-- View: Dashboard -->
     <div id="view-dashboard">
       <!-- Stats Cards -->
-      <div class="row mb-4">
+      <div class="row mb-4" id="dashboard-stats-bar">
         <div class="col-md-3">
           <div class="card mb-3 text-center">
             <div class="card-body">
@@ -140,7 +141,7 @@
                 <div id="provider-list-container">
                    <p class="text-muted small" data-i18n="selectUserHint">Providers for selected user:</p>
                    <ul id="provider-list" class="list-group list-group-flush mb-3"></ul>
-                   <button class="btn btn-sm btn-outline-primary w-100" onclick="showAddProviderModal()" data-i18n="addProvider">Add Provider</button>
+                   <button id="add-provider-btn" class="btn btn-sm btn-outline-primary w-100" onclick="showAddProviderModal()" data-i18n="addProvider">Add Provider</button>
                 </div>
              </div>
           </div>
@@ -286,7 +287,7 @@
         </div>
       </div>
       
-      <div class="card mt-4">
+      <div class="card mt-4" id="epg-sources-card">
          <div class="card-header d-flex justify-content-between align-items-center">
             <span data-i18n="epgSources">EPG Sources</span>
             <div>
@@ -519,16 +520,55 @@
     <!-- View: EPG Mapping -->
     <div id="view-epg-mapping" class="d-none">
       <h3 data-i18n="configuration" class="mt-4">Configuration</h3>
-      <div class="row align-items-end mb-4">
-        <div class="col-md-5">
-          <label class="form-label" data-i18n="selectProvider">Select Provider</label>
-          <select id="epg-mapping-provider-select" class="form-select">
-            <option value="" data-i18n="selectProviderPlaceholder">-- Select Provider --</option>
-          </select>
-        </div>
-        <div class="col-md-7 text-end">
-          <button id="auto-map-btn" class="btn btn-warning" disabled data-i18n="autoMap">⚡ Auto Map</button>
-        </div>
+
+      <!-- Mode Switcher -->
+      <div class="mb-3" id="epg-mode-switcher" style="display:none;">
+         <div class="btn-group" role="group">
+            <input type="radio" class="btn-check" name="epg-mode" id="epg-mode-provider" value="provider" checked>
+            <label class="btn btn-outline-primary" for="epg-mode-provider" data-i18n="modeProvider">By Provider</label>
+
+            <input type="radio" class="btn-check" name="epg-mode" id="epg-mode-category" value="category">
+            <label class="btn btn-outline-primary" for="epg-mode-category" data-i18n="modeCategory">By Category</label>
+         </div>
+      </div>
+
+      <!-- Provider Controls -->
+      <div id="epg-mapping-provider-container">
+          <div class="row align-items-end mb-4">
+            <div class="col-md-5">
+              <label class="form-label" data-i18n="selectProvider">Select Provider</label>
+              <select id="epg-mapping-provider-select" class="form-select">
+                <option value="" data-i18n="selectProviderPlaceholder">-- Select Provider --</option>
+              </select>
+            </div>
+            <div class="col-md-7 text-end">
+              <div class="d-flex justify-content-end align-items-center gap-3">
+                 <div class="form-check" id="only-used-container" style="display:none;">
+                   <input class="form-check-input" type="checkbox" id="epg-only-used">
+                   <label class="form-check-label" for="epg-only-used" data-i18n="only_used_channels">Only used channels</label>
+                 </div>
+                 <button id="auto-map-btn" class="btn btn-warning" disabled data-i18n="autoMap">⚡ Auto Map</button>
+              </div>
+            </div>
+          </div>
+      </div>
+
+      <!-- Category Controls -->
+      <div id="epg-mapping-category-container" style="display:none;">
+          <div class="row align-items-end mb-4">
+            <div class="col-md-4" id="epg-category-user-select-container">
+               <label class="form-label" data-i18n="selectUser">Select User</label>
+               <select id="epg-mapping-user-select" class="form-select">
+                  <!-- Populated by JS -->
+               </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" data-i18n="selectCategory">Select Category</label>
+              <select id="epg-mapping-category-select" class="form-select">
+                <option value="" data-i18n="selectCategoryPlaceholder">-- Select Category --</option>
+              </select>
+            </div>
+          </div>
       </div>
 
       <div class="d-flex justify-content-between align-items-center mb-2">
@@ -832,9 +872,43 @@
               <label for="login-password" class="form-label" data-i18n="password">Password</label>
               <input type="password" class="form-control" id="login-password" required>
             </div>
+            <div class="mb-3" id="login-otp-group" style="display:none;">
+              <label for="login-otp" class="form-label" data-i18n="otp_code">2FA Code</label>
+              <input type="text" class="form-control" id="login-otp" autocomplete="off" placeholder="123456">
+            </div>
             <div id="login-error" class="alert alert-danger" style="display: none;"></div>
             <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
           </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OTP Modal -->
+  <div class="modal fade" id="otp-modal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" data-i18n="setup_2fa">Two-Factor Authentication</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="otp-setup-step-1">
+             <div class="text-center mb-3">
+                <img id="otp-qr-code" src="" alt="QR Code" class="img-fluid" style="display:none; max-width: 200px;">
+                <div id="otp-secret-text" class="mt-2 text-muted small"></div>
+             </div>
+             <p data-i18n="scan_qr">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
+             <div class="input-group mb-3">
+                <input type="text" id="otp-verify-input" class="form-control" placeholder="123456">
+                <button class="btn btn-primary" onclick="verifyAndEnableOtp()" data-i18n="verify">Verify</button>
+             </div>
+          </div>
+
+          <div id="otp-status-active" style="display:none;" class="text-center">
+             <div class="alert alert-success" data-i18n="2fa_enabled">2FA is currently enabled on your account.</div>
+             <button class="btn btn-danger" onclick="disableOtp()" data-i18n="disable_2fa">Disable 2FA</button>
+          </div>
         </div>
       </div>
     </div>
@@ -858,6 +932,10 @@
             <div class="mb-3">
               <label class="form-label" data-i18n="new_password">New Password</label>
               <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="edit-user-webui-access">
+              <label class="form-check-label" for="edit-user-webui-access" data-i18n="webui_access">Web UI Access</label>
             </div>
           </div>
           <div class="modal-footer">

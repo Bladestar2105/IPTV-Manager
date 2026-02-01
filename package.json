@@ -21,6 +21,8 @@
     "morgan": "^1.10.0",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
+    "otplib": "^12.0.1",
+    "qrcode": "^1.5.4",
     "redis": "^5.10.0",
     "sortablejs": "^1.15.0"
   },
