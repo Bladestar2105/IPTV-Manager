@@ -57,19 +57,31 @@ export function cleanName(name) {
 export function levenshtein(a, b) {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+  // Swap to ensure a is the shorter string to minimize memory usage
+  if (a.length > b.length) [a, b] = [b, a];
+
+  // Use Int32Array for better performance
+  const row = new Int32Array(a.length + 1);
+  for (let i = 0; i <= a.length; i++) row[i] = i;
+
   for (let i = 1; i <= b.length; i++) {
+    let prevDiag = row[0];
+    row[0] = i;
     for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
+      const oldRowJ = row[j];
+      if (b.charCodeAt(i - 1) === a.charCodeAt(j - 1)) {
+        row[j] = prevDiag;
       } else {
-        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+        // row[j-1] is the new left value (insertion)
+        // oldRowJ is the top value (deletion)
+        // prevDiag is the diagonal (substitution)
+        row[j] = Math.min(prevDiag, row[j - 1], oldRowJ) + 1;
       }
+      prevDiag = oldRowJ;
     }
   }
-  return matrix[b.length][a.length];
+  return row[a.length];
 }
 
 /**
