@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
-import { cleanName, levenshtein } from './epg_utils.js';
+import { cleanName, levenshtein, getSimilarity } from './epg_utils.js';
 
 async function run() {
   const { channels, epgFiles, globalMappings } = workerData;
@@ -43,9 +43,23 @@ async function run() {
         if (clean) globalMap.set(clean, m.epg_channel_id);
     }
 
-    const epgChannelsMap = new Map();
+    // Improved Map: Store Array of candidates to handle collisions
+    const epgChannelsMap = new Map(); // cleanName -> [{id, name}]
+    const epgBuckets = new Map();     // prefix(2) -> [{id, name, cleanName}]
+
     for (const ch of allEpgChannels) {
-       if (ch.name) epgChannelsMap.set(cleanName(ch.name), ch.id);
+       if (!ch.name) continue;
+       const clean = cleanName(ch.name);
+       if (!clean) continue;
+
+       // Add to Exact Map
+       if (!epgChannelsMap.has(clean)) epgChannelsMap.set(clean, []);
+       epgChannelsMap.get(clean).push(ch);
+
+       // Add to Buckets (for fuzzy)
+       const prefix = clean.substring(0, 2);
+       if (!epgBuckets.has(prefix)) epgBuckets.set(prefix, []);
+       epgBuckets.get(prefix).push({ ...ch, cleanName: clean });
     }
 
     // 3. Matching Logic
@@ -55,27 +69,66 @@ async function run() {
        const cleaned = cleanName(ch.name);
        if (!cleaned) continue;
 
+       let epgId = null;
+
        // A. Global Map
-       let epgId = globalMap.get(cleaned);
+       // Prioritize global mappings (history)
+       if (globalMap.has(cleaned)) {
+           epgId = globalMap.get(cleaned);
+       }
 
        // B. Exact Match
        if (!epgId) {
-         epgId = epgChannelsMap.get(cleaned);
+         const candidates = epgChannelsMap.get(cleaned);
+         if (candidates) {
+             // Disambiguate using Original Name Similarity
+             // This solves "RTL (DE)" vs "RTL (NL)" if they both clean to "rtl"
+             // We pick the one that is closest to the original input name
+             let bestCand = null;
+             let bestSim = -1;
+
+             for (const cand of candidates) {
+                 // Use case-insensitive original name similarity
+                 const sim = getSimilarity(ch.name.toLowerCase(), cand.name.toLowerCase());
+                 if (sim > bestSim) {
+                     bestSim = sim;
+                     bestCand = cand;
+                 }
+             }
+             if (bestCand) epgId = bestCand.id;
+         }
        }
 
-       // C. Fuzzy Match (The CPU intensive part)
+       // C. Fuzzy Match (Optimized with Buckets & Threshold)
        if (!epgId) {
-         for (const [epgName, id] of epgChannelsMap.entries()) {
-           // Optimization: length diff check
-           if (Math.abs(epgName.length - cleaned.length) > 3) continue;
+         // Don't fuzzy match very short strings
+         if (cleaned.length < 3) continue;
 
-           // Don't fuzzy match very short strings
-           if (cleaned.length < 4) continue;
+         const prefix = cleaned.substring(0, 2);
+         const candidates = epgBuckets.get(prefix);
 
-           if (levenshtein(cleaned, epgName) < 3) {
-              epgId = id;
-              break;
-           }
+         if (candidates) {
+            let bestCand = null;
+            let bestSim = 0.0;
+
+            for (const cand of candidates) {
+                // Optimization: Skip if length difference is too big relative to length
+                // If len=10, and diff > 3, sim < 0.7. So skip.
+                if (Math.abs(cand.cleanName.length - cleaned.length) > 3) continue;
+
+                // Calculate Similarity on CLEANED names
+                const sim = getSimilarity(cleaned, cand.cleanName);
+
+                // Threshold: 80%
+                if (sim >= 0.8 && sim > bestSim) {
+                    bestSim = sim;
+                    bestCand = cand;
+                }
+            }
+
+            if (bestCand) {
+                epgId = bestCand.id;
+            }
          }
        }
 

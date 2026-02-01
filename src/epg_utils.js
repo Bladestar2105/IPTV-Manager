@@ -8,10 +8,7 @@ export function cleanName(name) {
   // 1. Remove "Provider|" prefixes (generic)
   cleaned = cleaned.replace(/^[a-z0-9]+\|\s*/, '');
 
-  // 2. Remove Country Codes / Prefixes
-  // Pattern: Start + (2-3 letters) + separator or brackets
-  cleaned = cleaned.replace(/^[\(\[][a-z]{2,3}[\)\]]\s*/, ''); // (US) Channel
-  cleaned = cleaned.replace(/^[a-z]{2,3}\s*[:\|\-]\s*/, ''); // US: Channel, UK - Channel
+  // 2. Remove Country Codes / Prefixes - REMOVED to preserve accuracy (e.g. RTL DE vs RTL NL)
 
   // 3. Technical Suffixes (Global)
   // HEVC, FHD, HD, SD, 4K, 8K, RAW, 50FPS, H265, UHD
@@ -26,27 +23,21 @@ export function cleanName(name) {
   // Clean trailing separators/spaces to ensure suffix checks work
   cleaned = cleaned.replace(/[:\|\-_\.\s]+$/, '');
 
-  // 5. TLD Suffixes
-  // Remove .de, .gr, .uk, .com, .tv (if at end)
-  cleaned = cleaned.replace(/\.[a-z]{2,3}$/, '');
+  // 5. TLD Suffixes - REMOVED to preserve accuracy
 
-  // 6. -CC Suffix (hyphenated country code at end)
-  // "Channel-de" -> "Channel"
-  cleaned = cleaned.replace(/\-[a-z]{2}$/, '');
+  // 6. -CC Suffix - REMOVED to preserve accuracy
 
   // 7. Cleanup special chars
-  // Replace dots, hyphens, underscores, pipes with space
-  cleaned = cleaned.replace(/[\.\-\_\+\|]/g, ' ');
+  // Replace dots, hyphens, underscores, pipes, brackets with space
+  cleaned = cleaned.replace(/[\.\-\_\+\|\(\)\[\]]/g, ' ');
 
-  // 8. Brackets/Parentheses content
-  cleaned = cleaned.replace(/\(.*\)/g, '');
-  cleaned = cleaned.replace(/\(.*\)/g, '');
-  cleaned = cleaned.replace(/\[.*\]/g, '');
+  // 8. Brackets/Parentheses content - REMOVED (was too aggressive)
 
   // 9. Common Normalizations
   cleaned = cleaned.replace(/\bplus\b/g, ' '); // "Plus" -> Space
   cleaned = cleaned.replace(/\b(ii)\b/g, '2'); // II -> 2
   cleaned = cleaned.replace(/\b(iii)\b/g, '3'); // III -> 3
+  cleaned = cleaned.replace(/\bone\b/g, '1'); // One -> 1
 
   // Remove extra spaces
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
@@ -82,6 +73,19 @@ export function levenshtein(a, b) {
     }
   }
   return row[a.length];
+}
+
+/**
+ * Calculates similarity between two strings (0.0 to 1.0)
+ * 1.0 = Exact Match
+ * 0.0 = Completely different
+ */
+export function getSimilarity(s1, s2) {
+  if (s1 === s2) return 1.0;
+  const len = Math.max(s1.length, s2.length);
+  if (len === 0) return 1.0;
+  const dist = levenshtein(s1, s2);
+  return Math.max(0, 1 - (dist / len));
 }
 
 /**
