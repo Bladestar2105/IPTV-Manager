@@ -25,6 +25,7 @@ import zlib from 'zlib';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import { cleanName, levenshtein, parseEpgXml } from './epg_utils.js';
+import { parseM3u } from './playlist_parser.js';
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -709,29 +710,94 @@ async function performSync(providerId, userId, isManual = false) {
     let allChannels = [];
     let allCategories = [];
 
-    // 1. Live
+    // 1. Live & M3U Fallback
     try {
        let liveChans = [];
-       try { liveChans = await xtream.getChannels(); }
-       catch {
-          const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`);
-          liveChans = resp.ok ? await resp.json() : [];
+       let m3uMode = false;
+
+       // Try Xtream API
+       try {
+         liveChans = await xtream.getChannels();
+       } catch {
+          try {
+             const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`);
+             if (resp.ok) {
+                 const contentType = resp.headers.get('content-type');
+                 if (contentType && contentType.includes('application/json')) {
+                     liveChans = await resp.json();
+                 }
+             }
+          } catch(e) {}
        }
+
+       // M3U Fallback if Xtream failed or empty
+       if (!Array.isArray(liveChans) || liveChans.length === 0) {
+           try {
+             // Try fetching as M3U
+             const m3uResp = await fetch(provider.url); // Use original URL
+             if (m3uResp.ok) {
+                 const text = await m3uResp.text();
+                 if (text.trim().startsWith('#EXTM3U')) {
+                     console.log('  📂 Detected M3U Playlist');
+                     m3uMode = true;
+                     const parsed = parseM3u(text);
+
+                     // Map to Xtream format
+                     parsed.channels.forEach((ch, idx) => {
+                         // Generate a stable integer ID from URL
+                         let hash = 0;
+                         for (let i = 0; i < ch.url.length; i++) {
+                             hash = ((hash << 5) - hash) + ch.url.charCodeAt(i);
+                             hash |= 0;
+                         }
+                         const streamId = Math.abs(hash);
+
+                         liveChans.push({
+                             num: idx + 1,
+                             name: ch.name,
+                             stream_type: ch.stream_type || 'live',
+                             stream_id: streamId,
+                             stream_icon: ch.logo,
+                             epg_channel_id: ch.epg_id,
+                             category_id: ch.category_id,
+                             category_type: ch.stream_type || 'live',
+                             metadata: JSON.stringify(ch.metadata || {}), // Store parsed headers/drm
+                             container_extension: ch.url.includes('.mpd') ? 'mpd' : 'ts',
+                             original_url: ch.url // Pass original URL for proxying later?
+                         });
+                     });
+
+                     parsed.categories.forEach(cat => {
+                        allCategories.push({
+                            category_id: cat.category_id,
+                            category_name: cat.category_name,
+                            category_type: cat.category_type
+                        });
+                     });
+                 }
+             }
+           } catch (e) { console.error('M3U fallback error:', e.message); }
+       }
+
        // Normalize
        if (Array.isArray(liveChans)) {
          liveChans.forEach(c => {
-           c.stream_type = 'live';
-           c.category_type = 'live';
+           if (!m3uMode) {
+               c.stream_type = 'live';
+               c.category_type = 'live';
+           }
            allChannels.push(c);
          });
        }
 
-       const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_categories`);
-       if(respCat.ok) {
-          const cats = await respCat.json();
-          if (Array.isArray(cats)) {
-            cats.forEach(c => { c.category_type = 'live'; allCategories.push(c); });
-          }
+       if (!m3uMode) {
+           const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_categories`);
+           if(respCat.ok) {
+              const cats = await respCat.json();
+              if (Array.isArray(cats)) {
+                cats.forEach(c => { c.category_type = 'live'; allCategories.push(c); });
+              }
+           }
        }
     } catch(e) { console.error('Live sync error:', e); }
 
@@ -912,7 +978,15 @@ async function performSync(providerId, userId, isManual = false) {
           const mimeType = ch.container_extension || '';
 
           // Construct metadata
-          const meta = {};
+          let meta = {};
+          // If we already have metadata (from M3U parsing), parse it first
+          if (ch.metadata) {
+              try {
+                  const existing = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
+                  meta = { ...existing };
+              } catch(e) {}
+          }
+
           if(ch.plot) meta.plot = ch.plot;
           if(ch.cast) meta.cast = ch.cast;
           if(ch.director) meta.director = ch.director;
@@ -924,6 +998,7 @@ async function performSync(providerId, userId, isManual = false) {
           if(ch.youtube_trailer) meta.youtube_trailer = ch.youtube_trailer;
           if(ch.episode_run_time) meta.episode_run_time = ch.episode_run_time;
           if(ch.added) meta.added = ch.added;
+          if(ch.original_url) meta.original_url = ch.original_url; // Store original URL for M3U streams
 
           const metaStr = JSON.stringify(meta);
 
@@ -2406,6 +2481,7 @@ app.get('/api/player/playlist', async (req, res) => {
         pc.remote_stream_id,
         pc.stream_type,
         pc.mime_type,
+        pc.metadata,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id,
         p.url as provider_url,
@@ -2441,14 +2517,28 @@ app.get('/api/player/playlist', async (req, res) => {
          ext = ch.mime_type || 'mp4';
       } else {
          // Live
-         // Default to TS for better compatibility with mpegts.js and to bypass flaky HLS upstream
-         ext = 'ts';
+         if (ch.mime_type === 'mpd') {
+             ext = 'mpd';
+             // For MPD, use the specific MPD proxy path pattern: /live/mpd/u/p/id/manifest.mpd
+             // But here we construct ${host}/${typePath}/...
+             // So we set typePath to 'live/mpd' and handle suffix below
+             typePath = 'live/mpd';
+         } else {
+             // Default to TS for better compatibility with mpegts.js and to bypass flaky HLS upstream
+             ext = 'ts';
+         }
       }
 
       // Construct SECURE local proxy URL
       // We use dummy user/pass 'token/auth' because we rely on the token param or headers
       // The stream_id here is the USER channel ID (uc.id), which the proxy resolves to provider credentials
-      const streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
+
+      let streamUrl;
+      if (ext === 'mpd') {
+          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}/manifest.mpd${tokenParam}`;
+      } else {
+          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
+      }
 
       // Escape metadata for M3U
       const safeGroup = group.replace(/"/g, '');
@@ -2457,6 +2547,18 @@ app.get('/api/player/playlist', async (req, res) => {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
       playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${name}\n`;
+
+      // Add DRM Tags if present
+      if (ch.metadata) {
+          try {
+              const meta = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
+              if (meta.drm) {
+                  if (meta.drm.license_type) playlist += `#KODIPROP:inputstream.adaptive.license_type=${meta.drm.license_type}\n`;
+                  if (meta.drm.license_key) playlist += `#KODIPROP:inputstream.adaptive.license_key=${meta.drm.license_key}\n`;
+              }
+          } catch(e) {}
+      }
+
       playlist += `${streamUrl}\n`;
     }
 
@@ -2536,6 +2638,155 @@ async function cachePicon(originalUrl, channelName) {
   // Simply return the original URL - no caching needed
   return originalUrl || null;
 }
+
+// === MPD Proxy ===
+app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
+  const connectionId = crypto.randomUUID();
+  try {
+    const streamId = Number(req.params.stream_id || 0);
+    // Path after stream_id
+    const relativePath = req.params[0];
+
+    if (!streamId) return res.sendStatus(404);
+
+    const user = await getXtreamUser(req);
+    if (!user) return res.sendStatus(401);
+
+    const channel = db.prepare(`
+      SELECT
+        uc.id as user_channel_id,
+        pc.id as provider_channel_id,
+        pc.remote_stream_id,
+        pc.name,
+        pc.metadata,
+        p.url as provider_url,
+        p.username as provider_user,
+        p.password as provider_pass
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE uc.id = ? AND cat.user_id = ?
+    `).get(streamId, user.id);
+
+    if (!channel) return res.sendStatus(404);
+
+    // Parse metadata for headers
+    let meta = {};
+    try {
+        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
+    } catch(e) {}
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Connection': 'keep-alive'
+    };
+
+    if (meta && meta.http_headers) {
+        Object.assign(headers, meta.http_headers);
+    }
+
+    // Determine upstream URL
+    let upstreamUrl = '';
+    if (meta && meta.original_url) {
+        // If we have the original M3U URL, use it as base
+        // If requesting manifest.mpd (which we likely rewrote the playlist to point to), use original_url
+        if (relativePath === 'manifest.mpd' || relativePath === '') {
+            upstreamUrl = meta.original_url;
+        } else {
+            // For segments, resolve against original URL base
+            try {
+              const urlObj = new URL(meta.original_url);
+              // Remove filename to get base
+              const basePath = urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1);
+              // Handle query params in segments? Usually segments are just paths
+              // If relativePath contains query params, append them?
+              // Simple join
+              // Handle absolute paths in relativePath? (unlikely for wildcard capture unless encoded)
+              upstreamUrl = new URL(relativePath, urlObj.origin + basePath).toString();
+            } catch(e) {
+              console.error('URL resolution error:', e);
+              return res.sendStatus(400);
+            }
+        }
+    } else {
+        // Fallback for Xtream (unlikely for MPD but possible)
+        channel.provider_pass = decrypt(channel.provider_pass);
+        const base = channel.provider_url.replace(/\/+$/, '');
+        // Standard Xtream doesn't usually do MPD, but if it did:
+        upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
+    }
+
+    // Track active stream (only for manifest)
+    if (relativePath.endsWith('.mpd')) {
+        const startTime = Date.now();
+        activeStreams.set(connectionId, {
+          id: connectionId,
+          user_id: user.id,
+          username: user.username,
+          channel_name: `${channel.name} (DASH)`,
+          start_time: startTime,
+          ip: req.ip
+        });
+
+        // Update stats
+        const now = Math.floor(startTime / 1000);
+        const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
+        if (existingStat) {
+          db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
+        } else {
+          db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
+        }
+    }
+
+    // Fetch
+    const upstream = await fetch(upstreamUrl, {
+      headers,
+      redirect: 'follow'
+    });
+
+    if (!upstream.ok) {
+       console.error(`MPD proxy error: ${upstream.status} for ${upstreamUrl}`);
+       activeStreams.delete(connectionId);
+       return res.sendStatus(upstream.status);
+    }
+
+    // Handle Manifest Rewriting
+    if (relativePath.endsWith('.mpd')) {
+        const text = await upstream.text();
+        const baseUrl = `${req.protocol}://${req.get('host')}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
+
+        let newText = text;
+
+        // Regex to replace absolute BaseURL
+        newText = newText.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
+
+        res.setHeader('Content-Type', 'application/dash+xml');
+        res.send(newText);
+
+        activeStreams.delete(connectionId);
+        return;
+    }
+
+    // For segments, just stream
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    upstream.body.pipe(res);
+
+    req.on('close', () => {
+       activeStreams.delete(connectionId);
+       if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
+    });
+
+  } catch (e) {
+    console.error('MPD proxy error:', e);
+    activeStreams.delete(connectionId);
+    if (!res.headersSent) res.sendStatus(500);
+  }
+});
 
 // === Stream Proxy ===
 app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:stream_id.m3u8'], async (req, res) => {

@@ -218,6 +218,7 @@
 <script src="vendor/bootstrap.bundle.min.js"></script>
 <script src="vendor/hls.min.js"></script>
 <script src="vendor/mpegts.min.js"></script>
+<script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
 <script src="i18n.js"></script>
 <script>
   const urlParams = new URLSearchParams(window.location.search);
@@ -236,6 +237,7 @@
   let epgSchedule = {}; // channel_id -> [programs]
   let hls = null;
   let flvPlayer = null;
+  let dashPlayer = null;
   const video = document.getElementById('video');
 
   // Timeline Config
@@ -353,6 +355,15 @@
                       if (key === 'plot') currentItem.plot = cleanVal;
                   });
               }
+          } else if (line.startsWith('#KODIPROP:')) {
+              const prop = line.substring(10).trim();
+              const parts = prop.split('=');
+              const key = parts[0];
+              const val = parts.slice(1).join('=');
+
+              if (!currentItem.drm) currentItem.drm = {};
+              if (key === 'inputstream.adaptive.license_type') currentItem.drm.license_type = val;
+              if (key === 'inputstream.adaptive.license_key') currentItem.drm.license_key = val;
           } else if (!line.startsWith('#')) {
               if (currentItem.name) {
                   currentItem.url = line;
@@ -613,6 +624,14 @@
       }
 
       video.dataset.currentUrl = url;
+
+      // Store DRM info
+      if (stream.drm) {
+          video.dataset.drm = JSON.stringify(stream.drm);
+      } else {
+          delete video.dataset.drm;
+      }
+
       initPlayer(url, stream.type || 'live');
   }
 
@@ -626,8 +645,67 @@
         hls.destroy();
         hls = null;
     }
+    if (dashPlayer) {
+        dashPlayer.destroy();
+        dashPlayer = null;
+    }
 
-    if (url.includes('.ts') && mpegts.isSupported()) {
+    if (url.includes('.mpd') && typeof dashjs !== 'undefined') {
+        dashPlayer = dashjs.MediaPlayer().create();
+        dashPlayer.initialize(video, url, true);
+
+        // DRM Configuration
+        if (video.dataset.drm) {
+            try {
+                const drm = JSON.parse(video.dataset.drm);
+                const protData = {};
+
+                if (drm.license_type && drm.license_key) {
+                    let keySystem = drm.license_type;
+                    // Map common aliases
+                    if (keySystem === 'clearkey') keySystem = 'org.w3.clearkey';
+                    if (keySystem === 'widevine') keySystem = 'com.widevine.alpha';
+                    if (keySystem === 'playready') keySystem = 'com.microsoft.playready';
+
+                    let licenseUrl = drm.license_key;
+                    const headers = {};
+
+                    if (licenseUrl.includes('|')) {
+                        const parts = licenseUrl.split('|');
+                        licenseUrl = parts[0];
+                        for (let i = 1; i < parts.length; i++) {
+                            const [hKey, hVal] = parts[i].split('=');
+                            if (hKey && hVal) headers[hKey] = hVal;
+                        }
+                    }
+
+                    if (keySystem === 'org.w3.clearkey' && !licenseUrl.startsWith('http')) {
+                         // ClearKey specific (kid:key)
+                         // This is a naive parser for kid:key format
+                         // DashJS expects { "kid": "key" } in clearkeys object
+                         const parts = licenseUrl.split(':');
+                         if (parts.length === 2) {
+                             protData[keySystem] = {
+                                 clearkeys: {
+                                     [parts[0]]: parts[1]
+                                 }
+                             };
+                         }
+                    } else {
+                        protData[keySystem] = {
+                            serverURL: licenseUrl,
+                            httpRequestHeaders: headers
+                        };
+                    }
+
+                    dashPlayer.setProtectionData(protData);
+                }
+            } catch(e) {
+                console.error('DRM Setup Error:', e);
+            }
+        }
+
+    } else if (url.includes('.ts') && mpegts.isSupported()) {
         const isLive = (type === 'live');
         flvPlayer = mpegts.createPlayer({
             type: 'mpegts',
