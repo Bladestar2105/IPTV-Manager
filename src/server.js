@@ -503,6 +503,7 @@ if (cluster.isPrimary) {
   migrateChannelsSchemaV2();
   migrateUserCategoriesType();
   migrateOtpSchema();
+  migrateWebUiAccess();
 
     // Migrate passwords
     migrateProviderPasswords();
@@ -719,6 +720,20 @@ function migrateOtpSchema() {
     }
   } catch (e) {
     console.error('OTP Schema migration error:', e);
+  }
+}
+
+function migrateWebUiAccess() {
+  try {
+    const userTable = db.prepare("PRAGMA table_info(users)").all();
+    const userCols = userTable.map(c => c.name);
+
+    if (!userCols.includes('webui_access')) {
+      db.exec('ALTER TABLE users ADD COLUMN webui_access INTEGER DEFAULT 1');
+      console.log('✅ DB Migration: webui_access column added to users');
+    }
+  } catch (e) {
+    console.error('WebUI Access Schema migration error:', e);
   }
 }
 
@@ -1605,7 +1620,7 @@ app.get('/api/epg/schedule', async (req, res) => {
 app.get('/api/users', authenticateToken, (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, is_active FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, is_active, webui_access FROM users ORDER BY id').all();
     const result = users.map(u => {
         let plain = null;
         if (u.password && !u.password.startsWith('$2b$')) {
@@ -1615,6 +1630,7 @@ app.get('/api/users', authenticateToken, (req, res) => {
             id: u.id,
             username: u.username,
             is_active: u.is_active,
+            webui_access: u.webui_access,
             plain_password: plain
         };
     });
@@ -1625,7 +1641,7 @@ app.get('/api/users', authenticateToken, (req, res) => {
 app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password } = req.body;
+    const { username, password, webui_access } = req.body;
     
     // Validation
     if (!username || !password) {
@@ -1665,7 +1681,7 @@ app.post('/api/users', authLimiter, authenticateToken, async (req, res) => {
     const encryptedPassword = encrypt(p);
     
     // Insert user
-    const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(u, encryptedPassword);
+    const info = db.prepare('INSERT INTO users (username, password, webui_access) VALUES (?, ?, ?)').run(u, encryptedPassword, webui_access !== undefined ? (webui_access ? 1 : 0) : 1);
     
     res.json({
       id: info.lastInsertRowid,
@@ -1680,7 +1696,7 @@ app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password } = req.body;
+    const { username, password, webui_access } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -1711,6 +1727,11 @@ app.put('/api/users/:id', authLimiter, authenticateToken, async (req, res) => {
         const encryptedPassword = encrypt(p);
         updates.push('password = ?');
         params.push(encryptedPassword);
+    }
+
+    if (webui_access !== undefined) {
+        updates.push('webui_access = ?');
+        params.push(webui_access ? 1 : 0);
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update
@@ -1747,6 +1768,13 @@ app.post('/api/login', authLimiter, async (req, res) => {
     }
     
     if (user) {
+      // Check WebUI Access for normal users
+      if (!user.is_admin && user.webui_access === 0) {
+          // Log Attempt
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_denied', `User: ${username} (WebUI Access Disabled)`, now);
+          return res.status(403).json({ error: 'access_denied_webui' });
+      }
+
       // Check Password
       let isValid = false;
       if (user.password && user.password.startsWith('$2b$')) {
@@ -2062,17 +2090,9 @@ app.post('/api/providers/:id/sync', authenticateToken, async (req, res) => {
       return res.status(400).json({error: 'user_id required'});
     }
 
-    // Check permission
+    // Check permission - Only Admin can sync
     if (!req.user.is_admin) {
-        // Can only sync own provider
-        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
-        if (!provider || provider.user_id !== req.user.id) {
-            return res.status(403).json({error: 'Access denied'});
-        }
-        // Force user_id to self
-        if (Number(user_id) !== req.user.id) {
-             return res.status(403).json({error: 'Cannot sync for other users'});
-        }
+        return res.status(403).json({error: 'Access denied'});
     }
     
     const result = await performSync(id, user_id, true);
@@ -3600,6 +3620,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
 // === Statistics API ===
 app.get('/api/statistics', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     // Top Channels
     const topChannels = db.prepare(`
       SELECT ss.views, ss.last_viewed, pc.name, pc.logo
@@ -4212,6 +4233,7 @@ async function updateEpgSource(sourceId, skipRegenerate = false) {
 // === EPG Sources APIs ===
 app.get('/api/epg-sources', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
     
     // Add provider EPG sources
@@ -4248,6 +4270,7 @@ app.get('/api/epg-sources', authenticateToken, (req, res) => {
 
 app.post('/api/epg-sources', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
     
@@ -4270,6 +4293,7 @@ app.post('/api/epg-sources', authenticateToken, (req, res) => {
 
 app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     const { name, url, enabled, update_interval } = req.body;
     
@@ -4308,6 +4332,7 @@ app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/epg-sources/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     
     // Delete cache file
@@ -4326,6 +4351,7 @@ app.delete('/api/epg-sources/:id', authenticateToken, (req, res) => {
 // Update single EPG source
 app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = req.params.id;
     
     // Check if it's a provider EPG
@@ -4360,6 +4386,7 @@ app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
 // Update all EPG sources
 app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
     const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
     
@@ -4523,6 +4550,16 @@ app.post('/api/mapping/manual', authenticateToken, (req, res) => {
 app.delete('/api/mapping/:id', authenticateToken, (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!req.user.is_admin) {
+        // Check if channel belongs to user's categories
+        const used = db.prepare(`
+            SELECT 1 FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.provider_channel_id = ? AND cat.user_id = ?
+        `).get(id, req.user.id);
+
+        if (!used) return res.status(403).json({error: 'Access denied: Channel not in your categories'});
+    }
     db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
     res.json({success: true});
   } catch (e) {
@@ -4680,6 +4717,7 @@ app.delete('/api/client-logs', authenticateToken, (req, res) => {
 // === Security API ===
 app.get('/api/security/logs', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const logs = db.prepare('SELECT * FROM security_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
     res.json(logs);
@@ -4688,6 +4726,7 @@ app.get('/api/security/logs', authenticateToken, (req, res) => {
 
 app.delete('/api/security/logs', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     db.prepare('DELETE FROM security_logs').run();
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -4695,6 +4734,7 @@ app.delete('/api/security/logs', authenticateToken, (req, res) => {
 
 app.get('/api/security/blocked', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const ips = db.prepare('SELECT * FROM blocked_ips ORDER BY created_at DESC').all();
     res.json(ips);
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -4702,6 +4742,7 @@ app.get('/api/security/blocked', authenticateToken, (req, res) => {
 
 app.post('/api/security/block', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { ip, reason, duration } = req.body; // duration in seconds
     if (!ip) return res.status(400).json({error: 'ip required'});
 
@@ -4727,6 +4768,7 @@ app.post('/api/security/block', authenticateToken, (req, res) => {
 
 app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = req.params.id;
     const now = Math.floor(Date.now() / 1000);
     let ipToLog = id;
@@ -4751,6 +4793,7 @@ app.delete('/api/security/block/:id', authenticateToken, (req, res) => {
 
 app.get('/api/security/whitelist', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const ips = db.prepare('SELECT * FROM whitelisted_ips ORDER BY created_at DESC').all();
     res.json(ips);
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -4758,6 +4801,7 @@ app.get('/api/security/whitelist', authenticateToken, (req, res) => {
 
 app.post('/api/security/whitelist', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { ip, description } = req.body;
     if (!ip) return res.status(400).json({error: 'ip required'});
 
@@ -4776,6 +4820,7 @@ app.post('/api/security/whitelist', authenticateToken, (req, res) => {
 
 app.delete('/api/security/whitelist/:id', authenticateToken, (req, res) => {
   try {
+     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
      const id = req.params.id;
      if (id.includes('.') || id.includes(':')) {
         db.prepare('DELETE FROM whitelisted_ips WHERE ip = ?').run(id);
@@ -4789,6 +4834,7 @@ app.delete('/api/security/whitelist/:id', authenticateToken, (req, res) => {
 // === Import/Export API ===
 app.get('/api/export', authenticateToken, (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { user_id, password } = req.query;
 
     if (!password) {
@@ -4872,6 +4918,7 @@ app.get('/api/export', authenticateToken, (req, res) => {
 });
 
 app.post('/api/import', authenticateToken, upload.single('file'), (req, res) => {
+  if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
   let tempPath = null;
   try {
     const { password } = req.body;
