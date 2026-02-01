@@ -81,7 +81,7 @@
     <!-- View: Dashboard -->
     <div id="view-dashboard">
       <!-- Stats Cards -->
-      <div class="row mb-4">
+      <div class="row mb-4" id="dashboard-stats-bar">
         <div class="col-md-3">
           <div class="card mb-3 text-center">
             <div class="card-body">
@@ -287,7 +287,7 @@
         </div>
       </div>
       
-      <div class="card mt-4">
+      <div class="card mt-4" id="epg-sources-card">
          <div class="card-header d-flex justify-content-between align-items-center">
             <span data-i18n="epgSources">EPG Sources</span>
             <div>
@@ -899,6 +899,10 @@
             <div class="mb-3">
               <label class="form-label" data-i18n="new_password">New Password</label>
               <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="edit-user-webui-access">
+              <label class="form-check-label" for="edit-user-webui-access" data-i18n="webui_access">Web UI Access</label>
             </div>
           </div>
           <div class="modal-footer">

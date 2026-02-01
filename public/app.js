@@ -426,6 +426,9 @@ function showEditUserModal(user) {
   document.getElementById('edit-user-id').value = user.id;
   document.getElementById('edit-user-username').value = user.username;
   document.getElementById('edit-user-password').value = '';
+  // Checkbox handling: default to true if undefined/null (legacy users), else use value
+  const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
+  document.getElementById('edit-user-webui-access').checked = webuiAccess;
   modal.show();
 }
 
@@ -434,8 +437,9 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const id = document.getElementById('edit-user-id').value;
   const username = document.getElementById('edit-user-username').value;
   const password = document.getElementById('edit-user-password').value;
+  const webuiAccess = document.getElementById('edit-user-webui-access').checked;
 
-  const body = { username };
+  const body = { username, webui_access: webuiAccess };
   if (password) body.password = password;
 
   try {
@@ -494,53 +498,53 @@ async function loadProviders(filterUserId = null) {
         editBtn.setAttribute('aria-label', t('edit'));
         editBtn.onclick = () => prepareEditProvider(p);
         btnGroup.appendChild(editBtn);
-    }
 
-    const syncBtn = document.createElement('button');
-    syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
-    syncBtn.textContent = t('sync');
-    syncBtn.onclick = async () => {
-      if (!selectedUserId) {
-        alert(t('pleaseSelectUserFirst'));
-        return;
-      }
-      syncBtn.disabled = true;
-      syncBtn.textContent = t('syncing');
-      try {
-        const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({user_id: selectedUserId})
-        });
-        alert(t('syncSuccess', {
-          added: res.channels_added,
-          updated: res.channels_updated,
-          categories: res.categories_added
-        }));
-      } catch (e) {
-        alert(t('errorPrefix') + ' ' + e.message);
-      } finally {
-        syncBtn.disabled = false;
+        const syncBtn = document.createElement('button');
+        syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
         syncBtn.textContent = t('sync');
-      }
-    };
-    btnGroup.appendChild(syncBtn);
-    
-    const configBtn = document.createElement('button');
-    configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    configBtn.innerHTML = '⚙️';
-    configBtn.title = t('syncConfig');
-    configBtn.setAttribute('aria-label', t('syncConfig'));
-    configBtn.onclick = () => showSyncConfigModal(p.id);
-    btnGroup.appendChild(configBtn);
-    
-    const logsBtn = document.createElement('button');
-    logsBtn.className = 'btn btn-sm btn-outline-info me-1';
-    logsBtn.innerHTML = '📊';
-    logsBtn.title = t('syncLogs');
-    logsBtn.setAttribute('aria-label', t('syncLogs'));
-    logsBtn.onclick = () => showSyncLogs(p.id);
-    btnGroup.appendChild(logsBtn);
+        syncBtn.onclick = async () => {
+          if (!selectedUserId) {
+            alert(t('pleaseSelectUserFirst'));
+            return;
+          }
+          syncBtn.disabled = true;
+          syncBtn.textContent = t('syncing');
+          try {
+            const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({user_id: selectedUserId})
+            });
+            alert(t('syncSuccess', {
+              added: res.channels_added,
+              updated: res.channels_updated,
+              categories: res.categories_added
+            }));
+          } catch (e) {
+            alert(t('errorPrefix') + ' ' + e.message);
+          } finally {
+            syncBtn.disabled = false;
+            syncBtn.textContent = t('sync');
+          }
+        };
+        btnGroup.appendChild(syncBtn);
+
+        const configBtn = document.createElement('button');
+        configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+        configBtn.innerHTML = '⚙️';
+        configBtn.title = t('syncConfig');
+        configBtn.setAttribute('aria-label', t('syncConfig'));
+        configBtn.onclick = () => showSyncConfigModal(p.id);
+        btnGroup.appendChild(configBtn);
+
+        const logsBtn = document.createElement('button');
+        logsBtn.className = 'btn btn-sm btn-outline-info me-1';
+        logsBtn.innerHTML = '📊';
+        logsBtn.title = t('syncLogs');
+        logsBtn.setAttribute('aria-label', t('syncLogs'));
+        logsBtn.onclick = () => showSyncLogs(p.id);
+        btnGroup.appendChild(logsBtn);
+    }
 
     if (isAdmin) {
         const delBtn = document.createElement('button');
@@ -2778,7 +2782,7 @@ function applyPermissions() {
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
 
-    // Hide EPG "Only used" checkbox for non-admins (since they are forced to only used)
+    // Hide EPG "Only used" checkbox for non-admins
     const onlyUsedContainer = document.getElementById('only-used-container');
     if (onlyUsedContainer) {
         onlyUsedContainer.style.display = isAdmin ? 'block' : 'none';
@@ -2788,6 +2792,25 @@ function applyPermissions() {
     const userForm = document.getElementById('user-form');
     if (userForm) {
         userForm.style.display = isAdmin ? 'flex' : 'none';
+    }
+
+    // Hide Navigation Items
+    const idsToHide = ['nav-statistics', 'nav-security', 'nav-import-export'];
+    idsToHide.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.parentElement.style.display = isAdmin ? 'block' : 'none';
+    });
+
+    // Hide Stats Bar
+    const statsBar = document.getElementById('dashboard-stats-bar');
+    if (statsBar) {
+        statsBar.style.display = isAdmin ? 'flex' : 'none';
+    }
+
+    // Hide EPG Sources Card
+    const epgCard = document.getElementById('epg-sources-card');
+    if (epgCard) {
+        epgCard.style.display = isAdmin ? 'block' : 'none';
     }
 }
 
