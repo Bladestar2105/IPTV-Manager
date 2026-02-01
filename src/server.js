@@ -1242,6 +1242,7 @@ function startEpgScheduler() {
             await fs.promises.writeFile(cacheFile, epgData, 'utf8');
             console.log(`✅ Scheduled EPG update success: ${provider.name}`);
             failedUpdates.delete(provider.id);
+            await generateConsolidatedEpg();
           } else {
             console.error(`Scheduled EPG update HTTP error ${response.status} for ${provider.name}`);
             failedUpdates.set(provider.id, now);
@@ -3433,11 +3434,63 @@ app.get('/api/statistics', authenticateToken, async (req, res) => {
   }
 });
 
+async function generateConsolidatedEpg() {
+  try {
+    const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+    const tempFile = path.join(EPG_CACHE_DIR, 'epg.xml.tmp');
+    const writeStream = createWriteStream(tempFile);
+
+    const epgFiles = [];
+
+    // Get provider EPG files
+    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    for (const provider of providers) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+      if (fs.existsSync(cacheFile)) {
+        epgFiles.push(cacheFile);
+      }
+    }
+
+    // Get EPG source files
+    const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
+    for (const source of sources) {
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
+      if (fs.existsSync(cacheFile)) {
+        epgFiles.push(cacheFile);
+      }
+    }
+
+    writeStream.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
+
+    for (const file of epgFiles) {
+      await streamEpgContent(file, writeStream);
+    }
+
+    writeStream.write('</tv>');
+    writeStream.end();
+
+    await new Promise(resolve => writeStream.on('finish', resolve));
+    await fs.promises.rename(tempFile, consolidatedFile);
+    console.log('✅ Consolidated EPG regenerated');
+  } catch (e) {
+    console.error('Failed to regenerate consolidated EPG:', e);
+  }
+}
+
 // === XMLTV ===
 app.get('/xmltv.php', async (req, res) => {
   try {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
+
+    // Serve consolidated file if exists
+    const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+    if (fs.existsSync(consolidatedFile)) {
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      const stream = fs.createReadStream(consolidatedFile);
+      stream.pipe(res);
+      return;
+    }
 
     // Collect all EPG data from cache
     const epgFiles = [];
@@ -3894,6 +3947,7 @@ async function updateEpgSource(sourceId) {
     db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
     
     console.log(`✅ EPG updated: ${source.name} (${(epgData.length / 1024 / 1024).toFixed(2)} MB)`);
+    await generateConsolidatedEpg();
     return { success: true, size: epgData.length };
   } catch (e) {
     console.error(`❌ EPG update failed: ${source.name}`, e.message);
@@ -4037,6 +4091,8 @@ app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
       const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${providerId}.xml`);
       fs.writeFileSync(cacheFile, epgData, 'utf8');
       
+      await generateConsolidatedEpg();
+
       return res.json({success: true, size: epgData.length});
     }
     
@@ -4083,6 +4139,8 @@ app.post('/api/epg-sources/update-all', authenticateToken, async (req, res) => {
 
     const results = await Promise.all([...providerPromises, ...sourcePromises]);
     
+    await generateConsolidatedEpg();
+
     res.json({success: true, results});
   } catch (e) {
     res.status(500).json({error: e.message});
