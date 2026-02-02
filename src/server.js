@@ -4619,6 +4619,26 @@ app.get('/api/mapping/:providerId', authenticateToken, (req, res) => {
   }
 });
 
+app.post('/api/mapping/reset', authenticateToken, (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const { provider_id } = req.body;
+    if (!provider_id) return res.status(400).json({error: 'provider_id required'});
+
+    db.prepare(`
+      DELETE FROM epg_channel_mappings
+      WHERE provider_channel_id IN (
+        SELECT id FROM provider_channels WHERE provider_id = ?
+      )
+    `).run(Number(provider_id));
+
+    res.json({success: true});
+  } catch (e) {
+    console.error('Reset mapping error:', e);
+    res.status(500).json({error: e.message});
+  }
+});
+
 app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
   try {
     const { provider_id, only_used } = req.body;
