@@ -1419,12 +1419,42 @@ async function createDefaultAdmin() {
   }
 }
 
+// Authentication Cache
+const authCache = new Map();
+const AUTH_CACHE_TTL = 60000; // 60 seconds
+const AUTH_CACHE_MAX_SIZE = 10000;
+
+// Cleanup interval (every 5 minutes)
+setInterval(() => {
+  if (authCache.size > AUTH_CACHE_MAX_SIZE) {
+    authCache.clear();
+    console.log('🧹 Auth Cache cleared (limit reached)');
+  } else {
+    // Remove expired entries
+    const now = Date.now();
+    for (const [key, value] of authCache.entries()) {
+      if (now > value.expiry) authCache.delete(key);
+    }
+  }
+}, 300000).unref(); // unref to not prevent process exit
+
 // Authenticate user with bcrypt
 async function authUser(username, password) {
   try {
     const u = (username || '').trim();
     const p = (password || '').trim();
     if (!u || !p) return null;
+
+    // 1. Check Cache
+    // Use hash to avoid storing plaintext password in memory
+    const cacheKey = crypto.createHash('sha256').update(`${u}:${p}`).digest('hex');
+    if (authCache.has(cacheKey)) {
+      const cached = authCache.get(cacheKey);
+      if (Date.now() < cached.expiry) {
+        return cached.user;
+      }
+      authCache.delete(cacheKey);
+    }
     
     const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(u);
     if (!user) return null;
@@ -1438,7 +1468,16 @@ async function authUser(username, password) {
         isValid = (decrypted === p);
     }
 
-    return isValid ? user : null;
+    if (isValid) {
+      // 2. Cache Result
+      authCache.set(cacheKey, {
+        user: user,
+        expiry: Date.now() + AUTH_CACHE_TTL
+      });
+      return user;
+    }
+
+    return null;
   } catch (e) {
     console.error('authUser error:', e);
     return null;
