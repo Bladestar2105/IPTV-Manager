@@ -242,7 +242,7 @@
                           <label class="form-label small fw-bold" data-i18n="url">URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="xtream-url" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-url').value)" data-i18n-label="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-url').value, this)" data-i18n-label="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -251,14 +251,14 @@
                              <label class="form-label small fw-bold" data-i18n="username">Username</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-user" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-user').value)" data-i18n-label="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-user').value, this)" data-i18n-label="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                           <div class="col-md-6">
                              <label class="form-label small fw-bold" data-i18n="password">Password</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-pass" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-pass').value)" data-i18n-label="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-pass').value, this)" data-i18n-label="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                        </div>
@@ -267,7 +267,7 @@
                           <label class="form-label small fw-bold" data-i18n="epgUrlLabel">EPG URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="epg-url" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('epg-url').value)" data-i18n-label="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('epg-url').value, this)" data-i18n-label="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -275,11 +275,11 @@
                           <label class="form-label small fw-bold" data-i18n="m3uLink">M3U Link</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="m3u-link" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('m3u-link').value)" data-i18n-label="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('m3u-link').value, this)" data-i18n-label="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
-                       <button class="btn btn-primary w-100" onclick="copyAllXtreamCredentials()" data-i18n="copyAll">Copy All Credentials</button>
+                       <button class="btn btn-primary w-100" onclick="copyAllXtreamCredentials(this)" data-i18n="copyAll">Copy All Credentials</button>
                     </div>
                  </div>
               </div>

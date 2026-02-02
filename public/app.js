@@ -192,21 +192,50 @@ function generateUser() {
     }
 }
 
-function copyToClipboard(text) {
+function copyToClipboard(text, btnElement) {
     if (!text) return;
+
+    const handleSuccess = () => {
+        if (btnElement) {
+            const originalHtml = btnElement.innerHTML;
+            const originalClass = btnElement.className;
+
+            // Disable button to prevent rapid clicks and state corruption
+            btnElement.disabled = true;
+
+            // Visual feedback
+            const isSmallBtn = btnElement.textContent.trim().length <= 2;
+
+            if (isSmallBtn) {
+                btnElement.innerHTML = '✅';
+                btnElement.className = 'btn btn-success ' + btnElement.className.replace('btn-outline-secondary', '');
+            } else {
+                const width = btnElement.offsetWidth;
+                btnElement.style.width = width + 'px'; // Fix width
+                btnElement.innerHTML = `✅ ${t('copied') || 'Copied!'}`;
+                btnElement.className = 'btn btn-success w-100';
+            }
+
+            setTimeout(() => {
+                btnElement.innerHTML = originalHtml;
+                btnElement.className = originalClass;
+                btnElement.style.width = '';
+                btnElement.disabled = false;
+            }, 2000);
+        }
+    };
+
     if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => {
-            // Optional feedback
-        }).catch(err => {
+        navigator.clipboard.writeText(text).then(handleSuccess).catch(err => {
             console.error('Clipboard API failed', err);
-            fallbackCopyTextToClipboard(text);
+            fallbackCopyTextToClipboard(text, btnElement, handleSuccess);
         });
     } else {
-        fallbackCopyTextToClipboard(text);
+        fallbackCopyTextToClipboard(text, btnElement, handleSuccess);
     }
 }
 
-function fallbackCopyTextToClipboard(text) {
+function fallbackCopyTextToClipboard(text, btnElement, successCallback) {
     const textArea = document.createElement("textarea");
     textArea.value = text;
 
@@ -221,8 +250,7 @@ function fallbackCopyTextToClipboard(text) {
 
     try {
         const successful = document.execCommand('copy');
-        // const msg = successful ? 'successful' : 'unsuccessful';
-        // console.log('Fallback: Copying text command was ' + msg);
+        if (successful && successCallback) successCallback();
     } catch (err) {
         console.error('Fallback: Oops, unable to copy', err);
     }
@@ -230,7 +258,7 @@ function fallbackCopyTextToClipboard(text) {
     document.body.removeChild(textArea);
 }
 
-function copyAllXtreamCredentials() {
+function copyAllXtreamCredentials(btnElement) {
     const url = document.getElementById('xtream-url').value;
     const user = document.getElementById('xtream-user').value;
     const pass = document.getElementById('xtream-pass').value;
@@ -245,8 +273,7 @@ function copyAllXtreamCredentials() {
                  `M3U-URL: ${m3u}\n` +
                  `######`;
 
-    copyToClipboard(text);
-    alert(t('copiedToClipboard') || 'Copied to clipboard');
+    copyToClipboard(text, btnElement);
 }
 
 async function loadUsers() {

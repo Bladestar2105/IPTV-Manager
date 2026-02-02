@@ -104,6 +104,7 @@ const translations = {
     passwordPlaceholder: '<Your Password>',
     copyAll: 'Copy All Credentials',
     copiedToClipboard: 'Copied to clipboard',
+    copied: 'Copied!',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Please select a user first',
@@ -455,6 +456,7 @@ const translations = {
     passwordPlaceholder: '<dein Passwort>',
     copyAll: 'Alle Zugangsdaten kopieren',
     copiedToClipboard: 'In die Zwischenablage kopiert',
+    copied: 'Kopiert!',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Bitte zuerst einen User auswählen',
@@ -806,6 +808,7 @@ const translations = {
     passwordPlaceholder: '<Votre Mot de Passe>',
     copyAll: 'Copier tous les identifiants',
     copiedToClipboard: 'Copié dans le presse-papiers',
+    copied: 'Copié !',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Veuillez d\'abord sélectionner un utilisateur',
@@ -1157,6 +1160,7 @@ const translations = {
     passwordPlaceholder: '<Ο Κωδικός σας>',
     copyAll: 'Αντιγραφή όλων των διαπιστευτηρίων',
     copiedToClipboard: 'Αντιγράφηκε στο πρόχειρο',
+    copied: 'Αντιγράφηκε!',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
