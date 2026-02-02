@@ -44,6 +44,7 @@ A comprehensive IPTV management system with automatic provider synchronization, 
 - **🔒 Security Headers**: Helmet.js for comprehensive security headers.
 - **🚪 Login System**: Secure login modal with session management.
 - **🚫 IP Blocking**: Configurable blocking duration (1h to 24h or custom) and whitelisting with reasons.
+- **🛡️ SSRF Protection**: Validates all upstream URLs to prevent internal network access (Private IPs, Localhost, Cloud Metadata).
 
 ### Performance & Scalability
 - **🔥 Multi-Core Optimization**: Automatically utilizes all available CPU cores via Node.js Clustering.
