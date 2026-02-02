@@ -189,3 +189,54 @@ export async function parseEpgXml(filePath, onProgramme) {
       }
   }
 }
+
+/**
+ * Parses EPG XML file for channels only (Streaming).
+ * @param {string} filePath
+ * @param {function} onChannel callback({id, name})
+ * @returns {Promise<void>}
+ */
+export function parseEpgChannels(filePath, onChannel) {
+  return new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    let buffer = '';
+
+    stream.on('data', (chunk) => {
+      buffer += chunk;
+
+      while (true) {
+         const endTag = '</channel>';
+         const endIndex = buffer.indexOf(endTag);
+         if (endIndex === -1) break;
+
+         const blockEnd = endIndex + endTag.length;
+
+         // Find the corresponding start tag
+         const startTag = '<channel';
+         const startIndex = buffer.indexOf(startTag);
+
+         if (startIndex !== -1 && startIndex < endIndex) {
+             const fullBlock = buffer.substring(startIndex, blockEnd);
+
+             const idMatch = fullBlock.match(/id="([^"]+)"/);
+             const nameMatch = fullBlock.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
+
+             if (idMatch && nameMatch) {
+                 onChannel({ id: idMatch[1], name: nameMatch[1] });
+             }
+         }
+
+         // Remove everything up to blockEnd
+         buffer = buffer.substring(blockEnd);
+      }
+    });
+
+    stream.on('end', () => {
+       resolve();
+    });
+
+    stream.on('error', (err) => {
+       reject(err);
+    });
+  });
+}
