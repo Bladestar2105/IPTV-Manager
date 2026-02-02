@@ -123,8 +123,8 @@
             <div class="card-header" data-i18n="userManagement">User Management</div>
             <div class="card-body">
                <form id="user-form" class="row g-2 mb-3">
-                  <div class="col-4"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" placeholder="Username" required /></div>
-                  <div class="col-4"><input class="form-control form-control-sm" name="password" type="text" data-i18n-placeholder="password" placeholder="Password" required /></div>
+                  <div class="col-4"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" data-i18n-label="username" placeholder="Username" required /></div>
+                  <div class="col-4"><input class="form-control form-control-sm" name="password" type="text" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required /></div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
                   <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" onclick="generateUser()" title="Generate Random" data-i18n-label="generateRandomUser">⚡</button></div>
                </form>
@@ -186,7 +186,7 @@
                                 </div>
                              </div>
                              <form id="category-form" class="input-group input-group-sm mb-2">
-                                <input class="form-control" name="name" data-i18n-placeholder="newCategory" placeholder="New Category" required />
+                                <input class="form-control" name="name" data-i18n-placeholder="newCategory" data-i18n-label="newCategory" placeholder="New Category" required />
                                 <button class="btn btn-outline-secondary" type="submit" data-i18n-label="addCategory">+</button>
                              </form>
                              <div class="d-flex justify-content-between align-items-center mb-1">
@@ -214,7 +214,7 @@
                                 </div>
                              </div>
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
-                             <input type="text" id="channel-search" class="form-control form-control-sm mb-2" data-i18n-placeholder="searchChannels" placeholder="Search..." disabled />
+                             <input type="text" id="channel-search" class="form-control form-control-sm mb-2" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search..." disabled />
 
                              <div class="row g-2">
                                 <div class="col-6">
@@ -342,8 +342,8 @@
          <div class="col-md-6">
             <h5 data-i18n="blockIp">Block IP</h5>
             <form id="block-ip-form" class="d-flex gap-2 mb-2 align-items-center">
-               <input class="form-control form-control-sm" name="ip" placeholder="IP Address" required style="width: 150px;">
-               <input class="form-control form-control-sm" name="reason" data-i18n-placeholder="whitelistReason" placeholder="Reason" style="flex-grow: 1;">
+               <input class="form-control form-control-sm" name="ip" data-i18n-label="ip" placeholder="IP Address" required style="width: 150px;">
+               <input class="form-control form-control-sm" name="reason" data-i18n-placeholder="whitelistReason" data-i18n-label="whitelistReason" placeholder="Reason" style="flex-grow: 1;">
                <select class="form-select form-select-sm" name="duration" style="width: auto;">
                   <option value="3600">1h</option>
                   <option value="21600">6h</option>
@@ -358,8 +358,8 @@
          <div class="col-md-6">
             <h5 data-i18n="whitelistIp">Whitelist IP</h5>
             <form id="whitelist-ip-form" class="d-flex gap-2 mb-2">
-               <input class="form-control form-control-sm" name="ip" placeholder="IP Address" required>
-               <input class="form-control form-control-sm" name="description" data-i18n-placeholder="reasonPlaceholder" placeholder="Reason">
+               <input class="form-control form-control-sm" name="ip" data-i18n-label="ip" placeholder="IP Address" required>
+               <input class="form-control form-control-sm" name="description" data-i18n-placeholder="reasonPlaceholder" data-i18n-label="whitelistReason" placeholder="Reason">
                <button class="btn btn-sm btn-success" data-i18n="whitelist">Whitelist</button>
             </form>
             <ul id="whitelisted-ip-list" class="list-group small" style="max-height: 200px; overflow:auto;"></ul>
@@ -574,7 +574,7 @@
 
       <div class="d-flex justify-content-between align-items-center mb-2">
          <h3 data-i18n="channelMappingList" class="m-0 border-0">Channel List</h3>
-         <input type="text" id="epg-mapping-search" class="form-control form-control-sm" style="width: 250px;" data-i18n-placeholder="searchChannels" placeholder="Search channels...">
+         <input type="text" id="epg-mapping-search" class="form-control form-control-sm" style="width: 250px;" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search channels...">
       </div>
 
       <div class="table-responsive" style="max-height: 600px; border: 1px solid var(--tv-border); border-radius: 8px;">
@@ -623,7 +623,7 @@
                <label class="form-check-label" for="import-type-series" data-i18n="typeSeries">Series</label>
              </div>
           </div>
-          <input type="text" id="category-import-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchCategories" placeholder="🔍 Search categories..." />
+          <input type="text" id="category-import-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="🔍 Search categories..." />
           <div class="d-flex justify-content-between mb-2">
              <div>
                <button class="btn btn-sm btn-outline-secondary" id="cat-select-all" data-i18n="selectAll">Select All</button>
@@ -1054,7 +1054,7 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="text" id="epg-select-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchChannels" placeholder="Search EPG channels...">
+          <input type="text" id="epg-select-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search EPG channels...">
           <ul id="epg-select-list" class="list-group" style="max-height:400px; overflow:auto;">
              <li class="list-group-item text-center text-muted">Loading...</li>
           </ul>
