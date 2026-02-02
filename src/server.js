@@ -33,6 +33,7 @@ import { parseM3u } from './playlist_parser.js';
 import streamManager from './stream_manager.js';
 import { authenticator } from 'otplib';
 import QRCode from 'qrcode';
+import { isIP } from 'net';
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -1449,14 +1450,29 @@ function isSafeUrl(urlStr) {
     const parsed = new URL(urlStr);
     const hostname = parsed.hostname;
 
-    // Block Localhost and Loopback
-    if (hostname === 'localhost' || hostname === '0.0.0.0') return false;
-    if (hostname.startsWith('127.')) return false;
-    if (hostname === '::1' || hostname === '::') return false;
+    // Remove brackets for IPv6
+    const cleanHost = hostname.replace(/^\[|\]$/g, '');
 
-    // Block Cloud Metadata
-    if (hostname === '169.254.169.254') return false;
-    if (hostname === 'metadata.google.internal') return false;
+    // 1. Block Localhost and Generic
+    if (cleanHost === 'localhost' || cleanHost === '0.0.0.0') return false;
+    if (cleanHost === '::' || cleanHost === '::1') return false;
+
+    // 2. Block IPv4 Loopback (127.0.0.0/8)
+    if (cleanHost.startsWith('127.')) return false;
+
+    // 3. Block IPv6 Loopback / Mapped IPv4
+    if (isIP(cleanHost)) {
+        const lowerHost = cleanHost.toLowerCase();
+        // Block mapped IPv4 loopback (::ffff:127.x.x.x)
+        if (lowerHost.startsWith('::ffff:127.')) return false;
+        // Block hex representation of 127 (7f) in mapped IPv6 (::ffff:7fxx:xxxx)
+        // Note: 127.0.0.1 -> ::ffff:7f00:1
+        if (lowerHost.startsWith('::ffff:7f')) return false;
+    }
+
+    // 4. Block Cloud Metadata
+    if (cleanHost === '169.254.169.254') return false;
+    if (cleanHost === 'metadata.google.internal') return false;
 
     // Protocol check
     if (!parsed.protocol.startsWith('http')) return false;
@@ -2036,10 +2052,18 @@ app.post('/api/providers', authenticateToken, async (req, res) => {
     if (!/^https?:\/\//i.test(url.trim())) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
+    if (!isSafeUrl(url.trim())) {
+      return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
+    }
 
     let finalEpgUrl = (epg_url || '').trim();
-    if (finalEpgUrl && !/^https?:\/\//i.test(finalEpgUrl)) {
-      return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
+    if (finalEpgUrl) {
+      if (!/^https?:\/\//i.test(finalEpgUrl)) {
+        return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
+      }
+      if (!isSafeUrl(finalEpgUrl)) {
+        return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL is unsafe (blocked)'});
+      }
     }
 
     // Auto-discover EPG URL if missing
@@ -4123,9 +4147,17 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
     if (!/^https?:\/\//i.test(url.trim())) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
+    if (!isSafeUrl(url.trim())) {
+      return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
+    }
 
-    if (epg_url && !/^https?:\/\//i.test(epg_url.trim())) {
-      return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
+    if (epg_url) {
+      if (!/^https?:\/\//i.test(epg_url.trim())) {
+        return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
+      }
+      if (!isSafeUrl(epg_url.trim())) {
+        return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL is unsafe (blocked)'});
+      }
     }
 
     // Get existing to check for masked password
@@ -4274,6 +4306,10 @@ app.post('/api/epg-sources', authenticateToken, (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
+
+    if (!isSafeUrl(url.trim())) {
+      return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
+    }
     
     const info = db.prepare(`
       INSERT INTO epg_sources (name, url, enabled, update_interval, source_type)
@@ -4306,6 +4342,9 @@ app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
       params.push(name.trim());
     }
     if (url !== undefined) {
+      if (!isSafeUrl(url.trim())) {
+        return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
+      }
       updates.push('url = ?');
       params.push(url.trim());
     }
