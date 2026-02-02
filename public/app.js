@@ -2045,6 +2045,11 @@ document.addEventListener('DOMContentLoaded', () => {
     autoMapBtn.addEventListener('click', handleAutoMap);
   }
 
+  const resetMapBtn = document.getElementById('reset-map-btn');
+  if (resetMapBtn) {
+    resetMapBtn.addEventListener('click', handleResetMapping);
+  }
+
   const epgMappingSearch = document.getElementById('epg-mapping-search');
   if (epgMappingSearch) {
     epgMappingSearch.addEventListener('input', renderEpgMappingChannels);
@@ -2631,7 +2636,9 @@ async function loadEpgMappingChannels() {
       if (!providerId) return; // Wait for selection
 
       tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+      const resetMapBtn = document.getElementById('reset-map-btn');
       if(autoMapBtn) autoMapBtn.disabled = true;
+      if(resetMapBtn) resetMapBtn.disabled = true;
 
       try {
         const [channels, mappings] = await Promise.all([
@@ -2656,7 +2663,9 @@ async function loadEpgMappingChannels() {
       if (!catId) return;
 
       tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+      const resetMapBtn = document.getElementById('reset-map-btn');
       if(autoMapBtn) autoMapBtn.style.display = 'none';
+      if(resetMapBtn) resetMapBtn.style.display = 'none';
 
       try {
           const channels = await fetchJSON(`/api/user-categories/${catId}/channels`);
@@ -2682,11 +2691,20 @@ function finishLoadingMapping() {
     loadAvailableEpgChannels();
 
     const autoMapBtn = document.getElementById('auto-map-btn');
-    if (autoMapBtn && epgMappingMode === 'provider') {
-        autoMapBtn.disabled = false;
-        autoMapBtn.style.display = 'inline-block';
-    } else if (autoMapBtn) {
-        autoMapBtn.style.display = 'none';
+    const resetMapBtn = document.getElementById('reset-map-btn');
+
+    if (epgMappingMode === 'provider') {
+        if (autoMapBtn) {
+            autoMapBtn.disabled = false;
+            autoMapBtn.style.display = 'inline-block';
+        }
+        if (resetMapBtn) {
+            resetMapBtn.disabled = false;
+            resetMapBtn.style.display = 'inline-block';
+        }
+    } else {
+        if (autoMapBtn) autoMapBtn.style.display = 'none';
+        if (resetMapBtn) resetMapBtn.style.display = 'none';
     }
 }
 
@@ -2809,6 +2827,33 @@ async function handleAutoMap() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('autoMap');
+  }
+}
+
+async function handleResetMapping() {
+  const providerId = document.getElementById('epg-mapping-provider-select').value;
+  if (!providerId) return;
+
+  if (!confirm(t('resetMappingConfirm'))) return;
+
+  const btn = document.getElementById('reset-map-btn');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ ...';
+
+  try {
+    await fetchJSON('/api/mapping/reset', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider_id: providerId})
+    });
+
+    alert(t('resetMappingSuccess'));
+    await loadEpgMappingChannels();
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('resetMapping');
   }
 }
 
