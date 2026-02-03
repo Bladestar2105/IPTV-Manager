@@ -48,9 +48,11 @@ export function cleanName(name) {
 const MAX_ROW_SIZE = 256;
 const _rowBuffer = new Int32Array(MAX_ROW_SIZE);
 
-export function levenshtein(a, b) {
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
+export function levenshtein(a, b, limit = Infinity) {
+  if (a.length === 0) return b.length <= limit ? b.length : limit + 1;
+  if (b.length === 0) return a.length <= limit ? a.length : limit + 1;
+
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
 
   // Swap to ensure a is the shorter string to minimize memory usage
   if (a.length > b.length) [a, b] = [b, a];
@@ -69,6 +71,8 @@ export function levenshtein(a, b) {
   for (let i = 1; i <= b.length; i++) {
     let prevDiag = row[0];
     row[0] = i;
+    let minRowDist = row[0];
+
     for (let j = 1; j <= a.length; j++) {
       const oldRowJ = row[j];
       if (b.charCodeAt(i - 1) === a.charCodeAt(j - 1)) {
@@ -80,9 +84,12 @@ export function levenshtein(a, b) {
         row[j] = Math.min(prevDiag, row[j - 1], oldRowJ) + 1;
       }
       prevDiag = oldRowJ;
+      if (row[j] < minRowDist) minRowDist = row[j];
     }
+
+    if (minRowDist > limit) return limit + 1;
   }
-  return row[a.length];
+  return row[a.length] <= limit ? row[a.length] : limit + 1;
 }
 
 /**
@@ -90,11 +97,15 @@ export function levenshtein(a, b) {
  * 1.0 = Exact Match
  * 0.0 = Completely different
  */
-export function getSimilarity(s1, s2) {
+export function getSimilarity(s1, s2, threshold = 0) {
   if (s1 === s2) return 1.0;
   const len = Math.max(s1.length, s2.length);
   if (len === 0) return 1.0;
-  const dist = levenshtein(s1, s2);
+
+  const limit = Math.floor(len * (1 - threshold));
+  const dist = levenshtein(s1, s2, limit);
+
+  if (dist > limit) return 0;
   return Math.max(0, 1 - (dist / len));
 }
 
