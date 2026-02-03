@@ -1496,22 +1496,40 @@ function isSafeUrl(urlStr) {
     if (cleanHost === 'localhost' || cleanHost === '0.0.0.0') return false;
     if (cleanHost === '::' || cleanHost === '::1') return false;
 
-    // 2. Block IPv4 Loopback (127.0.0.0/8)
-    if (cleanHost.startsWith('127.')) return false;
+    const ipVer = isIP(cleanHost);
 
-    // 3. Block IPv6 Loopback / Mapped IPv4
-    if (isIP(cleanHost)) {
-        const lowerHost = cleanHost.toLowerCase();
-        // Block mapped IPv4 loopback (::ffff:127.x.x.x)
-        if (lowerHost.startsWith('::ffff:127.')) return false;
-        // Block hex representation of 127 (7f) in mapped IPv6 (::ffff:7fxx:xxxx)
-        // Note: 127.0.0.1 -> ::ffff:7f00:1
-        if (lowerHost.startsWith('::ffff:7f')) return false;
+    // 2. Block IPs
+    if (ipVer !== 0) {
+        // IPv4 Loopback
+        if (cleanHost.startsWith('127.')) return false;
+
+        // IPv6
+        if (ipVer === 6) {
+             const lowerHost = cleanHost.toLowerCase();
+             // Block all IPv4-mapped IPv6 addresses (::ffff:...)
+             if (lowerHost.includes('::ffff:')) return false;
+        }
+
+        // Private IPv4 Ranges (10., 192.168., 169.254.)
+        if (cleanHost.startsWith('10.') ||
+            cleanHost.startsWith('192.168.') ||
+            cleanHost.startsWith('169.254.')) {
+            return false;
+        }
+
+        // 172.16-31
+        if (cleanHost.startsWith('172.')) {
+            const parts = cleanHost.split('.');
+            if (parts.length === 4) {
+                const second = parseInt(parts[1], 10);
+                if (second >= 16 && second <= 31) return false;
+            }
+        }
     }
 
-    // 4. Block Cloud Metadata
-    if (cleanHost === '169.254.169.254') return false;
+    // 5. Block Cloud Metadata
     if (cleanHost === 'metadata.google.internal') return false;
+    if (cleanHost === '169.254.169.254') return false;
 
     // Protocol check
     if (!parsed.protocol.startsWith('http')) return false;
@@ -3085,6 +3103,13 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
         } else {
           db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
         }
+    }
+
+    // Validate upstream URL
+    if (!isSafeUrl(upstreamUrl)) {
+        console.warn(`🛡️ Blocked unsafe upstream URL: ${upstreamUrl}`);
+        streamManager.remove(connectionId);
+        return res.sendStatus(403);
     }
 
     // Fetch
