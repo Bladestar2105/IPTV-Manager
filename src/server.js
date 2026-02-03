@@ -502,6 +502,7 @@ if (cluster.isPrimary) {
   migrateChannelsSchemaExtended();
   migrateCategoriesSchema();
   migrateChannelsSchemaV2();
+  migrateChannelsSchemaV3();
   migrateUserCategoriesType();
   migrateOtpSchema();
   migrateWebUiAccess();
@@ -665,6 +666,77 @@ function migrateChannelsSchemaV2() {
     }
   } catch (e) {
     console.error('Channel Schema V2 migration error:', e);
+  }
+}
+
+function migrateChannelsSchemaV3() {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(provider_channels)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    const newColumns = [
+      { name: 'rating', type: 'TEXT' },
+      { name: 'rating_5based', type: 'REAL DEFAULT 0' },
+      { name: 'added', type: 'TEXT' },
+      { name: 'plot', type: 'TEXT' },
+      { name: 'cast', type: 'TEXT' },
+      { name: 'director', type: 'TEXT' },
+      { name: 'genre', type: 'TEXT' },
+      { name: 'releaseDate', type: 'TEXT' },
+      { name: 'youtube_trailer', type: 'TEXT' },
+      { name: 'episode_run_time', type: 'TEXT' }
+    ];
+
+    let migrationNeeded = false;
+    for (const col of newColumns) {
+      if (!columns.includes(col.name)) {
+        db.exec(`ALTER TABLE provider_channels ADD COLUMN ${col.name} ${col.type}`);
+        console.log(`✅ DB Migration: ${col.name} column added to provider_channels`);
+        migrationNeeded = true;
+      }
+    }
+
+    if (migrationNeeded) {
+        console.log('🔄 Backfilling provider_channels metadata...');
+        const rows = db.prepare('SELECT id, metadata FROM provider_channels WHERE metadata IS NOT NULL').all();
+
+        const updateStmt = db.prepare(`
+            UPDATE provider_channels
+            SET rating = ?, rating_5based = ?, added = ?, plot = ?, cast = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
+            WHERE id = ?
+        `);
+
+        const updateTransaction = db.transaction((rowsToUpdate) => {
+            let updated = 0;
+            for (const row of rowsToUpdate) {
+                try {
+                    const meta = JSON.parse(row.metadata);
+                    updateStmt.run(
+                        meta.rating || '',
+                        meta.rating_5based || 0,
+                        meta.added || '',
+                        meta.plot || '',
+                        meta.cast || '',
+                        meta.director || '',
+                        meta.genre || '',
+                        meta.releaseDate || '',
+                        meta.youtube_trailer || '',
+                        meta.episode_run_time || '',
+                        row.id
+                    );
+                    updated++;
+                } catch (e) {
+                    // Ignore parsing errors
+                }
+            }
+            console.log(`✅ Backfilled ${updated} channels`);
+        });
+
+        updateTransaction(rows);
+    }
+
+  } catch (e) {
+    console.error('Channel Schema V3 migration error:', e);
   }
 }
 
@@ -996,13 +1068,13 @@ async function performSync(providerId, userId, isManual = false) {
     // Prepare channel statements
     const insertChannel = db.prepare(`
       INSERT OR IGNORE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type, rating, rating_5based, added, plot, cast, director, genre, releaseDate, youtube_trailer, episode_run_time)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     const updateChannel = db.prepare(`
       UPDATE provider_channels 
-      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?
+      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?, rating = ?, rating_5based = ?, added = ?, plot = ?, cast = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
     
@@ -1171,6 +1243,16 @@ async function performSync(providerId, userId, isManual = false) {
               streamType,
               metaStr,
               mimeType,
+              meta.rating || '',
+              meta.rating_5based || 0,
+              meta.added || '',
+              meta.plot || '',
+              String(meta.cast || ''),
+              String(meta.director || ''),
+              String(meta.genre || ''),
+              meta.releaseDate || '',
+              meta.youtube_trailer || '',
+              meta.episode_run_time || '',
               providerId,
               sid
             );
@@ -1190,7 +1272,17 @@ async function performSync(providerId, userId, isManual = false) {
               tvArchive,
               tvArchiveDuration,
               metaStr,
-              mimeType
+              mimeType,
+              meta.rating || '',
+              meta.rating_5based || 0,
+              meta.added || '',
+              meta.plot || '',
+              String(meta.cast || ''),
+              String(meta.director || ''),
+              String(meta.genre || ''),
+              meta.releaseDate || '',
+              meta.youtube_trailer || '',
+              meta.episode_run_time || ''
             );
             channelsAdded++;
             provChannelId = info.lastInsertRowid;
@@ -2757,7 +2849,7 @@ app.get('/player_api.php', async (req, res) => {
 
     if (action === 'get_vod_streams') {
       const rows = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.mime_type, pc.rating, pc.rating_5based, pc.added, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -2766,18 +2858,15 @@ app.get('/player_api.php', async (req, res) => {
       `).all(user.id);
 
       const result = rows.map((ch, i) => {
-        let meta = {};
-        try { meta = JSON.parse(ch.metadata || '{}'); } catch(e){}
-
         return {
           num: i + 1,
           name: ch.name,
           stream_type: 'movie',
           stream_id: Number(ch.user_channel_id),
           stream_icon: ch.logo || '',
-          rating: meta.rating || '',
-          rating_5based: meta.rating_5based || 0,
-          added: meta.added || now.toString(),
+          rating: ch.rating || '',
+          rating_5based: ch.rating_5based || 0,
+          added: ch.added || now.toString(),
           category_id: String(ch.user_category_id),
           container_extension: ch.mime_type || 'mp4',
           custom_sid: null,
@@ -2789,7 +2878,7 @@ app.get('/player_api.php', async (req, res) => {
 
     if (action === 'get_series') {
       const rows = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc.cast, pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time, pc.metadata, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -2798,25 +2887,30 @@ app.get('/player_api.php', async (req, res) => {
       `).all(user.id);
 
       const result = rows.map((ch, i) => {
-        let meta = {};
-        try { meta = JSON.parse(ch.metadata || '{}'); } catch(e){}
+        let backdrop_path = [];
+        if (ch.metadata) {
+             try {
+                 const meta = JSON.parse(ch.metadata);
+                 if (meta.backdrop_path) backdrop_path = meta.backdrop_path;
+             } catch(e){}
+        }
 
         return {
           num: i + 1,
           name: ch.name,
           series_id: Number(ch.user_channel_id),
           cover: ch.logo || '',
-          plot: meta.plot || '',
-          cast: meta.cast || '',
-          director: meta.director || '',
-          genre: meta.genre || '',
-          releaseDate: meta.releaseDate || '',
-          last_modified: meta.added || now.toString(),
-          rating: meta.rating || '',
-          rating_5based: meta.rating_5based || 0,
-          backdrop_path: meta.backdrop_path || [],
-          youtube_trailer: meta.youtube_trailer || '',
-          episode_run_time: meta.episode_run_time || '',
+          plot: ch.plot || '',
+          cast: ch.cast || '',
+          director: ch.director || '',
+          genre: ch.genre || '',
+          releaseDate: ch.releaseDate || '',
+          last_modified: ch.added || now.toString(),
+          rating: ch.rating || '',
+          rating_5based: ch.rating_5based || 0,
+          backdrop_path: backdrop_path,
+          youtube_trailer: ch.youtube_trailer || '',
+          episode_run_time: ch.episode_run_time || '',
           category_id: String(ch.user_category_id)
         };
       });
