@@ -28,5 +28,12 @@
   },
   "devDependencies": {
     "playwright": "^1.58.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "better-sqlite3",
+      "ffmpeg-static"
+    ]
   }
 }
