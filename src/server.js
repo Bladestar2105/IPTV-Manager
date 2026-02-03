@@ -1013,8 +1013,18 @@ async function performSync(providerId, userId, isManual = false) {
       existingMap.set(row.remote_stream_id, row.id);
     }
     
+    const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
+    const insertCategoryMapping = db.prepare(`
+      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (?, ?, ?, ?, ?, 1, ?)
+    `);
+
     // Execute all DB operations in a single transaction
     db.transaction(() => {
+      // Pre-calculate max sort order for optimization
+      const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
+      let currentSortOrder = maxSortRow?.max_sort || -1;
+
       // 1. Process Categories
       for (const provCat of allCategories) {
         const catId = Number(provCat.category_id);
@@ -1033,17 +1043,14 @@ async function performSync(providerId, userId, isManual = false) {
         if (shouldAutoCreate) {
           // Create new user category
           const isAdult = isAdultCategory(catName) ? 1 : 0;
-          const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-          const newSortOrder = (maxSort?.max_sort || -1) + 1;
+          currentSortOrder++;
+          const newSortOrder = currentSortOrder;
 
-          const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, catName, isAdult, newSortOrder, catType);
+          const catInfo = insertUserCategory.run(userId, catName, isAdult, newSortOrder, catType);
           const newCategoryId = catInfo.lastInsertRowid;
 
           // Create new mapping (only for new categories)
-          db.prepare(`
-            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-            VALUES (?, ?, ?, ?, ?, 1, ?)
-          `).run(providerId, userId, catId, catName, newCategoryId, catType);
+          insertCategoryMapping.run(providerId, userId, catId, catName, newCategoryId, catType);
 
           categoryMap.set(lookupKey, newCategoryId);
 
