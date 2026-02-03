@@ -1012,6 +1012,37 @@ async function performSync(providerId, userId, isManual = false) {
     for (const row of existingChannels) {
       existingMap.set(row.remote_stream_id, row.id);
     }
+
+    // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
+    const existingAssignments = new Set();
+    const maxSortMap = new Map();
+
+    // Prepare statement unconditionally to avoid potential undefined issues
+    const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+
+    if (config && config.auto_add_channels) {
+      const existingAssignmentsRows = db.prepare(`
+        SELECT uc.user_category_id, uc.provider_channel_id
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        WHERE pc.provider_id = ?
+      `).all(providerId);
+
+      for (const r of existingAssignmentsRows) {
+        existingAssignments.add(`${r.user_category_id}_${r.provider_channel_id}`);
+      }
+
+      const sortRows = db.prepare(`
+        SELECT user_category_id, MAX(sort_order) as max_sort
+        FROM user_channels
+        WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)
+        GROUP BY user_category_id
+      `).all(userId);
+
+      for (const r of sortRows) {
+        maxSortMap.set(r.user_category_id, r.max_sort);
+      }
+    }
     
     const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
     const insertCategoryMapping = db.prepare(`
@@ -1174,14 +1205,20 @@ async function performSync(providerId, userId, isManual = false) {
             const userCatId = categoryMap.get(lookupKey);
             
             if (userCatId) {
-              // Check if already added
-              const existingUserChannel = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(userCatId, provChannelId);
+              // Check if already added (Optimized in-memory check)
+              const assignmentKey = `${userCatId}_${provChannelId}`;
               
-              if (!existingUserChannel) {
-                const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(userCatId);
-                const newSortOrder = (maxSort?.max_sort || -1) + 1;
+              if (!existingAssignments.has(assignmentKey)) {
+                // Optimized sort order calculation
+                let currentMax = maxSortMap.get(userCatId);
+                if (currentMax === undefined) currentMax = -1;
+                const newSortOrder = currentMax + 1;
                 
-                db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(userCatId, provChannelId, newSortOrder);
+                insertUserChannel.run(userCatId, provChannelId, newSortOrder);
+
+                // Update in-memory state
+                existingAssignments.add(assignmentKey);
+                maxSortMap.set(userCatId, newSortOrder);
               }
             }
           }
