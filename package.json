@@ -31,8 +31,9 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "bcrypt",
       "better-sqlite3",
-      "bcrypt"
+      "ffmpeg-static"
     ]
   }
 }

@@ -5030,41 +5030,48 @@ app.get('/api/export', authenticateToken, (req, res) => {
     }
 
     // Collect Data
-    for (const user of usersToExport) {
-       exportData.users.push(user);
+    // Optimization: Bulk fetch to avoid N+1 queries
+    exportData.users = usersToExport;
 
-       // Providers
-       const providers = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(user.id);
+    if (usersToExport.length > 0) {
+       const userIds = usersToExport.map(u => u.id);
+       const userPlaceholders = userIds.map(() => '?').join(',');
+
+       // 1. Fetch All Providers
+       const providers = db.prepare(`SELECT * FROM providers WHERE user_id IN (${userPlaceholders})`).all(...userIds);
+
+       const providerIds = [];
        for (const p of providers) {
           // Decrypt password so it can be re-encrypted on import
           p.password = decrypt(p.password);
           exportData.providers.push(p);
+          providerIds.push(p.id);
+       }
 
-          // Provider Channels
-          const channels = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ?').all(p.id);
+       // 2. Fetch Provider Related Data
+       if (providerIds.length > 0) {
+          const provPlaceholders = providerIds.map(() => '?').join(',');
+
+          const channels = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
           exportData.channels.push(...channels);
 
-          // Mappings
-          const mappings = db.prepare('SELECT * FROM category_mappings WHERE provider_id = ?').all(p.id);
+          const mappings = db.prepare(`SELECT * FROM category_mappings WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
           exportData.mappings.push(...mappings);
 
-          // Sync Configs
-          const syncs = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ?').all(p.id);
+          const syncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
           exportData.sync_configs.push(...syncs);
        }
 
-       // User Categories
-       const categories = db.prepare('SELECT * FROM user_categories WHERE user_id = ?').all(user.id);
+       // 3. Fetch User Data
+       const categories = db.prepare(`SELECT * FROM user_categories WHERE user_id IN (${userPlaceholders})`).all(...userIds);
        exportData.categories.push(...categories);
 
-       // User Channels (assignments)
-       // We need to fetch user channels linked to these categories
        const userChannels = db.prepare(`
          SELECT uc.*
          FROM user_channels uc
          JOIN user_categories cat ON cat.id = uc.user_category_id
-         WHERE cat.user_id = ?
-       `).all(user.id);
+         WHERE cat.user_id IN (${userPlaceholders})
+       `).all(...userIds);
        exportData.channels.push(...userChannels.map(uc => ({...uc, type: 'user_assignment'})));
     }
 
