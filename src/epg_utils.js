@@ -45,6 +45,9 @@ export function cleanName(name) {
   return cleaned;
 }
 
+const MAX_ROW_SIZE = 256;
+const _rowBuffer = new Int32Array(MAX_ROW_SIZE);
+
 export function levenshtein(a, b) {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
@@ -52,8 +55,15 @@ export function levenshtein(a, b) {
   // Swap to ensure a is the shorter string to minimize memory usage
   if (a.length > b.length) [a, b] = [b, a];
 
+  let row;
+  if (a.length < MAX_ROW_SIZE) {
+    row = _rowBuffer;
+  } else {
+    // Fallback for very long strings
+    row = new Int32Array(a.length + 1);
+  }
+
   // Use Int32Array for better performance
-  const row = new Int32Array(a.length + 1);
   for (let i = 0; i <= a.length; i++) row[i] = i;
 
   for (let i = 1; i <= b.length; i++) {
