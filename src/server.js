@@ -4472,7 +4472,7 @@ app.post('/api/epg-sources/:id/update', authenticateToken, async (req, res) => {
       
       const epgData = await response.text();
       const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${providerId}.xml`);
-      fs.writeFileSync(cacheFile, epgData, 'utf8');
+      await fs.promises.writeFile(cacheFile, epgData, 'utf8');
       
       await generateConsolidatedEpg();
 
