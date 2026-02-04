@@ -261,3 +261,94 @@ export function parseEpgChannels(filePath, onChannel) {
     });
   });
 }
+
+/**
+ * Streams filtered EPG content from input file to output stream.
+ * Only writes <channel> and <programme> blocks if their ID/channel attribute is in allowedIds.
+ *
+ * @param {string} inputFile Path to source XMLTV file
+ * @param {Writable} outputStream Node.js Writable Stream
+ * @param {Set<string>} allowedIds Set of allowed Channel IDs
+ * @returns {Promise<void>}
+ */
+export function filterEpgFile(inputFile, outputStream, allowedIds) {
+    return new Promise((resolve, reject) => {
+        const rs = fs.createReadStream(inputFile, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+
+        let buffer = '';
+
+        rs.on('data', (chunk) => {
+            buffer += chunk;
+
+            // State machine loop
+            while (true) {
+                // Find next tag start
+                const tagStart = buffer.indexOf('<');
+                if (tagStart === -1) break;
+
+                // Optimization: Discard garbage before tag
+                if (tagStart > 0) {
+                    buffer = buffer.substring(tagStart);
+                }
+
+                // Identify tag type
+                if (buffer.startsWith('<channel')) {
+                    const endTag = '</channel>';
+                    const endIdx = buffer.indexOf(endTag);
+                    if (endIdx === -1) break; // Wait for more data
+
+                    const blockEnd = endIdx + endTag.length;
+                    const block = buffer.substring(0, blockEnd);
+
+                    // Extract ID (handle double or single quotes)
+                    const idMatch = block.match(/id=(["'])(.*?)\1/);
+                    if (idMatch && allowedIds.has(idMatch[2])) {
+                        outputStream.write(block + '\n');
+                    }
+
+                    buffer = buffer.substring(blockEnd);
+                } else if (buffer.startsWith('<programme')) {
+                    const endTag = '</programme>';
+                    const endIdx = buffer.indexOf(endTag);
+                    if (endIdx === -1) break; // Wait for more data
+
+                    const blockEnd = endIdx + endTag.length;
+                    const block = buffer.substring(0, blockEnd);
+
+                    // Extract Channel (handle double or single quotes)
+                    const chMatch = block.match(/channel=(["'])(.*?)\1/);
+                    if (chMatch && allowedIds.has(chMatch[2])) {
+                        outputStream.write(block + '\n');
+                    }
+
+                    buffer = buffer.substring(blockEnd);
+                } else if (buffer.startsWith('<tv') || buffer.startsWith('<?xml') || buffer.startsWith('<!DOCTYPE')) {
+                     // Skip header tags as the consolidator writes its own
+                     const closeIdx = buffer.indexOf('>');
+                     if (closeIdx === -1) break;
+                     buffer = buffer.substring(closeIdx + 1);
+                } else if (buffer.startsWith('</tv>')) {
+                     // End of file content, skip
+                     const closeIdx = buffer.indexOf('>');
+                     if (closeIdx === -1) break;
+                     buffer = buffer.substring(closeIdx + 1);
+                } else {
+                     // Unknown tag or comment, just skip to next '>'
+                     // This handles comments <!-- --> loosely or other tags
+                     const closeIdx = buffer.indexOf('>');
+                     if (closeIdx === -1) break;
+                     buffer = buffer.substring(closeIdx + 1);
+                }
+            }
+        });
+
+        rs.on('end', () => {
+            resolve();
+        });
+
+        rs.on('error', (err) => {
+            console.error(`Error filtering EPG file ${inputFile}:`, err.message);
+            resolve(); // Resolve to avoid breaking the whole process
+        });
+    });
+}
