@@ -682,10 +682,11 @@
   }
 
   function initPlayer(url, type) {
-    // iOS/Safari Fix: Force HLS if MPEGTS is not supported but Native HLS is
+    // iOS/Safari Fix: Force fMP4 (transcoding) if MPEGTS is not supported but Native HLS is (since we don't have true HLS generation)
+    // We use .mp4 to trigger the backend's fMP4 streaming
     if (url.includes('.ts') && (!mpegts.isSupported() || /iPad|iPhone|iPod/.test(navigator.userAgent)) && video.canPlayType('application/vnd.apple.mpegurl')) {
-        console.log('Detected iOS/Safari: Switching to HLS (.m3u8)');
-        url = url.replace(/\.ts($|\?)/, '.m3u8$1');
+        console.log('Detected iOS/Safari: Switching to fMP4 (.mp4) for transcoding');
+        url = url.replace(/\.ts($|\?)/, '.mp4$1');
     }
 
     if (flvPlayer) {
