@@ -2,26 +2,9 @@ import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
 import { cleanName, levenshtein, getSimilarity, parseEpgChannels } from './epg_utils.js';
 
-async function run() {
-  const { channels, epgXmlFile, globalMappings } = workerData;
-  const updates = [];
-
-  try {
-    // 1. Load EPG Channels
-    const allEpgChannels = [];
-    const seenIds = new Set();
-
-    try {
-      await parseEpgChannels(epgXmlFile, (channel) => {
-        if (!seenIds.has(channel.id)) {
-          allEpgChannels.push(channel);
-          seenIds.add(channel.id);
-        }
-      });
-    } catch (e) {
-      // Ignore file errors in worker
-      // If the file is missing or invalid, we will just have 0 channels to map against
-    }
+export function matchChannels(channels, allEpgChannels, globalMappings) {
+    const updates = [];
+    let matched = 0;
 
     // 2. Build Lookup Maps
     const globalMap = new Map();
@@ -50,8 +33,6 @@ async function run() {
     }
 
     // 3. Matching Logic
-    let matched = 0;
-
     for (const ch of channels) {
        const cleaned = cleanName(ch.name);
        if (!cleaned) continue;
@@ -98,7 +79,28 @@ async function run() {
             let bestCand = null;
             let bestSim = 0.8;
 
+            // Extract numbers from cleaned name for strict number matching
+            const nameNums = cleaned.match(/\d+/g);
+
             for (const cand of candidates) {
+                // Strict Number Check: If both have numbers, they must match exactly
+                const candNums = cand.cleanName.match(/\d+/g);
+                if (nameNums && candNums) {
+                    // Check if arrays are same (order doesn't strictly matter but usually does in names)
+                    // For simplicity, sort and join
+                    const n1 = [...nameNums].sort().join(',');
+                    const n2 = [...candNums].sort().join(',');
+                    if (n1 !== n2) continue;
+                } else if ((nameNums && !candNums) || (!nameNums && candNums)) {
+                    // One has number, other doesn't.
+                    // This is risky (e.g. "RTL" vs "RTL 2", "Cinema" vs "Cinema 1").
+                    // We enforce that if one has numbers, the other must have them too?
+                    // Or we penalize?
+                    // Let's enforce strict number matching: if one has numbers, the other must have the same numbers.
+                    // This implies: if one has numbers and other doesn't, it's a mismatch.
+                    if (nameNums || candNums) continue;
+                }
+
                 // Calculate Similarity with dynamic threshold
                 const sim = getSimilarity(cleaned, cand.cleanName, bestSim);
 
@@ -123,6 +125,32 @@ async function run() {
          matched++;
        }
     }
+
+    return { updates, matched };
+}
+
+async function run() {
+  if (!workerData) return; // Not running in worker thread
+
+  const { channels, epgXmlFile, globalMappings } = workerData;
+
+  try {
+    // 1. Load EPG Channels
+    const allEpgChannels = [];
+    const seenIds = new Set();
+
+    try {
+      await parseEpgChannels(epgXmlFile, (channel) => {
+        if (!seenIds.has(channel.id)) {
+          allEpgChannels.push(channel);
+          seenIds.add(channel.id);
+        }
+      });
+    } catch (e) {
+      // Ignore file errors
+    }
+
+    const { updates, matched } = matchChannels(channels, allEpgChannels, globalMappings);
 
     parentPort.postMessage({ success: true, updates, matched });
 

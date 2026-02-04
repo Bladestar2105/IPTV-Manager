@@ -8,7 +8,10 @@ export function cleanName(name) {
   // 1. Remove "Provider|" prefixes (generic)
   cleaned = cleaned.replace(/^[a-z0-9]+\|\s*/, '');
 
-  // 2. Remove Country Codes / Prefixes - REMOVED to preserve accuracy (e.g. RTL DE vs RTL NL)
+  // 2. Remove Country Codes / Prefixes
+  // Re-enabled to allow fuzzy matching (e.g. RTL (DE) -> RTL)
+  // Disambiguation handles the conflicts (RTL DE vs RTL NL) via original name similarity
+  cleaned = cleaned.replace(/\b(de|at|ch|us|uk|en|gr|nl|be|fr|it|es|pl|tr|ru|ger|usa)\b/g, '');
 
   // 3. Technical Suffixes (Global)
   // HEVC, FHD, HD, SD, 4K, 8K, RAW, 50FPS, H265, UHD
