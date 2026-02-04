@@ -5162,11 +5162,20 @@ app.post('/api/settings', authenticateToken, (req, res) => {
 // === Client Logs API ===
 app.post('/api/client-logs', (req, res) => {
   try {
-    // Rate limit? Maybe rely on general limiter.
     const { level, message, stack, user_agent } = req.body;
+
+    // Input Validation & Sanitization
+    const allowedLevels = ['info', 'warn', 'error', 'debug'];
+    let safeLevel = (level || 'error').toString().toLowerCase();
+    if (!allowedLevels.includes(safeLevel)) safeLevel = 'error';
+
+    const safeMessage = (message || 'Unknown').toString().substring(0, 1000);
+    const safeStack = (stack || '').toString().substring(0, 2000);
+    const safeUserAgent = (user_agent || '').toString().substring(0, 200);
+
     const now = Math.floor(Date.now() / 1000);
     db.prepare('INSERT INTO client_logs (level, message, stack, user_agent, timestamp) VALUES (?, ?, ?, ?, ?)')
-      .run(level || 'error', message || 'Unknown', stack || '', user_agent || '', now);
+      .run(safeLevel, safeMessage, safeStack, safeUserAgent, now);
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
 });
