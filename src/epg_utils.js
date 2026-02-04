@@ -261,3 +261,167 @@ export function parseEpgChannels(filePath, onChannel) {
     });
   });
 }
+
+/**
+ * Streams filtered EPG content from input file to output stream.
+ * Only writes <channel> and <programme> blocks if their ID/channel attribute is in allowedIds.
+ *
+ * @param {string} inputFile Path to source XMLTV file
+ * @param {Writable} outputStream Node.js Writable Stream
+ * @param {Set<string>} allowedIds Set of allowed Channel IDs
+ * @returns {Promise<void>}
+ */
+export function filterEpgFile(inputFile, outputStream, allowedIds) {
+    return new Promise((resolve, reject) => {
+        const rs = fs.createReadStream(inputFile, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+
+        let buffer = '';
+
+        rs.on('data', (chunk) => {
+            buffer += chunk;
+
+            // State machine loop
+            while (true) {
+                // Find next tag start
+                const tagStart = buffer.indexOf('<');
+                if (tagStart === -1) break;
+
+                // Optimization: Discard garbage before tag
+                if (tagStart > 0) {
+                    buffer = buffer.substring(tagStart);
+                }
+
+                // Identify tag type
+                if (buffer.startsWith('<channel')) {
+                    const endTag = '</channel>';
+                    const endIdx = buffer.indexOf(endTag);
+                    if (endIdx === -1) break; // Wait for more data
+
+                    const blockEnd = endIdx + endTag.length;
+                    const block = buffer.substring(0, blockEnd);
+
+                    // Extract ID (handle double or single quotes)
+                    const idMatch = block.match(/id=(["'])(.*?)\1/);
+                    if (idMatch && allowedIds.has(idMatch[2])) {
+                        outputStream.write(block + '\n');
+                    }
+
+                    buffer = buffer.substring(blockEnd);
+                } else if (buffer.startsWith('<programme')) {
+                    const endTag = '</programme>';
+                    const endIdx = buffer.indexOf(endTag);
+                    if (endIdx === -1) break; // Wait for more data
+
+                    const blockEnd = endIdx + endTag.length;
+                    const block = buffer.substring(0, blockEnd);
+
+                    // Extract Channel (handle double or single quotes)
+                    const chMatch = block.match(/channel=(["'])(.*?)\1/);
+                    if (chMatch && allowedIds.has(chMatch[2])) {
+                        outputStream.write(block + '\n');
+                    }
+
+                    buffer = buffer.substring(blockEnd);
+                } else if (buffer.startsWith('<tv') || buffer.startsWith('<?xml') || buffer.startsWith('<!DOCTYPE')) {
+                     // Skip header tags as the consolidator writes its own
+                     const closeIdx = buffer.indexOf('>');
+                     if (closeIdx === -1) break;
+                     buffer = buffer.substring(closeIdx + 1);
+                } else if (buffer.startsWith('</tv>')) {
+                     // End of file content, skip
+                     const closeIdx = buffer.indexOf('>');
+                     if (closeIdx === -1) break;
+                     buffer = buffer.substring(closeIdx + 1);
+                } else {
+                     // Unknown tag or comment, just skip to next '>'
+                     // This handles comments <!-- --> loosely or other tags
+                     const closeIdx = buffer.indexOf('>');
+                     if (closeIdx === -1) break;
+                     buffer = buffer.substring(closeIdx + 1);
+                }
+            }
+        });
+
+        rs.on('end', () => {
+            resolve();
+        });
+
+        rs.on('error', (err) => {
+            console.error(`Error filtering EPG file ${inputFile}:`, err.message);
+            resolve(); // Resolve to avoid breaking the whole process
+        });
+    });
+}
+
+/**
+ * Streams multiple EPG files into a single output file.
+ * Handles removal of individual headers and footers to create valid XML.
+ *
+ * @param {string[]} inputFiles Array of file paths
+ * @param {Writable} outputStream Node.js Writable Stream
+ * @returns {Promise<void>}
+ */
+export async function mergeEpgFiles(inputFiles, outputStream) {
+    for (const file of inputFiles) {
+        if (!fs.existsSync(file)) continue;
+
+        await new Promise((resolve, reject) => {
+            const stream = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+            let buffer = '';
+            let foundStart = false;
+
+            stream.on('data', (chunk) => {
+                let currentChunk = buffer + chunk;
+                buffer = '';
+
+                if (!foundStart) {
+                    const startMatch = currentChunk.match(/<tv[^>]*>/);
+                    if (startMatch) {
+                        foundStart = true;
+                        const startIndex = startMatch.index + startMatch[0].length;
+                        currentChunk = currentChunk.substring(startIndex);
+                    } else {
+                        // Keep the last part of chunk to handle split tags
+                        const lastLt = currentChunk.lastIndexOf('<');
+                        if (lastLt !== -1) {
+                            buffer = currentChunk.substring(lastLt);
+                        }
+                        return;
+                    }
+                }
+
+                if (foundStart) {
+                    const endMatch = currentChunk.indexOf('</tv>');
+                    if (endMatch !== -1) {
+                        outputStream.write(currentChunk.substring(0, endMatch));
+                        stream.destroy();
+                        resolve();
+                        return;
+                    } else {
+                        if (currentChunk.length >= 5) {
+                            const toWrite = currentChunk.substring(0, currentChunk.length - 4);
+                            outputStream.write(toWrite);
+                            buffer = currentChunk.substring(currentChunk.length - 4);
+                        } else {
+                            buffer = currentChunk;
+                        }
+                    }
+                }
+            });
+
+            stream.on('end', () => {
+                if (buffer && buffer.length > 0) {
+                    outputStream.write(buffer);
+                }
+                resolve();
+            });
+
+            stream.on('error', (err) => {
+                console.error(`Error merging EPG file ${file}:`, err.message);
+                resolve(); // Continue even on error
+            });
+
+            stream.on('close', resolve);
+        });
+    }
+}

@@ -28,7 +28,7 @@ import cluster from 'cluster';
 import os from 'os';
 import { Worker } from 'worker_threads';
 import { createClient } from 'redis';
-import { cleanName, levenshtein, parseEpgXml } from './epg_utils.js';
+import { cleanName, levenshtein, parseEpgXml, filterEpgFile, mergeEpgFiles } from './epg_utils.js';
 import { parseM3u } from './playlist_parser.js';
 import streamManager from './stream_manager.js';
 import { authenticator } from 'otplib';
@@ -3999,12 +3999,12 @@ app.get('/api/statistics', authenticateToken, async (req, res) => {
 });
 
 async function generateConsolidatedEpg() {
-  const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
-  const tempFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
+  const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
+  const filteredFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+  const tempFullFile = path.join(EPG_CACHE_DIR, `epg_full.xml.tmp.${crypto.randomUUID()}`);
+  const tempFilteredFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
 
   try {
-    const writeStream = createWriteStream(tempFile);
-
     const epgFiles = [];
 
     // Get provider EPG files
@@ -4025,30 +4025,47 @@ async function generateConsolidatedEpg() {
       }
     }
 
-    writeStream.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
-
-    for (const file of epgFiles) {
-      await streamEpgContent(file, writeStream);
-    }
-
-    writeStream.write('</tv>');
-    writeStream.end();
-
+    // 1. Generate Full EPG (Merged)
+    console.log(`ℹ️ Generating Full EPG from ${epgFiles.length} sources`);
+    const writeStreamFull = createWriteStream(tempFullFile);
+    writeStreamFull.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
+    await mergeEpgFiles(epgFiles, writeStreamFull);
+    writeStreamFull.write('</tv>');
+    writeStreamFull.end();
     await new Promise((resolve, reject) => {
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
+        writeStreamFull.on('finish', resolve);
+        writeStreamFull.on('error', reject);
     });
+    await fs.promises.rename(tempFullFile, fullFile);
+    console.log('✅ Full Consolidated EPG generated');
 
-    await fs.promises.rename(tempFile, consolidatedFile);
-    console.log('✅ Consolidated EPG regenerated');
+    // 2. Generate Filtered EPG
+    // Collect all Used EPG IDs
+    const usedIds = new Set();
+    const mappings = db.prepare('SELECT DISTINCT epg_channel_id FROM epg_channel_mappings').all();
+    mappings.forEach(r => { if(r.epg_channel_id) usedIds.add(r.epg_channel_id); });
+    const direct = db.prepare("SELECT DISTINCT epg_channel_id FROM provider_channels WHERE epg_channel_id IS NOT NULL AND epg_channel_id != ''").all();
+    direct.forEach(r => { if(r.epg_channel_id) usedIds.add(r.epg_channel_id); });
+
+    console.log(`ℹ️ Generating Filtered EPG for ${usedIds.size} unique channels`);
+
+    const writeStreamFiltered = createWriteStream(tempFilteredFile);
+    writeStreamFiltered.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
+    // Filter from the newly generated FULL file to avoid re-reading all small files
+    await filterEpgFile(fullFile, writeStreamFiltered, usedIds);
+    writeStreamFiltered.write('</tv>');
+    writeStreamFiltered.end();
+    await new Promise((resolve, reject) => {
+        writeStreamFiltered.on('finish', resolve);
+        writeStreamFiltered.on('error', reject);
+    });
+    await fs.promises.rename(tempFilteredFile, filteredFile);
+    console.log('✅ Filtered Consolidated EPG generated');
+
   } catch (e) {
     console.error('Failed to regenerate consolidated EPG:', e);
-    // Cleanup temp file if it exists
-    try {
-        if (fs.existsSync(tempFile)) await fs.promises.unlink(tempFile);
-    } catch (cleanupErr) {
-        console.error('Failed to clean up temp file:', cleanupErr);
-    }
+    try { if (fs.existsSync(tempFullFile)) await fs.promises.unlink(tempFullFile); } catch (e) {}
+    try { if (fs.existsSync(tempFilteredFile)) await fs.promises.unlink(tempFilteredFile); } catch (e) {}
   }
 }
 
@@ -5004,14 +5021,20 @@ app.post('/api/mapping/auto', authenticateToken, async (req, res) => {
       JOIN provider_channels pc ON pc.id = map.provider_channel_id
     `).all();
 
-    // Get EPG Files list
-    const epgFiles = getEpgFiles();
+    // Use Consolidated Full EPG
+    const epgXmlFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
+    if (!fs.existsSync(epgXmlFile)) {
+        // Fallback or trigger generation?
+        // Ideally should exist. If not, trigger generation and wait?
+        // For now, fail fast or use raw files (fallback logic omitted for simplicity as per plan)
+        return res.status(503).json({error: 'EPG data not ready. Please update EPG sources.'});
+    }
 
     // Spawn Worker
     const worker = new Worker(path.join(__dirname, 'epg_worker.js'), {
       workerData: {
         channels,
-        epgFiles,
+        epgXmlFile,
         globalMappings
       }
     });
@@ -5486,62 +5509,3 @@ if (!cluster.isPrimary) {
   });
 }
 
-// Helper function to stream EPG content efficiently
-function streamEpgContent(file, res) {
-  return new Promise((resolve, reject) => {
-    const stream = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 64 * 1024 });
-    let buffer = '';
-    let foundStart = false;
-
-    stream.on('data', (chunk) => {
-      let currentChunk = buffer + chunk;
-      buffer = '';
-
-      if (!foundStart) {
-        const startMatch = currentChunk.match(/<tv[^>]*>/);
-        if (startMatch) {
-          foundStart = true;
-          const startIndex = startMatch.index + startMatch[0].length;
-          currentChunk = currentChunk.substring(startIndex);
-        } else {
-          // Keep the last part of chunk to handle split tags
-          const lastLt = currentChunk.lastIndexOf('<');
-          if (lastLt !== -1) {
-            buffer = currentChunk.substring(lastLt);
-          }
-          return;
-        }
-      }
-
-      if (foundStart) {
-        const endMatch = currentChunk.indexOf('</tv>');
-        if (endMatch !== -1) {
-          res.write(currentChunk.substring(0, endMatch));
-          stream.destroy();
-          resolve();
-          return;
-        } else {
-          if (currentChunk.length >= 5) {
-             const toWrite = currentChunk.substring(0, currentChunk.length - 4);
-             res.write(toWrite);
-             buffer = currentChunk.substring(currentChunk.length - 4);
-          } else {
-             buffer = currentChunk;
-          }
-        }
-      }
-    });
-
-    stream.on('end', () => {
-      if (buffer && buffer.length > 0) {
-        res.write(buffer);
-      }
-      resolve();
-    });
-    stream.on('error', (err) => {
-      console.error(`Error streaming EPG file ${file}:`, err.message);
-      resolve(); // Continue even on error
-    });
-    stream.on('close', resolve);
-  });
-}
