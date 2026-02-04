@@ -97,20 +97,19 @@ async function run() {
 
          if (candidates) {
             let bestCand = null;
-            let bestSim = 0.0;
+            let bestSim = 0.8;
 
             for (const cand of candidates) {
-                // Optimization: Skip if length difference is too big relative to length
-                // If len=10, and diff > 3, sim < 0.7. So skip.
-                if (Math.abs(cand.cleanName.length - cleaned.length) > 3) continue;
+                // Calculate Similarity with dynamic threshold
+                const sim = getSimilarity(cleaned, cand.cleanName, bestSim);
 
-                // Calculate Similarity on CLEANED names
-                const sim = getSimilarity(cleaned, cand.cleanName);
-
-                // Threshold: 80%
-                if (sim >= 0.8 && sim > bestSim) {
-                    bestSim = sim;
-                    bestCand = cand;
+                if (sim >= bestSim) {
+                    if (sim > bestSim) {
+                        bestSim = sim;
+                        bestCand = cand;
+                    } else if (!bestCand) {
+                        bestCand = cand;
+                    }
                 }
             }
 
