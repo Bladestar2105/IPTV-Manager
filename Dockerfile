@@ -5,14 +5,11 @@ WORKDIR /app
 # Install build dependencies for native modules
 RUN apk add --no-cache python3 make g++
 
-# Enable pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 
 # Install dependencies
-RUN pnpm install --prod --frozen-lockfile
+RUN npm ci --omit=dev
 
 # Copy application code
 COPY src ./src
@@ -34,4 +31,4 @@ EXPOSE 3000
 VOLUME ["/data"]
 
 # Start application
-CMD ["pnpm", "start"]
+CMD ["npm", "start"]

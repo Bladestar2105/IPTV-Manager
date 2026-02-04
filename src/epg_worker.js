@@ -1,23 +1,40 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
-import { parseEpgChannels } from './epg_utils.js';
+import { parseEpgChannels, cleanName } from './epg_utils.js';
 import { ChannelMatcher } from './channel_matcher.js';
 
 export function matchChannels(channels, allEpgChannels, globalMappings) {
     const updates = [];
     let matched = 0;
 
+    // 1. Build Global Map (History)
+    const globalMap = new Map();
+    if (globalMappings) {
+        for (const m of globalMappings) {
+            const clean = cleanName(m.name);
+            if (clean) globalMap.set(clean, m.epg_channel_id);
+        }
+    }
+
     const matcher = new ChannelMatcher(allEpgChannels);
 
     for (const ch of channels) {
+       const cleaned = cleanName(ch.name);
+
+       // A. Prioritize Global Mappings
+       if (cleaned && globalMap.has(cleaned)) {
+           const epgId = globalMap.get(cleaned);
+           updates.push({pid: ch.id, eid: epgId});
+           matched++;
+           continue;
+       }
+
+       // B. Automapping
        const result = matcher.match(ch.name);
 
        if (result.epgChannel) {
-         // console.log(`MATCHED: "${ch.name}" -> "${result.epgChannel.id}" (Method: ${result.method})`);
          updates.push({pid: ch.id, eid: result.epgChannel.id});
          matched++;
-       } else {
-         // console.log(`NO MATCH: "${ch.name}"`);
        }
     }
 

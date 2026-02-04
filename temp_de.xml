@@ -1,0 +1,684 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<tv generator-info-name="Processed by Open-EPG Visual Processor v1.0" generator-info-url="https://www.open-epg.com">
+<channel id="13TH Street.de"><display-name>13TH Street.de</display-name></channel>
+<channel id="3+.de"><display-name>3+.de</display-name></channel>
+<channel id="3sat.de"><display-name>3sat.de</display-name></channel>
+<channel id="4+.de"><display-name>4+.de</display-name></channel>
+<channel id="Animal Planet.de"><display-name>Animal Planet.de</display-name></channel>
+<channel id="Anixe HD Serie.de"><display-name>Anixe HD Serie.de</display-name></channel>
+<channel id="ANIXE+.de"><display-name>ANIXE+.de</display-name></channel>
+<channel id="ARD alpha.de"><display-name>ARD alpha.de</display-name></channel>
+<channel id="ARTE.de"><display-name>ARTE.de</display-name></channel>
+<channel id="ATV 2.de"><display-name>ATV 2.de</display-name></channel>
+<channel id="ATV.de"><display-name>ATV.de</display-name></channel>
+<channel id="Auto Motor And Sport TV.de"><display-name>Auto Motor And Sport TV.de</display-name></channel>
+<channel id="AXN black.de"><display-name>AXN black.de</display-name></channel>
+<channel id="AXN white.de"><display-name>AXN white.de</display-name></channel>
+<channel id="BBC World News (Engl).de"><display-name>BBC World News (Engl).de</display-name></channel>
+<channel id="Beate Uhse.TV.de"><display-name>Beate Uhse.TV.de</display-name></channel>
+<channel id="Bergblick.de"><display-name>Bergblick.de</display-name></channel>
+<channel id="Bibel TV.de"><display-name>Bibel TV.de</display-name></channel>
+<channel id="Bloomberg TV (Engl).de"><display-name>Bloomberg TV (Engl).de</display-name></channel>
+<channel id="Boomerang.de"><display-name>Boomerang.de</display-name></channel>
+<channel id="BR Nord.de"><display-name>BR Nord.de</display-name></channel>
+<channel id="BR Sud.de"><display-name>BR Sud.de</display-name></channel>
+<channel id="Cartoon Network.de"><display-name>Cartoon Network.de</display-name></channel>
+<channel id="Classica TV.de"><display-name>Classica TV.de</display-name></channel>
+<channel id="CNN.de"><display-name>CNN.de</display-name></channel>
+<channel id="Comedy Central.de"><display-name>Comedy Central.de</display-name></channel>
+<channel id="Crime + Investigation.de"><display-name>Crime + Investigation.de</display-name></channel>
+<channel id="Curiosity Channel.de"><display-name>Curiosity Channel.de</display-name></channel>
+<channel id="Das Erste.de"><display-name>Das Erste.de</display-name></channel>
+<channel id="DAZN.de"><display-name>DAZN.de</display-name></channel>
+<channel id="Deluxe Music.de"><display-name>Deluxe Music.de</display-name></channel>
+<channel id="Deutsche Welle (Engl).de"><display-name>Deutsche Welle (Engl).de</display-name></channel>
+<channel id="DF1.de"><display-name>DF1.de</display-name></channel>
+<channel id="Discovery Channel.de"><display-name>Discovery Channel.de</display-name></channel>
+<channel id="Disney Channel.de"><display-name>Disney Channel.de</display-name></channel>
+<channel id="DMAX.de"><display-name>DMAX.de</display-name></channel>
+<channel id="DMF.de"><display-name>DMF.de</display-name></channel>
+<channel id="DOKUSAT.de"><display-name>DOKUSAT.de</display-name></channel>
+<channel id="eSportsONE.de"><display-name>eSportsONE.de</display-name></channel>
+<channel id="Euronews (Engl).de"><display-name>Euronews (Engl).de</display-name></channel>
+<channel id="Euronews (Fran).de"><display-name>Euronews (Fran).de</display-name></channel>
+<channel id="Eurosport 1.de"><display-name>Eurosport 1.de</display-name></channel>
+<channel id="Eurosport 2.de"><display-name>Eurosport 2.de</display-name></channel>
+<channel id="fight24.de"><display-name>fight24.de</display-name></channel>
+<channel id="Folx TV.de"><display-name>Folx TV.de</display-name></channel>
+<channel id="France 2 (Fran).de"><display-name>France 2 (Fran).de</display-name></channel>
+<channel id="France 24 (Engl).de"><display-name>France 24 (Engl).de</display-name></channel>
+<channel id="France 24 (Fran).de"><display-name>France 24 (Fran).de</display-name></channel>
+<channel id="France 3 (Fran).de"><display-name>France 3 (Fran).de</display-name></channel>
+<channel id="France 4 (Fran).de"><display-name>France 4 (Fran).de</display-name></channel>
+<channel id="France 5 (Fran).de"><display-name>France 5 (Fran).de</display-name></channel>
+<channel id="God TV (Engl).de"><display-name>God TV (Engl).de</display-name></channel>
+<channel id="Goldstar TV.de"><display-name>Goldstar TV.de</display-name></channel>
+<channel id="Heimatkanal.de"><display-name>Heimatkanal.de</display-name></channel>
+<channel id="HGTV.de"><display-name>HGTV.de</display-name></channel>
+<channel id="History.de"><display-name>History.de</display-name></channel>
+<channel id="HR Fernsehen.de"><display-name>HR Fernsehen.de</display-name></channel>
+<channel id="HSE.de"><display-name>HSE.de</display-name></channel>
+<channel id="Jukebox.de"><display-name>Jukebox.de</display-name></channel>
+<channel id="K TV.de"><display-name>K TV.de</display-name></channel>
+<channel id="Kabel eins Classics.de"><display-name>Kabel eins Classics.de</display-name></channel>
+<channel id="Kabel Eins Doku.de"><display-name>Kabel Eins Doku.de</display-name></channel>
+<channel id="Kabel eins.de"><display-name>Kabel eins.de</display-name></channel>
+<channel id="KiKA.de"><display-name>KiKA.de</display-name></channel>
+<channel id="Kinowelt TV.de"><display-name>Kinowelt TV.de</display-name></channel>
+<channel id="Lilo TV.de"><display-name>Lilo TV.de</display-name></channel>
+<channel id="MDR Sachsen Anhalt.de"><display-name>MDR Sachsen Anhalt.de</display-name></channel>
+<channel id="MDR Sachsen.de"><display-name>MDR Sachsen.de</display-name></channel>
+<channel id="MDR Thuringen.de"><display-name>MDR Thuringen.de</display-name></channel>
+<channel id="More Than Sports TV.de"><display-name>More Than Sports TV.de</display-name></channel>
+<channel id="Motorvision+.de"><display-name>Motorvision+.de</display-name></channel>
+<channel id="MTV.de"><display-name>MTV.de</display-name></channel>
+<channel id="Munchen TV.de"><display-name>Munchen TV.de</display-name></channel>
+<channel id="N TV.de"><display-name>N TV.de</display-name></channel>
+<channel id="N24 Doku.de"><display-name>N24 Doku.de</display-name></channel>
+<channel id="Nat Geo Wild.de"><display-name>Nat Geo Wild.de</display-name></channel>
+<channel id="National Geographic Channel.de"><display-name>National Geographic Channel.de</display-name></channel>
+<channel id="NDR Hamburg.de"><display-name>NDR Hamburg.de</display-name></channel>
+<channel id="NDR Mecklenburg Vorpommern.de"><display-name>NDR Mecklenburg Vorpommern.de</display-name></channel>
+<channel id="NDR Niedersachsen.de"><display-name>NDR Niedersachsen.de</display-name></channel>
+<channel id="NDR Schleswig Holstein.de"><display-name>NDR Schleswig Holstein.de</display-name></channel>
+<channel id="NHK World Japan (Engl.).de"><display-name>NHK World Japan (Engl.).de</display-name></channel>
+<channel id="Nick Junior.de"><display-name>Nick Junior.de</display-name></channel>
+<channel id="Nick.de"><display-name>Nick.de</display-name></channel>
+<channel id="NickToons.de"><display-name>NickToons.de</display-name></channel>
+<channel id="NITRO.de"><display-name>NITRO.de</display-name></channel>
+<channel id="ONE.de"><display-name>ONE.de</display-name></channel>
+<channel id="ORF 1.de"><display-name>ORF 1.de</display-name></channel>
+<channel id="ORF 2 Europe.de"><display-name>ORF 2 Europe.de</display-name></channel>
+<channel id="ORF 2.de"><display-name>ORF 2.de</display-name></channel>
+<channel id="ORF III.de"><display-name>ORF III.de</display-name></channel>
+<channel id="ORF SPORT+.de"><display-name>ORF SPORT+.de</display-name></channel>
+<channel id="Phoenix.de"><display-name>Phoenix.de</display-name></channel>
+<channel id="ProSieben Fun.de"><display-name>ProSieben Fun.de</display-name></channel>
+<channel id="ProSieben MAXX.de"><display-name>ProSieben MAXX.de</display-name></channel>
+<channel id="ProSieben.de"><display-name>ProSieben.de</display-name></channel>
+<channel id="Puls 4.de"><display-name>Puls 4.de</display-name></channel>
+<channel id="PULS acht.de"><display-name>PULS acht.de</display-name></channel>
+<channel id="QVC Style.de"><display-name>QVC Style.de</display-name></channel>
+<channel id="QVC Zwei.de"><display-name>QVC Zwei.de</display-name></channel>
+<channel id="QVC.de"><display-name>QVC.de</display-name></channel>
+<channel id="Radio Bremen.de"><display-name>Radio Bremen.de</display-name></channel>
+<channel id="rbb Berlin.de"><display-name>rbb Berlin.de</display-name></channel>
+<channel id="rbb Brandenburg.de"><display-name>rbb Brandenburg.de</display-name></channel>
+<channel id="Red Bull TV.de"><display-name>Red Bull TV.de</display-name></channel>
+<channel id="RiC.de"><display-name>RiC.de</display-name></channel>
+<channel id="Romance TV.de"><display-name>Romance TV.de</display-name></channel>
+<channel id="RTL Crime.de"><display-name>RTL Crime.de</display-name></channel>
+<channel id="RTL Living.de"><display-name>RTL Living.de</display-name></channel>
+<channel id="RTL Passion.de"><display-name>RTL Passion.de</display-name></channel>
+<channel id="RTL ZWEI.de"><display-name>RTL ZWEI.de</display-name></channel>
+<channel id="RTL.de"><display-name>RTL.de</display-name></channel>
+<channel id="RTLup.de"><display-name>RTLup.de</display-name></channel>
+<channel id="Sat.1 Emotions.de"><display-name>Sat.1 Emotions.de</display-name></channel>
+<channel id="Sat.1 Gold.de"><display-name>Sat.1 Gold.de</display-name></channel>
+<channel id="Sat.1.de"><display-name>Sat.1.de</display-name></channel>
+<channel id="Schlager Deluxe.de"><display-name>Schlager Deluxe.de</display-name></channel>
+<channel id="Servus TV Austria.de"><display-name>Servus TV Austria.de</display-name></channel>
+<channel id="Silverline.de"><display-name>Silverline.de</display-name></channel>
+<channel id="Sixx.de"><display-name>Sixx.de</display-name></channel>
+<channel id="Sky Atlantic HD.de"><display-name>Sky Atlantic HD.de</display-name></channel>
+<channel id="Sky Bundesliga.de"><display-name>Sky Bundesliga.de</display-name></channel>
+<channel id="Sky Cinema Action.de"><display-name>Sky Cinema Action.de</display-name></channel>
+<channel id="Sky Cinema Family.de"><display-name>Sky Cinema Family.de</display-name></channel>
+<channel id="Sky Cinema Premieren.de"><display-name>Sky Cinema Premieren.de</display-name></channel>
+<channel id="Sky Crime.de"><display-name>Sky Crime.de</display-name></channel>
+<channel id="Sky Documentaries HD.de"><display-name>Sky Documentaries HD.de</display-name></channel>
+<channel id="Sky Krimi.de"><display-name>Sky Krimi.de</display-name></channel>
+<channel id="Sky Nature HD.de"><display-name>Sky Nature HD.de</display-name></channel>
+<channel id="Sky News.de"><display-name>Sky News.de</display-name></channel>
+<channel id="Sky Nostalgie.de"><display-name>Sky Nostalgie.de</display-name></channel>
+<channel id="Sky One.de"><display-name>Sky One.de</display-name></channel>
+<channel id="Sky Replay.de"><display-name>Sky Replay.de</display-name></channel>
+<channel id="Sky Sport News HD.de"><display-name>Sky Sport News HD.de</display-name></channel>
+<channel id="Sonlife (Engl).de"><display-name>Sonlife (Engl).de</display-name></channel>
+<channel id="Sonnenklar.TV.de"><display-name>Sonnenklar.TV.de</display-name></channel>
+<channel id="SPIEGEL GESCHICHTE.de"><display-name>SPIEGEL GESCHICHTE.de</display-name></channel>
+<channel id="Sport1.de"><display-name>Sport1.de</display-name></channel>
+<channel id="Sport1+.de"><display-name>Sport1+.de</display-name></channel>
+<channel id="Sportdigital Fussball.de"><display-name>Sportdigital Fussball.de</display-name></channel>
+<channel id="SR.de"><display-name>SR.de</display-name></channel>
+<channel id="SRF info.de"><display-name>SRF info.de</display-name></channel>
+<channel id="SRF1.de"><display-name>SRF1.de</display-name></channel>
+<channel id="SRF2.de"><display-name>SRF2.de</display-name></channel>
+<channel id="Super RTL.de"><display-name>Super RTL.de</display-name></channel>
+<channel id="SWR Baden Wurttemberg.de"><display-name>SWR Baden Wurttemberg.de</display-name></channel>
+<channel id="SWR Rheinland Pfalz.de"><display-name>SWR Rheinland Pfalz.de</display-name></channel>
+<channel id="Syfy.de"><display-name>Syfy.de</display-name></channel>
+<channel id="Tagesschau24.de"><display-name>Tagesschau24.de</display-name></channel>
+<channel id="Tele 5.de"><display-name>Tele 5.de</display-name></channel>
+<channel id="Telegold.de"><display-name>Telegold.de</display-name></channel>
+<channel id="TLC.de"><display-name>TLC.de</display-name></channel>
+<channel id="TOGGO plus.de"><display-name>TOGGO plus.de</display-name></channel>
+<channel id="TV5 Monde Europe (Fran).de"><display-name>TV5 Monde Europe (Fran).de</display-name></channel>
+<channel id="Universal TV.de"><display-name>Universal TV.de</display-name></channel>
+<channel id="Volksmusik.TV.de"><display-name>Volksmusik.TV.de</display-name></channel>
+<channel id="VOX.de"><display-name>VOX.de</display-name></channel>
+<channel id="VOXup.de"><display-name>VOXup.de</display-name></channel>
+<channel id="Warner TV Comedy.de"><display-name>Warner TV Comedy.de</display-name></channel>
+<channel id="Warner TV Film.de"><display-name>Warner TV Film.de</display-name></channel>
+<channel id="Warner TV Serie.de"><display-name>Warner TV Serie.de</display-name></channel>
+<channel id="WDR Aachen.de"><display-name>WDR Aachen.de</display-name></channel>
+<channel id="WDR Bielefeld.de"><display-name>WDR Bielefeld.de</display-name></channel>
+<channel id="WDR Bonn.de"><display-name>WDR Bonn.de</display-name></channel>
+<channel id="WDR Dortmund.de"><display-name>WDR Dortmund.de</display-name></channel>
+<channel id="WDR Duisburg.de"><display-name>WDR Duisburg.de</display-name></channel>
+<channel id="WDR Dusseldorf.de"><display-name>WDR Dusseldorf.de</display-name></channel>
+<channel id="WDR Essen.de"><display-name>WDR Essen.de</display-name></channel>
+<channel id="WDR Koln.de"><display-name>WDR Koln.de</display-name></channel>
+<channel id="WDR Munster.de"><display-name>WDR Munster.de</display-name></channel>
+<channel id="WDR Siegen.de"><display-name>WDR Siegen.de</display-name></channel>
+<channel id="WDR Wuppertal.de"><display-name>WDR Wuppertal.de</display-name></channel>
+<channel id="Wedo Movies.de"><display-name>Wedo Movies.de</display-name></channel>
+<channel id="Welt der Wunder TV.de"><display-name>Welt der Wunder TV.de</display-name></channel>
+<channel id="WELT.de"><display-name>WELT.de</display-name></channel>
+<channel id="ZDF.de"><display-name>ZDF.de</display-name></channel>
+<channel id="ZDFinfo.de"><display-name>ZDFinfo.de</display-name></channel>
+<channel id="ZDFneo.de"><display-name>ZDFneo.de</display-name></channel>
+<programme start="20260204010400 +0000" stop="20260204034900 +0000" channel="3sat.de"><title>Hart aber fair</title><desc>Kein Aufschwung, Jobs in Gefahr: Wer muss jetzt - mehr leisten?</desc></programme>
+<programme start="20260204034900 +0000" stop="20260204052400 +0000" channel="3sat.de"><title>Inside Gstaad Palace - Luxus und Tradition Im Kulthotel</title><desc>Live-TV</desc></programme>
+<programme start="20260204052400 +0000" stop="20260204080000 +0000" channel="3sat.de"><title>Hallstatt - Ein Leben zwischen Fels und See</title><desc>Live-TV</desc></programme>
+<programme start="20260204080000 +0000" stop="20260204094500 +0000" channel="3sat.de"><title>ZIB</title><desc>Live-TV</desc></programme>
+<programme start="20260204094500 +0000" stop="20260204114500 +0000" channel="3sat.de"><title>nano</title><desc>Live-TV</desc></programme>
+<programme start="20260204114500 +0000" stop="20260204140000 +0000" channel="3sat.de"><title>Kochstories</title><desc>Nachste Station: La Dolce Vita</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204153000 +0000" channel="3sat.de"><title>Tierische Superbauten</title><desc>Die perfekte Lage</desc></programme>
+<programme start="20260204153000 +0000" stop="20260204174500 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Von Sumpfmonstern und Zombiefischen</desc></programme>
+<programme start="20260204174500 +0000" stop="20260204200000 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Von Klimaretterinnen und Artenschutzern</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204220000 +0000" channel="3sat.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204220000 +0000" stop="20260204232000 +0000" channel="3sat.de"><title>ZIB 2</title><desc>Live-TV</desc></programme>
+<programme start="20260204232000 +0000" stop="20260205015000 +0000" channel="3sat.de"><title>Inside Gstaad Palace - Luxus und Tradition Im Kulthotel</title><desc>Live-TV</desc></programme>
+<programme start="20260205015000 +0000" stop="20260205040000 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Von Sumpfmonstern und Zombiefischen</desc></programme>
+<programme start="20260205040000 +0000" stop="20260205053000 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Von Klimaretterinnen und Artenschutzern</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205080000 +0000" channel="3sat.de"><title>Tierische Superbauten</title><desc>Die perfekte Lage</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205094500 +0000" channel="3sat.de"><title>ZIB</title><desc>Live-TV</desc></programme>
+<programme start="20260205094500 +0000" stop="20260205115500 +0000" channel="3sat.de"><title>nano</title><desc>Live-TV</desc></programme>
+<programme start="20260205115500 +0000" stop="20260205132000 +0000" channel="3sat.de"><title>Im Reich des Watzmann - Winter in Berchtesgaden</title><desc>Live-TV</desc></programme>
+<programme start="20260205132000 +0000" stop="20260205153000 +0000" channel="3sat.de"><title>Wildes Indien</title><desc>Walder</desc></programme>
+<programme start="20260205153000 +0000" stop="20260205174500 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Von Barenpavianen und Tanzvogeln</desc></programme>
+<programme start="20260205174500 +0000" stop="20260205200000 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Vom Überleben in der Menschenwelt</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205220000 +0000" channel="3sat.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205220000 +0000" stop="20260205235500 +0000" channel="3sat.de"><title>ZIB 2</title><desc>Live-TV</desc></programme>
+<programme start="20260205235500 +0000" stop="20260206020000 +0000" channel="3sat.de"><title>10 vor 10</title><desc>Live-TV</desc></programme>
+<programme start="20260206020000 +0000" stop="20260206033000 +0000" channel="3sat.de"><title>Unsere Erde III</title><desc>Von Meerengeln und Teufelsrochen</desc></programme>
+<programme start="20260204004500 +0000" stop="20260204033500 +0000" channel="ARTE.de"><title>Mariupolis 2</title><desc>Live-TV</desc></programme>
+<programme start="20260204033500 +0000" stop="20260204055500 +0000" channel="ARTE.de"><title>28 Minuten</title><desc>Marcel Gauchet / Repressionen im Iran</desc></programme>
+<programme start="20260204055500 +0000" stop="20260204072000 +0000" channel="ARTE.de"><title>360° Reportage</title><desc>Indonesien: Ein Dorf kampft gegen die Fluten</desc></programme>
+<programme start="20260204072000 +0000" stop="20260204085500 +0000" channel="ARTE.de"><title>Stadt Land Kunst</title><desc>Jurica Pavicic Dalmatien / Jura / Mexiko-Stadt</desc></programme>
+<programme start="20260204085500 +0000" stop="20260204115500 +0000" channel="ARTE.de"><title>Das Geheimwissen der Alten Ägypter</title><desc>Magie And Medizin</desc></programme>
+<programme start="20260204115500 +0000" stop="20260204140000 +0000" channel="ARTE.de"><title>Kuchen der Welt</title><desc>Medoc: Austern</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204154000 +0000" channel="ARTE.de"><title>In Wahrheit</title><desc>Blind vor Liebe</desc></programme>
+<programme start="20260204154000 +0000" stop="20260204175000 +0000" channel="ARTE.de"><title>Leben mit Vulkanen</title><desc>Bromo: Der heilige Vulkan von Java</desc></programme>
+<programme start="20260204175000 +0000" stop="20260204194000 +0000" channel="ARTE.de"><title>Magische Anden</title><desc>Ecuador und Kolumbien</desc></programme>
+<programme start="20260204194000 +0000" stop="20260204215000 +0000" channel="ARTE.de"><title>Re</title><desc>: Ninja, ein Sport erobert Europa</desc></programme>
+<programme start="20260204215000 +0000" stop="20260204225500 +0000" channel="ARTE.de"><title>The Quiet Girl</title><desc>Live-TV</desc></programme>
+<programme start="20260204225500 +0000" stop="20260205002500 +0000" channel="ARTE.de"><title>Hybrider Angriff - Wie Putin Europas Osten destabilisiert</title><desc>Live-TV</desc></programme>
+<programme start="20260205002500 +0000" stop="20260205034000 +0000" channel="ARTE.de"><title>Die untreue Frau</title><desc>Live-TV</desc></programme>
+<programme start="20260205034000 +0000" stop="20260205060000 +0000" channel="ARTE.de"><title>28 Minuten</title><desc>Club: Soziale Medien, Indien-EU-Abkommen, Trump-Iran, Macron</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205072500 +0000" channel="ARTE.de"><title>GEO Reportage</title><desc>Haute Couture: Federn, Falten, Seidenblumen</desc></programme>
+<programme start="20260205072500 +0000" stop="20260205085500 +0000" channel="ARTE.de"><title>Stadt Land Kunst</title><desc>Yves Kleins Nizza / Norwegen / Äthiopien</desc></programme>
+<programme start="20260205085500 +0000" stop="20260205115500 +0000" channel="ARTE.de"><title>Abenteuer Antarktis - Ein Jahr im ewigen Eis</title><desc>Live-TV</desc></programme>
+<programme start="20260205115500 +0000" stop="20260205140000 +0000" channel="ARTE.de"><title>Kuchen der Welt</title><desc>Jordanien: Musakhan</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205154000 +0000" channel="ARTE.de"><title>Dorfkrimi - Die tote Braut</title><desc>Live-TV</desc></programme>
+<programme start="20260205154000 +0000" stop="20260205175000 +0000" channel="ARTE.de"><title>Leben mit Vulkanen</title><desc>Kawah Ijen: Inmitten der Schwefelholle</desc></programme>
+<programme start="20260205175000 +0000" stop="20260205194000 +0000" channel="ARTE.de"><title>Magische Anden</title><desc>Bolivien</desc></programme>
+<programme start="20260205194000 +0000" stop="20260205214500 +0000" channel="ARTE.de"><title>Re</title><desc>: Die heiligen Kuhe der Mafia</desc></programme>
+<programme start="20260205214500 +0000" stop="20260205232000 +0000" channel="ARTE.de"><title>The Danish Woman</title><desc>Die Neue</desc></programme>
+<programme start="20260205232000 +0000" stop="20260206012000 +0000" channel="ARTE.de"><title>Bis die Erinnerung uns scheidet</title><desc>Live-TV</desc></programme>
+<programme start="20260206012000 +0000" stop="20260206035000 +0000" channel="ARTE.de"><title>Kurzschluss</title><desc>Kurzfilmfestival von Clermont-Ferrand</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204020000 +0000" channel="BBC World News (Engl).de"><title>BBC World News America</title><desc>Live-TV</desc></programme>
+<programme start="20260204020000 +0000" stop="20260204040000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260204040000 +0000" stop="20260204060000 +0000" channel="BBC World News (Engl).de"><title>Newsday</title><desc>Live-TV</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204080000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260204080000 +0000" stop="20260204100000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204120000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="BBC World News (Engl).de"><title>BBC News Now</title><desc>Live-TV</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="BBC World News (Engl).de"><title>Verified Live</title><desc>Live-TV</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204200000 +0000" channel="BBC World News (Engl).de"><title>Verified Live</title><desc>Live-TV</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204220000 +0000" channel="BBC World News (Engl).de"><title>The World Today with Maryam Moshiri</title><desc>Live-TV</desc></programme>
+<programme start="20260204220000 +0000" stop="20260205000000 +0000" channel="BBC World News (Engl).de"><title>The Context USA</title><desc>Live-TV</desc></programme>
+<programme start="20260205000000 +0000" stop="20260205020000 +0000" channel="BBC World News (Engl).de"><title>BBC World News America</title><desc>Live-TV</desc></programme>
+<programme start="20260205020000 +0000" stop="20260205040000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260205040000 +0000" stop="20260205060000 +0000" channel="BBC World News (Engl).de"><title>Newsday</title><desc>Live-TV</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205080000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205100000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205120000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205160000 +0000" channel="BBC World News (Engl).de"><title>BBC News Now</title><desc>Live-TV</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="BBC World News (Engl).de"><title>Verified Live</title><desc>Live-TV</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205200000 +0000" channel="BBC World News (Engl).de"><title>Verified Live</title><desc>Live-TV</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205220000 +0000" channel="BBC World News (Engl).de"><title>The World Today with Maryam Moshiri</title><desc>Live-TV</desc></programme>
+<programme start="20260205220000 +0000" stop="20260206000000 +0000" channel="BBC World News (Engl).de"><title>The Context USA</title><desc>Live-TV</desc></programme>
+<programme start="20260206000000 +0000" stop="20260206020000 +0000" channel="BBC World News (Engl).de"><title>BBC World News America</title><desc>Live-TV</desc></programme>
+<programme start="20260206020000 +0000" stop="20260206040000 +0000" channel="BBC World News (Engl).de"><title>BBC News</title><desc>Live-TV</desc></programme>
+<programme start="20260204003000 +0000" stop="20260204025500 +0000" channel="Das Erste.de"><title>Meine Tochter, mein Leben</title><desc>Live-TV</desc></programme>
+<programme start="20260204025500 +0000" stop="20260204053000 +0000" channel="Das Erste.de"><title>Petra Kelly - Act Now!</title><desc>Live-TV</desc></programme>
+<programme start="20260204053000 +0000" stop="20260204095500 +0000" channel="Das Erste.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204095500 +0000" stop="20260204120000 +0000" channel="Das Erste.de"><title>WaPo Bodensee</title><desc>Schlechte Energien</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="Das Erste.de"><title>ARD-Mittagsmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="Das Erste.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="Das Erste.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204200000 +0000" channel="Das Erste.de"><title>Wer weiSS denn sowas?</title><desc>Live-TV</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204214500 +0000" channel="Das Erste.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204214500 +0000" stop="20260204225000 +0000" channel="Das Erste.de"><title>Plusminus</title><desc>Live-TV</desc></programme>
+<programme start="20260204225000 +0000" stop="20260205014500 +0000" channel="Das Erste.de"><title>Petra Kelly - Act Now!</title><desc>Live-TV</desc></programme>
+<programme start="20260205014500 +0000" stop="20260205040000 +0000" channel="Das Erste.de"><title>Tage, die es nicht gab - Todliche Geheimnisse</title><desc>Live-TV</desc></programme>
+<programme start="20260205040000 +0000" stop="20260205053000 +0000" channel="Das Erste.de"><title>Tage, die es nicht gab - Todliche Geheimnisse</title><desc>Live-TV</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205095500 +0000" channel="Das Erste.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260205095500 +0000" stop="20260205120000 +0000" channel="Das Erste.de"><title>WaPo Bodensee</title><desc>Spiel mit dem Feuer</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="Das Erste.de"><title>ARD-Mittagsmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205160000 +0000" channel="Das Erste.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="Das Erste.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205200000 +0000" channel="Das Erste.de"><title>Wer weiSS denn sowas?</title><desc>Live-TV</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205214500 +0000" channel="Das Erste.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205214500 +0000" stop="20260205233500 +0000" channel="Das Erste.de"><title>Monitor</title><desc>Live-TV</desc></programme>
+<programme start="20260205233500 +0000" stop="20260206015000 +0000" channel="Das Erste.de"><title>Echtes Leben</title><desc>Generationenwechsel - wer ubernimmt den Hof?</desc></programme>
+<programme start="20260206015000 +0000" stop="20260206032000 +0000" channel="Das Erste.de"><title>Håkan Nessers Inspektor Barbarotti - Mensch ohne Hund</title><desc>Live-TV</desc></programme>
+<programme start="20260204004000 +0000" stop="20260204023500 +0000" channel="Kabel eins.de"><title>Beverly Hills Cop III</title><desc>Live-TV</desc></programme>
+<programme start="20260204023500 +0000" stop="20260204054500 +0000" channel="Kabel eins.de"><title>Ride Along</title><desc>Next Level Miami</desc></programme>
+<programme start="20260204054500 +0000" stop="20260204072500 +0000" channel="Kabel eins.de"><title>MacGyver</title><desc>Refugium fur die Unterwelt</desc></programme>
+<programme start="20260204072500 +0000" stop="20260204091500 +0000" channel="Kabel eins.de"><title>Navy CIS</title><desc>L.A.: Sieben Minuten</desc></programme>
+<programme start="20260204091500 +0000" stop="20260204115500 +0000" channel="Kabel eins.de"><title>Hawaii Five-0</title><desc>Hausfriedensbruch</desc></programme>
+<programme start="20260204115500 +0000" stop="20260204135000 +0000" channel="Kabel eins.de"><title>Bull</title><desc>Elf Stunden</desc></programme>
+<programme start="20260204135000 +0000" stop="20260204155500 +0000" channel="Kabel eins.de"><title>Castle</title><desc>Vergiftet</desc></programme>
+<programme start="20260204155500 +0000" stop="20260204175500 +0000" channel="Kabel eins.de"><title>Steel Buddies - Stahlharte Geschafte</title><desc>Der Endzeit-Bolide</desc></programme>
+<programme start="20260204175500 +0000" stop="20260204185500 +0000" channel="Kabel eins.de"><title>Mein Lokal, Dein Lokal - Der Profi kommt</title><desc>Trattoria Truffel, Essen</desc></programme>
+<programme start="20260204185500 +0000" stop="20260204201500 +0000" channel="Kabel eins.de"><title>Achtung Kontrolle! Wir kummern uns drum</title><desc>Live-TV</desc></programme>
+<programme start="20260204201500 +0000" stop="20260204223000 +0000" channel="Kabel eins.de"><title>Krieg der Welten</title><desc>Live-TV</desc></programme>
+<programme start="20260204223000 +0000" stop="20260205010000 +0000" channel="Kabel eins.de"><title>Beverly Hills Cop II</title><desc>Live-TV</desc></programme>
+<programme start="20260205010000 +0000" stop="20260205030000 +0000" channel="Kabel eins.de"><title>Krieg der Welten</title><desc>Live-TV</desc></programme>
+<programme start="20260205030000 +0000" stop="20260205055000 +0000" channel="Kabel eins.de"><title>Command Performance</title><desc>Live-TV</desc></programme>
+<programme start="20260205055000 +0000" stop="20260205072500 +0000" channel="Kabel eins.de"><title>MacGyver</title><desc>Viro-486</desc></programme>
+<programme start="20260205072500 +0000" stop="20260205091500 +0000" channel="Kabel eins.de"><title>Navy CIS</title><desc>L.A.: Schicksalsentscheidung</desc></programme>
+<programme start="20260205091500 +0000" stop="20260205120000 +0000" channel="Kabel eins.de"><title>Hawaii Five-0</title><desc>Der Fluch der Geister</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205135500 +0000" channel="Kabel eins.de"><title>Bull</title><desc>Gotter sind auch nur Menschen</desc></programme>
+<programme start="20260205135500 +0000" stop="20260205155500 +0000" channel="Kabel eins.de"><title>Castle</title><desc>Der ermordete Fernsehstar</desc></programme>
+<programme start="20260205155500 +0000" stop="20260205175500 +0000" channel="Kabel eins.de"><title>Steel Buddies - Stahlharte Geschafte</title><desc>Ein Panzer fur den Garten</desc></programme>
+<programme start="20260205175500 +0000" stop="20260205185500 +0000" channel="Kabel eins.de"><title>Mein Lokal, Dein Lokal - Der Profi kommt</title><desc>Die Stiege, Essen</desc></programme>
+<programme start="20260205185500 +0000" stop="20260205201500 +0000" channel="Kabel eins.de"><title>Achtung Kontrolle! Wir kummern uns drum</title><desc>Live-TV</desc></programme>
+<programme start="20260205201500 +0000" stop="20260205223500 +0000" channel="Kabel eins.de"><title>Achtung Abzocke - Betrugern auf der Spur</title><desc>Live-TV</desc></programme>
+<programme start="20260205223500 +0000" stop="20260206012000 +0000" channel="Kabel eins.de"><title>Justice League</title><desc>Live-TV</desc></programme>
+<programme start="20260206012000 +0000" stop="20260206034500 +0000" channel="Kabel eins.de"><title>Achtung Abzocke - Betrugern auf der Spur</title><desc>Live-TV</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204074500 +0000" channel="KiKA.de"><title>Kikaninchen Schnipselwelt</title><desc>Freundelied</desc></programme>
+<programme start="20260204074500 +0000" stop="20260204100000 +0000" channel="KiKA.de"><title>SesamstraSSe</title><desc>Der Spion der Kekse liebte</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204115500 +0000" channel="KiKA.de"><title>Jim Hensons</title><desc>Doozers: Mission: Verzwickte Situation</desc></programme>
+<programme start="20260204115500 +0000" stop="20260204140000 +0000" channel="KiKA.de"><title>Power Players</title><desc>Das Bowlingturnier</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204154500 +0000" channel="KiKA.de"><title>Die Regeln von Floor</title><desc>Enkeltrick</desc></programme>
+<programme start="20260204154500 +0000" stop="20260204180000 +0000" channel="KiKA.de"><title>Lassie</title><desc>Im Schneesturm</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204200000 +0000" channel="KiKA.de"><title>Wickie und die starken Manner</title><desc>Faxe und der Wal</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204210000 +0000" channel="KiKA.de"><title>KiKA LIVE</title><desc>Journaling mit Nikey Dauringon</desc></programme>
+<programme start="20260204210000 +0000" stop="20260205060000 +0000" channel="KiKA.de"><title>Sendeschluss</title><desc>Live-TV</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205074500 +0000" channel="KiKA.de"><title>Kikaninchen Schnipselwelt</title><desc>Freundelied</desc></programme>
+<programme start="20260205074500 +0000" stop="20260205100000 +0000" channel="KiKA.de"><title>SesamstraSSe</title><desc>Der magnetische Bert</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205115500 +0000" channel="KiKA.de"><title>Jim Hensons</title><desc>Doozers: Mission: Kleine Wunder</desc></programme>
+<programme start="20260205115500 +0000" stop="20260205140000 +0000" channel="KiKA.de"><title>Die Piraten von nebenan</title><desc>Die Piratenstadt</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205154500 +0000" channel="KiKA.de"><title>Die Regeln von Floor</title><desc>Hype</desc></programme>
+<programme start="20260205154500 +0000" stop="20260205180000 +0000" channel="KiKA.de"><title>Lassie</title><desc>Das Barenjunge</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205200000 +0000" channel="KiKA.de"><title>Wickie und die starken Manner</title><desc>Thors Hammer</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205210000 +0000" channel="KiKA.de"><title>KiKA LIVE</title><desc>Kochen ohne Plan / Teil 3</desc></programme>
+<programme start="20260205210000 +0000" stop="20260206060000 +0000" channel="KiKA.de"><title>Sendeschluss</title><desc>Live-TV</desc></programme>
+<programme start="20260204012500 +0000" stop="20260204033500 +0000" channel="N-TV.de"><title>Dinosaurier - Reise in eine vergangene Welt</title><desc>Jura</desc></programme>
+<programme start="20260204033500 +0000" stop="20260204060000 +0000" channel="N-TV.de"><title>Anwalte der Toten - Die schlimmsten Serienkiller der Welt</title><desc>Folge #05.09</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204080000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204080000 +0000" stop="20260204100000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204120000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204200000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204220000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204220000 +0000" stop="20260204233500 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204233500 +0000" stop="20260205015500 +0000" channel="N-TV.de"><title>Anwalte der Toten - Die schlimmsten Serienkiller der Welt</title><desc>Folge #05.09</desc></programme>
+<programme start="20260205015500 +0000" stop="20260205032000 +0000" channel="N-TV.de"><title>Lost Places - Mysteriose Inseln</title><desc>Die Pitcairninseln</desc></programme>
+<programme start="20260205032000 +0000" stop="20260205060000 +0000" channel="N-TV.de"><title>Ratselhafte Phanomene</title><desc>Folge #05.10</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205080000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205100000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205120000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205160000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205200000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205220000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205220000 +0000" stop="20260205233000 +0000" channel="N-TV.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205233000 +0000" stop="20260206015500 +0000" channel="N-TV.de"><title>Ratselhafte Phanomene</title><desc>Folge #05.09</desc></programme>
+<programme start="20260206015500 +0000" stop="20260206032500 +0000" channel="N-TV.de"><title>Apokalypse - Hitlers Krieg im Westen</title><desc>Folge #01.02</desc></programme>
+<programme start="20260204012500 +0000" stop="20260204033500 +0000" channel="ONE.de"><title>Velvet</title><desc>Tag Der Entscheidung</desc></programme>
+<programme start="20260204033500 +0000" stop="20260204052000 +0000" channel="ONE.de"><title>Krieg und Frieden</title><desc>Versuchung</desc></programme>
+<programme start="20260204052000 +0000" stop="20260204074500 +0000" channel="ONE.de"><title>In aller Freundschaft</title><desc>Nur zu zweit</desc></programme>
+<programme start="20260204074500 +0000" stop="20260204092000 +0000" channel="ONE.de"><title>Sturm der Liebe</title><desc>Live-TV</desc></programme>
+<programme start="20260204092000 +0000" stop="20260204114000 +0000" channel="ONE.de"><title>Seaside Hotel</title><desc>Besuch aus dem Suden</desc></programme>
+<programme start="20260204114000 +0000" stop="20260204140000 +0000" channel="ONE.de"><title>Rote Rosen</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204152500 +0000" channel="ONE.de"><title>Die Wunderubung</title><desc>Live-TV</desc></programme>
+<programme start="20260204152500 +0000" stop="20260204175000 +0000" channel="ONE.de"><title>Seaside Hotel</title><desc>Willkommen daheim</desc></programme>
+<programme start="20260204175000 +0000" stop="20260204192500 +0000" channel="ONE.de"><title>Rote Rosen</title><desc>Live-TV</desc></programme>
+<programme start="20260204192500 +0000" stop="20260204214500 +0000" channel="ONE.de"><title>Sturm der Liebe</title><desc>Live-TV</desc></programme>
+<programme start="20260204214500 +0000" stop="20260204235500 +0000" channel="ONE.de"><title>Professor T</title><desc>Thronerbe</desc></programme>
+<programme start="20260204235500 +0000" stop="20260205013500 +0000" channel="ONE.de"><title>Velvet</title><desc>Vater Sein Dagegen Sehr</desc></programme>
+<programme start="20260205013500 +0000" stop="20260205034500 +0000" channel="ONE.de"><title>Murdoch Mysteries - Auf den Spuren mysterioser Mordfalle</title><desc>Im Hafenviertel - Teil 2</desc></programme>
+<programme start="20260205034500 +0000" stop="20260205051500 +0000" channel="ONE.de"><title>Krieg und Frieden</title><desc>Erkenntnisse</desc></programme>
+<programme start="20260205051500 +0000" stop="20260205074000 +0000" channel="ONE.de"><title>In aller Freundschaft</title><desc>Versprechungen</desc></programme>
+<programme start="20260205074000 +0000" stop="20260205091500 +0000" channel="ONE.de"><title>Sturm der Liebe</title><desc>Live-TV</desc></programme>
+<programme start="20260205091500 +0000" stop="20260205114000 +0000" channel="ONE.de"><title>Seaside Hotel</title><desc>Willkommen daheim</desc></programme>
+<programme start="20260205114000 +0000" stop="20260205140000 +0000" channel="ONE.de"><title>Rote Rosen</title><desc>Live-TV</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205153000 +0000" channel="ONE.de"><title>Mein Vater, der Esel und ich</title><desc>Live-TV</desc></programme>
+<programme start="20260205153000 +0000" stop="20260205175000 +0000" channel="ONE.de"><title>Seaside Hotel</title><desc>Der Fremde</desc></programme>
+<programme start="20260205175000 +0000" stop="20260205192500 +0000" channel="ONE.de"><title>Rote Rosen</title><desc>Live-TV</desc></programme>
+<programme start="20260205192500 +0000" stop="20260205214500 +0000" channel="ONE.de"><title>Sturm der Liebe</title><desc>Live-TV</desc></programme>
+<programme start="20260205214500 +0000" stop="20260205232000 +0000" channel="ONE.de"><title>Vorstadtweiber</title><desc>Folge 59</desc></programme>
+<programme start="20260205232000 +0000" stop="20260206013500 +0000" channel="ONE.de"><title>Professor T</title><desc>Wahrheit und Gerechtigkeit</desc></programme>
+<programme start="20260206013500 +0000" stop="20260206040000 +0000" channel="ONE.de"><title>Vorstadtweiber</title><desc>Folge 59</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204013000 +0000" channel="Phoenix.de"><title>phoenix runde</title><desc>Mehr leisten, weniger bekommen - Wie sozial ist die Union?</desc></programme>
+<programme start="20260204013000 +0000" stop="20260204034500 +0000" channel="Phoenix.de"><title>Geheimnisse der Jurassic-Saurier</title><desc>Live-TV</desc></programme>
+<programme start="20260204034500 +0000" stop="20260204053000 +0000" channel="Phoenix.de"><title>Geheimnisse der DDR</title><desc>Macht und Unterdruckung</desc></programme>
+<programme start="20260204053000 +0000" stop="20260204100000 +0000" channel="Phoenix.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204120000 +0000" channel="Phoenix.de"><title>phoenix vor ort</title><desc>Live-TV</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="Phoenix.de"><title>phoenix vor ort</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="Phoenix.de"><title>phoenix vor ort</title><desc>Live-TV</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="Phoenix.de"><title>Donald Trump</title><desc>Konig im WeiSSen Haus?</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204200000 +0000" channel="Phoenix.de"><title>Die Schattenflotte der Ayatollahs</title><desc>Irans Öl-Spur nach Berlin</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204214500 +0000" channel="Phoenix.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204214500 +0000" stop="20260205000000 +0000" channel="Phoenix.de"><title>Winter auf Mallorca</title><desc>Live-TV</desc></programme>
+<programme start="20260205000000 +0000" stop="20260205013000 +0000" channel="Phoenix.de"><title>phoenix runde</title><desc>Ukraine im Kriegswinter - Gibt es Chancen auf Frieden?</desc></programme>
+<programme start="20260205013000 +0000" stop="20260205034500 +0000" channel="Phoenix.de"><title>Das Wustenparadies</title><desc>Zwischen Felsen und Kakteen</desc></programme>
+<programme start="20260205034500 +0000" stop="20260205053000 +0000" channel="Phoenix.de"><title>Naturparadiese am Äquator</title><desc>Pazifische Korallengarten</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205100000 +0000" channel="Phoenix.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205120000 +0000" channel="Phoenix.de"><title>phoenix vor ort</title><desc>Live-TV</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="Phoenix.de"><title>phoenix vor ort</title><desc>Live-TV</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205160000 +0000" channel="Phoenix.de"><title>phoenix vor ort</title><desc>Live-TV</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="Phoenix.de"><title>Die Jobcenter-Falle</title><desc>Was lauft falsch beim Burgergeld?</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205200000 +0000" channel="Phoenix.de"><title>Jugend im Krieg</title><desc>Zwischen Todesangst und Abschlusstanz</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205214500 +0000" channel="Phoenix.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205214500 +0000" stop="20260206000000 +0000" channel="Phoenix.de"><title>heute journal</title><desc>Live-TV</desc></programme>
+<programme start="20260206000000 +0000" stop="20260206013000 +0000" channel="Phoenix.de"><title>phoenix runde</title><desc>Live-TV</desc></programme>
+<programme start="20260206013000 +0000" stop="20260206035500 +0000" channel="Phoenix.de"><title>Dokumentation</title><desc>Live-TV</desc></programme>
+<programme start="20260204014000 +0000" stop="20260204032000 +0000" channel="ProSieben.de"><title>Reality Backpackers</title><desc>Live-TV</desc></programme>
+<programme start="20260204032000 +0000" stop="20260204055500 +0000" channel="ProSieben.de"><title>Balls - fur Geld mache ich alles</title><desc>Live-TV</desc></programme>
+<programme start="20260204055500 +0000" stop="20260204072500 +0000" channel="ProSieben.de"><title>taff</title><desc>Live-TV</desc></programme>
+<programme start="20260204072500 +0000" stop="20260204100000 +0000" channel="ProSieben.de"><title>Galileo</title><desc>Doner - Mit allem und extra teuer?</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204114500 +0000" channel="ProSieben.de"><title>Young Sheldon</title><desc>Cape Canaveral, Schrodingers Katze und die Blitze</desc></programme>
+<programme start="20260204114500 +0000" stop="20260204135000 +0000" channel="ProSieben.de"><title>The Big Bang Theory</title><desc>Die Tam-Turbulenzen</desc></programme>
+<programme start="20260204135000 +0000" stop="20260204160000 +0000" channel="ProSieben.de"><title>Young Sheldon</title><desc>Spock, Kirk und ein Leistenbruch</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="ProSieben.de"><title>The Big Bang Theory</title><desc>Die Vollzugs-Verweigerung</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204190500 +0000" channel="ProSieben.de"><title>ProSieben</title><desc>newstime</desc></programme>
+<programme start="20260204190500 +0000" stop="20260204201500 +0000" channel="ProSieben.de"><title>Galileo</title><desc>Real Survivor: Wie man einen Flugzeugabsturz uberlebt</desc></programme>
+<programme start="20260204201500 +0000" stop="20260204233500 +0000" channel="ProSieben.de"><title>Star Wars</title><desc>Der Aufstieg Skywalkers</desc></programme>
+<programme start="20260204233500 +0000" stop="20260205012500 +0000" channel="ProSieben.de"><title>TV total</title><desc>Live-TV</desc></programme>
+<programme start="20260205012500 +0000" stop="20260205040000 +0000" channel="ProSieben.de"><title>Antlers</title><desc>Live-TV</desc></programme>
+<programme start="20260205040000 +0000" stop="20260205060000 +0000" channel="ProSieben.de"><title>Chris Du das hin?</title><desc>Live-TV</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205072500 +0000" channel="ProSieben.de"><title>taff</title><desc>Live-TV</desc></programme>
+<programme start="20260205072500 +0000" stop="20260205100000 +0000" channel="ProSieben.de"><title>Galileo</title><desc>Real Survivor: Wie man einen Flugzeugabsturz uberlebt</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205114500 +0000" channel="ProSieben.de"><title>Young Sheldon</title><desc>Spock, Kirk und ein Leistenbruch</desc></programme>
+<programme start="20260205114500 +0000" stop="20260205135500 +0000" channel="ProSieben.de"><title>The Big Bang Theory</title><desc>Die Ablehnungs-Attraktion</desc></programme>
+<programme start="20260205135500 +0000" stop="20260205154000 +0000" channel="ProSieben.de"><title>Young Sheldon</title><desc>Dallas, grune Bohnen und eine Adlerfeder</desc></programme>
+<programme start="20260205154000 +0000" stop="20260205180000 +0000" channel="ProSieben.de"><title>The Big Bang Theory</title><desc>Die Theorie-Trauer</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205190500 +0000" channel="ProSieben.de"><title>ProSieben</title><desc>newstime</desc></programme>
+<programme start="20260205190500 +0000" stop="20260205201500 +0000" channel="ProSieben.de"><title>Galileo</title><desc>Rolls-Royce: Deconstructed.</desc></programme>
+<programme start="20260205201500 +0000" stop="20260205230000 +0000" channel="ProSieben.de"><title>Elysium</title><desc>Live-TV</desc></programme>
+<programme start="20260205230000 +0000" stop="20260206011500 +0000" channel="ProSieben.de"><title>Battleship</title><desc>Live-TV</desc></programme>
+<programme start="20260206011500 +0000" stop="20260206030000 +0000" channel="ProSieben.de"><title>Zombieland</title><desc>Doppelt halt besser</desc></programme>
+<programme start="20260204015500 +0000" stop="20260204033900 +0000" channel="RTL ZWEI.de"><title>Armes Deutschland - Stempeln oder abrackern?</title><desc>Der Traum vom Haus</desc></programme>
+<programme start="20260204033900 +0000" stop="20260204060000 +0000" channel="RTL ZWEI.de"><title>Hartz und herzlich - Tag fur Tag Benz-Baracken</title><desc>Liebesaus</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204080000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Otto bei Walter - Teil 1 / Mauro bei Conny</desc></programme>
+<programme start="20260204080000 +0000" stop="20260204100000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Sukru bei Utta</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204115500 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Sukru bei Rita und Peter</desc></programme>
+<programme start="20260204115500 +0000" stop="20260204135500 +0000" channel="RTL ZWEI.de"><title>Die Schnappchenhauser - Jeder Cent zahlt</title><desc>Nachbarschaftsstreit im Schnappchenhaus</desc></programme>
+<programme start="20260204135500 +0000" stop="20260204160000 +0000" channel="RTL ZWEI.de"><title>Hartz und herzlich - Tag fur Tag Benz-Baracken</title><desc>Geburtstagsvorbereitungen</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204170500 +0000" channel="RTL ZWEI.de"><title>RTLZWEI News</title><desc>Live-TV</desc></programme>
+<programme start="20260204170500 +0000" stop="20260204190500 +0000" channel="RTL ZWEI.de"><title>Hartz Rot Gold</title><desc>Einsturzen und neu bauen</desc></programme>
+<programme start="20260204190500 +0000" stop="20260204212000 +0000" channel="RTL ZWEI.de"><title>Berlin - Tag And Nacht</title><desc>Versohnt und mit Sex gekront</desc></programme>
+<programme start="20260204212000 +0000" stop="20260204221600 +0000" channel="RTL ZWEI.de"><title>#CoupleChallenge - Das starkste Team gewinnt</title><desc>Folge 6 (2026)</desc></programme>
+<programme start="20260204221600 +0000" stop="20260205020000 +0000" channel="RTL ZWEI.de"><title>Armes Deutschland - Stempeln oder abrackern?</title><desc>Der Traum vom Haus</desc></programme>
+<programme start="20260205020000 +0000" stop="20260205034000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Sukru, Mauro und Otto bei Ralf</desc></programme>
+<programme start="20260205034000 +0000" stop="20260205060000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Sukru bei Mona, Ingo und Rosi</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205080000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Antoine bei Peter und Birgit / Mauro bei Kai und Gunda - Teil 1</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205100000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Otto bei Jorn</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205110000 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Otto bei Michael</desc></programme>
+<programme start="20260205110000 +0000" stop="20260205135500 +0000" channel="RTL ZWEI.de"><title>Der Trodeltrupp - Das Geld liegt im Keller</title><desc>Sukru, Mauro und Otto bei Janine</desc></programme>
+<programme start="20260205135500 +0000" stop="20260205160000 +0000" channel="RTL ZWEI.de"><title>Hartz und herzlich - Tag fur Tag Benz-Baracken</title><desc>Jobangebot</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205170500 +0000" channel="RTL ZWEI.de"><title>RTLZWEI News</title><desc>Live-TV</desc></programme>
+<programme start="20260205170500 +0000" stop="20260205190500 +0000" channel="RTL ZWEI.de"><title>Hartz Rot Gold</title><desc>Tag der Einschulung</desc></programme>
+<programme start="20260205190500 +0000" stop="20260205201500 +0000" channel="RTL ZWEI.de"><title>Berlin - Tag And Nacht</title><desc>Bis einer kotzt</desc></programme>
+<programme start="20260205201500 +0000" stop="20260205232000 +0000" channel="RTL ZWEI.de"><title>Reeperbahn Privat! Das wahre Leben auf dem Kiez</title><desc>Der Neuanfang: Prostituierte Laura will als Cam-Girl durchstarten</desc></programme>
+<programme start="20260205232000 +0000" stop="20260206011500 +0000" channel="RTL ZWEI.de"><title>Die Wollnys - Eine schrecklich groSSe Familie!</title><desc>Wenn Liebe unter die Haut geht - Servets Überraschung fur Loredana</desc></programme>
+<programme start="20260206011500 +0000" stop="20260206034500 +0000" channel="RTL ZWEI.de"><title>#CoupleChallenge - Das starkste Team gewinnt</title><desc>Folge 6 (2026)</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204003500 +0000" channel="RTL.de"><title>RTL Nachtjournal</title><desc>Live-TV</desc></programme>
+<programme start="20260204003500 +0000" stop="20260204035500 +0000" channel="RTL.de"><title>Ich bin ein Star - Holt mich hier raus!</title><desc>Tag 12</desc></programme>
+<programme start="20260204035500 +0000" stop="20260204060000 +0000" channel="RTL.de"><title>Der Blaulicht Report</title><desc>Junge hat mysteriose blaue Flecke</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204080000 +0000" channel="RTL.de"><title>Punkt 6</title><desc>Live-TV</desc></programme>
+<programme start="20260204080000 +0000" stop="20260204100000 +0000" channel="RTL.de"><title>Punkt 8</title><desc>Live-TV</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204120000 +0000" channel="RTL.de"><title>Ulrich Wetzel - Das Strafgericht</title><desc>Braver Pizzabote soll einsame Seniorin mit Enkeltrick um ihr Erspartes gebracht haben</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204155500 +0000" channel="RTL.de"><title>Punkt 12 - Das RTL-Mittagsjournal</title><desc>Live-TV</desc></programme>
+<programme start="20260204155500 +0000" stop="20260204180000 +0000" channel="RTL.de"><title>Ulrich Wetzel - Das Strafgericht</title><desc>Machospruche nonstop! Schlug Singlefrau ihren Pascha-Schwager nieder?</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204194000 +0000" channel="RTL.de"><title>Explosiv - Das Magazin</title><desc>Folge #17.24</desc></programme>
+<programme start="20260204194000 +0000" stop="20260204201500 +0000" channel="RTL.de"><title>Gute Zeiten, schlechte Zeiten</title><desc>Verhallender Hilfeschrei</desc></programme>
+<programme start="20260204201500 +0000" stop="20260205000000 +0000" channel="RTL.de"><title>Ich bin ein Star - Holt mich hier raus!</title><desc>Tag 13</desc></programme>
+<programme start="20260205000000 +0000" stop="20260205003500 +0000" channel="RTL.de"><title>RTL Nachtjournal</title><desc>Live-TV</desc></programme>
+<programme start="20260205003500 +0000" stop="20260205032500 +0000" channel="RTL.de"><title>Ich bin ein Star - Holt mich hier raus!</title><desc>Tag 13</desc></programme>
+<programme start="20260205032500 +0000" stop="20260205060000 +0000" channel="RTL.de"><title>Der Blaulicht Report</title><desc>Frau will ihr verkauftes Baby wiederhaben</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205080000 +0000" channel="RTL.de"><title>Punkt 6</title><desc>Live-TV</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205100000 +0000" channel="RTL.de"><title>Punkt 8</title><desc>Live-TV</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205120000 +0000" channel="RTL.de"><title>Ulrich Wetzel - Das Strafgericht</title><desc>Eine Frau ohne Papiere, ein Cowboy und ein Raub</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205155500 +0000" channel="RTL.de"><title>Punkt 12 - Das RTL-Mittagsjournal</title><desc>Live-TV</desc></programme>
+<programme start="20260205155500 +0000" stop="20260205180000 +0000" channel="RTL.de"><title>Ulrich Wetzel - Das Strafgericht</title><desc>Spielplatzstreit eskaliert - Krankenschwester wird schwer verletzt</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205194000 +0000" channel="RTL.de"><title>Explosiv - Das Magazin</title><desc>Folge #17.25</desc></programme>
+<programme start="20260205194000 +0000" stop="20260205201500 +0000" channel="RTL.de"><title>Gute Zeiten, schlechte Zeiten</title><desc>Wem kann man noch trauen?</desc></programme>
+<programme start="20260205201500 +0000" stop="20260206000000 +0000" channel="RTL.de"><title>Ich bin ein Star - Holt mich hier raus!</title><desc>Tag 14</desc></programme>
+<programme start="20260206000000 +0000" stop="20260206003500 +0000" channel="RTL.de"><title>RTL Nachtjournal</title><desc>Live-TV</desc></programme>
+<programme start="20260206003500 +0000" stop="20260206034500 +0000" channel="RTL.de"><title>Ich bin ein Star - Holt mich hier raus!</title><desc>Tag 14</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204014500 +0000" channel="Sat.1.de"><title>Navy CIS</title><desc>Der Buchclub</desc></programme>
+<programme start="20260204014500 +0000" stop="20260204035000 +0000" channel="Sat.1.de"><title>FBI</title><desc>Special Crime Unit: Kunstliche Intelligenz</desc></programme>
+<programme start="20260204035000 +0000" stop="20260204053000 +0000" channel="Sat.1.de"><title>Auf Streife - Die Spezialisten</title><desc>(Fast) die letzte Ölung</desc></programme>
+<programme start="20260204053000 +0000" stop="20260204100000 +0000" channel="Sat.1.de"><title>SAT.1-Fruhstucksfernsehen</title><desc>Live-TV</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204120000 +0000" channel="Sat.1.de"><title>Lebensretter hautnah - Wenn jede Sekunde zahlt</title><desc>Live-TV</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="Sat.1.de"><title>Auf Streife - Die Spezialisten</title><desc>Zwischen zwei Übeln</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="Sat.1.de"><title>Auf Streife</title><desc>Mutterinstinkt!</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="Sat.1.de"><title>Lebensretter hautnah - Wenn jede Sekunde zahlt</title><desc>Live-TV</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204194500 +0000" channel="Sat.1.de"><title>LenSSen hilft</title><desc>Die Wahrheit uber meine Tochter</desc></programme>
+<programme start="20260204194500 +0000" stop="20260204201500 +0000" channel="Sat.1.de"><title>SAT.1</title><desc>newstime</desc></programme>
+<programme start="20260204201500 +0000" stop="20260205010000 +0000" channel="Sat.1.de"><title>Ein ganzes halbes Jahr</title><desc>Live-TV</desc></programme>
+<programme start="20260205010000 +0000" stop="20260205030500 +0000" channel="Sat.1.de"><title>Alien</title><desc>Covenant</desc></programme>
+<programme start="20260205030500 +0000" stop="20260205053000 +0000" channel="Sat.1.de"><title>Cloverfield</title><desc>Live-TV</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205100000 +0000" channel="Sat.1.de"><title>SAT.1-Fruhstucksfernsehen</title><desc>Live-TV</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205120000 +0000" channel="Sat.1.de"><title>Lebensretter hautnah - Wenn jede Sekunde zahlt</title><desc>Live-TV</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="Sat.1.de"><title>Auf Streife - Die Spezialisten</title><desc>Heiratsantrag mit Hindernissen</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205160000 +0000" channel="Sat.1.de"><title>Auf Streife</title><desc>Mama weg</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="Sat.1.de"><title>Lebensretter hautnah - Wenn jede Sekunde zahlt</title><desc>Live-TV</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205194500 +0000" channel="Sat.1.de"><title>LenSSen hilft</title><desc>Fairplay</desc></programme>
+<programme start="20260205194500 +0000" stop="20260205201500 +0000" channel="Sat.1.de"><title>SAT.1</title><desc>newstime</desc></programme>
+<programme start="20260205201500 +0000" stop="20260205223500 +0000" channel="Sat.1.de"><title>Das 1% Quiz - Wie clever ist Deutschland?</title><desc>Live-TV</desc></programme>
+<programme start="20260205223500 +0000" stop="20260206010000 +0000" channel="Sat.1.de"><title>Hidden Figures</title><desc>Unerkannte Heldinnen</desc></programme>
+<programme start="20260206010000 +0000" stop="20260206024000 +0000" channel="Sat.1.de"><title>Das 1% Quiz - Wie clever ist Deutschland?</title><desc>Live-TV</desc></programme>
+<programme start="20260206024000 +0000" stop="20260206053000 +0000" channel="Sat.1.de"><title>99 - Wer schlagt sie alle?</title><desc>Live-TV</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204010000 +0000" channel="Super RTL.de"><title>Lucifer</title><desc>Willkommen zuruck, Charlotte Richards</desc></programme>
+<programme start="20260204010000 +0000" stop="20260204060000 +0000" channel="Super RTL.de"><title>Teleshoppingsendung</title><desc>Live-TV</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204075500 +0000" channel="Super RTL.de"><title>Peppa Pig</title><desc>Picknick</desc></programme>
+<programme start="20260204075500 +0000" stop="20260204095500 +0000" channel="Super RTL.de"><title>Rubble And Crew</title><desc>Die Crew baut einen Zeltplatz</desc></programme>
+<programme start="20260204095500 +0000" stop="20260204120000 +0000" channel="Super RTL.de"><title>Super Wings</title><desc>Chaos bei der Autoshow</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="Super RTL.de"><title>Monster High</title><desc>Das Monsterfest Teil 4</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204154500 +0000" channel="Super RTL.de"><title>ALVINNN!!! und die Chipmunks</title><desc>Brittany, die AuSSerirdische</desc></programme>
+<programme start="20260204154500 +0000" stop="20260204175500 +0000" channel="Super RTL.de"><title>Woozle Goozle</title><desc>Gemuse And Das Wattenmeer</desc></programme>
+<programme start="20260204175500 +0000" stop="20260204194500 +0000" channel="Super RTL.de"><title>ALVINNN!!! und die Chipmunks</title><desc>Der Fahrraddieb</desc></programme>
+<programme start="20260204194500 +0000" stop="20260204220000 +0000" channel="Super RTL.de"><title>Die Thundermans</title><desc>Gestatten: Die Evilmans</desc></programme>
+<programme start="20260204220000 +0000" stop="20260205013500 +0000" channel="Super RTL.de"><title>Zwei Tickets ins Paradies</title><desc>Live-TV</desc></programme>
+<programme start="20260205013500 +0000" stop="20260205060000 +0000" channel="Super RTL.de"><title>Teleshoppingsendung</title><desc>Live-TV</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205075500 +0000" channel="Super RTL.de"><title>Peppa Pig</title><desc>Verkleiden</desc></programme>
+<programme start="20260205075500 +0000" stop="20260205095500 +0000" channel="Super RTL.de"><title>Rubble And Crew</title><desc>Die Crew baut einen Futterspender</desc></programme>
+<programme start="20260205095500 +0000" stop="20260205120000 +0000" channel="Super RTL.de"><title>Super Wings</title><desc>Die Flieger uber den Wolken</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="Super RTL.de"><title>Monster High</title><desc>Die Nacht der unlebendigen Frosche</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205154500 +0000" channel="Super RTL.de"><title>ALVINNN!!! und die Chipmunks</title><desc>Ein Wochenende mit Alvin</desc></programme>
+<programme start="20260205154500 +0000" stop="20260205175500 +0000" channel="Super RTL.de"><title>Woozle Goozle</title><desc>Die chinesische Mauer And Trinkwasser</desc></programme>
+<programme start="20260205175500 +0000" stop="20260205194500 +0000" channel="Super RTL.de"><title>ALVINNN!!! und die Chipmunks</title><desc>Die Wechsel-Hexe</desc></programme>
+<programme start="20260205194500 +0000" stop="20260205211000 +0000" channel="Super RTL.de"><title>Die Thundermans</title><desc>Freunde und Gruppen</desc></programme>
+<programme start="20260205211000 +0000" stop="20260205234500 +0000" channel="Super RTL.de"><title>CSI</title><desc>Miami: Arena der Antagonisten</desc></programme>
+<programme start="20260205234500 +0000" stop="20260206005000 +0000" channel="Super RTL.de"><title>Love, Romance And Chocolate</title><desc>Live-TV</desc></programme>
+<programme start="20260206005000 +0000" stop="20260206060000 +0000" channel="Super RTL.de"><title>Teleshoppingsendung</title><desc>Live-TV</desc></programme>
+<programme start="20260204020000 +0000" stop="20260204040000 +0000" channel="Tagesschau24.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204040000 +0000" stop="20260204053000 +0000" channel="Tagesschau24.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204053000 +0000" stop="20260204090000 +0000" channel="Tagesschau24.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204090000 +0000" stop="20260204120000 +0000" channel="Tagesschau24.de"><title>Tagesschau-Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="Tagesschau24.de"><title>ARD-Mittagsmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204200000 +0000" channel="Tagesschau24.de"><title>Tagesschau-Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204214500 +0000" channel="Tagesschau24.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204214500 +0000" stop="20260204225000 +0000" channel="Tagesschau24.de"><title>Report Munchen</title><desc>Live-TV</desc></programme>
+<programme start="20260204225000 +0000" stop="20260205020000 +0000" channel="Tagesschau24.de"><title>Tagesschau-Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205020000 +0000" stop="20260205040000 +0000" channel="Tagesschau24.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205040000 +0000" stop="20260205053000 +0000" channel="Tagesschau24.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205090000 +0000" channel="Tagesschau24.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260205090000 +0000" stop="20260205120000 +0000" channel="Tagesschau24.de"><title>Tagesschau-Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="Tagesschau24.de"><title>ARD-Mittagsmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205200000 +0000" channel="Tagesschau24.de"><title>Tagesschau-Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205214700 +0000" channel="Tagesschau24.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205214700 +0000" stop="20260205225000 +0000" channel="Tagesschau24.de"><title>Plusminus</title><desc>Live-TV</desc></programme>
+<programme start="20260205225000 +0000" stop="20260206020000 +0000" channel="Tagesschau24.de"><title>Tagesschau-Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260206020000 +0000" stop="20260206040000 +0000" channel="Tagesschau24.de"><title>Nachrichten</title><desc>Live-TV</desc></programme>
+<programme start="20260204013500 +0000" stop="20260204040000 +0000" channel="VOX.de"><title>Medical Detectives - Geheimnisse der Gerichtsmedizin</title><desc>Akte Mord</desc></programme>
+<programme start="20260204040000 +0000" stop="20260204054000 +0000" channel="VOX.de"><title>Medical Detectives - Geheimnisse der Gerichtsmedizin</title><desc>Last der Beweise</desc></programme>
+<programme start="20260204054000 +0000" stop="20260204075000 +0000" channel="VOX.de"><title>CSI</title><desc>Miami: Tiefer Fall</desc></programme>
+<programme start="20260204075000 +0000" stop="20260204093500 +0000" channel="VOX.de"><title>CSI</title><desc>Den Tatern auf der Spur: Tod in der Wuste</desc></programme>
+<programme start="20260204093500 +0000" stop="20260204112500 +0000" channel="VOX.de"><title>CSI</title><desc>Den Tatern auf der Spur: Der pelzige Rivale</desc></programme>
+<programme start="20260204112500 +0000" stop="20260204140000 +0000" channel="VOX.de"><title>CSI</title><desc>Den Tatern auf der Spur: Zum Sterben schon</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="VOX.de"><title>CSI</title><desc>Miami: Aus heiterem Himmel</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="VOX.de"><title>Guidos Deko Queen</title><desc>Tag 3: Jana</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204190000 +0000" channel="VOX.de"><title>First Dates - Ein Tisch fur zwei</title><desc>Live-TV</desc></programme>
+<programme start="20260204190000 +0000" stop="20260204220000 +0000" channel="VOX.de"><title>Das perfekte Dinner</title><desc>Tag 3: Kevin, Nurnberg</desc></programme>
+<programme start="20260204220000 +0000" stop="20260204221500 +0000" channel="VOX.de"><title>I, Robot</title><desc>Live-TV</desc></programme>
+<programme start="20260204221500 +0000" stop="20260205013000 +0000" channel="VOX.de"><title>Hot oder Schrott - Die Allestester</title><desc>7F476A4B6E9CDE22D75241235DC0CAD5#DMBAUTOFOLGE#//</desc></programme>
+<programme start="20260205013000 +0000" stop="20260205035500 +0000" channel="VOX.de"><title>Medical Detectives - Geheimnisse der Gerichtsmedizin</title><desc>Tod im Rotlichtmilieu</desc></programme>
+<programme start="20260205035500 +0000" stop="20260205052500 +0000" channel="VOX.de"><title>Medical Detectives - Geheimnisse der Gerichtsmedizin</title><desc>Folgenschwere Verweigerungen</desc></programme>
+<programme start="20260205052500 +0000" stop="20260205075500 +0000" channel="VOX.de"><title>CSI</title><desc>Miami: Aus heiterem Himmel</desc></programme>
+<programme start="20260205075500 +0000" stop="20260205094000 +0000" channel="VOX.de"><title>CSI</title><desc>Den Tatern auf der Spur: Gegen die Zeit</desc></programme>
+<programme start="20260205094000 +0000" stop="20260205112500 +0000" channel="VOX.de"><title>CSI</title><desc>Den Tatern auf der Spur: Tanz auf dem Vulkan</desc></programme>
+<programme start="20260205112500 +0000" stop="20260205131000 +0000" channel="VOX.de"><title>CSI</title><desc>Den Tatern auf der Spur: Der dritte Mann</desc></programme>
+<programme start="20260205131000 +0000" stop="20260205160000 +0000" channel="VOX.de"><title>CSI</title><desc>Miami: Kinder des Zorns</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="VOX.de"><title>Guidos Deko Queen</title><desc>Hat 4: Anja</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205190000 +0000" channel="VOX.de"><title>First Dates - Ein Tisch fur zwei</title><desc>Live-TV</desc></programme>
+<programme start="20260205190000 +0000" stop="20260205201500 +0000" channel="VOX.de"><title>Das perfekte Dinner</title><desc>Tag 4: Elena, Nurnberg</desc></programme>
+<programme start="20260205201500 +0000" stop="20260206015500 +0000" channel="VOX.de"><title>Killers Bodyguard 2</title><desc>Live-TV</desc></programme>
+<programme start="20260206015500 +0000" stop="20260206033500 +0000" channel="VOX.de"><title>Medical Detectives - Geheimnisse der Gerichtsmedizin</title><desc>Wahn und Willkur</desc></programme>
+<programme start="20260204020000 +0000" stop="20260204035500 +0000" channel="WDR Koln.de"><title>Lokalzeit aus Koln</title><desc>Live-TV</desc></programme>
+<programme start="20260204035500 +0000" stop="20260204055000 +0000" channel="WDR Koln.de"><title>Lokalzeit Ruhr</title><desc>Live-TV</desc></programme>
+<programme start="20260204055000 +0000" stop="20260204074000 +0000" channel="WDR Koln.de"><title>Lokalzeit Sudwestfalen</title><desc>Live-TV</desc></programme>
+<programme start="20260204074000 +0000" stop="20260204094000 +0000" channel="WDR Koln.de"><title>In aller Freundschaft</title><desc>Auf eigene Faust</desc></programme>
+<programme start="20260204094000 +0000" stop="20260204115500 +0000" channel="WDR Koln.de"><title>Gefragt - Gejagt</title><desc>Live-TV</desc></programme>
+<programme start="20260204115500 +0000" stop="20260204135000 +0000" channel="WDR Koln.de"><title>Das Waisenhaus fur wilde Tiere</title><desc>Live-TV</desc></programme>
+<programme start="20260204135000 +0000" stop="20260204160000 +0000" channel="WDR Koln.de"><title>Neues aus dem Munchner Tierpark Hellabrunn</title><desc>Ein kleiner Elefant muss zum Zahnarzt</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="WDR Koln.de"><title>WDR aktuell</title><desc>Live-TV</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204200000 +0000" channel="WDR Koln.de"><title>WDR aktuell / Lokalzeit</title><desc>Live-TV</desc></programme>
+<programme start="20260204200000 +0000" stop="20260204214500 +0000" channel="WDR Koln.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260204214500 +0000" stop="20260204234500 +0000" channel="WDR Koln.de"><title>WDR aktuell</title><desc>Live-TV</desc></programme>
+<programme start="20260204234500 +0000" stop="20260205020000 +0000" channel="WDR Koln.de"><title>Über die Grenze</title><desc>Rausch der Sterne</desc></programme>
+<programme start="20260205020000 +0000" stop="20260205035500 +0000" channel="WDR Koln.de"><title>Lokalzeit aus Koln</title><desc>Live-TV</desc></programme>
+<programme start="20260205035500 +0000" stop="20260205055000 +0000" channel="WDR Koln.de"><title>Lokalzeit Ruhr</title><desc>Live-TV</desc></programme>
+<programme start="20260205055000 +0000" stop="20260205074000 +0000" channel="WDR Koln.de"><title>Lokalzeit Sudwestfalen</title><desc>Live-TV</desc></programme>
+<programme start="20260205074000 +0000" stop="20260205094000 +0000" channel="WDR Koln.de"><title>In aller Freundschaft</title><desc>Ein weiter Weg</desc></programme>
+<programme start="20260205094000 +0000" stop="20260205115500 +0000" channel="WDR Koln.de"><title>Gefragt - Gejagt</title><desc>Live-TV</desc></programme>
+<programme start="20260205115500 +0000" stop="20260205135000 +0000" channel="WDR Koln.de"><title>Das Waisenhaus fur wilde Tiere</title><desc>Live-TV</desc></programme>
+<programme start="20260205135000 +0000" stop="20260205160000 +0000" channel="WDR Koln.de"><title>Neues aus dem Munchner Tierpark Hellabrunn</title><desc>Katta Niels braucht ganz viel Liebe</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="WDR Koln.de"><title>WDR aktuell</title><desc>Live-TV</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205200000 +0000" channel="WDR Koln.de"><title>WDR aktuell / Lokalzeit</title><desc>Live-TV</desc></programme>
+<programme start="20260205200000 +0000" stop="20260205214500 +0000" channel="WDR Koln.de"><title>Tagesschau</title><desc>Live-TV</desc></programme>
+<programme start="20260205214500 +0000" stop="20260205234500 +0000" channel="WDR Koln.de"><title>WDR aktuell</title><desc>Live-TV</desc></programme>
+<programme start="20260205234500 +0000" stop="20260206011000 +0000" channel="WDR Koln.de"><title>Trump And us - Wie er unsere Welt verandert</title><desc>Live-TV</desc></programme>
+<programme start="20260206011000 +0000" stop="20260206035500 +0000" channel="WDR Koln.de"><title>Lawrence - Leverkusener Jazztage 2025</title><desc>Live-TV</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204013500 +0000" channel="WELT.de"><title>UFO-Theorien - Zwischen Fakt und Fiktion</title><desc>Chicago</desc></programme>
+<programme start="20260204013500 +0000" stop="20260204034500 +0000" channel="WELT.de"><title>Spacetime</title><desc>Fur die Erde ins All - Wie Satelliten unser Leben verandern</desc></programme>
+<programme start="20260204034500 +0000" stop="20260204060000 +0000" channel="WELT.de"><title>Strip the Cosmos</title><desc>Die Eisriesen: Mystery of the Giant Ice Planets</desc></programme>
+<programme start="20260204060000 +0000" stop="20260204080000 +0000" channel="WELT.de"><title>Die Welt am Morgen</title><desc>Die Welt am Morgen</desc></programme>
+<programme start="20260204080000 +0000" stop="20260204100000 +0000" channel="WELT.de"><title>Die Welt am Morgen</title><desc>Die Welt am Morgen</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204120000 +0000" channel="WELT.de"><title>WELT Newsroom</title><desc>WELT Newsroom</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="WELT.de"><title>Die Welt am Mittag</title><desc>Die Welt am Mittag</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="WELT.de"><title>WELT Newsroom</title><desc>WELT Newsroom</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="WELT.de"><title>WELT Newsroom</title><desc>WELT Newsroom</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204194500 +0000" channel="WELT.de"><title>Die Welt am Abend</title><desc>Die Welt am Abend</desc></programme>
+<programme start="20260204194500 +0000" stop="20260204210500 +0000" channel="WELT.de"><title>Die Welt am Abend</title><desc>Die Welt am Abend</desc></programme>
+<programme start="20260204210500 +0000" stop="20260205000000 +0000" channel="WELT.de"><title>Die Macht der Natur - Steigender Meeresspiegel</title><desc>Rise Of The Sea Level</desc></programme>
+<programme start="20260205000000 +0000" stop="20260205013500 +0000" channel="WELT.de"><title>Auf Fangfahrt - Der Hochseetrawler</title><desc>Auf Fangfahrt - Der Hochseetrawler</desc></programme>
+<programme start="20260205013500 +0000" stop="20260205035500 +0000" channel="WELT.de"><title>Auf Tauchstation - Jobs unter Wasser</title><desc>Auf Tauchstation - Jobs unter Wasser</desc></programme>
+<programme start="20260205035500 +0000" stop="20260205060000 +0000" channel="WELT.de"><title>Seeungeheuer - Unbekannte Tiefe</title><desc>Seeungeheuer - Unbekannte Tiefe</desc></programme>
+<programme start="20260205060000 +0000" stop="20260205080000 +0000" channel="WELT.de"><title>Die Welt am Morgen</title><desc>Die Welt am Morgen</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205100000 +0000" channel="WELT.de"><title>Die Welt am Morgen</title><desc>Die Welt am Morgen</desc></programme>
+<programme start="20260205100000 +0000" stop="20260205120000 +0000" channel="WELT.de"><title>WELT Newsroom</title><desc>WELT Newsroom</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205140000 +0000" channel="WELT.de"><title>Die Welt am Mittag</title><desc>Die Welt am Mittag</desc></programme>
+<programme start="20260205140000 +0000" stop="20260205160000 +0000" channel="WELT.de"><title>WELT Newsroom</title><desc>WELT Newsroom</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="WELT.de"><title>WELT Newsroom</title><desc>WELT Newsroom</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205194500 +0000" channel="WELT.de"><title>Die Welt am Abend</title><desc>Die Welt am Abend</desc></programme>
+<programme start="20260205194500 +0000" stop="20260205211000 +0000" channel="WELT.de"><title>Die Welt am Abend</title><desc>Die Welt am Abend</desc></programme>
+<programme start="20260205211000 +0000" stop="20260206013000 +0000" channel="WELT.de"><title>Das Reich der Wikinger - Ivars Dynastie</title><desc>The Dynasty of Ivarr</desc></programme>
+<programme start="20260206013000 +0000" stop="20260206035000 +0000" channel="WELT.de"><title>Das Reich der Wikinger - Ivars Dynastie</title><desc>The Dark Foreigners</desc></programme>
+<programme start="20260204003500 +0000" stop="20260204033500 +0000" channel="ZDF.de"><title>Ultimatum - Die Bombe tickt</title><desc>Live-TV</desc></programme>
+<programme start="20260204033500 +0000" stop="20260204053000 +0000" channel="ZDF.de"><title>Notruf Hafenkante</title><desc>Unzerbrechlich</desc></programme>
+<programme start="20260204053000 +0000" stop="20260204090500 +0000" channel="ZDF.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204090500 +0000" stop="20260204120000 +0000" channel="ZDF.de"><title>Volle Kanne - Service taglich</title><desc>Live-TV</desc></programme>
+<programme start="20260204120000 +0000" stop="20260204140000 +0000" channel="ZDF.de"><title>ARD-Mittagsmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260204140000 +0000" stop="20260204160000 +0000" channel="ZDF.de"><title>heute - in Deutschland</title><desc>Live-TV</desc></programme>
+<programme start="20260204160000 +0000" stop="20260204180000 +0000" channel="ZDF.de"><title>heute - in Europa</title><desc>Live-TV</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204192500 +0000" channel="ZDF.de"><title>SOKO Wismar</title><desc>Der Tod im Kornfeld</desc></programme>
+<programme start="20260204192500 +0000" stop="20260204201500 +0000" channel="ZDF.de"><title>Duell der Gartenprofis</title><desc>Live-TV</desc></programme>
+<programme start="20260204201500 +0000" stop="20260204230500 +0000" channel="ZDF.de"><title>DFB-Pokal, Viertelfinale</title><desc>Holstein Kiel - VfB Stuttgart</desc></programme>
+<programme start="20260204230500 +0000" stop="20260205012000 +0000" channel="ZDF.de"><title>Markus Lanz</title><desc>Live-TV</desc></programme>
+<programme start="20260205012000 +0000" stop="20260205033500 +0000" channel="ZDF.de"><title>ZDFroyal</title><desc>Plotzlich Majestat - Liebe und Geheimnis</desc></programme>
+<programme start="20260205033500 +0000" stop="20260205053000 +0000" channel="ZDF.de"><title>ZDFroyal</title><desc>Royal Family - Englands konigliche Geschwister</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205090500 +0000" channel="ZDF.de"><title>ZDF-Morgenmagazin</title><desc>Live-TV</desc></programme>
+<programme start="20260205090500 +0000" stop="20260205120000 +0000" channel="ZDF.de"><title>Volle Kanne - Service taglich</title><desc>Live-TV</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205160000 +0000" channel="ZDF.de"><title>sportstudio live - Olympia</title><desc>Eishockey Frauen Eroffnungsspiel - Schweden - Deutschland</desc></programme>
+<programme start="20260205160000 +0000" stop="20260205180000 +0000" channel="ZDF.de"><title>heute - in Europa</title><desc>Live-TV</desc></programme>
+<programme start="20260205180000 +0000" stop="20260205192500 +0000" channel="ZDF.de"><title>SOKO Stuttgart</title><desc>Preis des Erbes</desc></programme>
+<programme start="20260205192500 +0000" stop="20260205214500 +0000" channel="ZDF.de"><title>Notruf Hafenkante</title><desc>Besuch in der Nacht</desc></programme>
+<programme start="20260205214500 +0000" stop="20260205233500 +0000" channel="ZDF.de"><title>heute journal</title><desc>Live-TV</desc></programme>
+<programme start="20260205233500 +0000" stop="20260206004500 +0000" channel="ZDF.de"><title>Markus Lanz</title><desc>Live-TV</desc></programme>
+<programme start="20260206004500 +0000" stop="20260206035500 +0000" channel="ZDF.de"><title>I, Tonya</title><desc>Live-TV</desc></programme>
+<programme start="20260204000000 +0000" stop="20260204020000 +0000" channel="ZDFinfo.de"><title>Hitlers letzte Tage. Das Ende im Bunker</title><desc>Live-TV</desc></programme>
+<programme start="20260204020000 +0000" stop="20260204033000 +0000" channel="ZDFinfo.de"><title>Countdown zum Zweiten Weltkrieg</title><desc>Erpressung - Januar bis April 1938</desc></programme>
+<programme start="20260204033000 +0000" stop="20260204054500 +0000" channel="ZDFinfo.de"><title>Countdown zum Zweiten Weltkrieg</title><desc>Aggression - Oktober 1938 bis Marz 1939</desc></programme>
+<programme start="20260204054500 +0000" stop="20260204074500 +0000" channel="ZDFinfo.de"><title>Hitlers Geheimwaffen-Chef - Die zwei Leben Hans Kammlers</title><desc>Live-TV</desc></programme>
+<programme start="20260204074500 +0000" stop="20260204100000 +0000" channel="ZDFinfo.de"><title>Die Deutschen II</title><desc>Hildegard von Bingen und die Macht der Frauen</desc></programme>
+<programme start="20260204100000 +0000" stop="20260204113000 +0000" channel="ZDFinfo.de"><title>Giganten der Kunst</title><desc>Michelangelo</desc></programme>
+<programme start="20260204113000 +0000" stop="20260204133000 +0000" channel="ZDFinfo.de"><title>Ein Moment in der Geschichte</title><desc>Kolumbus erreicht Amerika</desc></programme>
+<programme start="20260204133000 +0000" stop="20260204154500 +0000" channel="ZDFinfo.de"><title>Mythen-Jager</title><desc>Die Sintflut</desc></programme>
+<programme start="20260204154500 +0000" stop="20260204180000 +0000" channel="ZDFinfo.de"><title>Mythen der Bibel</title><desc>Sundenstadt Ninive</desc></programme>
+<programme start="20260204180000 +0000" stop="20260204193000 +0000" channel="ZDFinfo.de"><title>Mythen der Bibel</title><desc>Konig Salomo</desc></programme>
+<programme start="20260204193000 +0000" stop="20260204214000 +0000" channel="ZDFinfo.de"><title>Retro Battles - Die Trends der 90er</title><desc>Kelly Family, Pokemon And Co</desc></programme>
+<programme start="20260204214000 +0000" stop="20260205015500 +0000" channel="ZDFinfo.de"><title>Das war dann mal weg</title><desc>Radioaktive Zahnpasta, Bananen-Kur And Co.</desc></programme>
+<programme start="20260205015500 +0000" stop="20260205040000 +0000" channel="ZDFinfo.de"><title>Infinity - Geheimnisse des Kosmos</title><desc>Ist das Universum unendlich?</desc></programme>
+<programme start="20260205040000 +0000" stop="20260205053000 +0000" channel="ZDFinfo.de"><title>Geheimnisvolles Universum</title><desc>Unendlichkeit</desc></programme>
+<programme start="20260205053000 +0000" stop="20260205074000 +0000" channel="ZDFinfo.de"><title>Geheimnisvolles Universum</title><desc>Supernovae</desc></programme>
+<programme start="20260205074000 +0000" stop="20260205095500 +0000" channel="ZDFinfo.de"><title>Genial konstruiert</title><desc>Im ewigen Eis</desc></programme>
+<programme start="20260205095500 +0000" stop="20260205114000 +0000" channel="ZDFinfo.de"><title>Genial konstruiert</title><desc>Eisenbahnen</desc></programme>
+<programme start="20260205114000 +0000" stop="20260205132500 +0000" channel="ZDFinfo.de"><title>Terra X Harald Lesch</title><desc>... und die Superkraft des Allerkleinsten</desc></programme>
+<programme start="20260205132500 +0000" stop="20260205154500 +0000" channel="ZDFinfo.de"><title>Tschernobyl - Die Katastrophe</title><desc>Unfall</desc></programme>
+<programme start="20260205154500 +0000" stop="20260205174500 +0000" channel="ZDFinfo.de"><title>Super-GAU Tschernobyl - Sarkophag fur die Ewigkeit?</title><desc>Live-TV</desc></programme>
+<programme start="20260205174500 +0000" stop="20260205193000 +0000" channel="ZDFinfo.de"><title>Oppenheimer und die Bombe</title><desc>Das Manhattan-Projekt</desc></programme>
+<programme start="20260205193000 +0000" stop="20260205214500 +0000" channel="ZDFinfo.de"><title>Die sieben Geheimnisse der NVA</title><desc>Live-TV</desc></programme>
+<programme start="20260205214500 +0000" stop="20260205235500 +0000" channel="ZDFinfo.de"><title>Geheimnisse der DDR</title><desc>Anspruch und Wirklichkeit</desc></programme>
+<programme start="20260205235500 +0000" stop="20260206000000 +0000" channel="ZDFinfo.de"><title>Mythos Auto - wirklich unser liebstes Kind?</title><desc>Live-TV</desc></programme>
+<programme start="20260206000000 +0000" stop="20260206020000 +0000" channel="ZDFinfo.de"><title>Abzocke im Osten - Die Einheitsverbrecher</title><desc>Live-TV</desc></programme>
+<programme start="20260206020000 +0000" stop="20260206033000 +0000" channel="ZDFinfo.de"><title>Das Dritte Reich vor Gericht</title><desc>Die Anklage</desc></programme>
+<programme start="20260204012000 +0000" stop="20260204035000 +0000" channel="ZDFneo.de"><title>Requiem for Selina</title><desc>Der letzte Akt</desc></programme>
+<programme start="20260204035000 +0000" stop="20260204051000 +0000" channel="ZDFneo.de"><title>Killing Eve</title><desc>Mutterchen Russland</desc></programme>
+<programme start="20260204051000 +0000" stop="20260204075000 +0000" channel="ZDFneo.de"><title>Das fliegende Auge</title><desc>Live-TV</desc></programme>
+<programme start="20260204075000 +0000" stop="20260204092500 +0000" channel="ZDFneo.de"><title>Lowenzahn Classics</title><desc>Peter und die Wolfe</desc></programme>
+<programme start="20260204092500 +0000" stop="20260204114500 +0000" channel="ZDFneo.de"><title>Die Kuchenschlacht</title><desc>Alexander Kumptner sucht den Spitzenkoch</desc></programme>
+<programme start="20260204114500 +0000" stop="20260204133000 +0000" channel="ZDFneo.de"><title>Bares fur Rares</title><desc>Live-TV</desc></programme>
+<programme start="20260204133000 +0000" stop="20260204154500 +0000" channel="ZDFneo.de"><title>Death in Paradise</title><desc>Spiel der Konige</desc></programme>
+<programme start="20260204154500 +0000" stop="20260204174500 +0000" channel="ZDFneo.de"><title>Suits</title><desc>Wem der Schuh passt</desc></programme>
+<programme start="20260204174500 +0000" stop="20260204192000 +0000" channel="ZDFneo.de"><title>The Rookie</title><desc>Trainingstag</desc></programme>
+<programme start="20260204192000 +0000" stop="20260204214500 +0000" channel="ZDFneo.de"><title>Bares fur Rares</title><desc>Live-TV</desc></programme>
+<programme start="20260204214500 +0000" stop="20260204233500 +0000" channel="ZDFneo.de"><title>Friesland</title><desc>Krabbenkrieg</desc></programme>
+<programme start="20260204233500 +0000" stop="20260205013500 +0000" channel="ZDFneo.de"><title>Requiem for Selina</title><desc>Schmetterlings-Effekt</desc></programme>
+<programme start="20260205013500 +0000" stop="20260205032500 +0000" channel="ZDFneo.de"><title>Die glorreichen 10</title><desc>Die krassesten Tage der Geschichte</desc></programme>
+<programme start="20260205032500 +0000" stop="20260205053500 +0000" channel="ZDFneo.de"><title>Countdown Copenhagen</title><desc>Tag 2</desc></programme>
+<programme start="20260205053500 +0000" stop="20260205080000 +0000" channel="ZDFneo.de"><title>Death in Paradise</title><desc>Undercover</desc></programme>
+<programme start="20260205080000 +0000" stop="20260205094000 +0000" channel="ZDFneo.de"><title>Lowenzahn Classics</title><desc>Peter versinkt im Moor</desc></programme>
+<programme start="20260205094000 +0000" stop="20260205120000 +0000" channel="ZDFneo.de"><title>Die Kuchenschlacht</title><desc>Alexander Kumptner sucht den Spitzenkoch</desc></programme>
+<programme start="20260205120000 +0000" stop="20260205133500 +0000" channel="ZDFneo.de"><title>Bares fur Rares</title><desc>Live-TV</desc></programme>
+<programme start="20260205133500 +0000" stop="20260205154500 +0000" channel="ZDFneo.de"><title>Death in Paradise</title><desc>Der Weihnachtsgeist - Teil 2</desc></programme>
+<programme start="20260205154500 +0000" stop="20260205174500 +0000" channel="ZDFneo.de"><title>Suits</title><desc>Panoramastrasse</desc></programme>
+<programme start="20260205174500 +0000" stop="20260205192000 +0000" channel="ZDFneo.de"><title>The Rookie</title><desc>Geheimnisse und Lugen</desc></programme>
+<programme start="20260205192000 +0000" stop="20260205213500 +0000" channel="ZDFneo.de"><title>Bares fur Rares</title><desc>Live-TV</desc></programme>
+<programme start="20260205213500 +0000" stop="20260205231500 +0000" channel="ZDFneo.de"><title>heute-show</title><desc>Nachrichtensatire mit Oliver Welke</desc></programme>
+<programme start="20260205231500 +0000" stop="20260206015500 +0000" channel="ZDFneo.de"><title>Verfuhrung einer Fremden</title><desc>Live-TV</desc></programme>
+<programme start="20260206015500 +0000" stop="20260206032000 +0000" channel="ZDFneo.de"><title>Countdown Copenhagen</title><desc>Tag 7</desc></programme>
+</tv>

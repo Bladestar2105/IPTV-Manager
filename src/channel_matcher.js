@@ -1,5 +1,4 @@
 import ISO6391 from 'iso-639-1';
-import stringSimilarity from 'string-similarity';
 
 export class ChannelMatcher {
   constructor(epgChannels) {
@@ -227,19 +226,8 @@ export class ChannelMatcher {
     const bestGlobal = this.findBestSimilarity(parsed.baseName, potentialCandidates);
 
     if (bestGlobal.score > 0.8) {
-        // Double check language conflict:
-        // If I asked for DE, and result is FR, reject?
-        // Unless it's INT or Unknown.
         const candLang = bestGlobal.channel.parsed.language;
         if (parsed.language && candLang && parsed.language !== candLang) {
-             // Language mismatch (e.g. Arte DE vs Arte FR)
-             // Only accept if score is essentially exact (which it won't be if lang was stripped)
-             // Actually, findBestSimilarity compares base names. "arte" == "arte". Score 1.0.
-             // If base matches, we should have caught it in step 2.
-             // So this Step 6 is for "RTL" vs "RTL Television".
-             // Base: "rtl" vs "rtl television".
-
-             // If lang mismatch, penalize?
              return {
                  epgChannel: null,
                  confidence: bestGlobal.score * 0.5,
@@ -287,13 +275,53 @@ export class ChannelMatcher {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
     const normalized = this.normalizeBaseName(searchName);
-    const candidateNames = candidates.map(c => c.parsed.baseName); // Compare Base Names
 
-    const matches = stringSimilarity.findBestMatch(normalized, candidateNames);
+    let bestScore = -1;
+    let bestCand = null;
+
+    for (const cand of candidates) {
+        const score = this.calculateDiceCoefficient(normalized, cand.parsed.baseName);
+        if (score > bestScore) {
+            bestScore = score;
+            bestCand = cand;
+        }
+    }
+
     return {
-      channel: candidates[matches.bestMatchIndex],
-      score: matches.bestMatch.rating
+      channel: bestCand,
+      score: bestScore
     };
+  }
+
+  /**
+   * Calculates Dice Coefficient (Sørensen–Dice index) for string similarity.
+   * Range 0.0 to 1.0.
+   */
+  calculateDiceCoefficient(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+
+    const bigramsA = this.getBigrams(a);
+    const bigramsB = this.getBigrams(b);
+
+    if (bigramsA.size === 0 && bigramsB.size === 0) return 0;
+
+    let intersection = 0;
+    for (const bg of bigramsA) {
+        if (bigramsB.has(bg)) {
+            intersection++;
+        }
+    }
+
+    return (2 * intersection) / (bigramsA.size + bigramsB.size);
+  }
+
+  getBigrams(str) {
+    const bigrams = new Set();
+    for (let i = 0; i < str.length - 1; i++) {
+        bigrams.add(str.substring(i, i + 2));
+    }
+    return bigrams;
   }
 
   getISO6392Code(iso6391Code) {
