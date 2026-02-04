@@ -21,6 +21,7 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import multer from 'multer';
+import compression from 'compression';
 import zlib from 'zlib';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
@@ -45,6 +46,9 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
+
+// Enable Gzip compression
+app.use(compression());
 
 // Trust Proxy Configuration
 if (process.env.TRUST_PROXY) {
