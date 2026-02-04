@@ -116,6 +116,19 @@ function debounce(func, wait) {
   };
 }
 
+// Utility: Accessibility Helper
+function makeAccessible(element, clickHandler) {
+  element.tabIndex = 0;
+  element.role = 'button';
+  element.onclick = clickHandler;
+  element.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      clickHandler(e);
+    }
+  };
+}
+
 // i18n: Seite übersetzen
 function translatePage() {
   // Texte übersetzen
@@ -319,7 +332,8 @@ async function loadUsers() {
     const span = document.createElement('span');
     span.textContent = `${u.username} (id=${u.id})`;
     span.style.cursor = 'pointer';
-    span.onclick = () => {
+
+    makeAccessible(span, () => {
       selectedUser = u;
       selectedUserId = u.id;
       document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${u.username} (id=${u.id})`;
@@ -346,7 +360,7 @@ async function loadUsers() {
       if (provForm && !provForm.provider_id.value) {
           if(provForm.user_id) provForm.user_id.value = u.id;
       }
-    };
+    });
     
     const btnGroup = document.createElement('div');
 
@@ -731,12 +745,13 @@ async function loadUserCategories() {
     span.textContent = c.is_adult ? `🔞 ${c.name}` : c.name;
     span.style.cursor = 'pointer';
     span.style.flex = '1';
-    span.onclick = () => {
+
+    makeAccessible(span, () => {
       [...list.children].forEach(el => el.classList.remove('active'));
       li.classList.add('active');
       selectedCategoryId = c.id;
       loadUserCategoryChannels();
-    };
+    });
     li.appendChild(span);
     
     const btnGroup = document.createElement('div');
