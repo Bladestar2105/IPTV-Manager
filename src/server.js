@@ -64,6 +64,8 @@ if (process.env.TRUST_PROXY) {
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../');
 
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
+
 // Ensure Data Directory exists
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -3173,7 +3175,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
     } catch(e) {}
 
     const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'User-Agent': DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
 
@@ -3301,6 +3303,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
         pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
+        pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass
@@ -3336,6 +3339,21 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     const ext = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
     
+    // Prepare Headers
+    let meta = {};
+    try {
+        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
+    } catch(e) {}
+
+    const fetchHeaders = {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Connection': 'keep-alive'
+    };
+
+    if (meta && meta.http_headers) {
+        Object.assign(fetchHeaders, meta.http_headers);
+    }
+
     // Handle Transcoding if requested (only for .ts)
     if (ext === 'ts' && req.query.transcode === 'true') {
       console.log(`🎬 Starting transcoding for stream ${streamId}`);
@@ -3343,10 +3361,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
       try {
         // Fetch stream first to ensure connection (mimicking standard proxy behavior)
         const upstream = await fetch(remoteUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Connection': 'keep-alive'
-          },
+          headers: fetchHeaders,
           redirect: 'follow'
         });
 
@@ -3398,10 +3413,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
 
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Connection': 'keep-alive'
-      },
+      headers: fetchHeaders,
       // Don't follow redirects automatically for better control
       redirect: 'follow'
       // No timeout - streams can run indefinitely
@@ -3413,27 +3425,42 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
       return res.sendStatus(502);
     }
 
+    // Capture Cookies
+    const cookies = upstream.headers.get('set-cookie');
+
     // Handle M3U8 Playlists (Rewrite URLs)
     if (ext === 'm3u8') {
       const text = await upstream.text();
       const baseUrl = remoteUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
+      // Prepare headers to forward
+      const headersToForward = { ...fetchHeaders };
+      if (cookies) headersToForward['Cookie'] = cookies;
+
       const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
         const line = match.trim();
         if (!line) return match;
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
-          const encoded = encodeURIComponent(absoluteUrl);
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?url=${encoded}${tokenParam}`;
+          const payload = {
+              u: absoluteUrl,
+              h: headersToForward
+          };
+          const b64 = Buffer.from(JSON.stringify(payload)).toString('base64');
+          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(b64)}${tokenParam}`;
         } catch (e) {
           return match;
         }
       }).replace(/URI="([^"]+)"/g, (match, p1) => {
         try {
           const absoluteUrl = new URL(p1, baseUrl).toString();
-          const encoded = encodeURIComponent(absoluteUrl);
-          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?url=${encoded}${tokenParam}"`;
+          const payload = {
+              u: absoluteUrl,
+              h: headersToForward
+          };
+          const b64 = Buffer.from(JSON.stringify(payload)).toString('base64');
+          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(b64)}${tokenParam}"`;
         } catch (e) {
           return match;
         }
@@ -3497,7 +3524,22 @@ app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:p
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const targetUrl = req.query.url;
+    let targetUrl = req.query.url;
+    let headers = {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Connection': 'keep-alive'
+    };
+
+    if (req.query.data) {
+        try {
+            const payload = JSON.parse(Buffer.from(req.query.data, 'base64').toString());
+            if (payload.u) targetUrl = payload.u;
+            if (payload.h) Object.assign(headers, payload.h);
+        } catch(e) {
+            return res.sendStatus(400);
+        }
+    }
+
     if (!targetUrl) return res.sendStatus(400);
 
     // Validate URL
@@ -3507,10 +3549,7 @@ app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:p
     }
 
     const upstream = await fetch(targetUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Connection': 'keep-alive'
-      },
+      headers,
       redirect: 'follow'
     });
 
@@ -3552,6 +3591,7 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
         pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
+        pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass
@@ -3583,11 +3623,20 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
 
-    // Fetch
+    // Prepare Headers
+    let meta = {};
+    try {
+        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
+    } catch(e) {}
+
     const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      'Connection': 'keep-alive'
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Connection': 'keep-alive'
     };
+
+    if (meta && meta.http_headers) {
+        Object.assign(headers, meta.http_headers);
+    }
 
     if (req.headers.range) {
         headers['Range'] = req.headers.range;
@@ -3676,7 +3725,7 @@ app.get('/series/:username/:password/:episode_id.:ext', async (req, res) => {
 
     // Fetch
     const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'User-Agent': DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
 
@@ -3750,6 +3799,7 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
         pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
+        pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass
@@ -3773,12 +3823,24 @@ app.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', async (
     // Standard Xtream Timeshift URL: /timeshift/user/pass/duration/start/id.ts
     const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.ts`;
 
+    // Prepare Headers
+    let meta = {};
+    try {
+        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
+    } catch(e) {}
+
+    const headers = {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Connection': 'keep-alive'
+    };
+
+    if (meta && meta.http_headers) {
+        Object.assign(headers, meta.http_headers);
+    }
+
     // Fetch with optimized settings for streaming
     const upstream = await fetch(remoteUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Connection': 'keep-alive'
-      },
+      headers,
       redirect: 'follow'
     });
 
