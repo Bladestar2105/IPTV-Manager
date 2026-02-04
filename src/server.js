@@ -34,6 +34,7 @@ import streamManager from './stream_manager.js';
 import { authenticator } from 'otplib';
 import QRCode from 'qrcode';
 import { isIP } from 'net';
+import dns from 'dns/promises';
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -1620,55 +1621,38 @@ async function authUser(username, password) {
   }
 }
 
-function isSafeUrl(urlStr) {
+async function isSafeUrl(urlStr) {
   try {
     const parsed = new URL(urlStr);
-    const hostname = parsed.hostname;
-
-    // Remove brackets for IPv6
-    const cleanHost = hostname.replace(/^\[|\]$/g, '');
-
-    // 1. Block Localhost and Generic
-    if (cleanHost === 'localhost' || cleanHost === '0.0.0.0') return false;
-    if (cleanHost === '::' || cleanHost === '::1') return false;
-
-    const ipVer = isIP(cleanHost);
-
-    // 2. Block IPs
-    if (ipVer !== 0) {
-        // IPv4 Loopback
-        if (cleanHost.startsWith('127.')) return false;
-
-        // IPv6
-        if (ipVer === 6) {
-             const lowerHost = cleanHost.toLowerCase();
-             // Block all IPv4-mapped IPv6 addresses (::ffff:...)
-             if (lowerHost.includes('::ffff:')) return false;
-        }
-
-        // Private IPv4 Ranges (10., 192.168., 169.254.)
-        if (cleanHost.startsWith('10.') ||
-            cleanHost.startsWith('192.168.') ||
-            cleanHost.startsWith('169.254.')) {
-            return false;
-        }
-
-        // 172.16-31
-        if (cleanHost.startsWith('172.')) {
-            const parts = cleanHost.split('.');
-            if (parts.length === 4) {
-                const second = parseInt(parts[1], 10);
-                if (second >= 16 && second <= 31) return false;
-            }
-        }
-    }
-
-    // 5. Block Cloud Metadata
-    if (cleanHost === 'metadata.google.internal') return false;
-    if (cleanHost === '169.254.169.254') return false;
-
-    // Protocol check
     if (!parsed.protocol.startsWith('http')) return false;
+
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+
+    // Quick block
+    if (hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '::1') return false;
+    if (hostname === 'metadata.google.internal') return false;
+
+    // Resolve DNS
+    const { address } = await dns.lookup(hostname);
+
+    // Check resolved IP
+    const ipVer = isIP(address);
+    if (ipVer === 0) return false;
+
+    if (ipVer === 4) {
+        if (address.startsWith('127.') ||
+            address.startsWith('10.') ||
+            address.startsWith('192.168.') ||
+            address.startsWith('169.254.')) return false;
+
+        if (address.startsWith('172.')) {
+            const parts = address.split('.');
+            const second = parseInt(parts[1], 10);
+            if (second >= 16 && second <= 31) return false;
+        }
+    } else if (ipVer === 6) {
+         if (address === '::1' || address.includes('::ffff:')) return false;
+    }
 
     return true;
   } catch (e) {
@@ -2245,7 +2229,7 @@ app.post('/api/providers', authenticateToken, async (req, res) => {
     if (!/^https?:\/\//i.test(url.trim())) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
-    if (!isSafeUrl(url.trim())) {
+    if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
     }
 
@@ -2254,7 +2238,7 @@ app.post('/api/providers', authenticateToken, async (req, res) => {
       if (!/^https?:\/\//i.test(finalEpgUrl)) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
       }
-      if (!isSafeUrl(finalEpgUrl)) {
+      if (!(await isSafeUrl(finalEpgUrl))) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL is unsafe (blocked)'});
       }
     }
@@ -3244,7 +3228,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
     }
 
     // Validate upstream URL
-    if (!isSafeUrl(upstreamUrl)) {
+    if (!(await isSafeUrl(upstreamUrl))) {
         console.warn(`🛡️ Blocked unsafe upstream URL: ${upstreamUrl}`);
         streamManager.remove(connectionId);
         return res.sendStatus(403);
@@ -3517,7 +3501,7 @@ app.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:p
     if (!targetUrl) return res.sendStatus(400);
 
     // Validate URL
-    if (!isSafeUrl(targetUrl)) {
+    if (!(await isSafeUrl(targetUrl))) {
       console.warn(`🛡️ SSRF Attempt Blocked: ${targetUrl} (IP: ${req.ip})`);
       return res.status(403).send('Access Denied: Unsafe URL');
     }
@@ -4336,7 +4320,7 @@ app.put('/api/user-categories/:id', authenticateToken, (req, res) => {
   }
 });
 
-app.put('/api/providers/:id', authenticateToken, (req, res) => {
+app.put('/api/providers/:id', authenticateToken, async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
@@ -4349,7 +4333,7 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
     if (!/^https?:\/\//i.test(url.trim())) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
-    if (!isSafeUrl(url.trim())) {
+    if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
     }
 
@@ -4357,7 +4341,7 @@ app.put('/api/providers/:id', authenticateToken, (req, res) => {
       if (!/^https?:\/\//i.test(epg_url.trim())) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
       }
-      if (!isSafeUrl(epg_url.trim())) {
+      if (!(await isSafeUrl(epg_url.trim()))) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL is unsafe (blocked)'});
       }
     }
@@ -4503,13 +4487,13 @@ app.get('/api/epg-sources', authenticateToken, (req, res) => {
   }
 });
 
-app.post('/api/epg-sources', authenticateToken, (req, res) => {
+app.post('/api/epg-sources', authenticateToken, async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
 
-    if (!isSafeUrl(url.trim())) {
+    if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
     }
     
@@ -4530,7 +4514,7 @@ app.post('/api/epg-sources', authenticateToken, (req, res) => {
   }
 });
 
-app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
+app.put('/api/epg-sources/:id', authenticateToken, async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
@@ -4544,7 +4528,7 @@ app.put('/api/epg-sources/:id', authenticateToken, (req, res) => {
       params.push(name.trim());
     }
     if (url !== undefined) {
-      if (!isSafeUrl(url.trim())) {
+      if (!(await isSafeUrl(url.trim()))) {
         return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
       }
       updates.push('url = ?');
