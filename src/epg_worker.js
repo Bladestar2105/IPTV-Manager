@@ -3,7 +3,7 @@ import fs from 'fs';
 import { cleanName, levenshtein, getSimilarity, parseEpgChannels } from './epg_utils.js';
 
 async function run() {
-  const { channels, epgFiles, globalMappings } = workerData;
+  const { channels, epgXmlFile, globalMappings } = workerData;
   const updates = [];
 
   try {
@@ -11,17 +11,16 @@ async function run() {
     const allEpgChannels = [];
     const seenIds = new Set();
 
-    for (const item of epgFiles) {
-      try {
-        await parseEpgChannels(item.file, (channel) => {
-          if (!seenIds.has(channel.id)) {
-            allEpgChannels.push(channel);
-            seenIds.add(channel.id);
-          }
-        });
-      } catch (e) {
-        // Ignore file errors in worker
-      }
+    try {
+      await parseEpgChannels(epgXmlFile, (channel) => {
+        if (!seenIds.has(channel.id)) {
+          allEpgChannels.push(channel);
+          seenIds.add(channel.id);
+        }
+      });
+    } catch (e) {
+      // Ignore file errors in worker
+      // If the file is missing or invalid, we will just have 0 channels to map against
     }
 
     // 2. Build Lookup Maps

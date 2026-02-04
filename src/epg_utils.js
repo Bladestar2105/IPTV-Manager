@@ -352,3 +352,76 @@ export function filterEpgFile(inputFile, outputStream, allowedIds) {
         });
     });
 }
+
+/**
+ * Streams multiple EPG files into a single output file.
+ * Handles removal of individual headers and footers to create valid XML.
+ *
+ * @param {string[]} inputFiles Array of file paths
+ * @param {Writable} outputStream Node.js Writable Stream
+ * @returns {Promise<void>}
+ */
+export async function mergeEpgFiles(inputFiles, outputStream) {
+    for (const file of inputFiles) {
+        if (!fs.existsSync(file)) continue;
+
+        await new Promise((resolve, reject) => {
+            const stream = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+            let buffer = '';
+            let foundStart = false;
+
+            stream.on('data', (chunk) => {
+                let currentChunk = buffer + chunk;
+                buffer = '';
+
+                if (!foundStart) {
+                    const startMatch = currentChunk.match(/<tv[^>]*>/);
+                    if (startMatch) {
+                        foundStart = true;
+                        const startIndex = startMatch.index + startMatch[0].length;
+                        currentChunk = currentChunk.substring(startIndex);
+                    } else {
+                        // Keep the last part of chunk to handle split tags
+                        const lastLt = currentChunk.lastIndexOf('<');
+                        if (lastLt !== -1) {
+                            buffer = currentChunk.substring(lastLt);
+                        }
+                        return;
+                    }
+                }
+
+                if (foundStart) {
+                    const endMatch = currentChunk.indexOf('</tv>');
+                    if (endMatch !== -1) {
+                        outputStream.write(currentChunk.substring(0, endMatch));
+                        stream.destroy();
+                        resolve();
+                        return;
+                    } else {
+                        if (currentChunk.length >= 5) {
+                            const toWrite = currentChunk.substring(0, currentChunk.length - 4);
+                            outputStream.write(toWrite);
+                            buffer = currentChunk.substring(currentChunk.length - 4);
+                        } else {
+                            buffer = currentChunk;
+                        }
+                    }
+                }
+            });
+
+            stream.on('end', () => {
+                if (buffer && buffer.length > 0) {
+                    outputStream.write(buffer);
+                }
+                resolve();
+            });
+
+            stream.on('error', (err) => {
+                console.error(`Error merging EPG file ${file}:`, err.message);
+                resolve(); // Continue even on error
+            });
+
+            stream.on('close', resolve);
+        });
+    }
+}
