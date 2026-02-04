@@ -356,6 +356,15 @@ async function loadUsers() {
     playBtn.title = t('openWebPlayer') || 'Open Web Player';
     playBtn.setAttribute('aria-label', t('openWebPlayer') || 'Open Web Player');
     playBtn.onclick = async () => {
+        // Open window immediately to bypass popup blockers (especially on iOS/Safari)
+        const newWindow = window.open('', '_blank');
+        if (newWindow) {
+            newWindow.document.write('Loading player...');
+        } else {
+            alert(t('popupBlocked') || 'Popup blocked. Please allow popups for this site.');
+            return;
+        }
+
         try {
             playBtn.disabled = true;
             const res = await fetchJSON('/api/player/token', {
@@ -363,8 +372,9 @@ async function loadUsers() {
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({user_id: u.id})
             });
-            window.open(`player.html?token=${encodeURIComponent(res.token)}`, '_blank');
+            newWindow.location.href = `player.html?token=${encodeURIComponent(res.token)}`;
         } catch(e) {
+            newWindow.close();
             alert(t('errorPrefix') + ' ' + e.message);
         } finally {
             playBtn.disabled = false;
