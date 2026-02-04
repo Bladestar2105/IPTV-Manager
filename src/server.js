@@ -426,16 +426,6 @@ if (cluster.isPrimary) {
       is_updating INTEGER DEFAULT 0,
       UNIQUE(url)
     );
-    
-    CREATE TABLE IF NOT EXISTS epg_cache (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      epg_source_id INTEGER,
-      channel_id TEXT NOT NULL,
-      channel_name TEXT,
-      programme_data TEXT,
-      last_update INTEGER DEFAULT 0,
-      FOREIGN KEY (epg_source_id) REFERENCES epg_sources(id)
-    );
 
     CREATE TABLE IF NOT EXISTS epg_channel_mappings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -512,6 +502,9 @@ if (cluster.isPrimary) {
 
     // Migrate passwords
     migrateProviderPasswords();
+
+    // Optimize Database (One-time)
+    migrateOptimizeDatabase();
 
     // Clear ephemeral streams
     db.exec('DELETE FROM current_streams');
@@ -832,6 +825,61 @@ function migrateProviderPasswords() {
     if (migrated > 0) console.log(`🔐 Encrypted passwords for ${migrated} providers`);
   } catch (e) {
     console.error('Migration error:', e);
+  }
+}
+
+function migrateOptimizeDatabase() {
+  try {
+    const isOptimized = db.prepare("SELECT value FROM settings WHERE key = 'db_optimized_v1'").get();
+
+    if (!isOptimized) {
+       console.log('🧹 Optimizing database (removing duplicates)... this may take a while.');
+
+       // 1. Drop epg_cache table
+       db.exec('DROP TABLE IF EXISTS epg_cache');
+       console.log('✅ Dropped epg_cache table');
+
+       // 2. Clean metadata in provider_channels
+       const rows = db.prepare('SELECT id, metadata FROM provider_channels WHERE metadata IS NOT NULL').all();
+       const updateStmt = db.prepare('UPDATE provider_channels SET metadata = ? WHERE id = ?');
+
+       let updatedCount = 0;
+
+       db.transaction(() => {
+         for (const row of rows) {
+            try {
+               let meta = JSON.parse(row.metadata);
+               let changed = false;
+
+               const fieldsToRemove = ['plot', 'cast', 'director', 'genre', 'rating', 'rating_5based', 'added', 'releaseDate', 'youtube_trailer', 'episode_run_time'];
+
+               for (const field of fieldsToRemove) {
+                 if (meta[field] !== undefined) {
+                   delete meta[field];
+                   changed = true;
+                 }
+               }
+
+               if (changed) {
+                 updateStmt.run(JSON.stringify(meta), row.id);
+                 updatedCount++;
+               }
+            } catch(e) { /* ignore parse errors */ }
+         }
+       })();
+
+       console.log(`✅ Cleaned metadata for ${updatedCount} channels`);
+
+       // 3. VACUUM
+       console.log('🧹 Running VACUUM to reclaim space...');
+       db.exec('VACUUM');
+       console.log('✅ Database optimized');
+
+       // 4. Mark as done
+       db.prepare("INSERT INTO settings (key, value) VALUES ('db_optimized_v1', 'true')").run();
+    }
+  } catch (e) {
+    console.error('Optimization migration error:', e);
   }
 }
 
@@ -1218,17 +1266,31 @@ async function performSync(providerId, userId, isManual = false) {
               } catch(e) {}
           }
 
-          if(ch.plot) meta.plot = ch.plot;
-          if(ch.cast) meta.cast = ch.cast;
-          if(ch.director) meta.director = ch.director;
-          if(ch.genre) meta.genre = ch.genre;
-          if(ch.releaseDate) meta.releaseDate = ch.releaseDate;
-          if(ch.rating) meta.rating = ch.rating;
-          if(ch.rating_5based) meta.rating_5based = ch.rating_5based;
+          // Extract values for columns (prioritize direct fields, fall back to metadata)
+          const plot = ch.plot || meta.plot || '';
+          const cast = ch.cast || meta.cast || '';
+          const director = ch.director || meta.director || '';
+          const genre = ch.genre || meta.genre || '';
+          const releaseDate = ch.releaseDate || meta.releaseDate || '';
+          const rating = ch.rating || meta.rating || '';
+          const rating_5based = ch.rating_5based || meta.rating_5based || 0;
+          const youtube_trailer = ch.youtube_trailer || meta.youtube_trailer || '';
+          const episode_run_time = ch.episode_run_time || meta.episode_run_time || '';
+          const added = ch.added || meta.added || '';
+
+          // Clean up metadata to avoid duplication
+          delete meta.plot;
+          delete meta.cast;
+          delete meta.director;
+          delete meta.genre;
+          delete meta.rating;
+          delete meta.rating_5based;
+          delete meta.added;
+          delete meta.releaseDate;
+          delete meta.youtube_trailer;
+          delete meta.episode_run_time;
+
           if(ch.backdrop_path) meta.backdrop_path = ch.backdrop_path;
-          if(ch.youtube_trailer) meta.youtube_trailer = ch.youtube_trailer;
-          if(ch.episode_run_time) meta.episode_run_time = ch.episode_run_time;
-          if(ch.added) meta.added = ch.added;
           if(ch.original_url) meta.original_url = ch.original_url; // Store original URL for M3U streams
 
           const metaStr = JSON.stringify(meta);
@@ -1246,16 +1308,16 @@ async function performSync(providerId, userId, isManual = false) {
               streamType,
               metaStr,
               mimeType,
-              meta.rating || '',
-              meta.rating_5based || 0,
-              meta.added || '',
-              meta.plot || '',
-              String(meta.cast || ''),
-              String(meta.director || ''),
-              String(meta.genre || ''),
-              meta.releaseDate || '',
-              meta.youtube_trailer || '',
-              meta.episode_run_time || '',
+              rating,
+              rating_5based,
+              added,
+              plot,
+              String(cast),
+              String(director),
+              String(genre),
+              releaseDate,
+              youtube_trailer,
+              episode_run_time,
               providerId,
               sid
             );
@@ -1276,16 +1338,16 @@ async function performSync(providerId, userId, isManual = false) {
               tvArchiveDuration,
               metaStr,
               mimeType,
-              meta.rating || '',
-              meta.rating_5based || 0,
-              meta.added || '',
-              meta.plot || '',
-              String(meta.cast || ''),
-              String(meta.director || ''),
-              String(meta.genre || ''),
-              meta.releaseDate || '',
-              meta.youtube_trailer || '',
-              meta.episode_run_time || ''
+              rating,
+              rating_5based,
+              added,
+              plot,
+              String(cast),
+              String(director),
+              String(genre),
+              releaseDate,
+              youtube_trailer,
+              episode_run_time
             );
             channelsAdded++;
             provChannelId = info.lastInsertRowid;
