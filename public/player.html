@@ -175,6 +175,50 @@
       z-index: 1000;
       color: #fff;
     }
+
+    @media (max-width: 768px) {
+      #channel-sidebar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 100;
+        width: 80%;
+        max-width: 300px;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        background: #0a0a0a;
+        margin-top: 0;
+        border-right: 1px solid #333;
+      }
+      #channel-sidebar.open {
+        transform: translateX(0);
+        box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+      }
+      #controls-bar {
+        height: auto;
+        flex-wrap: wrap;
+        padding: 0.5rem;
+      }
+      #controls-bar > * {
+        margin-bottom: 0.5rem;
+      }
+      #category-select {
+        width: 100% !important;
+        order: 3;
+      }
+      #search-input {
+        width: 100% !important;
+        order: 4;
+      }
+      #clock {
+        display: none;
+      }
+      #player-container {
+        height: auto;
+        aspect-ratio: 16/9;
+      }
+    }
   </style>
 </head>
 <body>
@@ -184,6 +228,7 @@
 </div>
 
 <div id="controls-bar">
+  <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary me-2 d-md-none">☰</button>
   <div class="form-check form-switch me-3">
     <input class="form-check-input" type="checkbox" id="transcode-switch">
     <label class="form-check-label text-light" for="transcode-switch" data-i18n="transcodeAudio">Fix Audio</label>
@@ -523,6 +568,7 @@
               document.querySelectorAll('.channel-row').forEach(el => el.classList.remove('active'));
               rowDiv.classList.add('active');
               playStream(ch);
+              if (window.innerWidth <= 768) sidebarEl.classList.remove('open');
           };
 
           fragmentSidebar.appendChild(rowDiv);
@@ -636,6 +682,12 @@
   }
 
   function initPlayer(url, type) {
+    // iOS/Safari Fix: Force HLS if MPEGTS is not supported but Native HLS is
+    if (url.includes('.ts') && (!mpegts.isSupported() || /iPad|iPhone|iPod/.test(navigator.userAgent)) && video.canPlayType('application/vnd.apple.mpegurl')) {
+        console.log('Detected iOS/Safari: Switching to HLS (.m3u8)');
+        url = url.replace(/\.ts($|\?)/, '.m3u8$1');
+    }
+
     if (flvPlayer) {
         if (flvPlayer._mediaElement) flvPlayer.detachMediaElement();
         flvPlayer.destroy();
@@ -763,7 +815,7 @@
       });
     } else {
       video.src = url;
-      video.play();
+      video.play().catch(e => console.log('Autoplay blocked:', e));
     }
   }
 
@@ -799,6 +851,14 @@
       clearTimeout(timeout);
       timeout = setTimeout(() => func.apply(this, args), wait);
     };
+  }
+
+  // Sidebar Toggle
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  if (sidebarToggle) {
+      sidebarToggle.addEventListener('click', () => {
+          sidebarEl.classList.toggle('open');
+      });
   }
 
   init();
