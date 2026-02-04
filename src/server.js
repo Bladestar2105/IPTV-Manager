@@ -3510,7 +3510,7 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     const cookies = upstream.headers.get('set-cookie');
 
     // Handle M3U8 Playlists (Rewrite URLs)
-    if (ext === 'm3u8') {
+    if (reqExt === 'm3u8') {
       const text = await upstream.text();
       const baseUrl = remoteUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
