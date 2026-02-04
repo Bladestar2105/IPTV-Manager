@@ -135,6 +135,12 @@ function translatePage() {
     const key = el.getAttribute('data-i18n-label');
     el.setAttribute('aria-label', t(key));
   });
+
+  // Tooltips (title) übersetzen
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    el.title = t(key);
+  });
   
   // HTML title
   document.title = t('title');
@@ -369,12 +375,14 @@ async function loadUsers() {
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     editBtn.innerHTML = '✏️'; // Edit icon
     editBtn.setAttribute('aria-label', t('editUser') || t('edit'));
+    editBtn.title = t('editUser') || t('edit');
     editBtn.onclick = () => showEditUserModal(u);
 
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
     delBtn.setAttribute('aria-label', t('deleteAction'));
+    delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       if (!confirm(t('deleteUserConfirm', {name: u.username}))) return;
       await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
@@ -529,6 +537,7 @@ async function loadProviders(filterUserId = null) {
         editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
         editBtn.innerHTML = '✏️';
         editBtn.setAttribute('aria-label', t('edit'));
+        editBtn.title = t('edit');
         editBtn.onclick = () => prepareEditProvider(p);
         btnGroup.appendChild(editBtn);
 
@@ -584,6 +593,7 @@ async function loadProviders(filterUserId = null) {
         delBtn.className = 'btn btn-sm btn-danger';
         delBtn.textContent = t('delete');
         delBtn.setAttribute('aria-label', t('deleteAction'));
+        delBtn.title = t('deleteAction');
         delBtn.onclick = async () => {
           if (!confirm(t('deleteProviderConfirm', {name: p.name}))) return;
           await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
@@ -755,6 +765,7 @@ async function loadUserCategories() {
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
     delBtn.setAttribute('aria-label', t('deleteAction'));
+    delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       if (!confirm(t('deleteCategoryConfirm', {name: c.name}))) return;
       await fetchJSON(`/api/user-categories/${c.id}`, {method: 'DELETE'});
@@ -1253,6 +1264,7 @@ async function loadUserCategoryChannels() {
     delBtn.className = 'btn btn-sm btn-danger ms-2';
     delBtn.textContent = t('delete');
     delBtn.setAttribute('aria-label', t('deleteAction'));
+    delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
       loadUserCategoryChannels();
@@ -1621,6 +1633,7 @@ async function loadEpgSources() {
         delBtn.className = 'btn btn-sm btn-danger';
         delBtn.textContent = '🗑';
         delBtn.setAttribute('aria-label', t('deleteAction'));
+        delBtn.title = t('deleteAction');
         delBtn.onclick = async () => {
           if (!confirm(t('confirmDeleteEpgSource', {name: source.name}))) return;
           await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
