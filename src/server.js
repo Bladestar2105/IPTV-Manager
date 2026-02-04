@@ -3286,7 +3286,7 @@ app.get('/live/mpd/:username/:password/:stream_id/*', async (req, res) => {
 });
 
 // === Stream Proxy ===
-app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:stream_id.m3u8'], async (req, res) => {
+app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:stream_id.m3u8', '/live/:username/:password/:stream_id.mp4'], async (req, res) => {
   const connectionId = crypto.randomUUID();
 
   try {
@@ -3336,9 +3336,16 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
     channel.provider_pass = decrypt(channel.provider_pass);
 
     const base = channel.provider_url.replace(/\/+$/, '');
-    const ext = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
-    const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
     
+    // Determine extension requested
+    let reqExt = 'ts';
+    if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
+    if (req.path.endsWith('.mp4')) reqExt = 'mp4';
+
+    // Upstream usually needs .ts if we are transcoding from it
+    const remoteExt = (reqExt === 'm3u8') ? 'm3u8' : 'ts';
+    const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
+
     // Prepare Headers
     let meta = {};
     try {
@@ -3354,12 +3361,14 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
         Object.assign(fetchHeaders, meta.http_headers);
     }
 
-    // Handle Transcoding if requested (only for .ts)
-    if (ext === 'ts' && req.query.transcode === 'true') {
-      console.log(`🎬 Starting transcoding for stream ${streamId}`);
+    // Handle Transcoding
+    const shouldTranscode = (req.query.transcode === 'true') || (reqExt === 'mp4');
+
+    if (shouldTranscode) {
+      console.log(`🎬 Starting full transcoding for stream ${streamId} (${reqExt})`);
 
       try {
-        // Fetch stream first to ensure connection (mimicking standard proxy behavior)
+        // Fetch stream first
         const upstream = await fetch(remoteUrl, {
           headers: fetchHeaders,
           redirect: 'follow'
@@ -3371,18 +3380,29 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
            return res.sendStatus(upstream.status);
         }
 
-        // Headers for MPEG-TS
-        res.setHeader('Content-Type', 'video/mp2t');
+        const isMp4 = (reqExt === 'mp4');
+        const outputFormat = isMp4 ? 'mp4' : 'mpegts';
+        const contentType = isMp4 ? 'video/mp4' : 'video/mp2t';
+
+        // Headers
+        res.setHeader('Content-Type', contentType);
         res.setHeader('Connection', 'keep-alive');
 
-        // Pipe fetch body (stream) to ffmpeg
+        // FFmpeg Command
+        const outputOptions = [
+            '-c:v libx264',   // Force H264
+            '-preset veryfast',
+            '-c:a aac',       // Force AAC
+            `-f ${outputFormat}`
+        ];
+
+        if (isMp4) {
+            outputOptions.push('-movflags frag_keyframe+empty_moov');
+        }
+
         const command = ffmpeg(upstream.body)
           .inputFormat('mpegts')
-          .outputOptions([
-            '-c:v copy', // Copy video stream (fast)
-            '-c:a aac',  // Transcode audio to AAC
-            '-f mpegts'  // Output format
-          ])
+          .outputOptions(outputOptions)
           .on('error', (err) => {
             if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                console.error('FFmpeg error:', err.message);
@@ -3399,7 +3419,6 @@ app.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:password/:
         req.on('close', () => {
           command.kill('SIGKILL');
           streamManager.remove(connectionId);
-          // Optional: destroy upstream body if needed, though fetch body usually cleans up
         });
 
         return;
@@ -3636,6 +3655,66 @@ app.get('/movie/:username/:password/:stream_id.:ext', async (req, res) => {
 
     if (meta && meta.http_headers) {
         Object.assign(headers, meta.http_headers);
+    }
+
+    // Handle Transcoding/Remuxing (MKV -> MP4)
+    const shouldTranscode = (req.query.transcode === 'true') || (ext === 'mkv') || (ext === 'avi');
+
+    if (shouldTranscode) {
+        console.log(`🎬 Starting VOD transcoding for stream ${streamId} (${ext} -> mp4)`);
+
+        // Remove Range header for transcoding (we need full stream)
+        const transcodeHeaders = { ...headers };
+        delete transcodeHeaders['Range'];
+
+        try {
+            const upstream = await fetch(remoteUrl, {
+                headers: transcodeHeaders,
+                redirect: 'follow'
+            });
+
+            if (!upstream.ok) {
+                 console.error(`VOD Transcode upstream fetch error: ${upstream.status}`);
+                 streamManager.remove(connectionId);
+                 return res.sendStatus(upstream.status);
+            }
+
+            res.setHeader('Content-Type', 'video/mp4');
+            res.setHeader('Connection', 'keep-alive');
+
+            // Note: Range requests not easily supported in real-time transcoding pipe without complex seek logic.
+            // Sending 200 OK.
+
+            const command = ffmpeg(upstream.body)
+              .outputOptions([
+                '-c:v copy',      // Try copy video first (fast)
+                '-c:a aac',       // Convert audio to AAC
+                '-f mp4',
+                '-movflags frag_keyframe+empty_moov'
+              ])
+              .on('error', (err) => {
+                if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
+                   console.error('FFmpeg VOD error:', err.message);
+                }
+                streamManager.remove(connectionId);
+              })
+              .on('end', () => {
+                streamManager.remove(connectionId);
+              });
+
+            command.pipe(res, { end: true });
+
+            req.on('close', () => {
+                command.kill('SIGKILL');
+                streamManager.remove(connectionId);
+            });
+            return;
+
+        } catch(e) {
+            console.error('VOD Transcode error:', e);
+            streamManager.remove(connectionId);
+            return res.sendStatus(500);
+        }
     }
 
     if (req.headers.range) {
