@@ -1,0 +1,447 @@
+import fs from 'fs';
+import path from 'path';
+import { Worker } from 'worker_threads';
+import fetch from 'node-fetch';
+import db from '../database/db.js';
+import { EPG_CACHE_DIR } from '../config/constants.js';
+import { parseEpgXml } from '../epg_utils.js';
+import { getEpgFiles, loadAllEpgChannels, updateEpgSource, generateConsolidatedEpg } from '../services/epgService.js';
+import { getXtreamUser } from '../services/authService.js';
+import { isSafeUrl } from '../utils/helpers.js';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '../utils/crypto.js';
+
+export const getEpgNow = (req, res) => {
+  res.json([]);
+};
+
+export const getEpgSchedule = async (req, res) => {
+  try {
+    let user = null;
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+       try {
+         const token = authHeader.split(' ')[1];
+         user = jwt.verify(token, JWT_SECRET);
+       } catch(e) {}
+    }
+    if (!user) {
+       user = await getXtreamUser(req);
+    }
+    if (!user) return res.status(401).json({error: 'Unauthorized'});
+
+    const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200);
+    const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);
+
+    const epgFiles = getEpgFiles().map(f => f.file);
+
+    const schedule = {};
+
+    const promises = epgFiles.map(file => {
+      return parseEpgXml(file, (prog) => {
+        if (prog.stop < start || prog.start > end) return;
+
+        if (!schedule[prog.channel_id]) schedule[prog.channel_id] = [];
+        schedule[prog.channel_id].push({
+          start: prog.start,
+          stop: prog.stop,
+          title: prog.title,
+          desc: prog.desc || ''
+        });
+      }).catch(e => console.error(`Error parsing ${file}:`, e.message));
+    });
+
+    await Promise.all(promises);
+
+    res.json(schedule);
+  } catch (e) {
+    console.error('EPG Schedule error:', e);
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const getEpgSources = (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
+
+    const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const allSources = [
+      ...providers.map(p => {
+        let lastUpdate = 0;
+        const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${p.id}.xml`);
+        if (fs.existsSync(cacheFile)) {
+          try {
+            lastUpdate = Math.floor(fs.statSync(cacheFile).mtimeMs / 1000);
+          } catch(e) {}
+        }
+
+        return {
+          id: `provider_${p.id}`,
+          name: `${p.name} (Provider EPG)`,
+          url: p.epg_url,
+          enabled: 1,
+          last_update: lastUpdate,
+          update_interval: p.epg_update_interval || 86400,
+          source_type: 'provider',
+          is_updating: 0
+        };
+      }),
+      ...sources
+    ];
+
+    res.json(allSources);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const createEpgSource = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const { name, url, enabled, update_interval, source_type } = req.body;
+    if (!name || !url) return res.status(400).json({error: 'name and url required'});
+
+    if (!(await isSafeUrl(url.trim()))) {
+      return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
+    }
+
+    const info = db.prepare(`
+      INSERT INTO epg_sources (name, url, enabled, update_interval, source_type)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      name.trim(),
+      url.trim(),
+      enabled !== undefined ? (enabled ? 1 : 0) : 1,
+      update_interval || 86400,
+      source_type || 'custom'
+    );
+
+    res.json({id: info.lastInsertRowid});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const updateEpgSourceEndpoint = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const id = Number(req.params.id);
+    const { name, url, enabled, update_interval } = req.body;
+
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      params.push(name.trim());
+    }
+    if (url !== undefined) {
+      if (!(await isSafeUrl(url.trim()))) {
+        return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
+      }
+      updates.push('url = ?');
+      params.push(url.trim());
+    }
+    if (enabled !== undefined) {
+      updates.push('enabled = ?');
+      params.push(enabled ? 1 : 0);
+    }
+    if (update_interval !== undefined) {
+      updates.push('update_interval = ?');
+      params.push(update_interval);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({error: 'no fields to update'});
+    }
+
+    params.push(id);
+    db.prepare(`UPDATE epg_sources SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const deleteEpgSource = (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const id = Number(req.params.id);
+
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${id}.xml`);
+    if (fs.existsSync(cacheFile)) {
+      fs.unlinkSync(cacheFile);
+    }
+
+    db.prepare('DELETE FROM epg_sources WHERE id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const triggerUpdateEpgSource = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const id = req.params.id;
+
+    if (id.startsWith('provider_')) {
+      const providerId = Number(id.replace('provider_', ''));
+      const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+      if (!provider || !provider.epg_url) {
+        return res.status(404).json({error: 'Provider EPG not found'});
+      }
+
+      const response = await fetch(provider.epg_url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const epgData = await response.text();
+      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${providerId}.xml`);
+      await fs.promises.writeFile(cacheFile, epgData, 'utf8');
+
+      await generateConsolidatedEpg();
+
+      return res.json({success: true, size: epgData.length});
+    }
+
+    const result = await updateEpgSource(Number(id));
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const updateAllEpgSources = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
+    const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
+
+    const providerPromises = providers.map(async (provider) => {
+      try {
+        const response = await fetch(provider.epg_url);
+        if (response.ok) {
+          const epgData = await response.text();
+          const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+          await fs.promises.writeFile(cacheFile, epgData, 'utf8');
+          return {id: `provider_${provider.id}`, success: true};
+        }
+        throw new Error(`HTTP ${response.status}`);
+      } catch (e) {
+        return {id: `provider_${provider.id}`, success: false, error: e.message};
+      }
+    });
+
+    const sourcePromises = sources.map(async (source) => {
+      try {
+        await updateEpgSource(source.id, true);
+        return {id: source.id, success: true};
+      } catch (e) {
+        return {id: source.id, success: false, error: e.message};
+      }
+    });
+
+    const results = await Promise.all([...providerPromises, ...sourcePromises]);
+
+    await generateConsolidatedEpg();
+
+    res.json({success: true, results});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const getAvailableEpgSources = async (req, res) => {
+  try {
+    const jsonPath = path.join(process.cwd(), 'public', 'epg_sources.json');
+    if (!fs.existsSync(jsonPath)) {
+      return res.json([]);
+    }
+    const content = await fs.promises.readFile(jsonPath, 'utf8');
+    const data = JSON.parse(content);
+
+    const sources = (data.epg_sources || []).map(s => ({
+      name: s.name,
+      url: s.url,
+      size: 0,
+      country: s.country_code
+    }));
+
+    res.json(sources);
+  } catch (e) {
+    console.error('EPG sources error:', e.message);
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const getEpgChannels = async (req, res) => {
+  try {
+    const channels = await loadAllEpgChannels();
+    res.json(channels);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const manualMapping = (req, res) => {
+  try {
+    const { provider_channel_id, epg_channel_id } = req.body;
+    if (!provider_channel_id || !epg_channel_id) return res.status(400).json({error: 'missing fields'});
+
+    if (!req.user.is_admin) {
+        const used = db.prepare(`
+            SELECT 1 FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.provider_channel_id = ? AND cat.user_id = ?
+        `).get(Number(provider_channel_id), req.user.id);
+
+        if (!used) return res.status(403).json({error: 'Access denied: Channel not in your categories'});
+    }
+
+    db.prepare(`
+      INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
+      VALUES (?, ?)
+      ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
+    `).run(Number(provider_channel_id), epg_channel_id);
+
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const deleteMapping = (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!req.user.is_admin) {
+        const used = db.prepare(`
+            SELECT 1 FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE uc.provider_channel_id = ? AND cat.user_id = ?
+        `).get(id, req.user.id);
+
+        if (!used) return res.status(403).json({error: 'Access denied: Channel not in your categories'});
+    }
+    db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const getMappings = (req, res) => {
+  try {
+    const id = Number(req.params.providerId);
+    const mappings = db.prepare('SELECT * FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').all(id);
+    const map = {};
+    mappings.forEach(m => map[m.provider_channel_id] = m.epg_channel_id);
+    res.json(map);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const resetMapping = (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    const { provider_id } = req.body;
+    if (!provider_id) return res.status(400).json({error: 'provider_id required'});
+
+    db.prepare(`
+      DELETE FROM epg_channel_mappings
+      WHERE provider_channel_id IN (
+        SELECT id FROM provider_channels WHERE provider_id = ?
+      )
+    `).run(Number(provider_id));
+
+    res.json({success: true});
+  } catch (e) {
+    console.error('Reset mapping error:', e);
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const autoMapping = async (req, res) => {
+  try {
+    const { provider_id, only_used } = req.body;
+    if (!provider_id) return res.status(400).json({error: 'provider_id required'});
+
+    let query = `
+      SELECT pc.id, pc.name, pc.epg_channel_id
+      FROM provider_channels pc
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      WHERE pc.provider_id = ? AND map.id IS NULL
+    `;
+    const params = [Number(provider_id)];
+
+    if (!req.user.is_admin) {
+        query += ` AND pc.id IN (
+            SELECT uc.provider_channel_id
+            FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            WHERE cat.user_id = ?
+        )`;
+        params.push(req.user.id);
+    } else if (only_used) {
+        query += ` AND pc.id IN (SELECT provider_channel_id FROM user_channels)`;
+    }
+
+    const channels = db.prepare(query).all(...params);
+
+    if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
+
+    const globalMappings = db.prepare(`
+      SELECT pc.name, map.epg_channel_id
+      FROM epg_channel_mappings map
+      JOIN provider_channels pc ON pc.id = map.provider_channel_id
+    `).all();
+
+    const epgXmlFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
+    if (!fs.existsSync(epgXmlFile)) {
+        return res.status(503).json({error: 'EPG data not ready. Please update EPG sources.'});
+    }
+
+    const worker = new Worker(path.join(process.cwd(), 'src', 'epg_worker.js'), {
+      workerData: {
+        channels,
+        epgXmlFile,
+        globalMappings
+      }
+    });
+
+    const result = await new Promise((resolve, reject) => {
+      worker.on('message', resolve);
+      worker.on('error', reject);
+      worker.on('exit', (code) => {
+        if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
+      });
+    });
+
+    if (!result.success) {
+      throw new Error(result.error || 'Worker failed');
+    }
+
+    const { updates, matched } = result;
+
+    if (updates && updates.length > 0) {
+      const insert = db.prepare(`
+        INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
+        VALUES (?, ?)
+        ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
+      `);
+
+      db.transaction(() => {
+        for (const u of updates) {
+          insert.run(u.pid, u.eid);
+        }
+      })();
+    }
+
+    res.json({success: true, matched});
+  } catch (e) {
+    console.error('EPG Auto-Map Error:', e);
+    res.status(500).json({error: e.message});
+  }
+};
