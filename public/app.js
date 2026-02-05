@@ -1216,9 +1216,17 @@ function renderProviderChannels(channels) {
       btn.id = 'btn-load-more-channels';
       btn.className = 'btn btn-sm btn-outline-primary w-100';
       btn.textContent = t('loadMore');
-      btn.onclick = () => {
+      btn.onclick = async function() {
+          this.disabled = true;
+          this.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ${t('loading')}`;
+
           channelPage++;
-          loadProviderChannels(false);
+          await loadProviderChannels(false);
+
+          if (document.body.contains(this)) {
+              this.disabled = false;
+              this.textContent = t('loadMore');
+          }
       };
 
       li.appendChild(btn);

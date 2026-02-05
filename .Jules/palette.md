@@ -5,3 +5,7 @@
 ## 2025-05-15 - [Localized Tooltips]
 **Learning:** Icon-only buttons provided no context on hover, relying solely on icons or screen reader labels.
 **Action:** Extended `translatePage` to handle `data-i18n-title`, allowing declarative localized `title` attributes. Updated dynamic buttons to explicitly set `.title` property for consistent tooltip experience.
+
+## 2024-10-24 - [Async UI State Restoration]
+**Learning:** When adding loading states to elements that trigger content updates (like "Load More" buttons), the element itself might be replaced or moved by the resulting render function.
+**Action:** Always re-query the DOM element by ID after the await completes before attempting to restore its state (text, disabled status), rather than relying on the closure variable reference.
