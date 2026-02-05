@@ -8,6 +8,7 @@ import { calculateNextSync } from '../services/syncService.js';
 
 export const getSettings = (req, res) => {
   try {
+    if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
     const rows = db.prepare('SELECT * FROM settings').all();
     const settings = {};
     rows.forEach(r => settings[r.key] = r.value);
@@ -17,6 +18,7 @@ export const getSettings = (req, res) => {
 
 export const updateSettings = (req, res) => {
   try {
+    if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
     const settings = req.body;
     const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     db.transaction(() => {
