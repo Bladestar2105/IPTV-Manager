@@ -38,7 +38,7 @@ if (process.env.TRUST_PROXY) {
 app.use(securityHeaders);
 
 // Middleware
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '1mb' }));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS || '*',
   credentials: true
@@ -58,6 +58,9 @@ app.use(ipBlocker);
 
 // Rate Limiting
 app.use('/api', apiLimiter);
+app.use('/player_api.php', apiLimiter);
+app.use('/xmltv.php', apiLimiter);
+app.use('/get.php', apiLimiter);
 
 // Static Files
 app.use(express.static(path.join(__dirname, '../public')));

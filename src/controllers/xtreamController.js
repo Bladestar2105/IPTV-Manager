@@ -6,6 +6,7 @@ import { decrypt } from '../utils/crypto.js';
 import path from 'path';
 import fs from 'fs';
 import fetch from 'node-fetch';
+import { PORT } from '../config/constants.js';
 
 export const playerApi = async (req, res) => {
   try {
@@ -37,9 +38,9 @@ export const playerApi = async (req, res) => {
         },
         server_info: {
           url: req.hostname,
-          port: '3000',
+          port: String(PORT),
           https_port: '',
-          server_protocol: 'http',
+          server_protocol: req.secure ? 'https' : 'http',
           rtmp_port: '',
           timezone: 'Europe/Berlin',
           timestamp_now: now,
@@ -248,7 +249,7 @@ export const getPlaylist = async (req, res) => {
     if (!user) return res.sendStatus(401);
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, pc.name, pc.logo, pc.epg_channel_id,
+      SELECT uc.id as user_channel_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -274,8 +275,18 @@ export const getPlaylist = async (req, res) => {
       const name = ch.name || 'Unknown';
       const streamId = ch.user_channel_id;
 
-      const ext = output === 'hls' ? 'm3u8' : 'ts';
-      const streamUrl = `${baseUrl}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${ext}`;
+      let ext = output === 'hls' ? 'm3u8' : 'ts';
+      let typePath = 'live';
+
+      if (ch.stream_type === 'movie') {
+         typePath = 'movie';
+         ext = ch.mime_type || 'mp4';
+      } else if (ch.stream_type === 'series') {
+         typePath = 'series';
+         ext = ch.mime_type || 'mp4';
+      }
+
+      const streamUrl = `${baseUrl}/${typePath}/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${ext}`;
 
       if (type === 'm3u_plus') {
         m3u += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${name}" tvg-logo="${logo}" group-title="${group}",${name}\n`;

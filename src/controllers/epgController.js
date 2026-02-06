@@ -11,8 +11,43 @@ import { isSafeUrl } from '../utils/helpers.js';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../utils/crypto.js';
 
-export const getEpgNow = (req, res) => {
-  res.json([]);
+export const getEpgNow = async (req, res) => {
+  try {
+    let user = null;
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+       try {
+         const token = authHeader.split(' ')[1];
+         user = jwt.verify(token, JWT_SECRET);
+       } catch(e) {}
+    }
+    if (!user) {
+       user = await getXtreamUser(req);
+    }
+    if (!user) return res.status(401).json({error: 'Unauthorized'});
+
+    const now = Math.floor(Date.now() / 1000);
+    const epgFiles = getEpgFiles().map(f => f.file);
+    const currentPrograms = {};
+
+    const promises = epgFiles.map(file => {
+      return parseEpgXml(file, (prog) => {
+        if (prog.start <= now && prog.stop >= now) {
+            currentPrograms[prog.channel_id] = {
+              title: prog.title,
+              desc: prog.desc || '',
+              start: prog.start,
+              stop: prog.stop
+            };
+        }
+      }).catch(e => console.error(`Error parsing ${file}:`, e.message));
+    });
+
+    await Promise.all(promises);
+    res.json(currentPrograms);
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
 };
 
 export const getEpgSchedule = async (req, res) => {
@@ -194,6 +229,10 @@ export const triggerUpdateEpgSource = async (req, res) => {
         return res.status(404).json({error: 'Provider EPG not found'});
       }
 
+      if (!(await isSafeUrl(provider.epg_url))) {
+        return res.status(400).json({error: 'invalid_url', message: 'EPG URL is unsafe (blocked)'});
+      }
+
       const response = await fetch(provider.epg_url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -221,6 +260,9 @@ export const updateAllEpgSources = async (req, res) => {
 
     const providerPromises = providers.map(async (provider) => {
       try {
+        if (!(await isSafeUrl(provider.epg_url))) {
+            throw new Error(`Unsafe EPG URL for provider ${provider.name}`);
+        }
         const response = await fetch(provider.epg_url);
         if (response.ok) {
           const epgData = await response.text();

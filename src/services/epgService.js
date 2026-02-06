@@ -6,6 +6,7 @@ import { createWriteStream } from 'fs';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { mergeEpgFiles, filterEpgFile } from '../epg_utils.js';
+import { isSafeUrl } from '../utils/helpers.js';
 
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
@@ -69,6 +70,11 @@ export async function updateEpgSource(sourceId, skipRegenerate = false) {
 
   try {
     console.log(`📡 Fetching EPG from: ${source.name}`);
+
+    if (!(await isSafeUrl(source.url))) {
+      throw new Error(`Unsafe URL blocked: ${source.url}`);
+    }
+
     const response = await fetch(source.url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 

@@ -10,7 +10,7 @@ if (!JWT_SECRET) {
     JWT_SECRET = fs.readFileSync(jwtFile, 'utf8').trim();
   } else {
     JWT_SECRET = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(jwtFile, JWT_SECRET);
+    fs.writeFileSync(jwtFile, JWT_SECRET, { mode: 0o600 });
     console.log('🔐 Generated new unique JWT secret and saved to jwt.secret');
   }
 }
@@ -22,7 +22,7 @@ if (!ENCRYPTION_KEY) {
     ENCRYPTION_KEY = fs.readFileSync(keyFile, 'utf8').trim();
   } else {
     ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(keyFile, ENCRYPTION_KEY);
+    fs.writeFileSync(keyFile, ENCRYPTION_KEY, { mode: 0o600 });
     console.log('🔐 Generated new unique encryption key and saved to secret.key');
   }
 }
@@ -51,7 +51,7 @@ export function decrypt(text) {
   if (!text) return text;
   try {
     const textParts = text.split(':');
-    if (textParts.length !== 2) return text;
+    if (textParts.length !== 2) return null;
     const iv = Buffer.from(textParts[0], 'hex');
     const encryptedText = Buffer.from(textParts[1], 'hex');
     const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
@@ -59,7 +59,7 @@ export function decrypt(text) {
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     return decrypted.toString();
   } catch (e) {
-    return text;
+    return null;
   }
 }
 
