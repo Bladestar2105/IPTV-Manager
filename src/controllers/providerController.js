@@ -180,7 +180,11 @@ export const deleteProvider = (req, res) => {
     const id = Number(req.params.id);
 
     db.transaction(() => {
+      db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
+      db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
+      db.prepare('DELETE FROM stream_stats WHERE channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
       db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+
       db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(id);
@@ -285,11 +289,11 @@ export const getProviderCategories = async (req, res) => {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!provider) return res.status(404).json({error: 'Provider not found'});
 
-    provider.password = decrypt(provider.password);
+    const decryptedPassword = decrypt(provider.password);
 
     let categories = [];
     const baseUrl = provider.url.replace(/\/+$/, '');
-    const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
+    const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(decryptedPassword)}`;
     let action = 'get_live_categories';
 
     if(type === 'movie') action = 'get_vod_categories';

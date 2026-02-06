@@ -190,6 +190,12 @@ export const proxyLive = async (req, res) => {
     const remoteExt = (reqExt === 'm3u8') ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
 
+    if (!(await isSafeUrl(remoteUrl))) {
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      streamManager.remove(connectionId);
+      return res.sendStatus(403);
+    }
+
     let meta = {};
     try {
         meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
@@ -380,7 +386,12 @@ export const proxySegment = async (req, res) => {
         try {
             const payload = JSON.parse(Buffer.from(req.query.data, 'base64').toString());
             if (payload.u) targetUrl = payload.u;
-            if (payload.h) Object.assign(headers, payload.h);
+            if (payload.h) {
+                const ALLOWED = ['User-Agent', 'Referer', 'Cookie', 'Connection'];
+                for (const [key, val] of Object.entries(payload.h)) {
+                    if (ALLOWED.includes(key)) headers[key] = val;
+                }
+            }
         } catch(e) {
             return res.sendStatus(400);
         }
@@ -462,6 +473,12 @@ export const proxyMovie = async (req, res) => {
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+
+    if (!(await isSafeUrl(remoteUrl))) {
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      streamManager.remove(connectionId);
+      return res.sendStatus(403);
+    }
 
     let meta = {};
     try {
@@ -611,6 +628,12 @@ export const proxySeries = async (req, res) => {
     const base = provider.url.replace(/\/+$/, '');
     const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
 
+    if (!(await isSafeUrl(remoteUrl))) {
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      streamManager.remove(connectionId);
+      return res.sendStatus(403);
+    }
+
     const headers = {
       'User-Agent': DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
@@ -704,6 +727,12 @@ export const proxyTimeshift = async (req, res) => {
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.ts`;
+
+    if (!(await isSafeUrl(remoteUrl))) {
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      streamManager.remove(connectionId);
+      return res.sendStatus(403);
+    }
 
     let meta = {};
     try {

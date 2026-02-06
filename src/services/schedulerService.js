@@ -5,6 +5,7 @@ import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { performSync } from './syncService.js';
 import { updateEpgSource, generateConsolidatedEpg } from './epgService.js';
+import { isSafeUrl } from '../utils/helpers.js';
 
 let syncIntervals = new Map();
 
@@ -71,6 +72,13 @@ export function startEpgScheduler() {
       if (lastUpdate + interval <= now) {
         try {
           console.log(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
+
+          if (!(await isSafeUrl(provider.epg_url))) {
+             console.error(`Unsafe EPG URL for provider ${provider.name}`);
+             failedUpdates.set(provider.id, now);
+             continue;
+          }
+
           const response = await fetch(provider.epg_url);
           if (response.ok) {
             const epgData = await response.text();
@@ -99,6 +107,8 @@ export function startCleanupScheduler() {
       // Clean old client logs (7 days)
       const retention = 7 * 86400;
       db.prepare('DELETE FROM client_logs WHERE timestamp < ?').run(now - retention);
+      db.prepare('DELETE FROM security_logs WHERE timestamp < ?').run(now - retention);
+      db.prepare('DELETE FROM blocked_ips WHERE expires_at < ?').run(now);
     } catch (e) {
       console.error('Cleanup error:', e);
     }

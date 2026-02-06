@@ -31,7 +31,7 @@ export async function isSafeUrl(urlStr) {
             if (second >= 16 && second <= 31) return false;
         }
     } else if (ipVer === 6) {
-         if (address === '::1' || address.includes('::ffff:')) return false;
+         if (address === '::1' || address.includes('::ffff:') || address.startsWith('fe80:') || address.startsWith('fc') || address.startsWith('fd')) return false;
     }
 
     return true;

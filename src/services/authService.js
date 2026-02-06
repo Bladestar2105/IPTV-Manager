@@ -51,8 +51,9 @@ export async function authUser(username, password) {
     }
 
     if (isValid) {
+      const { password, otp_secret, ...safeUser } = user;
       authCache.set(cacheKey, {
-        user: user,
+        user: safeUser,
         expiry: Date.now() + AUTH_CACHE_TTL
       });
       return user;
