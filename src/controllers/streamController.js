@@ -74,7 +74,7 @@ export const proxyMpd = async (req, res) => {
     }
 
     if (relativePath.endsWith('.mpd')) {
-        streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip);
+        await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res);
 
         const startTime = Date.now();
         const now = Math.floor(startTime / 1000);
@@ -167,8 +167,8 @@ export const proxyLive = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    streamManager.cleanupUser(user.id, req.ip);
-    streamManager.add(connectionId, user, channel.name, req.ip);
+    await streamManager.cleanupUser(user.id, req.ip);
+    await streamManager.add(connectionId, user, channel.name, req.ip, res);
 
     const startTime = Date.now();
     const now = Math.floor(startTime / 1000);
@@ -458,7 +458,7 @@ export const proxyMovie = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip);
+    await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res);
 
     const startTime = Date.now();
     const now = Math.floor(startTime / 1000);
@@ -621,7 +621,7 @@ export const proxySeries = async (req, res) => {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) return res.sendStatus(404);
 
-    streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip);
+    await streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip, res);
 
     provider.password = decrypt(provider.password);
 
@@ -721,7 +721,7 @@ export const proxyTimeshift = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip);
+    await streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip, res);
 
     channel.provider_pass = decrypt(channel.provider_pass);
 

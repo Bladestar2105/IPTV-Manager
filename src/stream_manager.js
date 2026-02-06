@@ -7,6 +7,7 @@ class StreamManager {
     this.db = null;
     this.redis = null;
     this.pid = process.pid;
+    this.localStreams = new Map();
   }
 
   init(db, redisClient) {
@@ -19,7 +20,7 @@ class StreamManager {
     }
   }
 
-  async add(id, user, channelName, ip) {
+  async add(id, user, channelName, ip, resource = null) {
     const data = {
       id,
       user_id: user.id,
@@ -51,9 +52,24 @@ class StreamManager {
         console.error('DB Add Error:', e.message);
       }
     }
+
+    if (resource) {
+      this.localStreams.set(id, resource);
+    }
   }
 
   async remove(id) {
+    // Kill local resource if exists
+    const resource = this.localStreams.get(id);
+    if (resource) {
+      try {
+        if (typeof resource.destroy === 'function') resource.destroy();
+        else if (typeof resource.end === 'function') resource.end();
+        else if (typeof resource.kill === 'function') resource.kill('SIGKILL');
+      } catch (e) { console.error('Error killing stream resource:', e); }
+      this.localStreams.delete(id);
+    }
+
     if (this.redis) {
       try {
         // We need to remove the user index too, but we don't have user_id/ip here easily without fetching first.
@@ -82,15 +98,18 @@ class StreamManager {
         // Check index
         const oldId = await this.redis.get(`${REDIS_PREFIX_USER}${userId}:${ip}`);
         if (oldId) {
-          await this.redis.hDel(REDIS_KEY_STREAMS, oldId);
-          await this.redis.del(`${REDIS_PREFIX_USER}${userId}:${ip}`);
+          // Instead of just deleting from Redis, call remove() to trigger resource kill if local
+          await this.remove(oldId);
         }
       } catch (e) {
         console.error('Redis Cleanup Error:', e);
       }
     } else if (this.db) {
       try {
-        this.db.prepare('DELETE FROM current_streams WHERE user_id = ? AND ip = ?').run(userId, ip);
+        const row = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?').get(userId, ip);
+        if (row) {
+          await this.remove(row.id);
+        }
       } catch (e) {
         console.error('DB Cleanup Error:', e.message);
       }
