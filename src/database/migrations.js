@@ -351,3 +351,22 @@ export function checkIsAdultColumn(db) {
         // Spalte existiert bereits
     }
 }
+
+export function migrateIndexes(db) {
+  try {
+    // Index on user_categories (user_id, sort_order)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_user_categories_user_sort ON user_categories(user_id, sort_order)');
+
+    // Index on user_channels (user_category_id, sort_order)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_user_channels_cat_sort ON user_channels(user_category_id, sort_order)');
+
+    // Index on user_channels (provider_channel_id) for joins
+    db.exec('CREATE INDEX IF NOT EXISTS idx_user_channels_prov ON user_channels(provider_channel_id)');
+
+    // Only log if we suspect something changed or strictly once?
+    // Since IF NOT EXISTS is silent, we can just say verified.
+    // However, to avoid spamming logs on every restart, we might want to check existence, but it's fast enough.
+  } catch (e) {
+    console.error('Index migration error:', e);
+  }
+}
