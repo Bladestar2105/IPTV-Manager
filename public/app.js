@@ -211,6 +211,23 @@ function generateUser() {
     }
 }
 
+function togglePasswordVisibility(inputId, btnElement) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        btnElement.innerHTML = '🙈';
+        btnElement.title = t('hidePassword') || 'Hide Password';
+        btnElement.setAttribute('aria-label', t('hidePassword') || 'Hide Password');
+    } else {
+        input.type = 'password';
+        btnElement.innerHTML = '👁️';
+        btnElement.title = t('showPassword') || 'Show Password';
+        btnElement.setAttribute('aria-label', t('showPassword') || 'Show Password');
+    }
+}
+
 function copyToClipboard(text, btnElement) {
     if (!text) return;
 
