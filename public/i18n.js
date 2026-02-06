@@ -142,6 +142,13 @@ const translations = {
     login_failed: 'Login failed. Please try again.',
     token_expired: 'Your session has expired. Please login again.',
     authentication_required: 'Authentication required',
+    access_denied_webui: 'Web UI Access Denied',
+    invalid_otp: 'Invalid OTP Code',
+    server_error: 'Server Error',
+    user_not_found: 'User not found',
+    username_taken: 'Username already taken',
+    invalid_username_format: 'Invalid username format',
+    invalid_username_length: 'Username must be 3-50 characters',
     
     // EPG Section
     epgSources: 'EPG Sources',
@@ -497,6 +504,13 @@ const translations = {
     login_failed: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
     token_expired: 'Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.',
     authentication_required: 'Authentifizierung erforderlich',
+    access_denied_webui: 'Web UI Zugriff verweigert',
+    invalid_otp: 'Ungültiger OTP Code',
+    server_error: 'Serverfehler',
+    user_not_found: 'Benutzer nicht gefunden',
+    username_taken: 'Benutzername bereits vergeben',
+    invalid_username_format: 'Ungültiges Benutzername-Format',
+    invalid_username_length: 'Benutzername muss 3-50 Zeichen lang sein',
     
     // EPG Section
     epgSources: 'EPG-Quellen',
@@ -852,6 +866,13 @@ const translations = {
     login_failed: 'Échec de la connexion. Veuillez réessayer.',
     token_expired: 'Votre session a expiré. Veuillez vous reconnecter.',
     authentication_required: 'Authentification requise',
+    access_denied_webui: 'Accès Web UI refusé',
+    invalid_otp: 'Code OTP invalide',
+    server_error: 'Erreur serveur',
+    user_not_found: 'Utilisateur non trouvé',
+    username_taken: 'Nom d\'utilisateur déjà pris',
+    invalid_username_format: 'Format de nom d\'utilisateur invalide',
+    invalid_username_length: 'Le nom d\'utilisateur doit comporter entre 3 et 50 caractères',
     
     // EPG Section
     epgSources: 'Sources EPG',
@@ -1197,6 +1218,23 @@ const translations = {
     typeLive: 'Live',
     typeMovie: 'Ταινίες',
     typeSeries: 'Σειρές',
+
+    // Authentication
+    login: 'Σύνδεση',
+    logout: 'Αποσύνδεση',
+    logging_in: 'Σύνδεση...',
+    missing_credentials: 'Παρακαλώ εισάγετε όνομα χρήστη και κωδικό',
+    invalid_credentials: 'Μη έγκυρο όνομα χρήστη ή κωδικός',
+    login_failed: 'Η σύνδεση απέτυχε. Παρακαλώ προσπαθήστε ξανά.',
+    token_expired: 'Η συνεδρία σας έληξε. Παρακαλώ συνδεθείτε ξανά.',
+    authentication_required: 'Απαιτείται πιστοποίηση',
+    access_denied_webui: 'Άρνηση πρόσβασης Web UI',
+    invalid_otp: 'Μη έγκυρος κωδικός OTP',
+    server_error: 'Σφάλμα διακομιστή',
+    user_not_found: 'Ο χρήστης δεν βρέθηκε',
+    username_taken: 'Το όνομα χρήστη χρησιμοποιείται ήδη',
+    invalid_username_format: 'Μη έγκυρη μορφή ονόματος χρήστη',
+    invalid_username_length: 'Το όνομα χρήστη πρέπει να είναι 3-50 χαρακτήρες',
 
     // EPG Section
     epgSources: 'Πηγές EPG',

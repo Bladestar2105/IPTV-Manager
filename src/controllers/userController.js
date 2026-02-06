@@ -6,16 +6,11 @@ export const getUsers = (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const users = db.prepare('SELECT id, username, password, is_active, webui_access FROM users ORDER BY id').all();
     const result = users.map(u => {
-        let plain = null;
-        if (u.password && !u.password.startsWith('$2b$')) {
-            plain = decrypt(u.password);
-        }
         return {
             id: u.id,
             username: u.username,
             is_active: u.is_active,
-            webui_access: u.webui_access,
-            plain_password: plain
+            webui_access: u.webui_access
         };
     });
     res.json(result);
@@ -138,7 +133,11 @@ export const deleteUser = (req, res) => {
       // 1. Delete owned providers and their dependencies
       const userProviders = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(id);
       for (const p of userProviders) {
+        db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(p.id);
+        db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(p.id);
+        db.prepare('DELETE FROM stream_stats WHERE channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(p.id);
         db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(p.id);
+
         db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(p.id);
         db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(p.id);
         db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(p.id);

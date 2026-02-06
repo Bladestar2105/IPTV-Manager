@@ -54,7 +54,8 @@ export const login = async (req, res) => {
                 return res.status(401).json({ error: 'otp_required', require_otp: true });
             }
             // Verify OTP
-            const isValidOtp = authenticator.verify({ token: otp_code, secret: user.otp_secret });
+            const secret = decrypt(user.otp_secret);
+            const isValidOtp = authenticator.verify({ token: otp_code, secret: secret });
             if (!isValidOtp) {
                 return res.status(401).json({ error: 'invalid_otp' });
             }
@@ -151,7 +152,8 @@ export const verifyOtp = (req, res) => {
 
         // Save secret and enable OTP
         const table = req.user.is_admin ? 'admin_users' : 'users';
-        db.prepare(`UPDATE ${table} SET otp_secret = ?, otp_enabled = 1 WHERE id = ?`).run(secret, req.user.id);
+        const encryptedSecret = encrypt(secret);
+        db.prepare(`UPDATE ${table} SET otp_secret = ?, otp_enabled = 1 WHERE id = ?`).run(encryptedSecret, req.user.id);
 
         res.json({success: true});
     } catch(e) {

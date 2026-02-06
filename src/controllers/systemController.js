@@ -5,6 +5,7 @@ import streamManager from '../stream_manager.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
 import { startSyncScheduler } from '../services/schedulerService.js';
 import { calculateNextSync } from '../services/syncService.js';
+import { isIP } from 'net';
 
 export const getSettings = (req, res) => {
   try {
@@ -52,6 +53,7 @@ export const createClientLog = (req, res) => {
 
 export const getClientLogs = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const logs = db.prepare('SELECT * FROM client_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
     res.json(logs);
@@ -60,6 +62,7 @@ export const getClientLogs = (req, res) => {
 
 export const deleteClientLogs = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     db.prepare('DELETE FROM client_logs').run();
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -94,7 +97,7 @@ export const blockIp = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { ip, reason, duration } = req.body;
-    if (!ip) return res.status(400).json({error: 'ip required'});
+    if (!ip || isIP(ip) === 0) return res.status(400).json({error: 'Valid IP required'});
 
     const whitelisted = db.prepare('SELECT id FROM whitelisted_ips WHERE ip = ?').get(ip);
     if (whitelisted) {
@@ -181,7 +184,8 @@ export const removeWhitelist = (req, res) => {
 export const exportData = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { user_id, password } = req.query;
+    const user_id = req.body.user_id || req.query.user_id;
+    const password = req.body.password || req.query.password;
 
     if (!password) {
       return res.status(400).json({error: 'Password required for encryption'});
@@ -371,9 +375,9 @@ export const importData = (req, res) => {
 
         if (newProvId && newUserId) {
            db.prepare(`
-             INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created)
-             VALUES (?, ?, ?, ?, ?, ?)
-           `).run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created);
+             INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+           `).run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created, m.category_type || 'live');
         }
       }
 
@@ -418,6 +422,7 @@ export const importData = (req, res) => {
 
 export const getSyncConfigs = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const configs = db.prepare(`
       SELECT sc.*, p.name as provider_name, u.username
       FROM sync_configs sc
@@ -433,6 +438,7 @@ export const getSyncConfigs = (req, res) => {
 
 export const getSyncConfig = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?')
       .get(Number(req.params.providerId), Number(req.params.userId));
     res.json(config || null);
@@ -443,6 +449,7 @@ export const getSyncConfig = (req, res) => {
 
 export const createSyncConfig = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
 
     if (!provider_id || !user_id) {
@@ -474,6 +481,7 @@ export const createSyncConfig = (req, res) => {
 
 export const updateSyncConfig = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     const { enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
 
@@ -505,6 +513,7 @@ export const updateSyncConfig = (req, res) => {
 
 export const deleteSyncConfig = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     db.prepare('DELETE FROM sync_configs WHERE id = ?').run(id);
 
@@ -518,6 +527,7 @@ export const deleteSyncConfig = (req, res) => {
 
 export const getSyncLogs = (req, res) => {
   try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { provider_id, user_id, limit } = req.query;
     let query = `
       SELECT sl.*, p.name as provider_name, u.username
