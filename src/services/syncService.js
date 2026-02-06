@@ -3,7 +3,7 @@ import { Xtream } from '@iptv/xtream-api';
 import db from '../database/db.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory } from '../utils/helpers.js';
-import { parseM3u } from '../playlist_parser.js';
+import { parseM3uStream } from '../playlist_parser.js';
 
 function createXtreamClient(provider) {
   let baseUrl = (provider.url || '').trim();
@@ -77,11 +77,10 @@ export async function performSync(providerId, userId, isManual = false) {
              // Try fetching as M3U
              const m3uResp = await fetch(provider.url); // Use original URL
              if (m3uResp.ok) {
-                 const text = await m3uResp.text();
-                 if (text.trim().startsWith('#EXTM3U')) {
+                 const parsed = await parseM3uStream(m3uResp.body);
+                 if (parsed.isM3u) {
                      console.log('  📂 Detected M3U Playlist');
                      m3uMode = true;
-                     const parsed = parseM3u(text);
 
                      // Map to Xtream format
                      parsed.channels.forEach((ch, idx) => {
