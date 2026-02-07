@@ -36,7 +36,9 @@ export const securityHeaders = helmet({
       upgradeInsecureRequests: null,
     },
   },
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  originAgentCluster: false
 });
 
 export const ipBlocker = async (req, res, next) => {
