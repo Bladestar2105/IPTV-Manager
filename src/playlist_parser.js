@@ -38,19 +38,7 @@ export function parseM3u(content) {
       currentChannel.name = title;
 
       // Parse Attributes
-      const matches = attrs.match(/([a-zA-Z0-9-]+)="([^"]*)"/g);
-      if (matches) {
-        matches.forEach(m => {
-          const parts = m.split('=');
-          const key = parts[0];
-          const val = parts.slice(1).join('=').replace(/"/g, '');
-
-          if (key === 'group-title') currentChannel.group = val;
-          if (key === 'tvg-logo') currentChannel.logo = val;
-          if (key === 'tvg-id') currentChannel.epg_id = val;
-          if (key === 'tvg-name') currentChannel.tvg_name = val;
-        });
-      }
+      parseAttributes(attrs, currentChannel);
 
       // Add to categories
       if (currentChannel.group) {
@@ -188,19 +176,7 @@ export function parseM3uStream(readableStream) {
             currentChannel.name = title;
 
             // Parse Attributes
-            const matches = attrs.match(/([a-zA-Z0-9-]+)="([^"]*)"/g);
-            if (matches) {
-              matches.forEach(m => {
-                const parts = m.split('=');
-                const key = parts[0];
-                const val = parts.slice(1).join('=').replace(/"/g, '');
-
-                if (key === 'group-title') currentChannel.group = val;
-                if (key === 'tvg-logo') currentChannel.logo = val;
-                if (key === 'tvg-id') currentChannel.epg_id = val;
-                if (key === 'tvg-name') currentChannel.tvg_name = val;
-              });
-            }
+            parseAttributes(attrs, currentChannel);
 
             // Add to categories
             if (currentChannel.group) {
@@ -286,4 +262,18 @@ export function parseM3uStream(readableStream) {
         reject(err);
     });
   });
+}
+
+function parseAttributes(attrs, currentChannel) {
+  const attrRegex = /([a-zA-Z0-9-]+)="([^"]*)"/g;
+  let match;
+  while ((match = attrRegex.exec(attrs)) !== null) {
+      const key = match[1];
+      const val = match[2];
+
+      if (key === 'group-title') currentChannel.group = val;
+      else if (key === 'tvg-logo') currentChannel.logo = val;
+      else if (key === 'tvg-id') currentChannel.epg_id = val;
+      else if (key === 'tvg-name') currentChannel.tvg_name = val;
+  }
 }
