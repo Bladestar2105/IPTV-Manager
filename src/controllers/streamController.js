@@ -187,7 +187,10 @@ export const proxyLive = async (req, res) => {
     if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
     if (req.path.endsWith('.mp4')) reqExt = 'mp4';
 
-    const remoteExt = (reqExt === 'm3u8') ? 'm3u8' : 'ts';
+    // When requesting .m3u8 without transcode, fetch upstream .m3u8 (HLS manifest)
+    // Otherwise always fetch .ts (raw MPEG-TS stream for direct proxy or transcoding)
+    const wantsTranscode = (req.query.transcode === 'true');
+    const remoteExt = (reqExt === 'm3u8' && !wantsTranscode) ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
 
     if (!(await isSafeUrl(remoteUrl))) {
