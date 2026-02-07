@@ -729,11 +729,13 @@
   }
 
   function initPlayer(url, type) {
-    // iOS/Safari Fix: Force fMP4 (transcoding) if MPEGTS is not supported but Native HLS is (since we don't have true HLS generation)
-    // We use .mp4 to trigger the backend's fMP4 streaming
-    if (url.includes('.ts') && (!mpegts.isSupported() || /iPad|iPhone|iPod/.test(navigator.userAgent)) && video.canPlayType('application/vnd.apple.mpegurl')) {
-        console.log('Detected iOS/Safari: Switching to fMP4 (.mp4) for transcoding');
-        url = url.replace(/\.ts($|\?)/, '.mp4$1');
+    // iOS/Safari Fix: Use native HLS playback when MSE/mpegts.js is not available
+    // iOS Safari cannot play chunked fMP4 via video.src, but has native HLS support
+    // The server already supports .m3u8 proxying with segment URL rewriting
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (url.includes('.ts') && (!mpegts.isSupported() || isIOS) && video.canPlayType('application/vnd.apple.mpegurl')) {
+        console.log('Detected iOS/Safari: Switching to native HLS (.m3u8)');
+        url = url.replace(/\.ts($|\?)/, '.m3u8$1');
     }
 
     if (flvPlayer) {
