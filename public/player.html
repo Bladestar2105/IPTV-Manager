@@ -972,17 +972,11 @@
       initDashPlayer(url);
     } else if (url.includes('.ts')) {
       if (wantTranscode) {
-        // Transcode mode: request .ts with transcode=true (FFmpeg re-encodes audio to AAC)
-        // Use mpegts.js to play the transcoded MPEG-TS stream, or .mp4 for broader compat
-        var transcodeUrl = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
-        if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-          initMpegtsPlayer(transcodeUrl, streamType);
-        } else {
-          // Fallback: request as .mp4 (fragmented MP4 with transcoded audio)
-          var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
-          var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
-          initNativePlayer(mp4TranscodeUrl, streamType);
-        }
+        // Transcode mode: use .mp4 fragmented output (video copy + audio→AAC)
+        // Native <video> handles fMP4 — bypasses MSE entirely, no codec issues
+        var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
+        var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
+        initNativePlayer(mp4TranscodeUrl, streamType);
       } else if (isIOS || (isSafari && hasNativeHLS)) {
         // iOS/Safari: use native HLS
         var hlsUrl2 = url.replace(/\.ts($|\?)/, '.m3u8$1');
@@ -1292,23 +1286,12 @@
       }
 
       if (url.includes('.ts')) {
-        // Transcode: request .ts with transcode=true (FFmpeg re-encodes audio to AAC)
-        var transcodeUrl = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
-
-        if (isIOS || (isSafari && hasNativeHLS)) {
-          // iOS/Safari: use .mp4 fragmented output for native playback
-          var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
-          var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
-          initNativePlayer(mp4TranscodeUrl, type);
-        } else if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-          retryCount = 0;
-          initMpegtsPlayer(transcodeUrl, type);
-        } else {
-          // Fallback: fragmented MP4
-          var mp4Url2 = url.replace(/\.ts($|\?)/, '.mp4$1');
-          var mp4TranscodeUrl2 = mp4Url2 + (mp4Url2.includes('?') ? '&' : '?') + 'transcode=true';
-          initNativePlayer(mp4TranscodeUrl2, type);
-        }
+        // Transcode: use .mp4 fragmented output (video copy + audio→AAC)
+        // This bypasses MSE/mpegts.js entirely — native <video> handles fMP4
+        // which avoids the AC-3/HEVC addSourceBuffer errors completely
+        var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
+        var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
+        initNativePlayer(mp4TranscodeUrl, type);
       } else {
         // For non-.ts URLs, just add transcode param
         var transcodeUrl2 = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
