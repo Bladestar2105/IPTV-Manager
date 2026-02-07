@@ -1126,6 +1126,9 @@
   // ─── mpegts.js Player ───
   function initMpegtsPlayer(url, type) {
     destroyAllPlayers();
+    // Reset retry flag so mpegts.js can trigger its own error recovery (e.g. auto-transcode)
+    isRetrying = false;
+    retryCount = 0;
     setPlayerStatus('MPEG-TS', 'warning');
     console.log('mpegts.js: ' + url);
 
