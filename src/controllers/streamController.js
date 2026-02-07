@@ -168,6 +168,10 @@ export const proxyLive = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     await streamManager.cleanupUser(user.id, req.ip);
+    // Brief delay after cleanup to allow the upstream provider to register
+    // the closed connection before we open a new one (important for providers
+    // that limit concurrent connections per user)
+    await new Promise(resolve => setTimeout(resolve, 100));
     await streamManager.add(connectionId, user, channel.name, req.ip, res);
 
     const startTime = Date.now();
@@ -264,8 +268,16 @@ export const proxyLive = async (req, res) => {
 
         command.pipe(res, { end: true });
 
+        // Register cleanup for channel switching — kill FFmpeg and upstream connection
+        streamManager.localStreams.set(connectionId, {
+          destroy: () => {
+            try { command.kill('SIGKILL'); } catch(e) {}
+            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
+            try { if (!res.destroyed) res.destroy(); } catch(e) {}
+          }
+        });
+
         req.on('close', () => {
-          command.kill('SIGKILL');
           streamManager.remove(connectionId);
         });
 
@@ -353,6 +365,17 @@ export const proxyLive = async (req, res) => {
 
     upstream.body.pipe(res);
 
+    // Register the upstream body with the stream manager so it gets destroyed
+    // when the user switches channels (cleanupUser). This ensures the upstream
+    // connection to the provider is closed before opening a new one — critical
+    // for providers that limit concurrent connections per user.
+    streamManager.localStreams.set(connectionId, {
+      destroy: () => {
+        try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
+        try { if (!res.destroyed) res.destroy(); } catch(e) {}
+      }
+    });
+
     upstream.body.on('error', (err) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Stream error:', err.message);
@@ -365,9 +388,6 @@ export const proxyLive = async (req, res) => {
 
     req.on('close', () => {
       streamManager.remove(connectionId);
-      if (upstream.body && !upstream.body.destroyed) {
-        upstream.body.destroy();
-      }
     });
 
   } catch (e) {
