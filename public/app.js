@@ -307,7 +307,7 @@ async function loadUsers() {
       // Auto-select
       selectedUser = user;
       selectedUserId = user.id;
-      document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${user.username}`;
+      document.getElementById('selected-user-label').textContent = `${user.username}`;
 
       loadUserCategories();
       loadProviders(user.id);
@@ -335,7 +335,7 @@ async function loadUsers() {
     makeAccessible(span, () => {
       selectedUser = u;
       selectedUserId = u.id;
-      document.getElementById('selected-user-label').textContent = `${t('selectedUser')}: ${u.username} (id=${u.id})`;
+      document.getElementById('selected-user-label').textContent = `${u.username} (id=${u.id})`;
 
       const baseUrl = window.location.origin;
       const pass = u.plain_password || '********';
@@ -2830,7 +2830,7 @@ function updateMappingStats() {
     stats.textContent = t('mappingStats', {
         total: total,
         mapped: mapped,
-        percent: Math.round(mapped/total*100),
+        percent: total > 0 ? Math.round(mapped/total*100) : 0,
         manual: manual
     });
   }
