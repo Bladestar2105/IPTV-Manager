@@ -122,6 +122,7 @@ export async function getXtreamUser(req) {
 
   let user = null;
 
+  // Check token auth first (avoids logging failed attempts for placeholder credentials)
   if (token) {
     const now = Math.floor(Date.now() / 1000);
     const valid = db.prepare('SELECT user_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
@@ -130,10 +131,13 @@ export async function getXtreamUser(req) {
     }
   }
 
-  if (!user) {
+  // Only try username/password if token auth didn't succeed
+  if (!user && username && password) {
     user = await authUser(username, password);
   }
 
+  // Only log failed attempts when there was no token (prevents HLS segment
+  // requests with placeholder path params from triggering brute-force protection)
   if (!user && username && !token) {
     const ip = req.ip;
     const now = Math.floor(Date.now() / 1000);
