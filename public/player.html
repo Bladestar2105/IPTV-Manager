@@ -681,6 +681,53 @@
       initPlayer(url, stream.type || 'live');
   }
 
+  function enableTranscodeAndRetry(type) {
+      const transcodeSwitch = document.getElementById('transcode-switch');
+      if (transcodeSwitch && !transcodeSwitch.checked) {
+          console.log('Playback error detected. Auto-fixing audio...');
+          const toast = document.createElement('div');
+          toast.className = 'alert alert-info position-absolute top-0 start-0 m-3';
+          toast.style.zIndex = '1002';
+          toast.textContent = t('autoFixingAudio') || 'Unsupported audio codec detected. Enabling audio fix...';
+          document.getElementById('player-container').appendChild(toast);
+          setTimeout(() => toast.remove(), 4000);
+
+          transcodeSwitch.checked = true;
+          localStorage.setItem('transcode_enabled', 'true');
+
+          // Fully destroy the current player before retrying
+          if (flvPlayer) {
+              try {
+                  flvPlayer.pause();
+                  flvPlayer.unload();
+                  flvPlayer.detachMediaElement();
+                  flvPlayer.destroy();
+              } catch(e) { /* ignore cleanup errors */ }
+              flvPlayer = null;
+          }
+
+          // Small delay to let the MediaSource fully close before re-init
+          setTimeout(() => {
+              let currentUrl = video.dataset.currentUrl;
+              if (currentUrl) {
+                  if (!currentUrl.includes('transcode=')) {
+                      const separator = currentUrl.includes('?') ? '&' : '?';
+                      currentUrl += `${separator}transcode=true`;
+                  }
+                  initPlayer(currentUrl, type);
+              }
+          }, 500);
+      } else {
+          // Transcode is already enabled but still failing
+          const toast = document.createElement('div');
+          toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
+          toast.style.zIndex = '1002';
+          toast.textContent = t('playbackError') || 'Playback Error';
+          document.getElementById('player-container').appendChild(toast);
+          setTimeout(() => toast.remove(), 5000);
+      }
+  }
+
   function initPlayer(url, type) {
     // iOS/Safari Fix: Force fMP4 (transcoding) if MPEGTS is not supported but Native HLS is (since we don't have true HLS generation)
     // We use .mp4 to trigger the backend's fMP4 streaming
@@ -690,8 +737,12 @@
     }
 
     if (flvPlayer) {
-        if (flvPlayer._mediaElement) flvPlayer.detachMediaElement();
-        flvPlayer.destroy();
+        try {
+            flvPlayer.pause();
+            flvPlayer.unload();
+            flvPlayer.detachMediaElement();
+            flvPlayer.destroy();
+        } catch(e) { /* ignore cleanup errors */ }
         flvPlayer = null;
     }
     if (hls) {
@@ -769,40 +820,36 @@
         flvPlayer.attachMediaElement(video);
         flvPlayer.load();
 
-        // Error Handling Logic (Restored)
+        // Track whether we're already handling an error to prevent cascading retries
+        let isHandlingError = false;
+
+        // Unsupported audio codecs that browsers cannot play via MSE
+        const UNSUPPORTED_AUDIO_CODECS = ['ac-3', 'ec-3', 'eac3', 'eac-3', 'dts', 'dtsc', 'dtse', 'dtsh', 'dtsl', 'opus'];
+
+        // Proactive codec detection: catch unsupported audio before MSE rejects it
+        if (flvPlayer.on && mpegts.Events.MEDIA_INFO) {
+            flvPlayer.on(mpegts.Events.MEDIA_INFO, (mediaInfo) => {
+                if (isHandlingError) return;
+                const audioCodec = mediaInfo && mediaInfo.audioCodec;
+                if (audioCodec) {
+                    const codecLower = audioCodec.toLowerCase();
+                    const isUnsupported = UNSUPPORTED_AUDIO_CODECS.some(c => codecLower.includes(c));
+                    if (isUnsupported) {
+                        console.warn(`Detected unsupported audio codec: ${audioCodec}. Switching to transcoding...`);
+                        isHandlingError = true;
+                        enableTranscodeAndRetry(type);
+                    }
+                }
+            });
+        }
+
+        // Error Handling Logic
         flvPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
             console.warn('Mpegts Error:', errorType, errorDetail, errorInfo);
+            if (isHandlingError) return;
             if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-                const transcodeSwitch = document.getElementById('transcode-switch');
-                if (transcodeSwitch && !transcodeSwitch.checked) {
-                    console.log('Playback error detected. Auto-fixing...');
-                    const toast = document.createElement('div');
-                    toast.className = 'alert alert-info position-absolute top-0 start-0 m-3';
-                    toast.style.zIndex = '1002';
-                    toast.textContent = t('autoFixingAudio') || 'Playback Error. Enabling audio fix...';
-                    document.getElementById('player-container').appendChild(toast);
-                    setTimeout(() => toast.remove(), 3000);
-
-                    transcodeSwitch.checked = true;
-                    localStorage.setItem('transcode_enabled', 'true');
-
-                    setTimeout(() => {
-                        let currentUrl = video.dataset.currentUrl;
-                        if (currentUrl) {
-                             if (!currentUrl.includes('transcode=')) {
-                                const separator = currentUrl.includes('?') ? '&' : '?';
-                                currentUrl += `${separator}transcode=true`;
-                             }
-                             initPlayer(currentUrl, type);
-                        }
-                    }, 1000);
-                } else {
-                    const toast = document.createElement('div');
-                    toast.className = 'alert alert-warning position-absolute top-0 start-0 m-3';
-                    toast.textContent = t('playbackError') || 'Playback Error';
-                    document.getElementById('player-container').appendChild(toast);
-                    setTimeout(() => toast.remove(), 5000);
-                }
+                isHandlingError = true;
+                enableTranscodeAndRetry(type);
             }
         });
 
