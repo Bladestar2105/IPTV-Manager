@@ -963,7 +963,7 @@
     }
 
     // ─── Playback Strategy ───
-    // For .ts streams: prefer HLS (.m3u8) which handles codec issues server-side
+    // For .ts streams: use mpegts.js direct, auto-transcode on codec errors
     // For .mpd streams: use dash.js
     // For .m3u8 streams: use HLS.js or native
     // Fallback: mpegts.js direct
@@ -981,15 +981,12 @@
         // iOS/Safari: use native HLS
         var hlsUrl2 = url.replace(/\.ts($|\?)/, '.m3u8$1');
         initNativePlayer(hlsUrl2, streamType);
-      } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-        // Desktop/Android: try HLS.js first via .m3u8, fallback to mpegts.js
-        var hlsUrl3 = url.replace(/\.ts($|\?)/, '.m3u8$1');
-        initHlsPlayer(hlsUrl3, streamType, url);
       } else if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-        // Fallback: mpegts.js direct
+        // Desktop/Android: use mpegts.js direct — most reliable for live streams
+        // Auto-detects unsupported codecs (AC-3, HEVC) and falls back to transcode
         initMpegtsPlayer(url, streamType);
       } else if (hasNativeHLS) {
-        // Last resort: native HLS
+        // Fallback: native HLS if available
         var hlsUrl4 = url.replace(/\.ts($|\?)/, '.m3u8$1');
         initNativePlayer(hlsUrl4, streamType);
       } else {

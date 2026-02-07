@@ -293,7 +293,10 @@ export const proxyLive = async (req, res) => {
 
     if (reqExt === 'm3u8') {
       const text = await upstream.text();
-      const baseUrl = remoteUrl;
+      // Use the final URL after redirects as base for resolving relative segment URLs.
+      // The Xtream API often redirects .m3u8 requests to a CDN URL with a different path,
+      // so using the original remoteUrl would resolve relative segments incorrectly.
+      const baseUrl = upstream.url || remoteUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
       const headersToForward = { ...fetchHeaders };
@@ -328,6 +331,9 @@ export const proxyLive = async (req, res) => {
       });
 
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.send(newText);
 
       streamManager.remove(connectionId);
@@ -390,12 +396,12 @@ export const proxySegment = async (req, res) => {
             const payload = JSON.parse(Buffer.from(req.query.data, 'base64').toString());
             if (payload.u) targetUrl = payload.u;
             if (payload.h) {
-                const ALLOWED = ['User-Agent', 'Referer', 'Cookie', 'Connection'];
-                for (const [key, val] of Object.entries(payload.h)) {
-                    if (ALLOWED.includes(key)) headers[key] = val;
-                }
+                // Forward all headers from the payload (these were captured during
+                // the m3u8 fetch and are needed for segment authentication)
+                Object.assign(headers, payload.h);
             }
         } catch(e) {
+            console.error('Segment data decode error:', e.message);
             return res.sendStatus(400);
         }
     }
@@ -418,6 +424,7 @@ export const proxySegment = async (req, res) => {
     });
 
     if (!upstream.ok) {
+       console.error(`⚠️ Segment upstream error: ${upstream.status} for ${targetUrl}`);
        return res.sendStatus(upstream.status);
     }
 
