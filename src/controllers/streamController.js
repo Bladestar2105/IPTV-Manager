@@ -213,7 +213,7 @@ export const proxyLive = async (req, res) => {
     const shouldTranscode = (req.query.transcode === 'true') || (reqExt === 'mp4');
 
     if (shouldTranscode) {
-      console.log(`🎬 Starting full transcoding for stream ${streamId} (${reqExt})`);
+      console.log(`🎬 Starting audio transcoding for stream ${streamId} (${reqExt})`);
 
       try {
         const upstream = await fetch(remoteUrl, {
@@ -235,9 +235,9 @@ export const proxyLive = async (req, res) => {
         res.setHeader('Connection', 'keep-alive');
 
         const outputOptions = [
-            '-c:v libx264',
-            '-preset veryfast',
+            '-c:v copy',
             '-c:a aac',
+            '-b:a 128k',
             `-f ${outputFormat}`
         ];
 
