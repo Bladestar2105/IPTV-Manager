@@ -1009,6 +1009,18 @@
       } else {
         initNativePlayer(url, streamType);
       }
+    } else if (url.match(/\.(mkv|avi|mp4|mov|wmv)($|\?)/i)) {
+      // Movie/VOD files: MKV and AVI are auto-transcoded server-side to fMP4
+      // MP4/MOV play natively. Add transcode param if Fix Audio is enabled.
+      if (wantTranscode && !url.match(/\.(mkv|avi)($|\?)/i)) {
+        // MP4/MOV with transcode requested
+        var vodTranscodeUrl = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
+        initNativePlayer(vodTranscodeUrl, streamType);
+      } else {
+        // MKV/AVI: backend auto-transcodes to fMP4 (video copy + audio→AAC)
+        // MP4/MOV: play natively
+        initNativePlayer(url, streamType);
+      }
     } else {
       // Unknown format - try native
       initNativePlayer(url, streamType);
