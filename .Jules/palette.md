@@ -9,3 +9,7 @@
 ## 2024-10-24 - [Async UI State Restoration]
 **Learning:** When adding loading states to elements that trigger content updates (like "Load More" buttons), the element itself might be replaced or moved by the resulting render function.
 **Action:** Always re-query the DOM element by ID after the await completes before attempting to restore its state (text, disabled status), rather than relying on the closure variable reference.
+
+## 2025-05-20 - [Password Visibility Toggle]
+**Learning:** Admin dashboards often display sensitive data like passwords in plain text for convenience, which compromises privacy (shoulder surfing).
+**Action:** Default password fields to `type="password"` even for read-only displays, and add a "Show/Hide" toggle button. This balances security (default hidden) with utility (revealable).
