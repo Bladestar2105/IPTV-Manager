@@ -977,23 +977,24 @@
         var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
         var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
         initNativePlayer(mp4TranscodeUrl, streamType);
-      } else if (isIOS || (isSafari && hasNativeHLS)) {
-        // iOS/Safari: use native HLS
+      } else if (isIOS) {
+        // iOS only: use native HLS (MSE/mpegts.js unreliable on iOS)
         var hlsUrl2 = url.replace(/\.ts($|\?)/, '.m3u8$1');
         initNativePlayer(hlsUrl2, streamType);
       } else if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
-        // Desktop/Android: use mpegts.js direct — most reliable for live streams
-        // Auto-detects unsupported codecs (AC-3, HEVC) and falls back to transcode
+        // Desktop (Chrome/Firefox/Edge/Safari) + Android: mpegts.js direct
+        // Most reliable — auto-detects unsupported codecs (AC-3, HEVC) and falls back to transcode
         initMpegtsPlayer(url, streamType);
       } else if (hasNativeHLS) {
-        // Fallback: native HLS if available
+        // Fallback: native HLS if available (e.g. Safari without MSE)
         var hlsUrl4 = url.replace(/\.ts($|\?)/, '.m3u8$1');
         initNativePlayer(hlsUrl4, streamType);
       } else {
         initNativePlayer(url, streamType);
       }
     } else if (url.includes('.m3u8')) {
-      if (isIOS || (isSafari && hasNativeHLS)) {
+      if (isIOS) {
+        // iOS: native HLS
         initNativePlayer(url, streamType);
       } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         initHlsPlayer(url, streamType, null);
