@@ -21,43 +21,17 @@ function redactUrl(url) {
   }
 }
 
-// Detect if the request comes from a native IPTV app that can handle
-// MKV/AVI/AC-3/HEVC natively (no server-side transcoding needed).
-// Only web browsers need transcoding for unsupported codecs.
-function isNativePlayer(req) {
-  const ua = (req.headers['user-agent'] || '').toLowerCase();
-  const nativePlayerPatterns = [
-    'apple tv',           // Apple TV native player
-    'appletv',            // Apple TV variant
-    'tvos',               // tvOS (Apple TV)
-    'vlc',                // VLC media player
-    'kodi',               // Kodi
-    'xbmc',               // XBMC (old Kodi)
-    'tivimate',           // TiviMate
-    'smarters',           // IPTV Smarters
-    'iptv smarters',      // IPTV Smarters variant
-    'gse',                // GSE Smart IPTV
-    'ottnavigator',       // OTT Navigator
-    'perfect player',     // Perfect Player
-    'implayer',           // ImPlayer
-    'sparkle',            // Sparkle TV
-    'xtream',             // Xtream-compatible apps
-    'tivimax',            // TiviMax
-    'iplaytv',            // iPlayTV
-    'iptvx',              // IPTVX
-    'stbemu',             // STB Emulator
-    'mag',                // MAG devices
-    'formuler',           // Formuler boxes
-    'buzztv',             // BuzzTV
-    'dreamlink',          // Dreamlink
-    'libmpv',             // mpv-based players
-    'mpv ',               // mpv player
-    'lavf',               // FFmpeg/libav-based players
-    'dalvik',             // Android native apps
-    'exoplayer',          // Android ExoPlayer-based apps
-    'stagefright',        // Android native media framework
-  ];
-  return nativePlayerPatterns.some(p => ua.includes(p));
+// Detect if the request comes from a web browser.
+// Only browsers need server-side transcoding for MKV/AVI since they can't
+// play these containers natively. All other clients (IPTV apps, media players,
+// set-top boxes, etc.) handle MKV/AVI and their codecs natively.
+// Default: NO transcoding. Only transcode when a browser is detected.
+function isBrowser(req) {
+  const ua = (req.headers['user-agent'] || '');
+  // Browsers always include 'Mozilla/' AND at least one of these engine/browser tokens.
+  // IPTV apps may include 'Mozilla/' in their UA but won't have these browser-specific tokens.
+  if (!/Mozilla\//i.test(ua)) return false;
+  return /Chrome|Firefox|Safari|Edge|OPR|Opera|Vivaldi|Brave|SamsungBrowser|UCBrowser|MSIE|Trident/i.test(ua);
 }
 
 // --- MPD Proxy ---
@@ -583,11 +557,11 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
-    // Only auto-transcode MKV/AVI for web browsers. Native IPTV apps (Apple TV,
-    // VLC, Kodi, TiviMate, etc.) handle these formats and codecs natively.
+    // Default: NO transcoding. Only auto-transcode MKV/AVI for web browsers,
+    // which can't play these containers natively. All IPTV apps (Apple TV, VLC,
+    // Kodi, TiviMate, etc.) handle MKV/AVI and their codecs without issues.
     // Explicit transcode=true query param always forces transcoding (web player toggle).
-    const isNative = isNativePlayer(req);
-    const shouldTranscode = (req.query.transcode === 'true') || (!isNative && (ext === 'mkv' || ext === 'avi'));
+    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && (ext === 'mkv' || ext === 'avi'));
 
     if (shouldTranscode) {
         console.log(`🎬 Starting VOD transcoding for stream ${streamId} (${ext} -> mp4)`);
