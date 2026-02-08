@@ -508,7 +508,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
     });
     bootstrap.Modal.getInstance(document.getElementById('edit-user-modal')).hide();
     loadUsers();
-    alert(t('userUpdated'));
+    showToast(t('userUpdated'), 'success');
   } catch (e) {
     alert(t('errorPrefix') + ' ' + (e.message || 'Error'));
   }
@@ -1355,7 +1355,7 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     });
     f.reset();
     loadUsers();
-    alert(t('userCreated'));
+    showToast(t('userCreated'), 'success');
   } catch (e) {
     // Show user-friendly error message
     const errorData = e.response || {};
@@ -1387,7 +1387,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
       });
-      alert(t('providerUpdated'));
+      showToast(t('providerUpdated'), 'success');
       resetProviderForm();
     } else {
       await fetchJSON('/api/providers', {
@@ -1398,7 +1398,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
       f.reset();
       // Keep selected user if any
       if (selectedUserId) f.user_id.value = selectedUserId;
-      alert(t('providerCreated'));
+      showToast(t('providerCreated'), 'success');
     }
 
     // Close Modal
@@ -1431,7 +1431,7 @@ document.getElementById('category-form').addEventListener('submit', async e => {
     });
     f.reset();
     loadUserCategories();
-    alert(t('categoryCreated'));
+    showToast(t('categoryCreated'), 'success');
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   }
@@ -3324,11 +3324,28 @@ function updateCatBulkDeleteBtn() {
     }
 }
 
-function updateChanBulkDeleteBtn() {
-    const count = document.querySelectorAll('.user-chan-check:checked').length;
-    const btn = document.getElementById('chan-bulk-delete-btn');
-    if (btn) {
-        btn.style.display = count > 0 ? 'block' : 'none';
-        btn.textContent = `${t('deleteSelected')} (${count})`;
-    }
+function showToast(message, type = 'primary') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const el = document.createElement('div');
+    el.className = `toast align-items-center text-white bg-${type} border-0`;
+    el.setAttribute('role', 'alert');
+    el.setAttribute('aria-live', 'assertive');
+    el.setAttribute('aria-atomic', 'true');
+
+    el.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    `;
+
+    container.appendChild(el);
+    const toast = new bootstrap.Toast(el);
+    toast.show();
+
+    el.addEventListener('hidden.bs.toast', () => {
+        el.remove();
+    });
 }
