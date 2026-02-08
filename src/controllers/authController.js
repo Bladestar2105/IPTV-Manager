@@ -239,6 +239,12 @@ export const createPlayerToken = (req, res) => {
     const { user_id } = req.body;
     if (!user_id) return res.status(400).json({error: 'user_id required'});
 
+    // Security: Only allow admins to generate tokens for others
+    if (!req.user.is_admin && String(req.user.id) !== String(user_id)) {
+      console.warn(`⛔ IDOR Attempt: User ${req.user.username} (ID: ${req.user.id}) tried to generate token for ID: ${user_id}`);
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     const user = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
     if (!user) return res.status(404).json({error: 'User not found'});
 
