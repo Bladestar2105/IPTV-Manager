@@ -277,6 +277,23 @@ function fallbackCopyTextToClipboard(text, btnElement, successCallback) {
     document.body.removeChild(textArea);
 }
 
+function togglePasswordVisibility(inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    const isPassword = input.type === 'password';
+    input.type = isPassword ? 'text' : 'password';
+
+    // Update Button
+    btn.innerHTML = isPassword ? '🙈' : '👁️';
+
+    // Update ARIA and Title
+    const labelKey = isPassword ? 'hide_password' : 'show_password';
+    const label = t(labelKey);
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+}
+
 function copyAllXtreamCredentials(btnElement) {
     const url = document.getElementById('xtream-url').value;
     const user = document.getElementById('xtream-user').value;

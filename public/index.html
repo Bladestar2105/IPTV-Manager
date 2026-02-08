@@ -871,7 +871,10 @@
             </div>
             <div class="mb-3">
               <label for="login-password" class="form-label" data-i18n="password">Password</label>
-              <input type="password" class="form-control" id="login-password" required>
+              <div class="input-group">
+                <input type="password" class="form-control" id="login-password" required>
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('login-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+              </div>
             </div>
             <div class="mb-3" id="login-otp-group" style="display:none;">
               <label for="login-otp" class="form-label" data-i18n="otp_code">2FA Code</label>
