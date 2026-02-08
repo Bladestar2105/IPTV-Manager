@@ -3315,6 +3315,15 @@ async function handleChangePassword(event) {
   }
 }
 
+function updateChanBulkDeleteBtn() {
+    const count = document.querySelectorAll('.user-chan-check:checked').length;
+    const btn = document.getElementById('chan-bulk-delete-btn');
+    if (btn) {
+        btn.style.display = count > 0 ? 'block' : 'none';
+        btn.textContent = `${t('deleteSelected')} (${count})`;
+    }
+}
+
 function updateCatBulkDeleteBtn() {
     const count = document.querySelectorAll('.user-cat-check:checked').length;
     const btn = document.getElementById('cat-bulk-delete-btn');
