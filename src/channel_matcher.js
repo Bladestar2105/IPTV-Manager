@@ -57,7 +57,7 @@ export class ChannelMatcher {
    * Extrahiert Channel-Name und Sprache aus verschiedenen Formaten
    */
   parseChannelName(channelName) {
-    if (!channelName) return { baseName: '', language: null, original: '' };
+    if (!channelName) return { baseName: '', language: null, original: '', bigrams: new Set() };
     const original = channelName.trim();
 
     // Pattern-Matching für verschiedene Formate
@@ -66,7 +66,8 @@ export class ChannelMatcher {
       /^(.+?)\s+([A-Z]{2,3})$/i,
 
       // "Arte (German)", "CNN (EN)", "Eurosport 1 [ENG]"
-      /^(.+?)\s*[\\(\\[]([^\\)\\]]+)[\)\]]$/i,
+      // Fixed regex: removed extra backslashes to correctly match parenthesis
+      /^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]$/i,
 
       // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL"
       /^(.+?)[\-_\.\|]([A-Z]{2,3})$/i,
@@ -90,20 +91,24 @@ export class ChannelMatcher {
         }
 
         if (name && lang) {
+          const baseName = this.normalizeBaseName(name);
           return {
-            baseName: this.normalizeBaseName(name),
+            baseName: baseName,
             language: this.normalizeLanguage(lang),
-            original: original
+            original: original,
+            bigrams: this.getBigrams(baseName)
           };
         }
       }
     }
 
     // Kein Sprachcode gefunden
+    const baseName = this.normalizeBaseName(original);
     return {
-      baseName: this.normalizeBaseName(original),
+      baseName: baseName,
       language: null,
-      original: original
+      original: original,
+      bigrams: this.getBigrams(baseName)
     };
   }
 
@@ -275,12 +280,19 @@ export class ChannelMatcher {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
     const normalized = this.normalizeBaseName(searchName);
+    const searchBigrams = this.getBigrams(normalized);
 
     let bestScore = -1;
     let bestCand = null;
 
     for (const cand of candidates) {
-        const score = this.calculateDiceCoefficient(normalized, cand.parsed.baseName);
+        let score = 0;
+        if (normalized === cand.parsed.baseName) {
+            score = 1;
+        } else {
+            score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
+        }
+
         if (score > bestScore) {
             bestScore = score;
             bestCand = cand;
@@ -295,7 +307,7 @@ export class ChannelMatcher {
 
   /**
    * Calculates Dice Coefficient (Sørensen–Dice index) for string similarity.
-   * Range 0.0 to 1.0.
+   * Legacy method kept for backward compatibility.
    */
   calculateDiceCoefficient(a, b) {
     if (!a || !b) return 0;
@@ -304,11 +316,24 @@ export class ChannelMatcher {
     const bigramsA = this.getBigrams(a);
     const bigramsB = this.getBigrams(b);
 
-    if (bigramsA.size === 0 && bigramsB.size === 0) return 0;
+    return this.calculateDiceCoefficientSets(bigramsA, bigramsB);
+  }
+
+  /**
+   * Calculates Dice Coefficient using pre-computed bigram sets.
+   */
+  calculateDiceCoefficientSets(bigramsA, bigramsB) {
+    if (bigramsA.size === 0 && bigramsB.size === 0) return 0; // Both empty -> 0 similarity? Or 1?
+    // If both strings were empty, bigrams empty. Empty strings are equal?
+    // Original logic: if (a===b) return 1.
+    // If we handle empty case outside, here return 0.
 
     let intersection = 0;
-    for (const bg of bigramsA) {
-        if (bigramsB.has(bg)) {
+    // Iterate smaller set for performance
+    const [smaller, larger] = bigramsA.size < bigramsB.size ? [bigramsA, bigramsB] : [bigramsB, bigramsA];
+
+    for (const bg of smaller) {
+        if (larger.has(bg)) {
             intersection++;
         }
     }
@@ -318,6 +343,7 @@ export class ChannelMatcher {
 
   getBigrams(str) {
     const bigrams = new Set();
+    if (!str) return bigrams;
     for (let i = 0; i < str.length - 1; i++) {
         bigrams.add(str.substring(i, i + 2));
     }
