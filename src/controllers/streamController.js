@@ -8,6 +8,58 @@ import { isSafeUrl } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
+// Redact credentials from upstream URLs before logging.
+// Matches patterns like /live/user/pass/, /movie/user/pass/, /timeshift/user/pass/ etc.
+function redactUrl(url) {
+  try {
+    return url.replace(
+      /\/(live|movie|series|timeshift)\/([^/]+)\/([^/]+)\//,
+      '/$1/$2/********/'
+    );
+  } catch (e) {
+    return '[redacted]';
+  }
+}
+
+// Detect if the request comes from a native IPTV app that can handle
+// MKV/AVI/AC-3/HEVC natively (no server-side transcoding needed).
+// Only web browsers need transcoding for unsupported codecs.
+function isNativePlayer(req) {
+  const ua = (req.headers['user-agent'] || '').toLowerCase();
+  const nativePlayerPatterns = [
+    'apple tv',           // Apple TV native player
+    'appletv',            // Apple TV variant
+    'tvos',               // tvOS (Apple TV)
+    'vlc',                // VLC media player
+    'kodi',               // Kodi
+    'xbmc',               // XBMC (old Kodi)
+    'tivimate',           // TiviMate
+    'smarters',           // IPTV Smarters
+    'iptv smarters',      // IPTV Smarters variant
+    'gse',                // GSE Smart IPTV
+    'ottnavigator',       // OTT Navigator
+    'perfect player',     // Perfect Player
+    'implayer',           // ImPlayer
+    'sparkle',            // Sparkle TV
+    'xtream',             // Xtream-compatible apps
+    'tivimax',            // TiviMax
+    'iplaytv',            // iPlayTV
+    'iptvx',              // IPTVX
+    'stbemu',             // STB Emulator
+    'mag',                // MAG devices
+    'formuler',           // Formuler boxes
+    'buzztv',             // BuzzTV
+    'dreamlink',          // Dreamlink
+    'libmpv',             // mpv-based players
+    'mpv ',               // mpv player
+    'lavf',               // FFmpeg/libav-based players
+    'dalvik',             // Android native apps
+    'exoplayer',          // Android ExoPlayer-based apps
+    'stagefright',        // Android native media framework
+  ];
+  return nativePlayerPatterns.some(p => ua.includes(p));
+}
+
 // --- MPD Proxy ---
 export const proxyMpd = async (req, res) => {
   const connectionId = crypto.randomUUID();
@@ -87,7 +139,7 @@ export const proxyMpd = async (req, res) => {
     }
 
     if (!(await isSafeUrl(upstreamUrl))) {
-        console.warn(`🛡️ Blocked unsafe upstream URL: ${upstreamUrl}`);
+        console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(upstreamUrl)}`);
         streamManager.remove(connectionId);
         return res.sendStatus(403);
     }
@@ -98,7 +150,7 @@ export const proxyMpd = async (req, res) => {
     });
 
     if (!upstream.ok) {
-       console.error(`MPD proxy error: ${upstream.status} for ${upstreamUrl}`);
+       console.error(`MPD proxy error: ${upstream.status} for ${redactUrl(upstreamUrl)}`);
        streamManager.remove(connectionId);
        return res.sendStatus(upstream.status);
     }
@@ -198,7 +250,7 @@ export const proxyLive = async (req, res) => {
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
 
     if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -296,7 +348,7 @@ export const proxyLive = async (req, res) => {
     });
 
     if (!upstream.ok || !upstream.body) {
-      console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
       streamManager.remove(connectionId);
       return res.sendStatus(502);
     }
@@ -512,7 +564,7 @@ export const proxyMovie = async (req, res) => {
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
 
     if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -531,7 +583,11 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
-    const shouldTranscode = (req.query.transcode === 'true') || (ext === 'mkv') || (ext === 'avi');
+    // Only auto-transcode MKV/AVI for web browsers. Native IPTV apps (Apple TV,
+    // VLC, Kodi, TiviMate, etc.) handle these formats and codecs natively.
+    // Explicit transcode=true query param always forces transcoding (web player toggle).
+    const isNative = isNativePlayer(req);
+    const shouldTranscode = (req.query.transcode === 'true') || (!isNative && (ext === 'mkv' || ext === 'avi'));
 
     if (shouldTranscode) {
         console.log(`🎬 Starting VOD transcoding for stream ${streamId} (${ext} -> mp4)`);
@@ -597,7 +653,7 @@ export const proxyMovie = async (req, res) => {
 
     if (!upstream.ok || !upstream.body) {
       if (upstream.status !== 200 && upstream.status !== 206) {
-          console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+          console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
           streamManager.remove(connectionId);
           return res.sendStatus(502);
       }
@@ -666,7 +722,7 @@ export const proxySeries = async (req, res) => {
     const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
 
     if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -687,7 +743,7 @@ export const proxySeries = async (req, res) => {
 
     if (!upstream.ok || !upstream.body) {
       if (upstream.status !== 200 && upstream.status !== 206) {
-          console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+          console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
           streamManager.remove(connectionId);
           return res.sendStatus(502);
       }
@@ -763,10 +819,11 @@ export const proxyTimeshift = async (req, res) => {
     channel.provider_pass = decrypt(channel.provider_pass);
 
     const base = channel.provider_url.replace(/\/+$/, '');
-    const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.ts`;
+    const reqExt = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
+    const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
 
     if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${remoteUrl}`);
+      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -791,9 +848,42 @@ export const proxyTimeshift = async (req, res) => {
     });
 
     if (!upstream.ok || !upstream.body) {
-      console.error(`Timeshift proxy error: ${upstream.status} ${upstream.statusText} for ${remoteUrl}`);
+      console.error(`Timeshift proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
       streamManager.remove(connectionId);
       return res.sendStatus(502);
+    }
+
+    if (reqExt === 'm3u8') {
+      // Rewrite HLS manifest: resolve relative segment URLs through our proxy
+      const text = await upstream.text();
+      const baseUrl = upstream.url || remoteUrl;
+      const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+
+      const headersToForward = { ...headers };
+      const cookies = upstream.headers.get('set-cookie');
+      if (cookies) headersToForward['Cookie'] = cookies;
+
+      const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
+        const line = match.trim();
+        if (!line) return match;
+        try {
+          const absoluteUrl = new URL(line, baseUrl).toString();
+          const payload = { u: absoluteUrl, h: headersToForward };
+          const encrypted = encrypt(JSON.stringify(payload));
+          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}${tokenParam}`;
+        } catch (e) {
+          return match;
+        }
+      });
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.send(newText);
+
+      streamManager.remove(connectionId);
+      return;
     }
 
     res.setHeader('Content-Type', 'video/mp2t');

@@ -8,6 +8,6 @@ router.get(['/live/:username/:password/:stream_id.ts', '/live/:username/:passwor
 router.get(['/live/segment/:username/:password/seg.ts', '/live/segment/:username/:password/seg.key'], streamController.proxySegment);
 router.get('/movie/:username/:password/:stream_id.:ext', streamController.proxyMovie);
 router.get('/series/:username/:password/:episode_id.:ext', streamController.proxySeries);
-router.get('/timeshift/:username/:password/:duration/:start/:stream_id.ts', streamController.proxyTimeshift);
+router.get(['/timeshift/:username/:password/:duration/:start/:stream_id.ts', '/timeshift/:username/:password/:duration/:start/:stream_id.m3u8'], streamController.proxyTimeshift);
 
 export default router;

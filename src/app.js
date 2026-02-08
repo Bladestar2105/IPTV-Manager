@@ -47,8 +47,12 @@ app.use(cors({
 // Logging
 morgan.token('url', (req, res) => {
   let url = req.originalUrl || req.url;
-  url = url.replace(/\/live\/([^/]+)\/([^/]+)\//, '/live/$1/********.redacted/');
-  url = url.replace(/([?&])password=[^&]*/i, '$1password=********');
+  // Redact password in path segments: /live/user/PASS/..., /movie/user/PASS/...,
+  // /series/user/PASS/..., /timeshift/user/PASS/..., /live/mpd/user/PASS/...,
+  // /live/segment/user/PASS/...
+  url = url.replace(/\/(live|movie|series|timeshift)\/((?:mpd|segment)\/)?([^/]+)\/([^/]+)\//, '/$1/$2$3/********/');
+  // Redact password in query strings: ?password=xxx or &password=xxx
+  url = url.replace(/([?&])password=[^&]*/gi, '$1password=********');
   return url;
 });
 app.use(morgan(':method :url :status :response-time ms - :res[content-length]'));
