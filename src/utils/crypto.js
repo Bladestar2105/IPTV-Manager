@@ -43,7 +43,7 @@ export function encrypt(text) {
     return iv.toString('hex') + ':' + encrypted.toString('hex');
   } catch (e) {
     console.error('Encryption error:', e);
-    return text;
+    throw new Error('Encryption failed');
   }
 }
 
