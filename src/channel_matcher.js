@@ -92,11 +92,15 @@ export class ChannelMatcher {
 
         if (name && lang) {
           const baseName = this.normalizeBaseName(name);
+          const numbers = this.extractNumbers(baseName);
           return {
             baseName: baseName,
             language: this.normalizeLanguage(lang),
             original: original,
-            bigrams: this.getBigrams(baseName)
+            bigrams: this.getBigrams(baseName),
+            numbers: numbers,
+            // Pre-compute sorted numbers string for O(1) matching
+            numbersString: [...numbers].sort().join(',')
           };
         }
       }
@@ -104,11 +108,15 @@ export class ChannelMatcher {
 
     // Kein Sprachcode gefunden
     const baseName = this.normalizeBaseName(original);
+    const numbers = this.extractNumbers(baseName);
     return {
       baseName: baseName,
       language: null,
       original: original,
-      bigrams: this.getBigrams(baseName)
+      bigrams: this.getBigrams(baseName),
+      numbers: numbers,
+      // Pre-compute sorted numbers string for O(1) matching
+      numbersString: [...numbers].sort().join(',')
     };
   }
 
@@ -147,17 +155,12 @@ export class ChannelMatcher {
    */
   match(iptvChannelName) {
     const parsed = this.parseChannelName(iptvChannelName);
-    const iptvNums = this.extractNumbers(parsed.baseName);
+    const iptvNumsString = parsed.numbersString;
 
     // Helper to verify numbers match
-    const checkNumbers = (epgBaseName) => {
-        const epgNums = this.extractNumbers(epgBaseName);
-        if (iptvNums.length === 0 && epgNums.length === 0) return true;
-        if (iptvNums.length !== epgNums.length) return false;
-        // Strict set equality
-        const s1 = [...iptvNums].sort().join(',');
-        const s2 = [...epgNums].sort().join(',');
-        return s1 === s2;
+    // Optimized: compares pre-computed sorted number strings to avoid repeated regex and sorting in loops
+    const checkNumbers = (epgParsed) => {
+        return iptvNumsString === epgParsed.numbersString;
     };
 
     // 1. Suche nach exaktem Match (Name + Sprache)
@@ -225,7 +228,7 @@ export class ChannelMatcher {
 
     // 6. Global Fuzzy Fallback (if base name didn't match exactly)
     // Filter all EPG channels by Number Logic First
-    const potentialCandidates = this.parsedEpgChannels.filter(c => checkNumbers(c.parsed.baseName));
+    const potentialCandidates = this.parsedEpgChannels.filter(c => checkNumbers(c.parsed));
 
     // If language is known, prefer that language, but allow others if score is very high
     const bestGlobal = this.findBestSimilarity(parsed.baseName, potentialCandidates);
@@ -266,13 +269,13 @@ export class ChannelMatcher {
     return this.parsedEpgChannels.find(epg => {
       return epg.parsed.baseName === parsed.baseName &&
              epg.parsed.language === parsed.language &&
-             checkNumbers(epg.parsed.baseName);
+             checkNumbers(epg.parsed);
     });
   }
 
   findCandidatesByBaseName(baseName, checkNumbers) {
     return this.parsedEpgChannels.filter(epg => {
-      return epg.parsed.baseName === baseName && checkNumbers(epg.parsed.baseName);
+      return epg.parsed.baseName === baseName && checkNumbers(epg.parsed);
     });
   }
 
