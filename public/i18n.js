@@ -189,6 +189,8 @@ const translations = {
 
     // Password Change
     change_password: 'Change Password',
+    show_password: 'Show Password',
+    hide_password: 'Hide Password',
     old_password: 'Old Password',
     new_password: 'New Password',
     confirm_password: 'Confirm Password',
@@ -551,6 +553,8 @@ const translations = {
 
     // Password Change
     change_password: 'Passwort ändern',
+    show_password: 'Passwort anzeigen',
+    hide_password: 'Passwort verbergen',
     old_password: 'Altes Passwort',
     new_password: 'Neues Passwort',
     confirm_password: 'Passwort bestätigen',
@@ -913,6 +917,8 @@ const translations = {
 
     // Password Change
     change_password: 'Changer le mot de passe',
+    show_password: 'Afficher le mot de passe',
+    hide_password: 'Masquer le mot de passe',
     old_password: 'Ancien mot de passe',
     new_password: 'Nouveau mot de passe',
     confirm_password: 'Confirmer le mot de passe',
@@ -1275,6 +1281,8 @@ const translations = {
 
     // Password Change
     change_password: 'Αλλαγή κωδικού',
+    show_password: 'Εμφάνιση κωδικού',
+    hide_password: 'Απόκρυψη κωδικού',
     old_password: 'Παλιός κωδικός',
     new_password: 'Νέος κωδικός',
     confirm_password: 'Επιβεβαίωση κωδικού',
