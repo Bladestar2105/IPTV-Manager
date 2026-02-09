@@ -129,6 +129,30 @@ function makeAccessible(element, clickHandler) {
   };
 }
 
+// Utility: Loading State Helper
+function setLoadingState(btn, isLoading, textKey = 'loading', showText = true) {
+  if (!btn) return;
+  if (isLoading) {
+    btn.disabled = true;
+    if (!btn.dataset.originalText) {
+      btn.dataset.originalText = btn.innerHTML;
+    }
+    const spinner = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+    if (showText) {
+      const text = t(textKey) || 'Loading...';
+      btn.innerHTML = `${spinner} ${text}`;
+    } else {
+      btn.innerHTML = spinner;
+    }
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.originalText) {
+      btn.innerHTML = btn.dataset.originalText;
+      delete btn.dataset.originalText;
+    }
+  }
+}
+
 // i18n: Seite übersetzen
 function translatePage() {
   // Texte übersetzen
@@ -589,8 +613,7 @@ async function loadProviders(filterUserId = null) {
             alert(t('pleaseSelectUserFirst'));
             return;
           }
-          syncBtn.disabled = true;
-          syncBtn.textContent = t('syncing');
+          setLoadingState(syncBtn, true, 'syncing');
           try {
             const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
               method: 'POST',
@@ -605,8 +628,7 @@ async function loadProviders(filterUserId = null) {
           } catch (e) {
             alert(t('errorPrefix') + ' ' + e.message);
           } finally {
-            syncBtn.disabled = false;
-            syncBtn.textContent = t('sync');
+            setLoadingState(syncBtn, false);
           }
         };
         btnGroup.appendChild(syncBtn);
@@ -1009,10 +1031,7 @@ async function importSelectedCategories(withChannels) {
 
   const btnId = withChannels ? 'btn-import-selected-channels' : 'btn-import-selected';
   const btn = document.getElementById(btnId);
-  if(btn) {
-      btn.disabled = true;
-      btn.textContent = t('loading');
-  }
+  if(btn) setLoadingState(btn, true, 'loading');
 
   try {
     const result = await fetchJSON(`/api/providers/${providerId}/import-categories`, {
@@ -1041,10 +1060,7 @@ async function importSelectedCategories(withChannels) {
     console.error('❌ Import error:', e);
     alert(t('errorPrefix') + ' ' + e.message);
   } finally {
-      if(btn) {
-          btn.disabled = false;
-          btn.textContent = withChannels ? t('importSelectedWithChannels') : t('importSelected');
-      }
+      if(btn) setLoadingState(btn, false);
   }
 }
 
@@ -1234,15 +1250,13 @@ function renderProviderChannels(channels) {
       btn.className = 'btn btn-sm btn-outline-primary w-100';
       btn.textContent = t('loadMore');
       btn.onclick = async function() {
-          this.disabled = true;
-          this.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ${t('loading')}`;
+          setLoadingState(this, true, 'loading');
 
           channelPage++;
           await loadProviderChannels(false);
 
           if (document.body.contains(this)) {
-              this.disabled = false;
-              this.textContent = t('loadMore');
+              setLoadingState(this, false);
           }
       };
 
@@ -1640,8 +1654,7 @@ async function loadEpgSources() {
       updateBtn.setAttribute('aria-label', t('updateNow'));
       updateBtn.disabled = source.is_updating;
       updateBtn.onclick = async () => {
-        updateBtn.disabled = true;
-        updateBtn.innerHTML = '⏳';
+        setLoadingState(updateBtn, true, null, false);
         try {
           await fetchJSON(`/api/epg-sources/${source.id}/update`, {method: 'POST'});
           alert(t('epgUpdateSuccess'));
@@ -1649,8 +1662,7 @@ async function loadEpgSources() {
         } catch (e) {
           alert(t('errorPrefix') + ' ' + e.message);
         } finally {
-          updateBtn.disabled = false;
-          updateBtn.innerHTML = '🔄';
+          setLoadingState(updateBtn, false);
         }
       };
       
@@ -1851,8 +1863,7 @@ async function handleExport(e) {
     }
 
     const btn = document.getElementById('export-btn');
-    btn.disabled = true;
-    btn.textContent = t('processing');
+    setLoadingState(btn, true, 'processing');
 
     try {
         const token = getToken();
@@ -1888,8 +1899,7 @@ async function handleExport(e) {
     } catch(e) {
         alert(t('errorPrefix') + ' ' + e.message);
     } finally {
-        btn.disabled = false;
-        btn.textContent = t('exportBtn');
+        setLoadingState(btn, false);
     }
 }
 
@@ -1906,8 +1916,7 @@ async function handleImport(e) {
     }
 
     const btn = document.getElementById('import-btn');
-    btn.disabled = true;
-    btn.textContent = t('processing');
+    setLoadingState(btn, true, 'processing');
 
     const formData = new FormData();
     formData.append('file', file);
@@ -1933,8 +1942,7 @@ async function handleImport(e) {
     } catch(e) {
         alert(t('errorPrefix') + ' ' + e.message);
     } finally {
-        btn.disabled = false;
-        btn.textContent = t('importBtn');
+        setLoadingState(btn, false);
     }
 }
 
@@ -2050,8 +2058,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (updateAllEpgBtn) {
     updateAllEpgBtn.addEventListener('click', async () => {
       if (!confirm(t('epgUpdateAllConfirm'))) return;
-      updateAllEpgBtn.disabled = true;
-      updateAllEpgBtn.innerHTML = `⏳ ${t('updating')}`;
+      setLoadingState(updateAllEpgBtn, true, 'updating');
       try {
         const result = await fetchJSON('/api/epg-sources/update-all', {method: 'POST'});
         const success = result.results.filter(r => r.success).length;
@@ -2061,8 +2068,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (e) {
         alert(t('errorPrefix') + ' ' + e.message);
       } finally {
-        updateAllEpgBtn.disabled = false;
-        updateAllEpgBtn.innerHTML = t('updateAllEpg');
+        setLoadingState(updateAllEpgBtn, false);
       }
     });
   }
@@ -2869,8 +2875,7 @@ async function handleAutoMap() {
   if (!confirm(t('autoMapConfirm'))) return;
 
   const btn = document.getElementById('auto-map-btn');
-  btn.disabled = true;
-  btn.innerHTML = '⏳ ...';
+  setLoadingState(btn, true, 'autoMap');
 
   const onlyUsed = document.getElementById('epg-only-used') ? document.getElementById('epg-only-used').checked : false;
 
@@ -2886,8 +2891,7 @@ async function handleAutoMap() {
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   } finally {
-    btn.disabled = false;
-    btn.textContent = t('autoMap');
+    setLoadingState(btn, false);
   }
 }
 
@@ -2898,8 +2902,7 @@ async function handleResetMapping() {
   if (!confirm(t('resetMappingConfirm'))) return;
 
   const btn = document.getElementById('reset-map-btn');
-  btn.disabled = true;
-  btn.innerHTML = '⏳ ...';
+  setLoadingState(btn, true, 'resetMapping');
 
   try {
     await fetchJSON('/api/mapping/reset', {
@@ -2913,8 +2916,7 @@ async function handleResetMapping() {
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   } finally {
-    btn.disabled = false;
-    btn.textContent = t('resetMapping');
+    setLoadingState(btn, false);
   }
 }
 
@@ -3100,8 +3102,7 @@ async function handleLogin(event) {
     return;
   }
   
-  loginBtn.disabled = true;
-  loginBtn.textContent = t('logging_in');
+  setLoadingState(loginBtn, true, 'logging_in');
   errorDiv.style.display = 'none';
   
   try {
@@ -3158,8 +3159,7 @@ async function handleLogin(event) {
        errorDiv.style.display = 'block';
     }
   } finally {
-    loginBtn.disabled = false;
-    loginBtn.textContent = t('login');
+    setLoadingState(loginBtn, false);
   }
 }
 
@@ -3285,8 +3285,7 @@ async function handleChangePassword(event) {
     return;
   }
   
-  changePasswordBtn.disabled = true;
-  changePasswordBtn.textContent = t('changing_password');
+  setLoadingState(changePasswordBtn, true, 'changing_password');
   
   try {
     const response = await fetch('/api/change-password', {
@@ -3327,8 +3326,7 @@ async function handleChangePassword(event) {
     errorDiv.textContent = t(error.message) || t('change_password_failed');
     errorDiv.style.display = 'block';
   } finally {
-    changePasswordBtn.disabled = false;
-    changePasswordBtn.textContent = t('change_password');
+    setLoadingState(changePasswordBtn, false);
   }
 }
 
