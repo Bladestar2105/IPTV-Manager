@@ -17,6 +17,19 @@ class StreamManager {
       console.log(`⚡ StreamManager using Redis (Worker ${this.pid})`);
     } else {
       console.log(`💾 StreamManager using SQLite (Worker ${this.pid})`);
+      if (this.db) {
+        try {
+          this.stmtAdd = this.db.prepare(`
+            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `);
+          this.stmtRemove = this.db.prepare('DELETE FROM current_streams WHERE id = ?');
+          this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
+          this.stmtGetAll = this.db.prepare('SELECT * FROM current_streams');
+        } catch (e) {
+          console.error('Failed to prepare statements:', e);
+        }
+      }
     }
   }
 
@@ -44,10 +57,14 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        this.db.prepare(`
-          INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(id, user.id, user.username, channelName, data.start_time, ip, this.pid);
+        if (this.stmtAdd) {
+          this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, ip, this.pid);
+        } else {
+          this.db.prepare(`
+            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(id, user.id, user.username, channelName, data.start_time, ip, this.pid);
+        }
       } catch (e) {
         console.error('DB Add Error:', e.message);
       }
@@ -87,7 +104,11 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        this.db.prepare('DELETE FROM current_streams WHERE id = ?').run(id);
+        if (this.stmtRemove) {
+          this.stmtRemove.run(id);
+        } else {
+          this.db.prepare('DELETE FROM current_streams WHERE id = ?').run(id);
+        }
       } catch (e) { /* ignore */ }
     }
   }
@@ -106,7 +127,13 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        const row = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?').get(userId, ip);
+        let row;
+        if (this.stmtCleanup) {
+          row = this.stmtCleanup.get(userId, ip);
+        } else {
+          row = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?').get(userId, ip);
+        }
+
         if (row) {
           await this.remove(row.id);
         }
@@ -127,7 +154,11 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        return this.db.prepare('SELECT * FROM current_streams').all();
+        if (this.stmtGetAll) {
+          return this.stmtGetAll.all();
+        } else {
+          return this.db.prepare('SELECT * FROM current_streams').all();
+        }
       } catch (e) {
         return [];
       }
