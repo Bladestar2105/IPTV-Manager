@@ -1,4 +1,6 @@
 import { encrypt, decrypt } from '../utils/crypto.js';
+import bcrypt from 'bcrypt';
+import { BCRYPT_ROUNDS } from '../config/constants.js';
 
 export function migrateProvidersSchema(db) {
   try {
@@ -403,5 +405,34 @@ export function migrateOtpSecrets(db) {
     }
   } catch (e) {
     console.error('OTP Secret migration error:', e);
+  }
+}
+
+export function migrateUserPasswords(db) {
+  try {
+    const users = db.prepare('SELECT id, password FROM users').all();
+    let migratedCount = 0;
+
+    for (const user of users) {
+      if (!user.password) continue;
+
+      // Check if already bcrypt (starts with $2b$)
+      if (user.password.startsWith('$2b$')) continue;
+
+      // Try to decrypt (assuming it was encrypted with reversible encryption)
+      const decrypted = decrypt(user.password);
+
+      if (decrypted) {
+         const hashed = bcrypt.hashSync(decrypted, BCRYPT_ROUNDS);
+         db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashed, user.id);
+         migratedCount++;
+      }
+    }
+
+    if (migratedCount > 0) {
+      console.log(`🔐 Migrated ${migratedCount} user passwords to bcrypt hashes`);
+    }
+  } catch (e) {
+    console.error('User Password migration error:', e);
   }
 }

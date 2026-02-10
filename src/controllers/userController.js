@@ -1,5 +1,7 @@
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import bcrypt from 'bcrypt';
+import { BCRYPT_ROUNDS } from '../config/constants.js';
 
 export const getUsers = (req, res) => {
   try {
@@ -56,11 +58,11 @@ export const createUser = async (req, res) => {
       });
     }
 
-    // Encrypt password (reversible)
-    const encryptedPassword = encrypt(p);
+    // Hash password
+    const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
 
     // Insert user
-    const info = db.prepare('INSERT INTO users (username, password, webui_access) VALUES (?, ?, ?)').run(u, encryptedPassword, webui_access !== undefined ? (webui_access ? 1 : 0) : 1);
+    const info = db.prepare('INSERT INTO users (username, password, webui_access) VALUES (?, ?, ?)').run(u, hashedPassword, webui_access !== undefined ? (webui_access ? 1 : 0) : 1);
 
     res.json({
       id: info.lastInsertRowid,
@@ -103,9 +105,9 @@ export const updateUser = async (req, res) => {
         if (p.length < 8) {
             return res.status(400).json({ error: 'password_too_short' });
         }
-        const encryptedPassword = encrypt(p);
+        const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
         updates.push('password = ?');
-        params.push(encryptedPassword);
+        params.push(hashedPassword);
     }
 
     if (webui_access !== undefined) {
