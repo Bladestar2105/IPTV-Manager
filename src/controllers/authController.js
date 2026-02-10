@@ -212,12 +212,7 @@ export const changePassword = async (req, res) => {
       return res.status(401).json({error: 'invalid_old_password'});
     }
 
-    let newPasswordStored;
-    if (isAdmin) {
-        newPasswordStored = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    } else {
-        newPasswordStored = encrypt(newPassword);
-    }
+    const newPasswordStored = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
     // Update password
     db.prepare(`UPDATE ${table} SET password = ? WHERE id = ?`).run(newPasswordStored, userId);
