@@ -1948,6 +1948,45 @@ async function handleImport(e) {
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', () => {
+  // Make dashboard stats cards interactive
+  const cardActions = {
+    'stats-users': () => {
+      const el = document.getElementById('user-form');
+      if (el) {
+        el.scrollIntoView({behavior: 'smooth'});
+        if (el.username) el.username.focus();
+      }
+    },
+    'stats-providers': () => {
+      const section = document.getElementById('provider-section');
+      if (section && section.style.display !== 'none') {
+        section.scrollIntoView({behavior: 'smooth'});
+      } else {
+        const el = document.getElementById('user-form');
+        if (el) {
+          el.scrollIntoView({behavior: 'smooth'});
+          if (el.username) el.username.focus();
+        }
+      }
+    },
+    'stats-streams': () => switchView('statistics'),
+    'stats-epg': () => {
+      const el = document.getElementById('epg-sources-card');
+      if (el) el.scrollIntoView({behavior: 'smooth'});
+    }
+  };
+
+  for (const [id, action] of Object.entries(cardActions)) {
+    const el = document.getElementById(id);
+    if (el) {
+      const card = el.closest('.card');
+      if (card) {
+        makeAccessible(card, action);
+        card.style.cursor = 'pointer';
+      }
+    }
+  }
+
   // Fix for tab switching issues (overlapping content)
   const triggerTabList = [].slice.call(document.querySelectorAll('#user-tabs button'));
   triggerTabList.forEach(function (triggerEl) {
