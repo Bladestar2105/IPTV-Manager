@@ -935,7 +935,10 @@
             </div>
             <div class="mb-3">
               <label class="form-label" data-i18n="new_password">New Password</label>
-              <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
+              <div class="input-group">
+                <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('edit-user-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+              </div>
             </div>
             <div class="mb-3 form-check">
               <input type="checkbox" class="form-check-input" id="edit-user-webui-access">
@@ -963,16 +966,25 @@
           <form id="change-password-form" onsubmit="handleChangePassword(event)">
             <div class="mb-3">
               <label for="old-password" class="form-label" data-i18n="old_password">Old Password</label>
-              <input type="password" class="form-control" id="old-password" required>
+              <div class="input-group">
+                <input type="password" class="form-control" id="old-password" required>
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('old-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+              </div>
             </div>
             <div class="mb-3">
               <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
-              <input type="password" class="form-control" id="new-password" required minlength="8">
+              <div class="input-group">
+                <input type="password" class="form-control" id="new-password" required minlength="8">
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('new-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+              </div>
               <small class="form-text text-secondary" data-i18n="password_min_length">Minimum 8 characters</small>
             </div>
             <div class="mb-3">
               <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
-              <input type="password" class="form-control" id="confirm-password" required minlength="8">
+              <div class="input-group">
+                <input type="password" class="form-control" id="confirm-password" required minlength="8">
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('confirm-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+              </div>
             </div>
             <div id="change-password-error" class="alert alert-danger" style="display: none;"></div>
             <div id="change-password-success" class="alert alert-success" style="display: none;"></div>
@@ -1014,7 +1026,10 @@
                 </div>
                 <div class="col-md-6">
                    <label class="form-label" data-i18n="password">Password</label>
-                   <input class="form-control" name="password" required>
+                   <div class="input-group">
+                     <input class="form-control" name="password" id="provider-password" type="password" required>
+                     <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('provider-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                   </div>
                 </div>
              </div>
              <div class="mb-3">
