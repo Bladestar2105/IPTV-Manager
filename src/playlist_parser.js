@@ -264,8 +264,11 @@ export function parseM3uStream(readableStream) {
   });
 }
 
+// Optimization: Compile regex once and reuse. Safe as function is synchronous.
+const attrRegex = /([a-zA-Z0-9-]+)="([^"]*)"/g;
+
 function parseAttributes(attrs, currentChannel) {
-  const attrRegex = /([a-zA-Z0-9-]+)="([^"]*)"/g;
+  attrRegex.lastIndex = 0;
   let match;
   while ((match = attrRegex.exec(attrs)) !== null) {
       const key = match[1];

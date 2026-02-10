@@ -1,5 +1,21 @@
 import ISO6391 from 'iso-639-1';
 
+// Optimization: Pre-compile regex patterns to avoid re-compilation on every match
+const CHANNEL_NAME_PATTERNS = [
+  // "Arte HD DE", "CNN INT", "Eurosport 1 FR"
+  /^(.+?)\s+([A-Z]{2,3})$/i,
+
+  // "Arte (German)", "CNN (EN)", "Eurosport 1 [ENG]"
+  // Fixed regex: removed extra backslashes to correctly match parenthesis
+  /^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]$/i,
+
+  // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL"
+  /^(.+?)[\-_\.\|]([A-Z]{2,3})$/i,
+
+  // "DE: Arte", "EN: CNN", "DE| RTL"
+  /^([A-Z]{2,3})[\-_\.\|:]\s*(.+)$/i,
+];
+
 export class ChannelMatcher {
   constructor(epgChannels) {
     this.epgChannels = epgChannels;
@@ -60,23 +76,7 @@ export class ChannelMatcher {
     if (!channelName) return { baseName: '', language: null, original: '', bigrams: new Set() };
     const original = channelName.trim();
 
-    // Pattern-Matching für verschiedene Formate
-    const patterns = [
-      // "Arte HD DE", "CNN INT", "Eurosport 1 FR"
-      /^(.+?)\s+([A-Z]{2,3})$/i,
-
-      // "Arte (German)", "CNN (EN)", "Eurosport 1 [ENG]"
-      // Fixed regex: removed extra backslashes to correctly match parenthesis
-      /^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]$/i,
-
-      // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL"
-      /^(.+?)[\-_\.\|]([A-Z]{2,3})$/i,
-
-      // "DE: Arte", "EN: CNN", "DE| RTL"
-      /^([A-Z]{2,3})[\-_\.\|:]\s*(.+)$/i,
-    ];
-
-    for (const pattern of patterns) {
+    for (const pattern of CHANNEL_NAME_PATTERNS) {
       const match = original.match(pattern);
       if (match) {
         let name, lang;
