@@ -153,6 +153,27 @@ function setLoadingState(btn, isLoading, textKey = 'loading', showText = true) {
   }
 }
 
+// Utility: List/Table Loading State Helpers
+function renderLoadingList(elementId, textKey = 'loading') {
+  const list = document.getElementById(elementId);
+  if (list) {
+    list.innerHTML = `<li class="list-group-item text-center text-muted py-3">
+      <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+      ${t(textKey)}
+    </li>`;
+  }
+}
+
+function renderLoadingTable(tbodyId, colSpan = 5, textKey = 'loading') {
+  const tbody = document.getElementById(tbodyId);
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="${colSpan}" class="text-center p-4 text-muted">
+      <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+      ${t(textKey)}
+    </td></tr>`;
+  }
+}
+
 // i18n: Seite übersetzen
 function translatePage() {
   // Texte übersetzen
@@ -361,6 +382,7 @@ async function loadUsers() {
       return;
   }
 
+  renderLoadingList('user-list');
   const users = await fetchJSON('/api/users');
   updateStatsCounters('users', users.length);
   const list = document.getElementById('user-list');
@@ -724,6 +746,7 @@ function resetProviderForm() {
 // === Category Management ===
 async function loadUserCategories() {
   if (!selectedUserId) return;
+  renderLoadingList('category-list');
   const cats = await fetchJSON(`/api/users/${selectedUserId}/categories`);
   const list = document.getElementById('category-list');
   list.innerHTML = '';
@@ -1133,7 +1156,7 @@ async function loadProviderChannels(reset = true) {
     // If we want to clear search on provider change:
     if (!searchInput.value) channelSearch = '';
 
-    list.innerHTML = `<li class="list-group-item text-muted">${t('loadingChannels')}</li>`;
+    renderLoadingList('provider-channel-list', 'loadingChannels');
   }
 
   searchInput.disabled = false;
@@ -1267,6 +1290,7 @@ function renderProviderChannels(channels) {
 
 async function loadUserCategoryChannels() {
   if (!selectedCategoryId) return;
+  renderLoadingList('user-channel-list');
   const chans = await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels`);
   const list = document.getElementById('user-channel-list');
   list.innerHTML = '';
@@ -2741,7 +2765,7 @@ async function loadEpgMappingChannels() {
       const providerId = document.getElementById('epg-mapping-provider-select').value;
       if (!providerId) return; // Wait for selection
 
-      tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+      renderLoadingTable('epg-mapping-tbody', 5);
       const resetMapBtn = document.getElementById('reset-map-btn');
       if(autoMapBtn) autoMapBtn.disabled = true;
       if(resetMapBtn) resetMapBtn.disabled = true;
@@ -2768,7 +2792,7 @@ async function loadEpgMappingChannels() {
       const catId = catSelect.value;
       if (!catId) return;
 
-      tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('loading')}</td></tr>`;
+      renderLoadingTable('epg-mapping-tbody', 5);
       const resetMapBtn = document.getElementById('reset-map-btn');
       if(autoMapBtn) autoMapBtn.style.display = 'none';
       if(resetMapBtn) resetMapBtn.style.display = 'none';
