@@ -124,7 +124,12 @@
             <div class="card-body">
                <form id="user-form" class="row g-2 mb-3">
                   <div class="col-4"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" data-i18n-label="username" placeholder="Username" required /></div>
-                  <div class="col-4"><input class="form-control form-control-sm" name="password" type="text" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required /></div>
+                  <div class="col-4">
+                     <div class="input-group input-group-sm">
+                        <input class="form-control" name="password" id="new-user-password" type="password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
+                        <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('new-user-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                     </div>
+                  </div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
                   <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" onclick="generateUser()" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
                </form>
