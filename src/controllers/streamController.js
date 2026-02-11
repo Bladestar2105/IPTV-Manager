@@ -431,7 +431,7 @@ export const proxySegment = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    let targetUrl = req.query.url;
+    let targetUrl;
     let headers = {
         'User-Agent': DEFAULT_USER_AGENT,
         'Connection': 'keep-alive'
