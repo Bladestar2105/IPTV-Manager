@@ -20,18 +20,31 @@ export async function isSafeUrl(urlStr) {
     if (ipVer === 0) return false;
 
     if (ipVer === 4) {
-        if (address.startsWith('127.') ||
+        if (address === '0.0.0.0' ||
+            address.startsWith('127.') ||
             address.startsWith('10.') ||
             address.startsWith('192.168.') ||
-            address.startsWith('169.254.')) return false;
+            address.startsWith('169.254.') ||
+            address.startsWith('192.0.0.') || // IETF Protocol Assignments
+            address.startsWith('192.0.2.') || // TEST-NET-1
+            address.startsWith('198.51.100.') || // TEST-NET-2
+            address.startsWith('203.0.113.') || // TEST-NET-3
+            address.startsWith('240.')) return false; // Class E (Reserved)
 
         if (address.startsWith('172.')) {
             const parts = address.split('.');
             const second = parseInt(parts[1], 10);
             if (second >= 16 && second <= 31) return false;
         }
+
+        // CGNAT (100.64.0.0/10)
+        if (address.startsWith('100.')) {
+            const parts = address.split('.');
+            const second = parseInt(parts[1], 10);
+            if (second >= 64 && second <= 127) return false;
+        }
     } else if (ipVer === 6) {
-         if (address === '::1' || address.includes('::ffff:') || address.startsWith('fe80:') || address.startsWith('fc') || address.startsWith('fd')) return false;
+         if (address === '::' || address === '::1' || address.includes('::ffff:') || address.startsWith('fe80:') || address.startsWith('fc') || address.startsWith('fd')) return false;
     }
 
     return true;
