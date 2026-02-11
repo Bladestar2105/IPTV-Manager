@@ -30,16 +30,17 @@ export async function performSync(providerId, userId, isManual = false) {
   let channelsUpdated = 0;
   let categoriesAdded = 0;
   let errorMessage = null;
+  let config = null;
 
   try {
+    config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
+    if (!config && !isManual) return;
+
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
 
     // Decrypt password for usage
     provider.password = decrypt(provider.password);
-
-    const config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
-    if (!config && !isManual) return;
 
     console.log(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
 
@@ -505,6 +506,12 @@ export async function performSync(providerId, userId, isManual = false) {
       INSERT INTO sync_logs (provider_id, user_id, sync_time, status, error_message)
       VALUES (?, ?, ?, ?, ?)
     `).run(providerId, userId, startTime, 'error', errorMessage);
+
+    // Update next_sync even on failure to respect interval
+    if (config) {
+      const nextSync = calculateNextSync(config.sync_interval);
+      db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id);
+    }
   }
 
   return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
