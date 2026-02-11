@@ -16,57 +16,87 @@ const CHANNEL_NAME_PATTERNS = [
   /^([A-Z]{2,3})[\-_\.\|:]\s*(.+)$/i,
 ];
 
+// Optimization: Pre-compute language map once
+function getISO6392Code(iso6391Code) {
+  // Mapping für häufige Codes
+  const mapping = {
+    'de': 'deu', 'en': 'eng', 'fr': 'fra', 'es': 'spa',
+    'it': 'ita', 'pt': 'por', 'nl': 'nld', 'pl': 'pol',
+    'tr': 'tur', 'ar': 'ara', 'ru': 'rus', 'zh': 'zho',
+    'ja': 'jpn', 'ko': 'kor', 'el': 'gre' // el=Greek
+  };
+  return mapping[iso6391Code];
+}
+
+const LANGUAGE_MAP = (() => {
+  const map = {};
+  const allCodes = ISO6391.getAllCodes(); // ['de', 'en', 'fr', ...]
+
+  allCodes.forEach(code => {
+    const name = ISO6391.getName(code); // 'German', 'English', ...
+    const native = ISO6391.getNativeName(code); // 'Deutsch', 'English', ...
+
+    // Alle Varianten speichern
+    map[code.toLowerCase()] = code; // 'de' -> 'de'
+    if (name) map[name.toLowerCase()] = code; // 'german' -> 'de'
+    if (native) map[native.toLowerCase()] = code; // 'deutsch' -> 'de'
+
+    // ISO 639-2 (3-Buchstaben)
+    const code2 = getISO6392Code(code);
+    if (code2) {
+      map[code2.toLowerCase()] = code; // 'ger', 'deu' -> 'de'
+    }
+  });
+
+  // Zusätzliche Custom-Mappings für gängige Varianten
+  map['eng'] = 'en';
+  map['ger'] = 'de';
+  map['deu'] = 'de';
+  map['fra'] = 'fr';
+  map['fre'] = 'fr';
+  map['esp'] = 'es';
+  map['spa'] = 'es';
+  map['int'] = 'en'; // International = English
+  map['uk'] = 'en'; // UK = English
+  map['us'] = 'en'; // US = English
+  map['usa'] = 'en'; // USA = English
+  map['gr'] = 'el'; // GR -> Greek (el)
+  map['greece'] = 'el';
+  map['greek'] = 'el';
+
+  return map;
+})();
+
 export class ChannelMatcher {
   constructor(epgChannels) {
     this.epgChannels = epgChannels;
-    this.languageMap = this.buildLanguageMap();
+    this.languageMap = LANGUAGE_MAP;
+
     // Pre-parse EPG channels to avoid re-parsing on every match
     this.parsedEpgChannels = this.epgChannels.map(c => ({
         channel: c,
         parsed: this.parseChannelName(c.name)
     }));
-  }
 
-  /**
-   * Erstellt Mapping aller möglichen Sprachkürzel-Varianten
-   */
-  buildLanguageMap() {
-    const map = {};
-    const allCodes = ISO6391.getAllCodes(); // ['de', 'en', 'fr', ...]
+    // Optimization: Build indexes for O(1) lookups
+    this.baseNameIndex = new Map();
+    this.numbersIndex = new Map();
 
-    allCodes.forEach(code => {
-      const name = ISO6391.getName(code); // 'German', 'English', ...
-      const native = ISO6391.getNativeName(code); // 'Deutsch', 'English', ...
+    for (const item of this.parsedEpgChannels) {
+        // Index by baseName
+        const baseKey = item.parsed.baseName;
+        if (!this.baseNameIndex.has(baseKey)) {
+            this.baseNameIndex.set(baseKey, []);
+        }
+        this.baseNameIndex.get(baseKey).push(item);
 
-      // Alle Varianten speichern
-      map[code.toLowerCase()] = code; // 'de' -> 'de'
-      if (name) map[name.toLowerCase()] = code; // 'german' -> 'de'
-      if (native) map[native.toLowerCase()] = code; // 'deutsch' -> 'de'
-
-      // ISO 639-2 (3-Buchstaben)
-      const code2 = this.getISO6392Code(code);
-      if (code2) {
-        map[code2.toLowerCase()] = code; // 'ger', 'deu' -> 'de'
-      }
-    });
-
-    // Zusätzliche Custom-Mappings für gängige Varianten
-    map['eng'] = 'en';
-    map['ger'] = 'de';
-    map['deu'] = 'de';
-    map['fra'] = 'fr';
-    map['fre'] = 'fr';
-    map['esp'] = 'es';
-    map['spa'] = 'es';
-    map['int'] = 'en'; // International = English
-    map['uk'] = 'en'; // UK = English
-    map['us'] = 'en'; // US = English
-    map['usa'] = 'en'; // USA = English
-    map['gr'] = 'el'; // GR -> Greek (el)
-    map['greece'] = 'el';
-    map['greek'] = 'el';
-
-    return map;
+        // Index by numbersString
+        const numKey = item.parsed.numbersString;
+        if (!this.numbersIndex.has(numKey)) {
+            this.numbersIndex.set(numKey, []);
+        }
+        this.numbersIndex.get(numKey).push(item);
+    }
   }
 
   /**
@@ -126,7 +156,7 @@ export class ChannelMatcher {
   isLanguageCode(str) {
     if (!str) return false;
     const cleaned = str.toLowerCase().trim();
-    return Object.prototype.hasOwnProperty.call(this.languageMap, cleaned);
+    return Object.prototype.hasOwnProperty.call(LANGUAGE_MAP, cleaned);
   }
 
   /**
@@ -134,7 +164,7 @@ export class ChannelMatcher {
    */
   normalizeLanguage(lang) {
     const cleaned = lang.toLowerCase().trim();
-    return this.languageMap[cleaned] || null;
+    return LANGUAGE_MAP[cleaned] || null;
   }
 
   /**
@@ -228,7 +258,8 @@ export class ChannelMatcher {
 
     // 6. Global Fuzzy Fallback (if base name didn't match exactly)
     // Filter all EPG channels by Number Logic First
-    const potentialCandidates = this.parsedEpgChannels.filter(c => checkNumbers(c.parsed));
+    // Optimization: Use index instead of filtering all channels O(N) -> O(1)
+    const potentialCandidates = this.numbersIndex.get(iptvNumsString) || [];
 
     // If language is known, prefer that language, but allow others if score is very high
     const bestGlobal = this.findBestSimilarity(parsed.baseName, potentialCandidates);
@@ -266,17 +297,22 @@ export class ChannelMatcher {
   }
 
   findExactMatch(parsed, checkNumbers) {
-    return this.parsedEpgChannels.find(epg => {
-      return epg.parsed.baseName === parsed.baseName &&
-             epg.parsed.language === parsed.language &&
+    // Optimization: Use baseNameIndex for O(1) lookup
+    const candidates = this.baseNameIndex.get(parsed.baseName);
+    if (!candidates) return undefined;
+
+    return candidates.find(epg => {
+      return epg.parsed.language === parsed.language &&
              checkNumbers(epg.parsed);
     });
   }
 
   findCandidatesByBaseName(baseName, checkNumbers) {
-    return this.parsedEpgChannels.filter(epg => {
-      return epg.parsed.baseName === baseName && checkNumbers(epg.parsed);
-    });
+    // Optimization: Use baseNameIndex for O(1) lookup
+    const candidates = this.baseNameIndex.get(baseName);
+    if (!candidates) return [];
+
+    return candidates.filter(epg => checkNumbers(epg.parsed));
   }
 
   findBestSimilarity(searchName, candidates) {
@@ -353,14 +389,4 @@ export class ChannelMatcher {
     return bigrams;
   }
 
-  getISO6392Code(iso6391Code) {
-    // Mapping für häufige Codes
-    const mapping = {
-      'de': 'deu', 'en': 'eng', 'fr': 'fra', 'es': 'spa',
-      'it': 'ita', 'pt': 'por', 'nl': 'nld', 'pl': 'pol',
-      'tr': 'tur', 'ar': 'ara', 'ru': 'rus', 'zh': 'zho',
-      'ja': 'jpn', 'ko': 'kor', 'el': 'gre' // el=Greek
-    };
-    return mapping[iso6391Code];
-  }
 }
