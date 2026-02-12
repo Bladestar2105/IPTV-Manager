@@ -1415,7 +1415,7 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     // Show user-friendly error message
     const errorData = e.response || {};
     const errorMessage = errorData.message || e.message || 'Unknown error';
-    alert(t('errorPrefix') + ' ' + errorMessage);
+    showToast(errorMessage, 'danger');
   }
 });
 
@@ -1463,7 +1463,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
 
     loadProviders(selectedUserId);
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(e.message, 'danger');
   }
 });
 
@@ -1488,7 +1488,7 @@ document.getElementById('category-form').addEventListener('submit', async e => {
     loadUserCategories();
     showToast(t('categoryCreated'), 'success');
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(e.message, 'danger');
   }
 });
 
@@ -3415,21 +3415,34 @@ function showToast(message, type = 'primary') {
     const container = document.getElementById('toast-container');
     if (!container) return;
 
+    // Map types to icons
+    const icons = {
+        success: '✅',
+        danger: '⚠️',
+        warning: '⚠️',
+        info: 'ℹ️',
+        primary: 'ℹ️'
+    };
+    const icon = icons[type] || '';
+
     const el = document.createElement('div');
-    el.className = `toast align-items-center text-white bg-${type} border-0`;
+    el.className = `toast align-items-center text-white bg-${type} border-0 shadow-lg`;
     el.setAttribute('role', 'alert');
     el.setAttribute('aria-live', 'assertive');
     el.setAttribute('aria-atomic', 'true');
 
     el.innerHTML = `
         <div class="d-flex">
-            <div class="toast-body">${message}</div>
+            <div class="toast-body d-flex align-items-center gap-2">
+                ${icon ? `<span class="fs-5">${icon}</span>` : ''}
+                <div>${message}</div>
+            </div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
         </div>
     `;
 
     container.appendChild(el);
-    const toast = new bootstrap.Toast(el);
+    const toast = new bootstrap.Toast(el, { delay: 5000 });
     toast.show();
 
     el.addEventListener('hidden.bs.toast', () => {
