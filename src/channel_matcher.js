@@ -236,7 +236,8 @@ export class ChannelMatcher {
 
         if (langFiltered.length > 1) {
           // 4. String-Similarity auf den gefilterten Kandidaten
-          const best = this.findBestSimilarity(iptvChannelName, langFiltered);
+          // Optimization: Pass parsed object
+          const best = this.findBestSimilarity(parsed, langFiltered);
           return {
             epgChannel: best.channel.channel,
             confidence: best.score * 0.9,
@@ -247,7 +248,8 @@ export class ChannelMatcher {
       }
 
       // 5. Fallback: String-Similarity auf allen Kandidaten
-      const best = this.findBestSimilarity(iptvChannelName, candidates);
+      // Optimization: Pass parsed object
+      const best = this.findBestSimilarity(parsed, candidates);
       return {
         epgChannel: best.channel.channel,
         confidence: best.score * 0.7,
@@ -262,7 +264,8 @@ export class ChannelMatcher {
     const potentialCandidates = this.numbersIndex.get(iptvNumsString) || [];
 
     // If language is known, prefer that language, but allow others if score is very high
-    const bestGlobal = this.findBestSimilarity(parsed.baseName, potentialCandidates);
+    // Optimization: Pass parsed object and threshold 0.8
+    const bestGlobal = this.findBestSimilarity(parsed, potentialCandidates, 0.8);
 
     if (bestGlobal.score > 0.8) {
         const candLang = bestGlobal.channel.parsed.language;
@@ -315,18 +318,49 @@ export class ChannelMatcher {
     return candidates.filter(epg => checkNumbers(epg.parsed));
   }
 
-  findBestSimilarity(searchName, candidates) {
+  /**
+   * Finds best candidate using Dice Coefficient.
+   * Optimized to accept pre-parsed object and prune candidates by length.
+   * @param {Object|string} parsedSearch - The parsed channel object (containing baseName, bigrams) or search string.
+   * @param {Array} candidates - List of candidate channels.
+   * @param {number} threshold - Optional minimum score threshold. If > 0, prunes candidates that cannot mathematically reach the threshold.
+   */
+  findBestSimilarity(parsedSearch, candidates, threshold = 0) {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
-    const normalized = this.normalizeBaseName(searchName);
-    const searchBigrams = this.getBigrams(normalized);
+    let searchBaseName, searchBigrams;
+    if (typeof parsedSearch === 'string') {
+        searchBaseName = this.normalizeBaseName(parsedSearch);
+        searchBigrams = this.getBigrams(searchBaseName);
+    } else {
+        searchBaseName = parsedSearch.baseName;
+        // Safety fallback if bigrams not pre-computed
+        searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
+    }
+
+    // Optimization: Prune candidates based on length if threshold is set
+    let minLen = 0;
+    let maxLen = Infinity;
+    if (threshold > 0) {
+        const lenA = searchBigrams.size;
+        // B >= A * T / (2 - T)
+        minLen = Math.ceil(lenA * threshold / (2 - threshold));
+        // B <= A * (2 - T) / T
+        maxLen = Math.floor(lenA * (2 - threshold) / threshold);
+    }
 
     let bestScore = -1;
     let bestCand = null;
 
     for (const cand of candidates) {
+        // Length check optimization
+        if (threshold > 0) {
+            const lenB = cand.parsed.bigrams.size;
+            if (lenB < minLen || lenB > maxLen) continue;
+        }
+
         let score = 0;
-        if (normalized === cand.parsed.baseName) {
+        if (searchBaseName === cand.parsed.baseName) {
             score = 1;
         } else {
             score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
