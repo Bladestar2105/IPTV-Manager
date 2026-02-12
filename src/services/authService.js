@@ -9,6 +9,27 @@ import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE } fr
 // Authentication Cache
 export const authCache = new Map();
 
+// Pre-generate a dummy hash for timing attack mitigation
+let DUMMY_HASH = null;
+(async () => {
+    // Generate a hash of a fixed string once
+    DUMMY_HASH = await bcrypt.hash('dummy_timing_mitigation_password', BCRYPT_ROUNDS);
+})();
+
+// Helper to perform a dummy comparison to mitigate timing attacks
+export async function preventTimingAttack(password) {
+    try {
+        if (DUMMY_HASH) {
+            await bcrypt.compare(password || 'dummy', DUMMY_HASH);
+        } else {
+             // Fallback if hash not ready (rare race condition on startup)
+             await bcrypt.hash(password || 'dummy', BCRYPT_ROUNDS);
+        }
+    } catch (e) {
+        // Ignore errors during dummy check
+    }
+}
+
 // Cleanup interval (every 5 minutes)
 setInterval(() => {
   if (authCache.size > AUTH_CACHE_MAX_SIZE) {
@@ -40,7 +61,10 @@ export async function authUser(username, password) {
     }
 
     const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(u);
-    if (!user) return null;
+    if (!user) {
+        await preventTimingAttack(p);
+        return null;
+    }
 
     let isValid = false;
     if (user.password && user.password.startsWith('$2b$')) {
