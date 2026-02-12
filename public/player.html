@@ -363,7 +363,10 @@
 
   <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary" style="width:140px;" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
 
-  <div class="ms-auto" id="clock">00:00</div>
+  <div class="ms-auto d-flex align-items-center">
+    <google-cast-launcher id="cast-button" style="display: inline-block; width: 24px; height: 24px; margin-right: 10px; cursor: pointer; --connected-color: #2563eb; --disconnected-color: #999;"></google-cast-launcher>
+    <div id="clock">00:00</div>
+  </div>
 </div>
 
 <!-- Timeline View (Live TV) -->
@@ -417,6 +420,7 @@
   let currentChannels = [];
   let epgSchedule = {};
   let activeStream = null;
+  let castSession = null;
   let hls = null;
   let flvPlayer = null;
   let dashPlayer = null;
@@ -470,6 +474,68 @@
     document.title = t('playerTitle');
   }
   translatePage();
+
+  // ─── Cast Integration ───
+  window['__onGCastApiAvailable'] = function(isAvailable) {
+    if (isAvailable) {
+      cast.framework.CastContext.getInstance().setOptions({
+        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+      });
+
+      cast.framework.CastContext.getInstance().addEventListener(
+        cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+        function(event) {
+          switch (event.sessionState) {
+            case cast.framework.SessionState.SESSION_STARTED:
+            case cast.framework.SessionState.SESSION_RESUMED:
+              castSession = event.session;
+              if (activeStream) loadRemoteMedia(activeStream);
+              break;
+            case cast.framework.SessionState.SESSION_ENDED:
+              castSession = null;
+              if (activeStream) playStream(activeStream); // Resume local
+              break;
+          }
+        }
+      );
+    }
+  };
+
+  function loadRemoteMedia(stream) {
+    if (!castSession) return;
+    destroyAllPlayers();
+    setPlayerStatus('Casting', 'info');
+    document.getElementById('player-container').classList.add('show-info'); // Show info bar
+
+    var url = stream.url;
+    if (token && !url.includes('token=')) {
+      url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+    }
+    var fullUrl = new URL(url, window.location.href).href;
+
+    var contentType = 'application/x-mpegurl';
+    if (fullUrl.includes('.mpd')) contentType = 'application/dash+xml';
+    else if (fullUrl.includes('.mp4')) contentType = 'video/mp4';
+
+    var mediaInfo = new chrome.cast.media.MediaInfo(fullUrl, contentType);
+    mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+    mediaInfo.metadata.title = stream.name;
+    if (nowPlayingProgram && nowPlayingProgram.textContent) {
+      mediaInfo.metadata.subtitle = nowPlayingProgram.textContent;
+    }
+    if (stream.logo) {
+      mediaInfo.metadata.images = [{url: new URL(stream.logo, window.location.href).href}];
+    }
+
+    var request = new chrome.cast.media.LoadRequest(mediaInfo);
+    request.autoplay = true;
+
+    castSession.loadMedia(request).then(
+      function() { console.log('Cast load success'); },
+      function(e) { console.error('Cast load error', e); }
+    );
+  }
 
   // ─── Clock ───
   function updateClock() {
@@ -946,6 +1012,11 @@
     document.getElementById('player-container').classList.add('show-info');
     setTimeout(function() { document.getElementById('player-container').classList.remove('show-info'); }, 3000);
 
+    if (castSession) {
+      loadRemoteMedia(stream);
+      return;
+    }
+
     var url = stream.url;
     if (token && !url.includes('token=')) {
       url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
@@ -1364,5 +1435,6 @@
 
 })();
 </script>
+<script src="vendor/cast/cast_sender.js?loadCastFramework=1"></script>
 </body>
 </html>
