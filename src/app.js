@@ -14,6 +14,7 @@ import streamRoutes from './routes/streams.js';
 import xtreamRoutes from './routes/xtream.js';
 import epgRoutes from './routes/epg.js';
 import systemRoutes from './routes/system.js';
+import hdhrRoutes from './routes/hdhr.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,8 +50,8 @@ morgan.token('url', (req, res) => {
   let url = req.originalUrl || req.url;
   // Redact password in path segments: /live/user/PASS/..., /movie/user/PASS/...,
   // /series/user/PASS/..., /timeshift/user/PASS/..., /live/mpd/user/PASS/...,
-  // /live/segment/user/PASS/...
-  url = url.replace(/\/(live|movie|series|timeshift)\/((?:mpd|segment)\/)?([^/]+)\/([^/]+)\//, '/$1/$2$3/********/');
+  // /live/segment/user/PASS/..., /hdhr/user/PASS/...
+  url = url.replace(/\/(live|movie|series|timeshift|hdhr)\/((?:mpd|segment)\/)?([^/]+)\/([^/]+)\//, '/$1/$2$3/********/');
   // Redact password in query strings: ?password=xxx or &password=xxx
   url = url.replace(/([?&])password=[^&]*/gi, '$1password=********');
   return url;
@@ -78,5 +79,6 @@ app.use('/api', epgRoutes);
 app.use('/api', systemRoutes);
 app.use('/', streamRoutes);
 app.use('/', xtreamRoutes);
+app.use('/hdhr', hdhrRoutes);
 
 export default app;
