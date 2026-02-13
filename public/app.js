@@ -414,6 +414,26 @@ async function loadUsers() {
           m3uLinkEl.value = `${baseUrl}/get.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}&type=m3u_plus&output=ts`;
       }
 
+      // Update HDHomeRun Tab
+      const hdhrEnabledSection = document.getElementById('hdhr-enabled-section');
+      const hdhrDisabledSection = document.getElementById('hdhr-disabled-section');
+      const hdhrUrlInput = document.getElementById('hdhr-url');
+
+      if (hdhrEnabledSection && hdhrDisabledSection) {
+          if (u.hdhr_enabled) {
+              hdhrEnabledSection.style.display = 'block';
+              hdhrDisabledSection.style.display = 'none';
+              const protocol = window.location.protocol;
+              const host = window.location.host;
+              // u.hdhr_token is returned by GET /api/users
+              if (hdhrUrlInput) hdhrUrlInput.value = `${protocol}//${host}/hdhr/${u.hdhr_token}/discover.json`;
+          } else {
+              hdhrEnabledSection.style.display = 'none';
+              hdhrDisabledSection.style.display = 'block';
+              if (hdhrUrlInput) hdhrUrlInput.value = '';
+          }
+      }
+
       loadUserCategories();
       loadProviders(u.id); // Refresh providers
 
@@ -550,6 +570,7 @@ function showEditUserModal(user) {
   // Checkbox handling: default to true if undefined/null (legacy users), else use value
   const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
   document.getElementById('edit-user-webui-access').checked = webuiAccess;
+  document.getElementById('edit-user-hdhr-enabled').checked = (user.hdhr_enabled === 1);
   modal.show();
 }
 
@@ -559,8 +580,9 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const username = document.getElementById('edit-user-username').value;
   const password = document.getElementById('edit-user-password').value;
   const webuiAccess = document.getElementById('edit-user-webui-access').checked;
+  const hdhrEnabled = document.getElementById('edit-user-hdhr-enabled').checked;
 
-  const body = { username, webui_access: webuiAccess };
+  const body = { username, webui_access: webuiAccess, hdhr_enabled: hdhrEnabled };
   if (password) body.password = password;
 
   try {

@@ -21,7 +21,7 @@ describe('HDHomeRun Controller', () => {
 
     beforeEach(() => {
         req = {
-            params: { username: 'user', password: 'pass', channelId: '1' },
+            params: { token: 'testtoken', channelId: '1' },
             protocol: 'http',
             get: vi.fn().mockReturnValue('localhost:3000')
         };
@@ -35,8 +35,8 @@ describe('HDHomeRun Controller', () => {
     });
 
     describe('discover', () => {
-        it('should return discovery JSON for valid user', async () => {
-            const user = { id: 123, username: 'user', password: 'pass' };
+        it('should return discovery JSON for valid enabled user', async () => {
+            const user = { id: 123, username: 'user', hdhr_enabled: 1, hdhr_token: 'testtoken' };
             getXtreamUser.mockResolvedValue(user);
 
             await hdhrController.discover(req, res);
@@ -45,9 +45,18 @@ describe('HDHomeRun Controller', () => {
                 FriendlyName: 'IPTV Manager (user)',
                 ModelNumber: 'HDHR4-2US',
                 DeviceID: expect.stringMatching(/1234[0-9a-f]+/),
-                BaseURL: 'http://localhost:3000/hdhr/user/pass',
-                LineupURL: 'http://localhost:3000/hdhr/user/pass/lineup.json'
+                BaseURL: 'http://localhost:3000/hdhr/testtoken',
+                LineupURL: 'http://localhost:3000/hdhr/testtoken/lineup.json'
             }));
+        });
+
+        it('should return 403 if user disabled', async () => {
+            const user = { id: 123, username: 'user', hdhr_enabled: 0, hdhr_token: 'testtoken' };
+            getXtreamUser.mockResolvedValue(user);
+
+            await hdhrController.discover(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(403);
         });
 
         it('should return 401 for invalid user', async () => {
@@ -61,7 +70,7 @@ describe('HDHomeRun Controller', () => {
 
     describe('lineupStatus', () => {
         it('should return lineup status', async () => {
-            getXtreamUser.mockResolvedValue({ id: 1 });
+            getXtreamUser.mockResolvedValue({ id: 1, hdhr_enabled: 1 });
 
             await hdhrController.lineupStatus(req, res);
 
@@ -75,8 +84,8 @@ describe('HDHomeRun Controller', () => {
     });
 
     describe('lineup', () => {
-        it('should return channel lineup', async () => {
-            const user = { id: 123, username: 'user', password: 'pass' };
+        it('should return channel lineup with token URLs', async () => {
+            const user = { id: 123, username: 'user', hdhr_enabled: 1, hdhr_token: 'testtoken' };
             getXtreamUser.mockResolvedValue(user);
 
             const mockChannels = [
@@ -97,12 +106,12 @@ describe('HDHomeRun Controller', () => {
                 {
                     GuideNumber: '1',
                     GuideName: 'Channel 1',
-                    URL: 'http://localhost:3000/live/user/pass/1.ts'
+                    URL: 'http://localhost:3000/hdhr/testtoken/stream/1.ts'
                 },
                 {
                     GuideNumber: '2',
                     GuideName: 'Channel 2',
-                    URL: 'http://localhost:3000/movie/user/pass/2.mkv'
+                    URL: 'http://localhost:3000/hdhr/testtoken/movie/2.mkv'
                 }
             ]);
         });
@@ -110,7 +119,7 @@ describe('HDHomeRun Controller', () => {
 
     describe('auto', () => {
         it('should redirect to stream url', async () => {
-            const user = { id: 123, username: 'user', password: 'pass' };
+            const user = { id: 123, username: 'user', hdhr_enabled: 1, hdhr_token: 'testtoken' };
             getXtreamUser.mockResolvedValue(user);
 
             const mockChannel = { user_channel_id: '1', stream_type: 'live' };
@@ -123,11 +132,11 @@ describe('HDHomeRun Controller', () => {
 
             await hdhrController.auto(req, res);
 
-            expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000/live/user/pass/1.ts');
+            expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000/hdhr/testtoken/stream/1.ts');
         });
 
         it('should return 404 if channel not found', async () => {
-            const user = { id: 123, username: 'user', password: 'pass' };
+            const user = { id: 123, username: 'user', hdhr_enabled: 1 };
             getXtreamUser.mockResolvedValue(user);
 
             const mockPrepare = vi.fn().mockReturnValue({

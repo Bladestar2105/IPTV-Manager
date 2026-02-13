@@ -1,16 +1,21 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
-import { PORT } from '../config/constants.js';
 
 export const discover = async (req, res) => {
   try {
+    // getXtreamUser now supports req.params.token (checking hdhr_token)
     const user = await getXtreamUser(req);
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    if (!user.hdhr_enabled) {
+        return res.status(403).json({ error: 'HDHomeRun emulation is disabled for this user' });
+    }
+
     const deviceID = `1234${user.id.toString(16).padStart(4, '0')}`; // Simple unique ID
-    const baseURL = `${req.protocol}://${req.get('host')}/hdhr/${encodeURIComponent(user.username)}/${encodeURIComponent(user.password)}`;
+    // BaseURL uses the token, shielding the username/password
+    const baseURL = `${req.protocol}://${req.get('host')}/hdhr/${user.hdhr_token}`;
 
     res.json({
       FriendlyName: `IPTV Manager (${user.username})`,
@@ -34,6 +39,7 @@ export const lineupStatus = async (req, res) => {
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    if (!user.hdhr_enabled) return res.status(403).json({ error: 'Disabled' });
 
     res.json({
       ScanInProgress: 0,
@@ -53,6 +59,7 @@ export const lineup = async (req, res) => {
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    if (!user.hdhr_enabled) return res.status(403).json({ error: 'Disabled' });
 
     const channels = db.prepare(`
       SELECT
@@ -73,17 +80,16 @@ export const lineup = async (req, res) => {
 
     channels.forEach((ch, index) => {
       let ext = 'ts';
-      let typePath = 'live';
+      // We map movies to stream endpoints as well, although standard HDHR is for live TV.
+      // Plex expects a URL.
 
+      let streamUrl;
       if (ch.stream_type === 'movie') {
-         typePath = 'movie';
          ext = ch.mime_type || 'mp4';
-      } else if (ch.stream_type === 'series') {
-         typePath = 'series'; // Though query excludes series usually
-         ext = ch.mime_type || 'mp4';
+         streamUrl = `${host}/hdhr/${user.hdhr_token}/movie/${ch.user_channel_id}.${ext}`;
+      } else {
+         streamUrl = `${host}/hdhr/${user.hdhr_token}/stream/${ch.user_channel_id}.ts`;
       }
-
-      const streamUrl = `${host}/${typePath}/${encodeURIComponent(user.username)}/${encodeURIComponent(user.password)}/${ch.user_channel_id}.${ext}`;
 
       result.push({
         GuideNumber: String(index + 1),
@@ -105,6 +111,7 @@ export const auto = async (req, res) => {
     if (!user) {
       return res.status(401).send('Unauthorized');
     }
+    if (!user.hdhr_enabled) return res.status(403).send('Disabled');
 
     const channelId = req.params.channelId;
     if (!channelId) return res.status(400).send('Bad Request');
@@ -121,15 +128,16 @@ export const auto = async (req, res) => {
     if (!channel) return res.status(404).send('Channel not found');
 
     let ext = 'ts';
-    let typePath = 'live';
+    let typePath = 'stream'; // maps to proxyLive
 
     if (channel.stream_type === 'movie') {
-        typePath = 'movie';
+        typePath = 'movie'; // maps to proxyMovie
         ext = channel.mime_type || 'mp4';
     }
 
     const host = `${req.protocol}://${req.get('host')}`;
-    const streamUrl = `${host}/${typePath}/${encodeURIComponent(user.username)}/${encodeURIComponent(user.password)}/${channel.user_channel_id}.${ext}`;
+    // Redirect to the tokenized stream URL which is handled by streamController via mapped routes
+    const streamUrl = `${host}/hdhr/${user.hdhr_token}/${typePath}/${channel.user_channel_id}.${ext}`;
 
     res.redirect(streamUrl);
 
