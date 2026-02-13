@@ -450,3 +450,23 @@ export function migrateProviderExpiry(db) {
     console.error('Provider Expiry migration error:', e);
   }
 }
+
+export function migrateHdhrColumns(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('hdhr_enabled')) {
+      db.exec('ALTER TABLE users ADD COLUMN hdhr_enabled INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: hdhr_enabled column added to users');
+    }
+
+    if (!columns.includes('hdhr_token')) {
+      db.exec('ALTER TABLE users ADD COLUMN hdhr_token TEXT');
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_hdhr_token ON users(hdhr_token)');
+      console.log('✅ DB Migration: hdhr_token column added to users');
+    }
+  } catch (e) {
+    console.error('HDHR Columns migration error:', e);
+  }
+}

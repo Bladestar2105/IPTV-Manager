@@ -1,18 +1,21 @@
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
 
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, is_active, webui_access FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, is_active, webui_access, hdhr_enabled, hdhr_token FROM users ORDER BY id').all();
     const result = users.map(u => {
         return {
             id: u.id,
             username: u.username,
             is_active: u.is_active,
-            webui_access: u.webui_access
+            webui_access: u.webui_access,
+            hdhr_enabled: u.hdhr_enabled,
+            hdhr_token: u.hdhr_token
         };
     });
     res.json(result);
@@ -22,7 +25,7 @@ export const getUsers = (req, res) => {
 export const createUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password, webui_access } = req.body;
+    const { username, password, webui_access, hdhr_enabled } = req.body;
 
     // Validation
     if (!username || !password) {
@@ -61,8 +64,20 @@ export const createUser = async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
 
+    let hdhrToken = null;
+    const isHdhrEnabled = hdhr_enabled ? 1 : 0;
+    if (isHdhrEnabled) {
+        hdhrToken = crypto.randomBytes(16).toString('hex');
+    }
+
     // Insert user
-    const info = db.prepare('INSERT INTO users (username, password, webui_access) VALUES (?, ?, ?)').run(u, hashedPassword, webui_access !== undefined ? (webui_access ? 1 : 0) : 1);
+    const info = db.prepare('INSERT INTO users (username, password, webui_access, hdhr_enabled, hdhr_token) VALUES (?, ?, ?, ?, ?)').run(
+        u,
+        hashedPassword,
+        webui_access !== undefined ? (webui_access ? 1 : 0) : 1,
+        isHdhrEnabled,
+        hdhrToken
+    );
 
     res.json({
       id: info.lastInsertRowid,
@@ -77,7 +92,7 @@ export const updateUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password, webui_access } = req.body;
+    const { username, password, webui_access, hdhr_enabled } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -113,6 +128,18 @@ export const updateUser = async (req, res) => {
     if (webui_access !== undefined) {
         updates.push('webui_access = ?');
         params.push(webui_access ? 1 : 0);
+    }
+
+    if (hdhr_enabled !== undefined) {
+        const isEnabled = hdhr_enabled ? 1 : 0;
+        updates.push('hdhr_enabled = ?');
+        params.push(isEnabled);
+
+        if (isEnabled && !existing.hdhr_token) {
+            const token = crypto.randomBytes(16).toString('hex');
+            updates.push('hdhr_token = ?');
+            params.push(token);
+        }
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update

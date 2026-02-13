@@ -142,16 +142,22 @@ export async function createDefaultAdmin() {
 export async function getXtreamUser(req) {
   const username = (req.params.username || req.query.username || '').trim();
   const password = (req.params.password || req.query.password || '').trim();
-  const token = (req.query.token || '').trim();
+  const token = (req.query.token || req.params.token || '').trim();
 
   let user = null;
 
   // Check token auth first (avoids logging failed attempts for placeholder credentials)
   if (token) {
     const now = Math.floor(Date.now() / 1000);
+    // 1. Check temporary tokens
     const valid = db.prepare('SELECT user_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
     if (valid) {
       user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(valid.user_id);
+    }
+
+    // 2. Check HDHR tokens (if not found yet and token length matches hex string)
+    if (!user && /^[0-9a-f]{32}$/i.test(token)) {
+        user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
     }
   }
 
