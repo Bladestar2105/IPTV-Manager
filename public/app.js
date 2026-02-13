@@ -346,12 +346,12 @@ function copyAllXtreamCredentials(btnElement) {
     const epg = document.getElementById('epg-url').value;
     const m3u = document.getElementById('m3u-link').value;
 
-    const text = `### Credentials for "${user}" ###\n` +
-                 `URL: ${url}\n` +
-                 `USERNAME: ${user}\n` +
-                 `PASSWORD: ${pass}\n` +
-                 `EPG-URL: ${epg}\n` +
-                 `M3U-URL: ${m3u}\n` +
+    const text = `### ${t('credentialsFor', {name: user})} ###\n` +
+                 `${t('url') || 'URL'}: ${url}\n` +
+                 `${t('usernameCaps')}: ${user}\n` +
+                 `${t('passwordCaps')}: ${pass}\n` +
+                 `${t('epgUrlCaps')}: ${epg}\n` +
+                 `${t('m3uUrlCaps')}: ${m3u}\n` +
                  `######`;
 
     copyToClipboard(text, btnElement);
@@ -437,7 +437,7 @@ async function loadUsers() {
         if (newWindow) {
             newWindow.document.write('Loading player...');
         } else {
-            alert(t('popupBlocked') || 'Popup blocked. Please allow popups for this site.');
+            alert(t('popupBlocked'));
             return;
         }
 
@@ -621,7 +621,7 @@ async function loadProviders(filterUserId = null) {
         else if (diffDays < 7) colorClass = 'text-warning fw-bold';
         else colorClass = 'text-success';
 
-        expiryInfo = `<br><small class="${colorClass}">${t('expiryDate') || 'Expires'}: ${expDate.toLocaleDateString()} (${diffDays} days)</small>`;
+        expiryInfo = `<br><small class="${colorClass}">${t('expiryDate') || 'Expires'}: ${expDate.toLocaleDateString()} (${diffDays} ${t('days')})</small>`;
     }
 
     const row = document.createElement('div');
@@ -1092,9 +1092,9 @@ async function importSelectedCategories(withChannels) {
       })
     });
 
-    let msg = `✅ ${result.categories_imported} categories imported`;
+    let msg = t('categoriesImported', {count: result.categories_imported});
     if (result.channels_imported > 0) {
-        msg += `, ${result.channels_imported} channels`;
+        msg += `, ${result.channels_imported} ${t('channels')}`;
     }
     alert(msg);
 
@@ -1984,7 +1984,7 @@ async function handleImport(e) {
         if (!response.ok) throw new Error(res.error || 'Import failed');
 
         const stats = res.stats;
-        alert(`${t('importSuccess')}\n\nUsers: ${stats.users_imported} (Skipped: ${stats.users_skipped})\nProviders: ${stats.providers}\nCategories: ${stats.categories}\nChannels: ${stats.channels}`);
+        alert(`${t('importSuccess')}\n\n${t('totalUsers')}: ${stats.users_imported} (${t('skipped')}: ${stats.users_skipped})\n${t('providers')}: ${stats.providers}\n${t('categories')}: ${stats.categories}\n${t('channels')}: ${stats.channels}`);
 
         f.reset();
         loadUsers();
@@ -2664,12 +2664,12 @@ async function loadStatistics() {
 }
 
 function formatDuration(sec) {
-    if (!sec) return '0s';
+    if (!sec) return `0${t('time_s')}`;
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
     const s = Math.floor(sec % 60);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m ${s}s`;
+    if (h > 0) return `${h}${t('time_h')} ${m}${t('time_m')}`;
+    return `${m}${t('time_m')} ${s}${t('time_s')}`;
 }
 
 // === EPG Mapping Logic ===
