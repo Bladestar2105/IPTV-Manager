@@ -1,6 +1,15 @@
 import fs from 'fs';
 import readline from 'readline';
 
+export function decodeXml(str) {
+  if (!str) return '';
+  return str.replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&');
+}
+
 export function cleanName(name) {
   if (!name) return '';
   let cleaned = name.toLowerCase();
@@ -163,53 +172,74 @@ export async function parseEpgXml(filePath, onProgramme) {
       crlfDelay: Infinity
   });
 
-  let currentProg = null;
   let buffer = '';
-
-  // Simple state machine
-  // We look for <programme ...> to start
-  // We collect until </programme>
-  // We extract data
+  let inProgramme = false;
+  const MAX_BUFFER = 1024 * 50; // 50KB safety limit for a single programme entry
 
   for await (const line of rl) {
       const trimmed = line.trim();
 
-      if (trimmed.startsWith('<programme')) {
-          buffer = trimmed;
-          currentProg = {};
+      if (!inProgramme) {
+          if (trimmed.startsWith('<programme')) {
+              inProgramme = true;
+              buffer = trimmed;
 
-          // Quick extract attributes from the opening tag
-          const startMatch = trimmed.match(/start="([^"]+)"/);
-          const stopMatch = trimmed.match(/stop="([^"]+)"/);
-          const channelMatch = trimmed.match(/channel="([^"]+)"/);
+              // Handle self-closing tag immediately: <programme ... />
+              if (trimmed.endsWith('/>')) {
+                  inProgramme = false;
+                  // Self-closing programme usually has no title/desc, so skip or handle
+                  // Typically XMLTV uses child elements for title/desc so self-closing is rare/useless
+                  buffer = '';
+                  continue;
+              }
+          }
+      } else {
+          // In programme block
+          // Append with space to avoid merging attributes incorrectly
+          buffer += ' ' + trimmed;
 
-          if (startMatch) currentProg.start = parseXmltvDate(startMatch[1]);
-          if (stopMatch) currentProg.stop = parseXmltvDate(stopMatch[1]);
-          if (channelMatch) currentProg.channel_id = channelMatch[1];
+          // Safety check: Prevent infinite buffer growth if </programme> is missing
+          if (buffer.length > MAX_BUFFER) {
+              // Too large, discard and reset
+              inProgramme = false;
+              buffer = '';
+              continue;
+          }
       }
 
-      if (currentProg) {
-          if (!buffer.includes(trimmed)) {
-             buffer += ' ' + trimmed; // Append if not start line
-          }
+      if (inProgramme && buffer.includes('</programme>')) {
+          inProgramme = false;
 
-          if (trimmed.includes('</programme>')) {
-              // Parse Title
-              const titleMatch = buffer.match(/<title[^>]*>([^<]+)<\/title>/);
-              if (titleMatch) currentProg.title = titleMatch[1]; // decode entities if needed
+          // Extract attributes from the full block (handling multiline)
+          // Use [\s\S] to match across newlines if any, though buffer is single line here
+          // Buffer is constructed from lines with spaces in between.
 
-              // Parse Desc
-              const descMatch = buffer.match(/<desc[^>]*>([^<]+)<\/desc>/);
-              if (descMatch) currentProg.desc = descMatch[1];
+          const startMatch = buffer.match(/start="([^"]+)"/);
+          const stopMatch = buffer.match(/stop="([^"]+)"/);
+          const channelMatch = buffer.match(/channel="([^"]+)"/);
 
-              // Validate and emit
-              if (currentProg.channel_id && currentProg.start && currentProg.stop && currentProg.title) {
-                  onProgramme(currentProg);
+          const titleMatch = buffer.match(/<title[^>]*>([^<]+)<\/title>/);
+          const descMatch = buffer.match(/<desc[^>]*>([^<]+)<\/desc>/);
+
+          if (startMatch && stopMatch && channelMatch && titleMatch) {
+              // Do NOT decode channel ID to match DB/Playlist format (raw string)
+              const channelId = channelMatch[1];
+              const title = decodeXml(titleMatch[1]);
+              const desc = descMatch ? decodeXml(descMatch[1]) : '';
+              const start = parseXmltvDate(startMatch[1]);
+              const stop = parseXmltvDate(stopMatch[1]);
+
+              if (channelId && start && stop && title) {
+                  onProgramme({
+                      channel_id: channelId,
+                      title: title,
+                      desc: desc,
+                      start: start,
+                      stop: stop
+                  });
               }
-
-              currentProg = null;
-              buffer = '';
           }
+          buffer = '';
       }
   }
 }
@@ -246,7 +276,8 @@ export function parseEpgChannels(filePath, onChannel) {
              const nameMatch = fullBlock.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
 
              if (idMatch && nameMatch) {
-                 onChannel({ id: idMatch[1], name: nameMatch[1] });
+                 // Do NOT decode channel ID to match DB format
+                 onChannel({ id: idMatch[1], name: decodeXml(nameMatch[1]) });
              }
          }
 

@@ -5,7 +5,7 @@ import fetch from 'node-fetch';
 import { createWriteStream } from 'fs';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
-import { mergeEpgFiles, filterEpgFile } from '../epg_utils.js';
+import { mergeEpgFiles, filterEpgFile, decodeXml } from '../epg_utils.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
@@ -40,6 +40,7 @@ export async function loadAllEpgChannels() {
       const channelRegex = /<channel id="([^"]+)">([\s\S]*?)<\/channel>/g;
       let match;
       while ((match = channelRegex.exec(content)) !== null) {
+        // Do NOT decode channel ID to match DB/Playlist format
         const id = match[1];
         if (seenIds.has(id)) continue;
 
@@ -49,7 +50,7 @@ export async function loadAllEpgChannels() {
 
         allChannels.push({
           id: id,
-          name: nameMatch ? nameMatch[1] : id,
+          name: nameMatch ? decodeXml(nameMatch[1]) : id,
           logo: iconMatch ? iconMatch[1] : null,
           source: item.source
         });
