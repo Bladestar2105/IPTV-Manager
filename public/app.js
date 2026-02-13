@@ -734,6 +734,16 @@ function prepareEditProvider(p) {
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
 
+  const expiryInput = document.getElementById('provider-expiry-date');
+  if (expiryInput) {
+      if (p.expiry_date) {
+          const date = new Date(p.expiry_date * 1000);
+          expiryInput.value = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+      } else {
+          expiryInput.value = '';
+      }
+  }
+
   document.getElementById('save-provider-btn').textContent = t('saveChanges') || 'Save';
 
   // Show Modal
@@ -754,6 +764,9 @@ function resetProviderForm() {
   form.provider_id.value = '';
   document.getElementById('save-provider-btn').textContent = t('addProvider');
   if (selectedUserId && form.user_id) form.user_id.value = selectedUserId;
+
+  const expiryInput = document.getElementById('provider-expiry-date');
+  if (expiryInput) expiryInput.value = '';
 }
 
 // === Category Management ===
