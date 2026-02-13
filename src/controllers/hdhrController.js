@@ -136,3 +136,56 @@ export const auto = async (req, res) => {
     res.status(500).send('Internal Server Error');
   }
 };
+
+export const deviceXml = async (req, res) => {
+  try {
+    const user = await getXtreamUser(req);
+    if (!user) {
+      return res.status(401).send('Unauthorized');
+    }
+    if (!user.hdhr_enabled) {
+      return res.status(403).send('Disabled');
+    }
+
+    const deviceID = `1234${user.id.toString(16).padStart(4, '0')}`;
+    const baseURL = `${req.protocol}://${req.get('host')}/hdhr/${user.hdhr_token}`;
+    const friendlyName = `IPTV Manager (${user.username})`;
+
+    const escapeXml = (unsafe) => {
+        return unsafe.replace(/[<>&'"]/g, function (c) {
+            switch (c) {
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '&': return '&amp;';
+                case '\'': return '&apos;';
+                case '"': return '&quot;';
+            }
+        });
+    };
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
+    <friendlyName>${escapeXml(friendlyName)}</friendlyName>
+    <manufacturer>Silicondust</manufacturer>
+    <modelName>HDHR4-2US</modelName>
+    <modelNumber>HDHR4-2US</modelNumber>
+    <serialNumber>${deviceID}</serialNumber>
+    <UDN>uuid:${deviceID}</UDN>
+    <presentationURL>${baseURL}</presentationURL>
+    <URLBase>${baseURL}/</URLBase>
+  </device>
+</root>`;
+
+    res.set('Content-Type', 'application/xml');
+    res.send(xml);
+  } catch (e) {
+    console.error('HDHR deviceXml error:', e);
+    res.status(500).send('Internal Server Error');
+  }
+};
