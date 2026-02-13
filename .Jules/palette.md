@@ -13,3 +13,7 @@
 ## 2025-05-20 - [Password Visibility Toggle]
 **Learning:** Admin dashboards often display sensitive data like passwords in plain text for convenience, which compromises privacy (shoulder surfing).
 **Action:** Default password fields to `type="password"` even for read-only displays, and add a "Show/Hide" toggle button. This balances security (default hidden) with utility (revealable).
+
+## 2025-05-22 - [Clearable Search Input Pattern]
+**Learning:** Standard search inputs require users to manually delete text to reset filters, which is tedious on mobile or with long queries.
+**Action:** Implemented a reusable pattern wrapping inputs in a Bootstrap `input-group` with a hidden "X" button. A single `initClearableInput` helper handles the toggle logic and dispatches `input` events so existing live-search listeners update automatically.

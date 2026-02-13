@@ -222,7 +222,10 @@
                                 </div>
                              </div>
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
-                             <input type="text" id="channel-search" class="form-control form-control-sm mb-2" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search..." disabled />
+                             <div class="input-group input-group-sm mb-2">
+                                <input type="text" id="channel-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search..." disabled />
+                                <button class="btn btn-outline-secondary" type="button" id="channel-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+                             </div>
 
                              <div class="row g-2">
                                 <div class="col-6">
@@ -605,7 +608,10 @@
 
       <div class="d-flex justify-content-between align-items-center mb-2">
          <h3 data-i18n="channelMappingList" class="m-0 border-0">Channel List</h3>
-         <input type="text" id="epg-mapping-search" class="form-control form-control-sm" style="width: 250px;" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search channels...">
+         <div class="input-group input-group-sm" style="width: 250px;">
+            <input type="text" id="epg-mapping-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search channels...">
+            <button class="btn btn-outline-secondary" type="button" id="epg-mapping-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+         </div>
       </div>
 
       <div class="table-responsive" style="max-height: 600px; border: 1px solid var(--tv-border); border-radius: 8px;">
@@ -654,7 +660,10 @@
                <label class="form-check-label" for="import-type-series" data-i18n="typeSeries">Series</label>
              </div>
           </div>
-          <input type="text" id="category-import-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="🔍 Search categories..." />
+          <div class="input-group input-group-sm mb-3">
+             <input type="text" id="category-import-search" class="form-control" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="🔍 Search categories..." />
+             <button class="btn btn-outline-secondary" type="button" id="category-import-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+          </div>
           <div class="d-flex justify-content-between mb-2">
              <div>
                <button class="btn btn-sm btn-outline-secondary" id="cat-select-all" data-i18n="selectAll">Select All</button>
@@ -875,7 +884,10 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="text" id="epg-browse-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
+          <div class="input-group input-group-sm mb-3">
+             <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
+             <button class="btn btn-outline-secondary" type="button" id="epg-browse-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+          </div>
           <ul id="available-epg-sources-list" class="list-group" style="max-height:400px; overflow:auto;">
             <li class="list-group-item text-muted" data-i18n="loading">Loading...</li>
           </ul>
@@ -1111,7 +1123,10 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <input type="text" id="epg-select-search" class="form-control form-control-sm mb-3" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search EPG channels...">
+          <div class="input-group input-group-sm mb-3">
+             <input type="text" id="epg-select-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search EPG channels...">
+             <button class="btn btn-outline-secondary" type="button" id="epg-select-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+          </div>
           <ul id="epg-select-list" class="list-group" style="max-height:400px; overflow:auto;">
              <li class="list-group-item text-center text-muted">Loading...</li>
           </ul>
