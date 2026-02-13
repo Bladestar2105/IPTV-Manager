@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import db from '../database/db.js';
-import { generateToken } from '../services/authService.js';
+import { generateToken, preventTimingAttack } from '../services/authService.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS } from '../config/constants.js';
@@ -81,6 +81,9 @@ export const login = async (req, res) => {
           expiresIn: JWT_EXPIRES_IN
         });
       }
+    } else {
+      // User not found - mitigate timing attack
+      await preventTimingAttack(password);
     }
 
     // Log Failure

@@ -7,11 +7,11 @@
   "dependencies": {
     "@iptv/xtream-api": "^1.2.1",
     "bcrypt": "^6.0.0",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^11.10.0",
     "body-parser": "^1.20.3",
     "bootstrap": "^5.3.0",
     "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
+    "dotenv": "^17.3.1",
     "express": "^4.21.2",
     "express-rate-limit": "^8.2.1",
     "ffmpeg-static": "^5.3.0",
