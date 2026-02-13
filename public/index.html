@@ -883,7 +883,7 @@
             </div>
             <div class="mb-3" id="login-otp-group" style="display:none;">
               <label for="login-otp" class="form-label" data-i18n="otp_code">2FA Code</label>
-              <input type="text" class="form-control" id="login-otp" autocomplete="off" placeholder="123456">
+              <input type="text" class="form-control" id="login-otp" autocomplete="off" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
             </div>
             <div id="login-error" class="alert alert-danger" style="display: none;"></div>
             <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
@@ -909,7 +909,7 @@
              </div>
              <p data-i18n="scan_qr">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
              <div class="input-group mb-3">
-                <input type="text" id="otp-verify-input" class="form-control" placeholder="123456">
+                <input type="text" id="otp-verify-input" class="form-control" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
                 <button class="btn btn-primary" onclick="verifyAndEnableOtp()" data-i18n="verify">Verify</button>
              </div>
           </div>
@@ -1039,7 +1039,7 @@
              </div>
              <div class="mb-3">
                 <label class="form-label" data-i18n="epgUrl">EPG URL</label>
-                <input class="form-control" name="epg_url" placeholder="(Optional)">
+                <input class="form-control" name="epg_url" data-i18n-placeholder="optional" placeholder="(Optional)">
              </div>
              <div class="mb-3">
                 <label class="form-label" data-i18n="expiryDate">Expiry Date</label>
