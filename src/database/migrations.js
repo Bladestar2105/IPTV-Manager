@@ -436,3 +436,17 @@ export function migrateUserPasswords(db) {
     console.error('User Password migration error:', e);
   }
 }
+
+export function migrateProviderExpiry(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('expiry_date')) {
+      db.exec('ALTER TABLE providers ADD COLUMN expiry_date INTEGER');
+      console.log('✅ DB Migration: expiry_date column added to providers');
+    }
+  } catch (e) {
+    console.error('Provider Expiry migration error:', e);
+  }
+}

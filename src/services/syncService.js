@@ -12,6 +12,39 @@ function createXtreamClient(provider) {
   return new Xtream({ url: baseUrl, username: provider.username, password: provider.password });
 }
 
+export async function checkProviderExpiry(providerId) {
+  try {
+    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+    if (!provider) return null;
+
+    const password = decrypt(provider.password);
+    const baseUrl = provider.url.replace(/\/+$/, '');
+    const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(password)}`;
+
+    // Use fetch directly to get user_info
+    const resp = await fetch(`${baseUrl}/player_api.php?${authParams}`);
+    if (!resp.ok) return null;
+
+    const data = await resp.json();
+    if (data && data.user_info && data.user_info.exp_date !== undefined) {
+      let expDate = data.user_info.exp_date;
+      let expiry = null;
+
+      if (expDate !== null && expDate !== 'null') {
+          expiry = parseInt(expDate, 10);
+          if (isNaN(expiry)) expiry = null;
+      }
+
+      db.prepare('UPDATE providers SET expiry_date = ? WHERE id = ?').run(expiry, providerId);
+      console.log(`✅ Updated expiry date for provider ${provider.name}: ${expiry}`);
+      return expiry;
+    }
+  } catch (e) {
+    console.error(`Failed to check expiry for provider ${providerId}:`, e.message);
+  }
+  return null;
+}
+
 export function calculateNextSync(interval) {
   const now = Math.floor(Date.now() / 1000);
   switch (interval) {
@@ -38,6 +71,9 @@ export async function performSync(providerId, userId, isManual = false) {
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
+
+    // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
+    await checkProviderExpiry(providerId);
 
     // Decrypt password for usage
     provider.password = decrypt(provider.password);

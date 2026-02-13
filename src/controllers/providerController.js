@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
-import { performSync } from '../services/syncService.js';
+import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 
 export const getProviders = (req, res) => {
@@ -104,6 +104,10 @@ export const createProvider = async (req, res) => {
       epg_update_interval ? Number(epg_update_interval) : 86400,
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1
     );
+
+    // Check expiry
+    await checkProviderExpiry(info.lastInsertRowid);
+
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -167,6 +171,9 @@ export const updateProvider = async (req, res) => {
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
       id
     );
+
+    // Check expiry
+    await checkProviderExpiry(id);
 
     res.json({success: true});
   } catch (e) {
