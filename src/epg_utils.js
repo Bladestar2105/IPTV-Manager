@@ -174,6 +174,7 @@ export async function parseEpgXml(filePath, onProgramme) {
 
   let buffer = '';
   let inProgramme = false;
+  const MAX_BUFFER = 1024 * 50; // 50KB safety limit for a single programme entry
 
   for await (const line of rl) {
       const trimmed = line.trim();
@@ -182,11 +183,28 @@ export async function parseEpgXml(filePath, onProgramme) {
           if (trimmed.startsWith('<programme')) {
               inProgramme = true;
               buffer = trimmed;
+
+              // Handle self-closing tag immediately: <programme ... />
+              if (trimmed.endsWith('/>')) {
+                  inProgramme = false;
+                  // Self-closing programme usually has no title/desc, so skip or handle
+                  // Typically XMLTV uses child elements for title/desc so self-closing is rare/useless
+                  buffer = '';
+                  continue;
+              }
           }
       } else {
           // In programme block
           // Append with space to avoid merging attributes incorrectly
           buffer += ' ' + trimmed;
+
+          // Safety check: Prevent infinite buffer growth if </programme> is missing
+          if (buffer.length > MAX_BUFFER) {
+              // Too large, discard and reset
+              inProgramme = false;
+              buffer = '';
+              continue;
+          }
       }
 
       if (inProgramme && buffer.includes('</programme>')) {
@@ -204,7 +222,8 @@ export async function parseEpgXml(filePath, onProgramme) {
           const descMatch = buffer.match(/<desc[^>]*>([^<]+)<\/desc>/);
 
           if (startMatch && stopMatch && channelMatch && titleMatch) {
-              const channelId = decodeXml(channelMatch[1]);
+              // Do NOT decode channel ID to match DB/Playlist format (raw string)
+              const channelId = channelMatch[1];
               const title = decodeXml(titleMatch[1]);
               const desc = descMatch ? decodeXml(descMatch[1]) : '';
               const start = parseXmltvDate(startMatch[1]);
@@ -257,7 +276,8 @@ export function parseEpgChannels(filePath, onChannel) {
              const nameMatch = fullBlock.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
 
              if (idMatch && nameMatch) {
-                 onChannel({ id: decodeXml(idMatch[1]), name: decodeXml(nameMatch[1]) });
+                 // Do NOT decode channel ID to match DB format
+                 onChannel({ id: idMatch[1], name: decodeXml(nameMatch[1]) });
              }
          }
 

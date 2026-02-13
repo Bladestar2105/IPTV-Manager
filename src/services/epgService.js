@@ -40,7 +40,8 @@ export async function loadAllEpgChannels() {
       const channelRegex = /<channel id="([^"]+)">([\s\S]*?)<\/channel>/g;
       let match;
       while ((match = channelRegex.exec(content)) !== null) {
-        const id = decodeXml(match[1]);
+        // Do NOT decode channel ID to match DB/Playlist format
+        const id = match[1];
         if (seenIds.has(id)) continue;
 
         const inner = match[2];
