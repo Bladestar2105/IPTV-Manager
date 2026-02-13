@@ -357,22 +357,70 @@ function copyAllXtreamCredentials(btnElement) {
     copyToClipboard(text, btnElement);
 }
 
+function renderUserDetails(u) {
+    selectedUser = u;
+    selectedUserId = u.id;
+    const label = document.getElementById('selected-user-label');
+    if (label) label.textContent = `${u.username} (id=${u.id})`;
+
+    const baseUrl = window.location.origin;
+    const pass = u.plain_password || '********';
+
+    const elUrl = document.getElementById('xtream-url');
+    if(elUrl) elUrl.value = baseUrl;
+    const elUser = document.getElementById('xtream-user');
+    if(elUser) elUser.value = u.username;
+    const elPass = document.getElementById('xtream-pass');
+    if(elPass) elPass.value = pass;
+    const elEpg = document.getElementById('epg-url');
+    if(elEpg) elEpg.value = `${baseUrl}/xmltv.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}`;
+
+    // Update M3U Link
+    const m3uLinkEl = document.getElementById('m3u-link');
+    if (m3uLinkEl) {
+        m3uLinkEl.value = `${baseUrl}/get.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}&type=m3u_plus&output=ts`;
+    }
+
+    // Update HDHomeRun Tab
+    const hdhrEnabledSection = document.getElementById('hdhr-enabled-section');
+    const hdhrDisabledSection = document.getElementById('hdhr-disabled-section');
+    const hdhrUrlInput = document.getElementById('hdhr-url');
+
+    if (hdhrEnabledSection && hdhrDisabledSection) {
+        if (u.hdhr_enabled) {
+            hdhrEnabledSection.style.display = 'block';
+            hdhrDisabledSection.style.display = 'none';
+            const protocol = window.location.protocol;
+            const host = window.location.host;
+            // u.hdhr_token is returned by GET /api/users
+            if (hdhrUrlInput) hdhrUrlInput.value = `${protocol}//${host}/hdhr/${u.hdhr_token}/discover.json`;
+        } else {
+            hdhrEnabledSection.style.display = 'none';
+            hdhrDisabledSection.style.display = 'block';
+            if (hdhrUrlInput) hdhrUrlInput.value = '';
+        }
+    }
+
+    loadUserCategories();
+    loadProviders(u.id); // Refresh providers
+
+    // Update provider form user select if not editing
+    const provForm = document.getElementById('provider-form');
+    if (provForm && !provForm.provider_id.value) {
+        if(provForm.user_id) provForm.user_id.value = u.id;
+    }
+}
+
 async function loadUsers() {
   if (!currentUser || !currentUser.is_admin) {
       // If user, fake load themselves as selected
-      const user = {
-          id: currentUser.id,
-          username: currentUser.username,
-          plain_password: '***'
-      };
+      // Note: for non-admins, API currently doesn't return hdhr_token in /verify-token response
+      // We might need to fetch it or ensure verify-token returns it.
+      // However, /api/verify-token DOES return the user object.
+      // Let's assume verify-token returns necessary fields.
+      const user = currentUser;
 
-      // Auto-select
-      selectedUser = user;
-      selectedUserId = user.id;
-      document.getElementById('selected-user-label').textContent = `${user.username}`;
-
-      loadUserCategories();
-      loadProviders(user.id);
+      renderUserDetails(user);
 
       // Hide user list and management
       document.getElementById('user-list').innerHTML = `<li class="list-group-item text-muted">${t('managed_by_admin')}</li>`;
@@ -396,52 +444,7 @@ async function loadUsers() {
     span.textContent = `${u.username} (id=${u.id})`;
     span.style.cursor = 'pointer';
     makeAccessible(span, () => {
-      selectedUser = u;
-      selectedUserId = u.id;
-      document.getElementById('selected-user-label').textContent = `${u.username} (id=${u.id})`;
-
-      const baseUrl = window.location.origin;
-      const pass = u.plain_password || '********';
-
-      document.getElementById('xtream-url').value = baseUrl;
-      document.getElementById('xtream-user').value = u.username;
-      document.getElementById('xtream-pass').value = pass;
-      document.getElementById('epg-url').value = `${baseUrl}/xmltv.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}`;
-
-      // Update M3U Link
-      const m3uLinkEl = document.getElementById('m3u-link');
-      if (m3uLinkEl) {
-          m3uLinkEl.value = `${baseUrl}/get.php?username=${encodeURIComponent(u.username)}&password=${encodeURIComponent(pass)}&type=m3u_plus&output=ts`;
-      }
-
-      // Update HDHomeRun Tab
-      const hdhrEnabledSection = document.getElementById('hdhr-enabled-section');
-      const hdhrDisabledSection = document.getElementById('hdhr-disabled-section');
-      const hdhrUrlInput = document.getElementById('hdhr-url');
-
-      if (hdhrEnabledSection && hdhrDisabledSection) {
-          if (u.hdhr_enabled) {
-              hdhrEnabledSection.style.display = 'block';
-              hdhrDisabledSection.style.display = 'none';
-              const protocol = window.location.protocol;
-              const host = window.location.host;
-              // u.hdhr_token is returned by GET /api/users
-              if (hdhrUrlInput) hdhrUrlInput.value = `${protocol}//${host}/hdhr/${u.hdhr_token}/discover.json`;
-          } else {
-              hdhrEnabledSection.style.display = 'none';
-              hdhrDisabledSection.style.display = 'block';
-              if (hdhrUrlInput) hdhrUrlInput.value = '';
-          }
-      }
-
-      loadUserCategories();
-      loadProviders(u.id); // Refresh providers
-
-      // Update provider form user select if not editing
-      const provForm = document.getElementById('provider-form');
-      if (provForm && !provForm.provider_id.value) {
-          if(provForm.user_id) provForm.user_id.value = u.id;
-      }
+      renderUserDetails(u);
     });
     
     const btnGroup = document.createElement('div');

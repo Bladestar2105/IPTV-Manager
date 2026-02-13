@@ -84,13 +84,13 @@ describe('HDHomeRun Controller', () => {
     });
 
     describe('lineup', () => {
-        it('should return channel lineup with token URLs', async () => {
+        it('should return channel lineup with token URLs (live only)', async () => {
             const user = { id: 123, username: 'user', hdhr_enabled: 1, hdhr_token: 'testtoken' };
             getXtreamUser.mockResolvedValue(user);
 
             const mockChannels = [
                 { user_channel_id: '1', name: 'Channel 1', stream_type: 'live' },
-                { user_channel_id: '2', name: 'Channel 2', stream_type: 'movie', mime_type: 'mkv' }
+                { user_channel_id: '3', name: 'Channel 3', stream_type: 'live' }
             ];
 
             // Mock DB chain: db.prepare().all()
@@ -101,7 +101,9 @@ describe('HDHomeRun Controller', () => {
 
             await hdhrController.lineup(req, res);
 
-            expect(db.prepare).toHaveBeenCalled();
+            // Verify SQL filters for live streams
+            expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("pc.stream_type = 'live'"));
+
             expect(res.json).toHaveBeenCalledWith([
                 {
                     GuideNumber: '1',
@@ -110,8 +112,8 @@ describe('HDHomeRun Controller', () => {
                 },
                 {
                     GuideNumber: '2',
-                    GuideName: 'Channel 2',
-                    URL: 'http://localhost:3000/hdhr/testtoken/movie/2.mkv'
+                    GuideName: 'Channel 3',
+                    URL: 'http://localhost:3000/hdhr/testtoken/stream/3.ts'
                 }
             ]);
         });

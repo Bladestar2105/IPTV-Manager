@@ -71,7 +71,7 @@ export const lineup = async (req, res) => {
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE cat.user_id = ? AND pc.stream_type != 'series'
+      WHERE cat.user_id = ? AND pc.stream_type = 'live'
       ORDER BY uc.sort_order
     `).all(user.id);
 
@@ -79,17 +79,7 @@ export const lineup = async (req, res) => {
     const result = [];
 
     channels.forEach((ch, index) => {
-      let ext = 'ts';
-      // We map movies to stream endpoints as well, although standard HDHR is for live TV.
-      // Plex expects a URL.
-
-      let streamUrl;
-      if (ch.stream_type === 'movie') {
-         ext = ch.mime_type || 'mp4';
-         streamUrl = `${host}/hdhr/${user.hdhr_token}/movie/${ch.user_channel_id}.${ext}`;
-      } else {
-         streamUrl = `${host}/hdhr/${user.hdhr_token}/stream/${ch.user_channel_id}.ts`;
-      }
+      const streamUrl = `${host}/hdhr/${user.hdhr_token}/stream/${ch.user_channel_id}.ts`;
 
       result.push({
         GuideNumber: String(index + 1),
