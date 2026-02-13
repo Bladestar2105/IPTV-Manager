@@ -9,3 +9,6 @@
 ## 2025-06-01 - O(N) Search in Loop
 **Learning:** Filtering an array of 10k+ items inside a loop for 10k+ items creates an O(N*M) complexity which is extremely slow. Using a Map index changes lookup to O(1), making the process O(M).
 **Action:** Always pre-compute indexes (Maps) for frequently accessed data in matching algorithms.
+## 2026-02-13 - [Bit Signature Optimization]
+**Learning:** Inverted Indexes (Map<Bigram, List<Channel>>) can be slower than brute force for fuzzy matching when candidate sets are small (< 5000) and bigrams have low selectivity (common bigrams map to many candidates). The overhead of iterating long lists outweighs the cost of iterating all candidates. Bit Signatures (Bloom filter style) provide a constant-time O(32) intersection check that is significantly faster than Set.has() loop O(Bigrams), and avoids the memory/iteration overhead of Inverted Indexes.
+**Action:** For fuzzy matching sets of tokens (like bigrams) against a few thousand candidates, prefer Bit Signatures (popcount intersection) over Inverted Indexes or Set intersections. Ensure denominator uses popcount(A)+popcount(B) to maintain identity property (Similarity(A,A)=1.0).

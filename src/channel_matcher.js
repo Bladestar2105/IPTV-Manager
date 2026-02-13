@@ -67,6 +67,22 @@ const LANGUAGE_MAP = (() => {
   return map;
 })();
 
+// Helper functions for bit signature optimization
+function hashBigram(bg) {
+    let hash = 0;
+    for (let i = 0; i < bg.length; i++) {
+        hash = ((hash << 5) - hash) + bg.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function popcount(n) {
+    n = n - ((n >>> 1) & 0x55555555);
+    n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
+    return ((n + (n >>> 4) & 0x0F0F0F0F) * 0x01010101) >>> 24;
+}
+
 export class ChannelMatcher {
   constructor(epgChannels) {
     this.epgChannels = epgChannels;
@@ -123,11 +139,15 @@ export class ChannelMatcher {
         if (name && lang) {
           const baseName = this.normalizeBaseName(name);
           const numbers = this.extractNumbers(baseName);
+          const bigrams = this.getBigrams(baseName);
+          const sig = this.createSignature(bigrams);
           return {
             baseName: baseName,
             language: this.normalizeLanguage(lang),
             original: original,
-            bigrams: this.getBigrams(baseName),
+            bigrams: bigrams,
+            signature: sig,
+            signaturePopcount: this.countSignatureBits(sig),
             numbers: numbers,
             // Pre-compute sorted numbers string for O(1) matching
             numbersString: [...numbers].sort().join(',')
@@ -139,11 +159,15 @@ export class ChannelMatcher {
     // Kein Sprachcode gefunden
     const baseName = this.normalizeBaseName(original);
     const numbers = this.extractNumbers(baseName);
+    const bigrams = this.getBigrams(baseName);
+    const sig = this.createSignature(bigrams);
     return {
       baseName: baseName,
       language: null,
       original: original,
-      bigrams: this.getBigrams(baseName),
+      bigrams: bigrams,
+      signature: sig,
+      signaturePopcount: this.countSignatureBits(sig),
       numbers: numbers,
       // Pre-compute sorted numbers string for O(1) matching
       numbersString: [...numbers].sort().join(',')
@@ -328,14 +352,18 @@ export class ChannelMatcher {
   findBestSimilarity(parsedSearch, candidates, threshold = 0) {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
-    let searchBaseName, searchBigrams;
+    let searchBaseName, searchBigrams, searchSignature, searchPopcount;
     if (typeof parsedSearch === 'string') {
         searchBaseName = this.normalizeBaseName(parsedSearch);
         searchBigrams = this.getBigrams(searchBaseName);
+        searchSignature = this.createSignature(searchBigrams);
+        searchPopcount = this.countSignatureBits(searchSignature);
     } else {
         searchBaseName = parsedSearch.baseName;
         // Safety fallback if bigrams not pre-computed
         searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
+        searchSignature = parsedSearch.signature || this.createSignature(searchBigrams);
+        searchPopcount = parsedSearch.signaturePopcount !== undefined ? parsedSearch.signaturePopcount : this.countSignatureBits(searchSignature);
     }
 
     // Optimization: Prune candidates based on length if threshold is set
@@ -363,7 +391,12 @@ export class ChannelMatcher {
         if (searchBaseName === cand.parsed.baseName) {
             score = 1;
         } else {
-            score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
+            if (searchSignature && cand.parsed.signature) {
+                const candPopcount = cand.parsed.signaturePopcount !== undefined ? cand.parsed.signaturePopcount : this.countSignatureBits(cand.parsed.signature);
+                score = this.calculateDiceCoefficientSignature(searchSignature, cand.parsed.signature, searchPopcount, candPopcount);
+            } else {
+                score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
+            }
         }
 
         if (score > bestScore) {
@@ -421,6 +454,35 @@ export class ChannelMatcher {
         bigrams.add(str.substring(i, i + 2));
     }
     return bigrams;
+  }
+
+  createSignature(bigrams) {
+      // 1024 bits = 32 x 32-bit integers
+      const sig = new Uint32Array(32);
+      for (const bg of bigrams) {
+          const h = hashBigram(bg) % 1024;
+          const idx = Math.floor(h / 32);
+          const bit = h % 32;
+          sig[idx] |= (1 << bit);
+      }
+      return sig;
+  }
+
+  countSignatureBits(sig) {
+      let count = 0;
+      for (let i = 0; i < 32; i++) {
+          count += popcount(sig[i]);
+      }
+      return count;
+  }
+
+  calculateDiceCoefficientSignature(sigA, sigB, popA, popB) {
+      if (popA === 0 && popB === 0) return 0;
+      let intersection = 0;
+      for (let i = 0; i < 32; i++) {
+          intersection += popcount(sigA[i] & sigB[i]);
+      }
+      return (2 * intersection) / (popA + popB);
   }
 
 }
