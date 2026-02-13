@@ -613,7 +613,7 @@
       }
     } catch (e) {
       console.error('Init error:', e);
-      showToast('Error loading data: ' + e.message, 'danger', 10000);
+      showToast(t('errorLoadingData') + ': ' + e.message, 'danger', 10000);
     } finally {
       loadingEl.style.display = 'none';
     }

@@ -365,7 +365,24 @@ const translations = {
     selectCategory: 'Select Category',
     selectCategoryPlaceholder: '-- Select Category --',
     selectUserFirst: 'Please select a user first',
-    select_options_to_load: 'Select options above to load channels'
+    select_options_to_load: 'Select options above to load channels',
+    // New
+    days: 'days',
+    providers: 'Providers',
+    skipped: 'Skipped',
+    credentialsFor: 'Credentials for "{name}"',
+    usernameCaps: 'USERNAME',
+    passwordCaps: 'PASSWORD',
+    epgUrlCaps: 'EPG-URL',
+    m3uUrlCaps: 'M3U-URL',
+    categoriesImported: '✅ {count} categories imported',
+    errorLoadingData: 'Error loading data',
+    popupBlocked: 'Popup blocked. Please allow popups for this site.',
+    otpPlaceholder: '123456',
+    optional: '(Optional)',
+    time_h: 'h',
+    time_m: 'm',
+    time_s: 's'
   },
   
   de: {
@@ -730,7 +747,24 @@ const translations = {
     selectCategory: 'Kategorie wählen',
     selectCategoryPlaceholder: '-- Kategorie wählen --',
     selectUserFirst: 'Bitte zuerst einen Benutzer wählen',
-    select_options_to_load: 'Bitte Optionen wählen'
+    select_options_to_load: 'Bitte Optionen wählen',
+    // New
+    days: 'Tage',
+    providers: 'Provider',
+    skipped: 'Übersprungen',
+    credentialsFor: 'Zugangsdaten für "{name}"',
+    usernameCaps: 'BENUTZERNAME',
+    passwordCaps: 'PASSWORT',
+    epgUrlCaps: 'EPG-URL',
+    m3uUrlCaps: 'M3U-URL',
+    categoriesImported: '✅ {count} Kategorien importiert',
+    errorLoadingData: 'Fehler beim Laden der Daten',
+    popupBlocked: 'Popup blockiert. Bitte erlauben Sie Popups für diese Seite.',
+    otpPlaceholder: '123456',
+    optional: '(Optional)',
+    time_h: 'h',
+    time_m: 'm',
+    time_s: 's'
   },
 
   fr: {
@@ -1095,7 +1129,24 @@ const translations = {
     selectCategory: 'Sélectionner Catégorie',
     selectCategoryPlaceholder: '-- Sélectionner Catégorie --',
     selectUserFirst: 'Veuillez d\'abord sélectionner un utilisateur',
-    select_options_to_load: 'Sélectionnez les options pour charger'
+    select_options_to_load: 'Sélectionnez les options pour charger',
+    // New
+    days: 'jours',
+    providers: 'Fournisseurs',
+    skipped: 'Ignoré',
+    credentialsFor: 'Identifiants pour "{name}"',
+    usernameCaps: 'NOM D\'UTILISATEUR',
+    passwordCaps: 'MOT DE PASSE',
+    epgUrlCaps: 'URL EPG',
+    m3uUrlCaps: 'URL M3U',
+    categoriesImported: '✅ {count} catégories importées',
+    errorLoadingData: 'Erreur lors du chargement des données',
+    popupBlocked: 'Popup bloqué. Veuillez autoriser les popups pour ce site.',
+    otpPlaceholder: '123456',
+    optional: '(Optionnel)',
+    time_h: 'h',
+    time_m: 'm',
+    time_s: 's'
   },
 
   el: {
@@ -1460,7 +1511,24 @@ const translations = {
     selectCategory: 'Επιλογή Κατηγορίας',
     selectCategoryPlaceholder: '-- Επιλέξτε Κατηγορία --',
     selectUserFirst: 'Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
-    select_options_to_load: 'Επιλέξτε επιλογές για φόρτωση'
+    select_options_to_load: 'Επιλέξτε επιλογές για φόρτωση',
+    // New
+    days: 'ημέρες',
+    providers: 'Πάροχοι',
+    skipped: 'Παραλείφθηκαν',
+    credentialsFor: 'Διαπιστευτήρια για "{name}"',
+    usernameCaps: 'ΟΝΟΜΑ ΧΡΗΣΤΗ',
+    passwordCaps: 'ΚΩΔΙΚΟΣ',
+    epgUrlCaps: 'URL EPG',
+    m3uUrlCaps: 'URL M3U',
+    categoriesImported: '✅ {count} κατηγορίες εισήχθησαν',
+    errorLoadingData: 'Σφάλμα φόρτωσης δεδομένων',
+    popupBlocked: 'Το αναδυόμενο παράθυρο αποκλείστηκε. Παρακαλώ επιτρέψτε τα αναδυόμενα παράθυρα.',
+    otpPlaceholder: '123456',
+    optional: '(Προαιρετικό)',
+    time_h: 'ώ',
+    time_m: 'λ',
+    time_s: 'δ'
   }
 };
 
