@@ -9,6 +9,7 @@ import app from './app.js';
 import db, { initDb } from './database/db.js';
 import streamManager from './stream_manager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler } from './services/schedulerService.js';
+import { startSSDP } from './services/ssdpService.js';
 import { createDefaultAdmin } from './services/authService.js';
 import { PORT } from './config/constants.js';
 
@@ -74,6 +75,7 @@ let redisClient = null;
       startSyncScheduler();
       startEpgScheduler();
       startCleanupScheduler();
+      startSSDP();
     }
 
     app.listen(PORT, () => {
