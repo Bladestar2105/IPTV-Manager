@@ -170,6 +170,9 @@
                     <li class="nav-item">
                        <button class="nav-link" id="tab-xtream-btn" data-bs-toggle="tab" data-bs-target="#tab-xtream" type="button" data-i18n="xtreamCodes">Xtream Codes</button>
                     </li>
+                    <li class="nav-item">
+                       <button class="nav-link" id="tab-hdhr-btn" data-bs-toggle="tab" data-bs-target="#tab-hdhr" type="button">HDHomeRun</button>
+                    </li>
                  </ul>
 
                  <div class="tab-content" id="user-tab-content">
@@ -285,6 +288,29 @@
                        </div>
 
                        <button class="btn btn-primary w-100" onclick="copyAllXtreamCredentials(this)" data-i18n="copyAll">Copy All Credentials</button>
+                    </div>
+
+                    <!-- HDHomeRun Tab -->
+                    <div class="tab-pane fade" id="tab-hdhr">
+                       <div id="hdhr-enabled-section" style="display:none;">
+                          <div class="alert alert-info small">
+                             Use the URL below to configure Plex DVR or Emby Live TV.
+                             <br><strong>Note:</strong> This feature emulates an HDHomeRun tuner.
+                          </div>
+                          <div class="mb-3">
+                             <label class="form-label small fw-bold">Device URL</label>
+                             <div class="input-group input-group-sm">
+                                <input type="text" class="form-control" id="hdhr-url" readonly>
+                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('hdhr-url').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             </div>
+                          </div>
+                       </div>
+                       <div id="hdhr-disabled-section" style="display:none;">
+                          <div class="alert alert-warning small">
+                             HDHomeRun emulation is disabled for this user.
+                             <br>Enable it in the <strong>Edit User</strong> menu.
+                          </div>
+                       </div>
                     </div>
                  </div>
               </div>
@@ -948,6 +974,10 @@
             <div class="mb-3 form-check">
               <input type="checkbox" class="form-check-input" id="edit-user-webui-access">
               <label class="form-check-label" for="edit-user-webui-access" data-i18n="webui_access">Web UI Access</label>
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" class="form-check-input" id="edit-user-hdhr-enabled">
+              <label class="form-check-label" for="edit-user-hdhr-enabled">Enable HDHomeRun</label>
             </div>
           </div>
           <div class="modal-footer">
