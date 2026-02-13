@@ -229,6 +229,7 @@ export function initDb(isPrimary) {
             migrations.migrateIndexes(db);
             migrations.migrateOtpSecrets(db);
             migrations.migrateUserPasswords(db);
+            migrations.migrateProviderExpiry(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

@@ -44,6 +44,7 @@ const translations = {
     status: 'Status',
     added: 'Added',
     updated: 'Updated',
+    expiryDate: 'Expiry Date',
     
     // Category Section
     selectedUser: 'Selected User',
@@ -408,6 +409,7 @@ const translations = {
     status: 'Status',
     added: 'Hinzugefügt',
     updated: 'Aktualisiert',
+    expiryDate: 'Ablaufdatum',
     
     // Category Section
     selectedUser: 'Ausgewählter User',
@@ -772,6 +774,7 @@ const translations = {
     status: 'Statut',
     added: 'Ajouté',
     updated: 'Mis à jour',
+    expiryDate: "Date d'expiration",
     
     // Category Section
     selectedUser: 'Utilisateur Sélectionné',
@@ -1136,6 +1139,7 @@ const translations = {
     status: 'Κατάσταση',
     added: 'Προστέθηκαν',
     updated: 'Ενημερώθηκαν',
+    expiryDate: 'Ημερομηνία Λήξης',
     
     // Category Section
     selectedUser: 'Επιλεγμένος Χρήστης',

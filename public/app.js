@@ -611,9 +611,22 @@ async function loadProviders(filterUserId = null) {
     const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h) | ${t('lastEpgUpdate')}: ${lastUpdate}</small>` : '';
     const ownerInfo = p.owner_name ? `<br><small class="text-primary">${t('owner')}: ${p.owner_name}</small>` : '';
 
+    let expiryInfo = '';
+    if (p.expiry_date) {
+        const expDate = new Date(p.expiry_date * 1000);
+        const now = new Date();
+        const diffDays = Math.ceil((expDate - now) / (1000 * 60 * 60 * 24));
+        let colorClass = 'text-muted';
+        if (diffDays < 0) colorClass = 'text-danger fw-bold';
+        else if (diffDays < 7) colorClass = 'text-warning fw-bold';
+        else colorClass = 'text-success';
+
+        expiryInfo = `<br><small class="${colorClass}">${t('expiryDate') || 'Expires'}: ${expDate.toLocaleDateString()} (${diffDays} days)</small>`;
+    }
+
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
-    row.innerHTML = `<div><strong>${p.name}</strong> <small>(${p.url})</small>${ownerInfo}${epgInfo}</div>`;
+    row.innerHTML = `<div><strong>${p.name}</strong> <small>(${p.url})</small>${ownerInfo}${expiryInfo}${epgInfo}</div>`;
     
     const btnGroup = document.createElement('div');
     const isAdmin = currentUser && currentUser.is_admin;
