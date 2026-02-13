@@ -36,11 +36,13 @@ export { JWT_SECRET, ENCRYPTION_KEY };
 export function encrypt(text) {
   if (!text) return text;
   try {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    // AES-GCM (Authenticated Encryption)
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
     let encrypted = cipher.update(text);
     encrypted = Buffer.concat([encrypted, cipher.final()]);
-    return iv.toString('hex') + ':' + encrypted.toString('hex');
+    const tag = cipher.getAuthTag();
+    return iv.toString('hex') + ':' + encrypted.toString('hex') + ':' + tag.toString('hex');
   } catch (e) {
     console.error('Encryption error:', e);
     throw new Error('Encryption failed');
@@ -51,13 +53,28 @@ export function decrypt(text) {
   if (!text) return text;
   try {
     const textParts = text.split(':');
-    if (textParts.length !== 2) return null;
-    const iv = Buffer.from(textParts[0], 'hex');
-    const encryptedText = Buffer.from(textParts[1], 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
-    let decrypted = decipher.update(encryptedText);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    return decrypted.toString();
+
+    if (textParts.length === 3) {
+      // GCM (New Format: iv:ciphertext:tag)
+      const iv = Buffer.from(textParts[0], 'hex');
+      const encryptedText = Buffer.from(textParts[1], 'hex');
+      const tag = Buffer.from(textParts[2], 'hex');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+      decipher.setAuthTag(tag);
+      let decrypted = decipher.update(encryptedText);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      return decrypted.toString();
+    } else if (textParts.length === 2) {
+      // CBC (Legacy Format: iv:ciphertext) - Backward compatibility
+      const iv = Buffer.from(textParts[0], 'hex');
+      const encryptedText = Buffer.from(textParts[1], 'hex');
+      const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+      let decrypted = decipher.update(encryptedText);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      return decrypted.toString();
+    }
+
+    return null;
   } catch (e) {
     return null;
   }
