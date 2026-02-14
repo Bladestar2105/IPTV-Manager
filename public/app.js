@@ -1968,10 +1968,15 @@ async function handleExport(e) {
     try {
         const token = getToken();
         // Construct URL
-        const url = `/api/export?user_id=${userId}&password=${encodeURIComponent(password)}`;
+        const url = `/api/export`;
 
         const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${token}` }
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ user_id: userId, password: password })
         });
 
         if (!response.ok) {
