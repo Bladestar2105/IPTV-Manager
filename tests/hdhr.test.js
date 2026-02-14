@@ -23,7 +23,8 @@ describe('HDHomeRun Controller', () => {
         req = {
             params: { token: 'testtoken', channelId: '1' },
             protocol: 'http',
-            get: vi.fn().mockReturnValue('localhost:3000')
+            get: vi.fn().mockReturnValue('localhost:3000'),
+            app: { get: vi.fn() }
         };
         res = {
             json: vi.fn(),

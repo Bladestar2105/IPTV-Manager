@@ -1,6 +1,21 @@
 import dns from 'dns/promises';
 import { isIP } from 'net';
 
+export function getBaseUrl(req) {
+  const protocol = req.protocol;
+  let host = req.get('host');
+
+  // Respect X-Forwarded-Host if trust proxy is enabled
+  const trustProxy = req.app.get('trust proxy');
+  const xfh = req.get('x-forwarded-host');
+
+  if (trustProxy && xfh) {
+      host = xfh.split(',')[0].trim();
+  }
+
+  return `${protocol}://${host}`;
+}
+
 export async function isSafeUrl(urlStr) {
   try {
     const parsed = new URL(urlStr);
