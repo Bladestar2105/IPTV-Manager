@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { securityHeaders, ipBlocker, apiLimiter } from './middleware/security.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -82,5 +83,8 @@ app.use('/api', systemRoutes);
 app.use('/', streamRoutes);
 app.use('/', xtreamRoutes);
 app.use('/hdhr', hdhrRoutes);
+
+// Error Handler
+app.use(errorHandler);
 
 export default app;
