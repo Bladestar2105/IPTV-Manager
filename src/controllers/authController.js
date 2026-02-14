@@ -19,6 +19,10 @@ export const login = async (req, res) => {
       return res.status(400).json({error: 'missing_credentials'});
     }
 
+    if (username.length > 100) {
+      return res.status(400).json({error: 'username_too_long'});
+    }
+
     // 1. Check admin_users
     let user = db.prepare('SELECT *, 1 as is_admin FROM admin_users WHERE username = ? AND is_active = 1').get(username);
     let table = 'admin_users';
@@ -112,6 +116,7 @@ export const login = async (req, res) => {
 
         db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'ip_blocked', `Too many failed WebUI logins (Threshold: ${threshold})`, now);
         console.warn(`⛔ Blocking IP ${ip} due to ${failCount} failed logins`);
+        return res.status(403).json({ error: 'Access Denied', message: 'Your IP has been blocked due to too many failed attempts' });
       }
     }
 

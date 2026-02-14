@@ -7,6 +7,7 @@ import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { mergeEpgFiles, filterEpgFile, decodeXml } from '../epg_utils.js';
 import { isSafeUrl } from '../utils/helpers.js';
+import { httpAgent, httpsAgent } from '../utils/safeAgent.js';
 
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
@@ -76,7 +77,9 @@ export async function updateEpgSource(sourceId, skipRegenerate = false) {
       throw new Error(`Unsafe URL blocked: ${source.url}`);
     }
 
-    const response = await fetch(source.url);
+    const response = await fetch(source.url, {
+      agent: (parsedUrl) => parsedUrl.protocol === 'http:' ? httpAgent : httpsAgent
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const epgData = await response.text();
