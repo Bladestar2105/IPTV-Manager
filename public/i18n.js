@@ -238,6 +238,9 @@ const translations = {
     duration: 'Duration',
     ip: 'IP Address',
     client: 'Client',
+    resetStats: 'Reset',
+    confirmResetStats: 'Reset all statistics?',
+    statsResetSuccess: 'Statistics reset successfully',
 
     // Bulk Import
     importSelected: '📥 Import Selected',
@@ -620,6 +623,9 @@ const translations = {
     duration: 'Dauer',
     ip: 'IP-Adresse',
     client: 'Client',
+    resetStats: 'Zurücksetzen',
+    confirmResetStats: 'Alle Statistiken zurücksetzen?',
+    statsResetSuccess: 'Statistiken erfolgreich zurückgesetzt',
 
     // Bulk Import
     importSelected: '📥 Auswahl importieren',
@@ -1002,6 +1008,9 @@ const translations = {
     duration: 'Durée',
     ip: 'Adresse IP',
     client: 'Client',
+    resetStats: 'Réinitialiser',
+    confirmResetStats: 'Réinitialiser toutes les statistiques ?',
+    statsResetSuccess: 'Statistiques réinitialisées avec succès',
 
     // Bulk Import
     importSelected: '📥 Importer la sélection',
@@ -1384,6 +1393,9 @@ const translations = {
     duration: 'Διάρκεια',
     ip: 'Διεύθυνση IP',
     client: 'Πελάτης',
+    resetStats: 'Επαναφορά',
+    confirmResetStats: 'Επαναφορά όλων των στατιστικών;',
+    statsResetSuccess: 'Τα στατιστικά επαναφέρθηκαν επιτυχώς',
 
     // Bulk Import
     importSelected: '📥 Εισαγωγή Επιλεγμένων',
