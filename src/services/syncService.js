@@ -138,7 +138,7 @@ export async function performSync(providerId, userId, isManual = false) {
                              epg_channel_id: ch.epg_id,
                              category_id: ch.category_id,
                              category_type: ch.stream_type || 'live',
-                             metadata: JSON.stringify(ch.metadata || {}), // Store parsed headers/drm
+                             metadata: ch.metadata || {}, // Store parsed headers/drm (Optimization: avoid double stringify)
                              container_extension: ch.url.includes('.mpd') ? 'mpd' : 'ts',
                              original_url: ch.url // Pass original URL for proxying later?
                          });
@@ -265,11 +265,19 @@ export async function performSync(providerId, userId, isManual = false) {
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
 
-    // Optimized: Pre-fetch all channels to avoid N+1 query
-    const existingChannels = db.prepare('SELECT remote_stream_id, id FROM provider_channels WHERE provider_id = ?').all(providerId);
+    // Optimized: Pre-fetch all channels to avoid N+1 query and allow change detection
+    const existingChannels = db.prepare(`
+      SELECT id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id,
+             original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type,
+             rating, rating_5based, added, plot, cast, director, genre, releaseDate,
+             youtube_trailer, episode_run_time
+      FROM provider_channels
+      WHERE provider_id = ?
+    `).all(providerId);
+
     const existingMap = new Map();
     for (const row of existingChannels) {
-      existingMap.set(row.remote_stream_id, row.id);
+      existingMap.set(row.remote_stream_id, row);
     }
 
     // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
@@ -384,7 +392,8 @@ export async function performSync(providerId, userId, isManual = false) {
         const ch = allChannels[i];
         const sid = Number(ch.stream_id || ch.series_id || ch.id || 0);
         if (sid > 0) {
-          const existingId = existingMap.get(sid);
+          const existingRow = existingMap.get(sid);
+          const existingId = existingRow ? existingRow.id : undefined;
           let provChannelId;
 
           const tvArchive = Number(ch.tv_archive) === 1 ? 1 : 0;
@@ -409,7 +418,7 @@ export async function performSync(providerId, userId, isManual = false) {
           const genre = ch.genre || meta.genre || '';
           const releaseDate = ch.releaseDate || meta.releaseDate || '';
           const rating = ch.rating || meta.rating || '';
-          const rating_5based = ch.rating_5based || meta.rating_5based || 0;
+          const rating_5based = Number(ch.rating_5based || meta.rating_5based) || 0;
           const youtube_trailer = ch.youtube_trailer || meta.youtube_trailer || '';
           const episode_run_time = ch.episode_run_time || meta.episode_run_time || '';
           const added = ch.added || meta.added || '';
@@ -432,32 +441,79 @@ export async function performSync(providerId, userId, isManual = false) {
           const metaStr = JSON.stringify(meta);
 
           if (existingId) {
-            // Update existing channel - preserves ID and user_channels relationships
-            updateChannel.run(
-              ch.name || 'Unknown',
-              Number(ch.category_id || 0),
-              ch.stream_icon || ch.cover || '',
-              ch.epg_channel_id || '',
-              i, // original_sort_order
-              tvArchive,
-              tvArchiveDuration,
-              streamType,
-              metaStr,
-              mimeType,
-              rating,
-              rating_5based,
-              added,
-              plot,
-              String(cast),
-              String(director),
-              String(genre),
-              releaseDate,
-              youtube_trailer,
-              episode_run_time,
-              providerId,
-              sid
-            );
-            channelsUpdated++;
+            // Optimization: Check if update is needed
+            // Normalize values for comparison (DB returns numbers/nulls, inputs might be different types)
+            const newName = ch.name || 'Unknown';
+            const newCatId = Number(ch.category_id || 0);
+            const newLogo = ch.stream_icon || ch.cover || '';
+            const newEpgId = ch.epg_channel_id || '';
+            const newSort = i;
+            const newTvArchive = tvArchive;
+            const newTvArchiveDur = tvArchiveDuration;
+            const newStreamType = streamType;
+            const newMetaStr = metaStr;
+            const newMime = mimeType;
+            const newRating = rating;
+            const newRating5 = rating_5based;
+            const newAdded = added;
+            const newPlot = plot;
+            const newCast = String(cast);
+            const newDirector = String(director);
+            const newGenre = String(genre);
+            const newRelease = releaseDate;
+            const newTrailer = youtube_trailer;
+            const newRuntime = episode_run_time;
+
+            const hasChanges =
+              existingRow.name !== newName ||
+              existingRow.original_category_id !== newCatId ||
+              (existingRow.logo || '') !== newLogo ||
+              (existingRow.epg_channel_id || '') !== newEpgId ||
+              existingRow.original_sort_order !== newSort ||
+              existingRow.tv_archive !== newTvArchive ||
+              existingRow.tv_archive_duration !== newTvArchiveDur ||
+              (existingRow.stream_type || 'live') !== newStreamType ||
+              (existingRow.metadata || '{}') !== newMetaStr ||
+              (existingRow.mime_type || '') !== newMime ||
+              (existingRow.rating || '') !== newRating ||
+              (existingRow.rating_5based || 0) !== newRating5 ||
+              (existingRow.added || '') !== newAdded ||
+              (existingRow.plot || '') !== newPlot ||
+              (existingRow.cast || '') !== newCast ||
+              (existingRow.director || '') !== newDirector ||
+              (existingRow.genre || '') !== newGenre ||
+              (existingRow.releaseDate || '') !== newRelease ||
+              (existingRow.youtube_trailer || '') !== newTrailer ||
+              (existingRow.episode_run_time || '') !== newRuntime;
+
+            if (hasChanges) {
+              // Update existing channel - preserves ID and user_channels relationships
+              updateChannel.run(
+                newName,
+                newCatId,
+                newLogo,
+                newEpgId,
+                newSort,
+                newTvArchive,
+                newTvArchiveDur,
+                newStreamType,
+                newMetaStr,
+                newMime,
+                newRating,
+                newRating5,
+                newAdded,
+                newPlot,
+                newCast,
+                newDirector,
+                newGenre,
+                newRelease,
+                newTrailer,
+                newRuntime,
+                providerId,
+                sid
+              );
+              channelsUpdated++;
+            }
             provChannelId = existingId;
           } else {
             // Insert new channel

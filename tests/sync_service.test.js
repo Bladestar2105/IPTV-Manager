@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+
+// Mock DB to prevent initialization error in syncService.js
+vi.mock('../src/database/db.js', () => ({
+  default: {
+    prepare: vi.fn(),
+    transaction: vi.fn(),
+  }
+}));
+
 import { calculateNextSync } from '../src/services/syncService.js';
 
 describe('calculateNextSync', () => {
