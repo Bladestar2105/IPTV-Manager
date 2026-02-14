@@ -230,17 +230,17 @@ export const exportData = (req, res) => {
           const provPlaceholders = providerIds.map(() => '?').join(',');
 
           const channels = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
-          exportData.channels.push(...channels);
+          for (const c of channels) exportData.channels.push(c);
 
           const mappings = db.prepare(`SELECT * FROM category_mappings WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
-          exportData.mappings.push(...mappings);
+          for (const m of mappings) exportData.mappings.push(m);
 
           const syncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
-          exportData.sync_configs.push(...syncs);
+          for (const s of syncs) exportData.sync_configs.push(s);
        }
 
        const categories = db.prepare(`SELECT * FROM user_categories WHERE user_id IN (${userPlaceholders})`).all(...userIds);
-       exportData.categories.push(...categories);
+       for (const c of categories) exportData.categories.push(c);
 
        const userChannels = db.prepare(`
          SELECT uc.*
@@ -248,7 +248,7 @@ export const exportData = (req, res) => {
          JOIN user_categories cat ON cat.id = uc.user_category_id
          WHERE cat.user_id IN (${userPlaceholders})
        `).all(...userIds);
-       exportData.channels.push(...userChannels.map(uc => ({...uc, type: 'user_assignment'})));
+       for (const uc of userChannels) exportData.channels.push({...uc, type: 'user_assignment'});
     }
 
     const jsonStr = JSON.stringify(exportData);
