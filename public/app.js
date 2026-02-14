@@ -174,6 +174,31 @@ function renderLoadingTable(tbodyId, colSpan = 5, textKey = 'loading') {
   }
 }
 
+// Utility: Clearable Input Helper
+function initClearableInput(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  const clearBtn = document.getElementById(inputId + '-clear');
+  if (!clearBtn) return;
+
+  const updateVisibility = () => {
+    clearBtn.style.display = input.value ? 'block' : 'none';
+  };
+
+  input.addEventListener('input', updateVisibility);
+
+  // Initial check
+  updateVisibility();
+
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    input.focus();
+    updateVisibility();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 // i18n: Seite übersetzen
 function translatePage() {
   // Texte übersetzen
@@ -2396,6 +2421,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const assignedHeader = document.getElementById('assigned-channels-header');
   if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
   
+  // Initialize clearable inputs
+  ['channel-search', 'epg-mapping-search', 'category-import-search', 'epg-browse-search', 'epg-select-search'].forEach(id => {
+      initClearableInput(id);
+  });
+
   console.log('✅ IPTV-Manager loaded with i18n & local assets');
 });
 
