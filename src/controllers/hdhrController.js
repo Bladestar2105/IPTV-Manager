@@ -1,5 +1,6 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
+import { getBaseUrl } from '../utils/helpers.js';
 
 export const discover = async (req, res) => {
   try {
@@ -15,7 +16,7 @@ export const discover = async (req, res) => {
 
     const deviceID = `1234${user.id.toString(16).padStart(4, '0')}`; // Simple unique ID
     // BaseURL uses the token, shielding the username/password
-    const baseURL = `${req.protocol}://${req.get('host')}/hdhr/${user.hdhr_token}`;
+    const baseURL = `${getBaseUrl(req)}/hdhr/${user.hdhr_token}`;
 
     res.json({
       FriendlyName: `IPTV Manager (${user.username})`,
@@ -75,7 +76,7 @@ export const lineup = async (req, res) => {
       ORDER BY uc.sort_order
     `).all(user.id);
 
-    const host = `${req.protocol}://${req.get('host')}`;
+    const host = getBaseUrl(req);
     const result = [];
 
     channels.forEach((ch, index) => {
@@ -125,7 +126,7 @@ export const auto = async (req, res) => {
         ext = channel.mime_type || 'mp4';
     }
 
-    const host = `${req.protocol}://${req.get('host')}`;
+    const host = getBaseUrl(req);
     // Redirect to the tokenized stream URL which is handled by streamController via mapped routes
     const streamUrl = `${host}/hdhr/${user.hdhr_token}/${typePath}/${channel.user_channel_id}.${ext}`;
 
@@ -148,7 +149,7 @@ export const deviceXml = async (req, res) => {
     }
 
     const deviceID = `1234${user.id.toString(16).padStart(4, '0')}`;
-    const baseURL = `${req.protocol}://${req.get('host')}/hdhr/${user.hdhr_token}`;
+    const baseURL = `${getBaseUrl(req)}/hdhr/${user.hdhr_token}`;
     const friendlyName = `IPTV Manager (${user.username})`;
 
     const escapeXml = (unsafe) => {

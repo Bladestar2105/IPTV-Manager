@@ -4,7 +4,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import db from '../database/db.js';
 import streamManager from '../stream_manager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { isSafeUrl } from '../utils/helpers.js';
+import { isSafeUrl, getBaseUrl } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
@@ -131,7 +131,7 @@ export const proxyMpd = async (req, res) => {
 
     if (relativePath.endsWith('.mpd')) {
         const text = await upstream.text();
-        const baseUrl = `${req.protocol}://${req.get('host')}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
+        const baseUrl = `${getBaseUrl(req)}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
 
         let newText = text;
         newText = newText.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);

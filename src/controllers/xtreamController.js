@@ -3,6 +3,7 @@ import { getXtreamUser } from '../services/authService.js';
 import { getEpgFiles, streamEpgContent } from '../services/epgService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { decrypt } from '../utils/crypto.js';
+import { getBaseUrl } from '../utils/helpers.js';
 import path from 'path';
 import fs from 'fs';
 import fetch from 'node-fetch';
@@ -259,7 +260,7 @@ export const getPlaylist = async (req, res) => {
       ORDER BY uc.sort_order
     `).all(user.id);
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const baseUrl = getBaseUrl(req);
     let m3u = '#EXTM3U';
 
     if (type === 'm3u_plus') {
@@ -374,7 +375,7 @@ export const playerPlaylist = async (req, res) => {
     `).all(user.id);
 
     let playlist = '#EXTM3U\n';
-    const host = `${req.protocol}://${req.get('host')}`;
+    const host = getBaseUrl(req);
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
     for (const ch of channels) {
