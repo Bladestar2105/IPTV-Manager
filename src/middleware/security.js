@@ -57,7 +57,7 @@ export const ipBlocker = async (req, res, next) => {
     if (blocked) {
       if (blocked.expires_at > now) {
         console.warn(`⛔ IP Blocked: ${ip} (Reason: ${blocked.reason})`);
-        return res.status(403).send('Access Denied');
+        return res.status(403).json({ error: 'Access Denied', message: 'Your IP is blocked' });
       } else {
         // Expired, remove it
         db.prepare('DELETE FROM blocked_ips WHERE id = ?').run(blocked.id);
