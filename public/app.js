@@ -2177,6 +2177,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnImportSelectedChannels) {
       btnImportSelectedChannels.addEventListener('click', () => importSelectedCategories(true));
   }
+
+  const resetStatsBtn = document.getElementById('reset-stats-btn');
+  if (resetStatsBtn) {
+      resetStatsBtn.addEventListener('click', resetStatistics);
+  }
   
   const syncConfigForm = document.getElementById('sync-config-form');
   if (syncConfigForm) {
@@ -2431,6 +2436,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // === View Management ===
 let statsInterval = null;
+let globalStatsInterval = null;
+
+async function updateDashboardCounters() {
+    // Only update if statistics tab is NOT active (to avoid double fetching)
+    if (document.getElementById('view-statistics') && !document.getElementById('view-statistics').classList.contains('d-none')) {
+        return;
+    }
+
+    try {
+        const data = await fetchJSON('/api/statistics');
+        updateStatsCounters('streams', data.active_streams.length);
+    } catch(e) {
+        console.error('Failed to update dashboard counters', e);
+    }
+}
 
 function switchView(viewName) {
   // Hide all views
@@ -2716,6 +2736,23 @@ async function loadStatistics() {
   } catch(e) {
     console.error('Stats error:', e);
   }
+}
+
+async function resetStatistics() {
+    if (!confirm(t('confirmResetStats') || 'Reset all statistics?')) return;
+
+    const btn = document.getElementById('reset-stats-btn');
+    if(btn) setLoadingState(btn, true, 'resetting');
+
+    try {
+        await fetchJSON('/api/statistics/reset', { method: 'POST' });
+        loadStatistics();
+        showToast(t('statsResetSuccess') || 'Statistics reset successfully', 'success');
+    } catch(e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    } finally {
+        if(btn) setLoadingState(btn, false);
+    }
 }
 
 function formatDuration(sec) {
@@ -3186,6 +3223,11 @@ async function checkAuthentication() {
     loadUsers();
     loadProviders();
     loadEpgSources();
+
+    if (globalStatsInterval) clearInterval(globalStatsInterval);
+    globalStatsInterval = setInterval(updateDashboardCounters, 15000);
+    updateDashboardCounters();
+
     return true;
   } catch {
     removeToken();
@@ -3289,6 +3331,10 @@ async function handleLogin(event) {
     loadProviders();
     loadEpgSources();
     
+    if (globalStatsInterval) clearInterval(globalStatsInterval);
+    globalStatsInterval = setInterval(updateDashboardCounters, 15000);
+    updateDashboardCounters();
+
     // Clear form
     document.getElementById('login-username').value = '';
     document.getElementById('login-password').value = '';
@@ -3378,6 +3424,11 @@ function handleLogout() {
   selectedUserId = null;
   selectedCategoryId = null;
   
+  if (globalStatsInterval) {
+      clearInterval(globalStatsInterval);
+      globalStatsInterval = null;
+  }
+
   // Hide the main UI when logging out
   document.getElementById('main-navbar').style.display = 'none';
   document.getElementById('main-content').style.display = 'none';

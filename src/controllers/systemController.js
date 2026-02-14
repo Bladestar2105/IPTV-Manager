@@ -588,3 +588,13 @@ export const getStatistics = async (req, res) => {
     res.status(500).json({error: e.message});
   }
 };
+
+export const resetStatistics = (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    db.prepare('DELETE FROM stream_stats').run();
+    res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
