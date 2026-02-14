@@ -16,9 +16,50 @@ export function getBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
+// Convert IPv4 string to integer (big-endian)
+function ipToLong(ip) {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+  return ((parseInt(parts[0], 10) << 24) |
+          (parseInt(parts[1], 10) << 16) |
+          (parseInt(parts[2], 10) << 8) |
+          parseInt(parts[3], 10)) >>> 0;
+}
+
+// Check if IPv4 is in CIDR range
+function isIpInCidr(ip, cidr) {
+  const [range, bits] = cidr.split('/');
+  if (!range || !bits) return false;
+
+  const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1);
+  const ipLong = ipToLong(ip);
+  const rangeLong = ipToLong(range);
+
+  if (ipLong === null || rangeLong === null) return false;
+  return (ipLong & mask) === (rangeLong & mask);
+}
+
 export function isSafeIP(address) {
   const ipVer = isIP(address);
   if (ipVer === 0) return false;
+
+  // Check Whitelist (ALLOWED_INTERNAL_IPS)
+  // Format: "192.168.1.5,10.0.0.0/8"
+  if (process.env.ALLOWED_INTERNAL_IPS) {
+      const allowed = process.env.ALLOWED_INTERNAL_IPS.split(',');
+      for (const entryRaw of allowed) {
+          const entry = entryRaw.trim();
+          if (!entry) continue;
+
+          // Exact match (IPv4 or IPv6)
+          if (entry === address) return true;
+
+          // CIDR match (IPv4 only)
+          if (ipVer === 4 && entry.includes('/')) {
+              if (isIpInCidr(address, entry)) return true;
+          }
+      }
+  }
 
   if (ipVer === 4) {
       if (address === '0.0.0.0' ||
@@ -63,7 +104,6 @@ export async function isSafeUrl(urlStr) {
     const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
 
     // Quick block known unsafe hostnames
-    if (hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '::1') return false;
     if (hostname === 'metadata.google.internal') return false;
 
     // Resolve DNS
