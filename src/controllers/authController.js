@@ -128,10 +128,34 @@ export const login = async (req, res) => {
 };
 
 export const verifyToken = (req, res) => {
-  res.json({
-    valid: true,
-    user: req.user
-  });
+  try {
+    // We need to fetch the fresh user from DB because JWT payload might be stale
+    // or missing mutable fields like otp_enabled.
+    const table = req.user.is_admin ? 'admin_users' : 'users';
+    const user = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.user.id);
+
+    if (!user) {
+      return res.status(401).json({ valid: false, error: 'User not found' });
+    }
+
+    if (!user.is_active) {
+      return res.status(403).json({ valid: false, error: 'User is inactive' });
+    }
+
+    res.json({
+      valid: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        is_active: !!user.is_active,
+        is_admin: !!req.user.is_admin,
+        otp_enabled: !!user.otp_enabled
+      }
+    });
+  } catch (e) {
+    console.error('Verify token error:', e);
+    res.status(500).json({ error: 'server_error' });
+  }
 };
 
 export const generateOtp = async (req, res) => {
