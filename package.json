@@ -29,6 +29,7 @@
     "string-similarity": "^4.0.4"
   },
   "devDependencies": {
-    "playwright": "^1.58.1"
+    "playwright": "^1.58.1",
+    "supertest": "^7.2.2"
   }
 }
