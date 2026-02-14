@@ -35,8 +35,13 @@ export const securityHeaders = helmet({
       workerSrc: ["'self'", "blob:"],
       frameSrc: ["'self'"],
       objectSrc: ["'none'"],
-      upgradeInsecureRequests: null,
+      upgradeInsecureRequests: [],
     },
+  },
+  strictTransportSecurity: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
   },
   crossOriginEmbedderPolicy: false,
   crossOriginOpenerPolicy: false,

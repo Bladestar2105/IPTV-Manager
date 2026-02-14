@@ -24,14 +24,16 @@ const app = express();
 
 // Trust Proxy Configuration
 if (process.env.TRUST_PROXY) {
-  const trustProxy = process.env.TRUST_PROXY;
+  const trustProxy = process.env.TRUST_PROXY.trim();
   if (trustProxy.toLowerCase() === 'true') {
     app.set('trust proxy', true);
   } else if (trustProxy.toLowerCase() === 'false') {
     app.set('trust proxy', false);
-  } else if (!isNaN(trustProxy)) {
-    app.set('trust proxy', parseInt(trustProxy));
+  } else if (/^\d+$/.test(trustProxy)) {
+    // Number of hops
+    app.set('trust proxy', parseInt(trustProxy, 10));
   } else {
+    // IP address, subnet, or comma-separated list
     app.set('trust proxy', trustProxy);
   }
 }

@@ -56,4 +56,24 @@ describe('isSafeUrl Security Checks', () => {
     const safe = await isSafeUrl('http://203.0.113.1');
     expect(safe).toBe(false);
   });
+
+  it('should block Multicast (224.0.0.1)', async () => {
+    const safe = await isSafeUrl('http://224.0.0.1');
+    expect(safe).toBe(false);
+  });
+
+  it('should block Multicast (239.255.255.250)', async () => {
+    const safe = await isSafeUrl('http://239.255.255.250');
+    expect(safe).toBe(false);
+  });
+
+  it('should block Private 172.16.x.x', async () => {
+    const safe = await isSafeUrl('http://172.16.0.1');
+    expect(safe).toBe(false);
+  });
+
+  it('should allow Public 172.32.x.x', async () => {
+    const safe = await isSafeUrl('http://172.32.0.1');
+    expect(safe).toBe(true);
+  });
 });

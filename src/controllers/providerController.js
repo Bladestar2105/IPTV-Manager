@@ -4,6 +4,7 @@ import fetch from 'node-fetch';
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
+import { httpAgent, httpsAgent } from '../utils/safeAgent.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 
@@ -77,7 +78,11 @@ export const createProvider = async (req, res) => {
         const discoveredUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(username.trim())}&password=${encodeURIComponent(password.trim())}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
-        const resp = await fetch(discoveredUrl, { method: 'HEAD', signal: controller.signal });
+        const resp = await fetch(discoveredUrl, {
+          method: 'HEAD',
+          signal: controller.signal,
+          agent: (parsedUrl) => parsedUrl.protocol === 'http:' ? httpAgent : httpsAgent
+        });
         clearTimeout(timeout);
 
         if (resp.ok) {
@@ -308,7 +313,9 @@ export const getProviderCategories = async (req, res) => {
 
     try {
       const apiUrl = `${baseUrl}/player_api.php?${authParams}&action=${action}`;
-      const resp = await fetch(apiUrl);
+      const resp = await fetch(apiUrl, {
+        agent: (parsedUrl) => parsedUrl.protocol === 'http:' ? httpAgent : httpsAgent
+      });
       if (resp.ok) {
         categories = await resp.json();
       }

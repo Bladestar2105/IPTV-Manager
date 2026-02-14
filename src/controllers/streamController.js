@@ -5,8 +5,11 @@ import db from '../database/db.js';
 import streamManager from '../stream_manager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { isSafeUrl, getBaseUrl } from '../utils/helpers.js';
+import { httpAgent, httpsAgent } from '../utils/safeAgent.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
+
+const getAgent = (parsedUrl) => parsedUrl.protocol === 'http:' ? httpAgent : httpsAgent;
 
 // Redact credentials from upstream URLs before logging.
 // Matches patterns like /live/user/pass/, /movie/user/pass/, /timeshift/user/pass/ etc.
@@ -120,7 +123,8 @@ export const proxyMpd = async (req, res) => {
 
     const upstream = await fetch(upstreamUrl, {
       headers,
-      redirect: 'follow'
+      redirect: 'follow',
+      agent: getAgent
     });
 
     if (!upstream.ok) {
@@ -318,7 +322,8 @@ export const proxyLive = async (req, res) => {
 
     const upstream = await fetch(remoteUrl, {
       headers: fetchHeaders,
-      redirect: 'follow'
+      redirect: 'follow',
+      agent: getAgent
     });
 
     if (!upstream.ok || !upstream.body) {
@@ -468,7 +473,8 @@ export const proxySegment = async (req, res) => {
 
     const upstream = await fetch(targetUrl, {
       headers,
-      redirect: 'follow'
+      redirect: 'follow',
+      agent: getAgent
     });
 
     if (!upstream.ok) {
@@ -572,7 +578,8 @@ export const proxyMovie = async (req, res) => {
         try {
             const upstream = await fetch(remoteUrl, {
                 headers: transcodeHeaders,
-                redirect: 'follow'
+                redirect: 'follow',
+                agent: getAgent
             });
 
             if (!upstream.ok) {
@@ -622,7 +629,8 @@ export const proxyMovie = async (req, res) => {
 
     const upstream = await fetch(remoteUrl, {
       headers,
-      redirect: 'follow'
+      redirect: 'follow',
+      agent: getAgent
     });
 
     if (!upstream.ok || !upstream.body) {
