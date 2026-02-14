@@ -1322,15 +1322,36 @@ function renderProviderChannels(channels) {
         alert(t('selectUserAndCategory'));
         return;
       }
+
+      const originalText = btn.textContent;
+      const originalClass = btn.className;
+      setLoadingState(btn, true, 'loading', false);
+
       try {
         await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({provider_channel_id: ch.id})
         });
+
         loadUserCategoryChannels();
+
+        // Success state
+        btn.disabled = true; // Keep disabled during success message
+        btn.innerHTML = `✅ ${t('added')}`;
+        btn.className = 'btn btn-sm btn-outline-success ms-2';
+
+        setTimeout(() => {
+             // Only restore if the button is still in the DOM (though garbage collection handles it, but good practice)
+             btn.className = originalClass;
+             btn.textContent = originalText;
+             btn.disabled = false;
+        }, 1500);
+
       } catch (e) {
         alert(t('errorPrefix') + ' ' + e.message);
+        setLoadingState(btn, false);
+        btn.textContent = originalText;
       }
     };
     
