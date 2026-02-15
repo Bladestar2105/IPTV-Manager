@@ -27,19 +27,21 @@ let redisClient = null;
         redisClient = createClient({ url: process.env.REDIS_URL });
         redisClient.on('error', (err) => console.error('Redis Client Error', err));
         await redisClient.connect();
-        streamManager.init(db, redisClient);
       } catch (e) {
         console.error('Failed to connect to Redis, falling back to SQLite:', e);
-        streamManager.init(db, null);
+        redisClient = null;
       }
-  } else {
-    streamManager.init(db, null);
   }
 
   if (cluster.isPrimary) {
     // Init DB and Run Migrations
     initDb(true);
+  }
 
+  // Initialize Stream Manager (Redis or SQLite)
+  streamManager.init(db, redisClient);
+
+  if (cluster.isPrimary) {
     // Create default admin
     await createDefaultAdmin();
 
