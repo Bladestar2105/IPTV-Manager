@@ -8,6 +8,9 @@ import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS } from '../config/constants.js';
 
+// Configure authenticator with window=1 to allow ±30s drift
+authenticator.options = { window: 1 };
+
 export const login = async (req, res) => {
   const ip = req.ip;
   const now = Math.floor(Date.now() / 1000);
