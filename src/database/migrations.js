@@ -274,7 +274,8 @@ export function migrateProviderPasswords(db) {
     for (const p of providers) {
       if (!p.password) continue;
       // Check if already encrypted using regex (hex:hex)
-      if (/^[0-9a-f]{32}:[0-9a-f]+$/i.test(p.password)) continue;
+      // Supports both Legacy CBC (32 char IV) and GCM (24 char IV)
+      if (/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(p.password)) continue;
 
       // Encrypt
       const enc = encrypt(p.password);
@@ -382,7 +383,7 @@ export function migrateOtpSecrets(db) {
     for (const u of users) {
       if (!u.otp_secret) continue;
       // If NOT encrypted (doesn't match hex:hex)
-      if (!/^[0-9a-f]{32}:[0-9a-f]+$/i.test(u.otp_secret)) {
+      if (!/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(u.otp_secret)) {
         const encrypted = encrypt(u.otp_secret);
         db.prepare('UPDATE users SET otp_secret = ? WHERE id = ?').run(encrypted, u.id);
         migratedUsers++;
@@ -393,7 +394,7 @@ export function migrateOtpSecrets(db) {
     let migratedAdmins = 0;
     for (const a of admins) {
       if (!a.otp_secret) continue;
-      if (!/^[0-9a-f]{32}:[0-9a-f]+$/i.test(a.otp_secret)) {
+      if (!/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(a.otp_secret)) {
         const encrypted = encrypt(a.otp_secret);
         db.prepare('UPDATE admin_users SET otp_secret = ? WHERE id = ?').run(encrypted, a.id);
         migratedAdmins++;
