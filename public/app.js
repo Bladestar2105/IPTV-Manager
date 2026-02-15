@@ -2470,6 +2470,8 @@ async function updateDashboardCounters() {
         return;
     }
 
+    if (!currentUser || !currentUser.is_admin) return;
+
     try {
         const data = await fetchJSON('/api/statistics');
         updateStatsCounters('streams', data.active_streams.length);
