@@ -17,6 +17,7 @@ import epgRoutes from './routes/epg.js';
 import systemRoutes from './routes/system.js';
 import hdhrRoutes from './routes/hdhr.js';
 import proxyRoutes from './routes/proxy.js';
+import shareRoutes from './routes/shares.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +82,7 @@ app.use('/api', providerRoutes);
 app.use('/api', channelRoutes);
 app.use('/api', epgRoutes);
 app.use('/api', systemRoutes);
+app.use('/api/shares', shareRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/', streamRoutes);
 app.use('/', xtreamRoutes);

@@ -426,6 +426,22 @@ function renderUserDetails(u) {
         };
     }
 
+    const sharesBtn = document.getElementById('header-shares-btn');
+    if (sharesBtn) {
+        // Show for admins or self-management
+        // Allow if admin OR if viewing own profile
+        const canManage = (currentUser && currentUser.is_admin) || (currentUser && currentUser.id === u.id);
+        sharesBtn.style.display = canManage ? 'block' : 'none';
+        sharesBtn.onclick = showSharesList;
+    }
+
+    // Show Share Button in Channel List
+    const shareBtn = document.getElementById('chan-bulk-share-btn');
+    if (shareBtn) {
+        shareBtn.style.display = 'block';
+        shareBtn.onclick = openShareModal;
+    }
+
     const baseUrl = window.location.origin;
     const pass = u.plain_password || '********';
 
@@ -3594,9 +3610,15 @@ async function handleChangePassword(event) {
 function updateChanBulkDeleteBtn() {
     const count = document.querySelectorAll('.user-chan-check:checked').length;
     const btn = document.getElementById('chan-bulk-delete-btn');
+    const shareBtn = document.getElementById('chan-bulk-share-btn');
+
     if (btn) {
         btn.style.display = count > 0 ? 'block' : 'none';
         btn.textContent = `${t('deleteSelected')} (${count})`;
+    }
+
+    if (shareBtn) {
+        shareBtn.textContent = t('share');
     }
 }
 
@@ -3647,3 +3669,126 @@ function showToast(message, type = 'primary') {
         el.remove();
     });
 }
+
+// === Share Logic ===
+function openShareModal() {
+    const selected = Array.from(document.querySelectorAll('.user-chan-check:checked')).map(cb => Number(cb.value));
+    if (selected.length === 0) {
+        alert(t('noSelection'));
+        return;
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('share-modal'));
+    document.getElementById('share-form').reset();
+    document.getElementById('share-result').style.display = 'none';
+    document.getElementById('share-channel-count').textContent = `${selected.length} channels`;
+    document.getElementById('create-share-btn').style.display = 'block';
+
+    document.getElementById('share-modal').dataset.channels = JSON.stringify(selected);
+
+    modal.show();
+}
+
+// Add event listener for create button if not exists
+const createShareBtn = document.getElementById('create-share-btn');
+if (createShareBtn) {
+    createShareBtn.addEventListener('click', createShare);
+}
+
+async function createShare() {
+    const selected = JSON.parse(document.getElementById('share-modal').dataset.channels || '[]');
+    const name = document.getElementById('share-name').value;
+    const start = document.getElementById('share-start-time').value;
+    const end = document.getElementById('share-end-time').value;
+    const btn = document.getElementById('create-share-btn');
+
+    setLoadingState(btn, true, 'creating');
+
+    try {
+        // Fix timezone: Send ISO string (UTC) to backend
+        let startTime = start ? new Date(start).toISOString() : null;
+        let endTime = end ? new Date(end).toISOString() : null;
+
+        const body = {
+            channels: selected,
+            name: name,
+            start_time: startTime,
+            end_time: endTime
+        };
+        if (selectedUserId) body.user_id = selectedUserId;
+
+        const res = await fetchJSON('/api/shares', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+
+        document.getElementById('share-link-output').value = res.link;
+        document.getElementById('share-result').style.display = 'block';
+        btn.style.display = 'none';
+
+    } catch(e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    } finally {
+        setLoadingState(btn, false);
+    }
+}
+
+async function showSharesList() {
+    const modal = new bootstrap.Modal(document.getElementById('shares-list-modal'));
+    modal.show();
+    loadSharesList();
+}
+
+async function loadSharesList() {
+    const tbody = document.getElementById('shares-list-tbody');
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">${t('loading')}</td></tr>`;
+
+    try {
+        let url = '/api/shares';
+        if (selectedUserId) url += `?user_id=${selectedUserId}`;
+
+        const shares = await fetchJSON(url);
+        tbody.innerHTML = '';
+
+        if (shares.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">${t('noResults', {search: ''})}</td></tr>`;
+            return;
+        }
+
+        shares.forEach(s => {
+            const tr = document.createElement('tr');
+            const startStr = s.start_time ? new Date(s.start_time * 1000).toLocaleString() : 'Now';
+            const endStr = s.end_time ? new Date(s.end_time * 1000).toLocaleString() : 'Never';
+
+            tr.innerHTML = `
+                <td>${s.name || '-'}</td>
+                <td>${s.channel_count}</td>
+                <td>${startStr}<br>↓<br>${endStr}</td>
+                <td>
+                    <div class="input-group input-group-sm" style="max-width: 200px;">
+                       <input class="form-control" value="${s.link}" readonly>
+                       <button class="btn btn-outline-secondary" onclick="copyToClipboard('${s.link}', this)">📋</button>
+                    </div>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteShare('${s.token}')">🗑</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+    } catch(e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${e.message}</td></tr>`;
+    }
+}
+
+window.deleteShare = async function(token) {
+    if (!confirm(t('confirmDeleteShare'))) return;
+    try {
+        await fetchJSON(`/api/shares/${token}`, {method: 'DELETE'});
+        loadSharesList();
+    } catch(e) {
+        alert(e.message);
+    }
+};

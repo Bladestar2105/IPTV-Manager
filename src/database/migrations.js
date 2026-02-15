@@ -485,3 +485,23 @@ export function migrateTemporaryTokensSchema(db) {
     console.error('Temporary Tokens Schema migration error:', e);
   }
 }
+
+export function migrateSharedLinksSchema(db) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS shared_links (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        name TEXT,
+        channels TEXT NOT NULL,
+        start_time INTEGER,
+        end_time INTEGER,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+    `);
+    // Check if index exists? PK implies index.
+  } catch (e) {
+    console.error('Shared Links Schema migration error:', e);
+  }
+}
