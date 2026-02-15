@@ -250,11 +250,20 @@ export const createPlayerToken = (req, res) => {
     if (!user) return res.status(404).json({error: 'User not found'});
 
     const token = crypto.randomUUID();
+    const sessionId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     const expiresAt = now + 21600; // 6 hours
 
-    db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at) VALUES (?, ?, ?)')
-      .run(token, user_id, expiresAt);
+    db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at, session_id) VALUES (?, ?, ?, ?)')
+      .run(token, user_id, expiresAt, sessionId);
+
+    // Set Cookie
+    res.cookie('player_session', sessionId, {
+        httpOnly: true,
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 21600000 // 6 hours
+    });
 
     // Cleanup old tokens
     db.prepare('DELETE FROM temporary_tokens WHERE expires_at < ?').run(now);

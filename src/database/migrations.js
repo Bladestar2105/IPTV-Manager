@@ -471,3 +471,17 @@ export function migrateHdhrColumns(db) {
     console.error('HDHR Columns migration error:', e);
   }
 }
+
+export function migrateTemporaryTokensSchema(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(temporary_tokens)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('session_id')) {
+      db.exec('ALTER TABLE temporary_tokens ADD COLUMN session_id TEXT');
+      console.log('✅ DB Migration: session_id column added to temporary_tokens');
+    }
+  } catch (e) {
+    console.error('Temporary Tokens Schema migration error:', e);
+  }
+}
