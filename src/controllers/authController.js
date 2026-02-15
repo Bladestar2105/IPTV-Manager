@@ -55,7 +55,7 @@ export const login = async (req, res) => {
             }
             // Verify OTP
             const secret = decrypt(user.otp_secret);
-            const isValidOtp = authenticator.verify({ token: otp_code, secret: secret });
+            const isValidOtp = authenticator.verify({ token: String(otp_code), secret: secret });
             if (!isValidOtp) {
                 return res.status(401).json({ error: 'invalid_otp' });
             }
@@ -149,7 +149,7 @@ export const generateOtp = async (req, res) => {
 export const verifyOtp = (req, res) => {
     try {
         const { token, secret } = req.body;
-        const isValid = authenticator.verify({ token, secret });
+        const isValid = authenticator.verify({ token: String(token), secret: secret });
 
         if (!isValid) return res.status(400).json({error: 'invalid_otp'});
 
