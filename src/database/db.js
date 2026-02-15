@@ -232,6 +232,7 @@ export function initDb(isPrimary) {
             migrations.migrateProviderExpiry(db);
             migrations.migrateHdhrColumns(db);
             migrations.migrateTemporaryTokensSchema(db);
+            migrations.migrateSharedLinksSchema(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
