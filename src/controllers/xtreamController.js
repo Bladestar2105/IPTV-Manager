@@ -145,7 +145,7 @@ export const playerApi = async (req, res) => {
 
     if (action === 'get_series') {
       const rows = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc.cast, pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time, pc.metadata, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time, pc.metadata, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id

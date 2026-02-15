@@ -255,13 +255,13 @@ export async function performSync(providerId, userId, isManual = false) {
     // Prepare channel statements
     const insertChannel = db.prepare(`
       INSERT OR IGNORE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type, rating, rating_5based, added, plot, cast, director, genre, releaseDate, youtube_trailer, episode_run_time)
+      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type, rating, rating_5based, added, plot, "cast", director, genre, releaseDate, youtube_trailer, episode_run_time)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const updateChannel = db.prepare(`
       UPDATE provider_channels
-      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?, rating = ?, rating_5based = ?, added = ?, plot = ?, cast = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
+      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?, rating = ?, rating_5based = ?, added = ?, plot = ?, "cast" = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
       WHERE provider_id = ? AND remote_stream_id = ?
     `);
 

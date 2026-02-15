@@ -159,7 +159,7 @@ export function migrateChannelsSchemaV3(db) {
 
         const updateStmt = db.prepare(`
             UPDATE provider_channels
-            SET rating = ?, rating_5based = ?, added = ?, plot = ?, cast = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
+            SET rating = ?, rating_5based = ?, added = ?, plot = ?, "cast" = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
             WHERE id = ?
         `);
 
