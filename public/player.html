@@ -475,6 +475,15 @@
   }
   translatePage();
 
+  function getProxiedUrl(url) {
+    if (!url) return '';
+    // If we are on HTTPS and the URL is HTTP, use proxy
+    if (window.location.protocol === 'https:' && url.startsWith('http://')) {
+      return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+  }
+
   // ─── Cast Integration ───
   window['__onGCastApiAvailable'] = function(isAvailable) {
     if (isAvailable) {
@@ -731,7 +740,7 @@
 
       if (s.logo) {
         var img = document.createElement('img');
-        img.src = s.logo;
+        img.src = getProxiedUrl(s.logo);
         img.style.cssText = 'width:40px;height:40px;object-fit:contain;margin-right:10px;border-radius:4px;background:#1a1a24;';
         img.loading = 'lazy';
         img.onerror = function() { img.style.display = 'none'; };
@@ -810,7 +819,7 @@
 
       if (ch.logo) {
         var img = document.createElement('img');
-        img.src = ch.logo;
+        img.src = getProxiedUrl(ch.logo);
         img.loading = 'lazy';
         img.onerror = function() { this.style.display = 'none'; };
         rowDiv.appendChild(img);
