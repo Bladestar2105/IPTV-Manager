@@ -38,9 +38,16 @@ export const getProviders = (req, res) => {
              } catch(e) {}
          }
       }
+
+      let plainPassword = null;
+      if (req.user.is_admin) {
+        plainPassword = decrypt(p.password);
+      }
+
       return {
         ...p,
         password: '********',
+        plain_password: plainPassword || '********',
         epg_last_updated: lastUpdate
       };
     });

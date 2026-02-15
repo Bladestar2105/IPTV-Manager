@@ -778,7 +778,7 @@ function prepareEditProvider(p) {
   form.name.value = p.name;
   form.url.value = p.url;
   form.username.value = p.username;
-  form.password.value = '********';
+  form.password.value = p.plain_password || '********';
   form.epg_url.value = p.epg_url || '';
   form.user_id.value = p.user_id || '';
   form.epg_update_interval.value = p.epg_update_interval || 86400;
