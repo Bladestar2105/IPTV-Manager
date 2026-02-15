@@ -3705,11 +3705,15 @@ async function createShare() {
     setLoadingState(btn, true, 'creating');
 
     try {
+        // Fix timezone: Send ISO string (UTC) to backend
+        let startTime = start ? new Date(start).toISOString() : null;
+        let endTime = end ? new Date(end).toISOString() : null;
+
         const body = {
             channels: selected,
             name: name,
-            start_time: start,
-            end_time: end
+            start_time: startTime,
+            end_time: endTime
         };
         if (selectedUserId) body.user_id = selectedUserId;
 
