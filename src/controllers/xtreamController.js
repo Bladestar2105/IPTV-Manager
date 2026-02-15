@@ -354,7 +354,7 @@ export const playerPlaylist = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.status(401).send('Unauthorized');
 
-    const channels = db.prepare(`
+    let channels = db.prepare(`
       SELECT
         uc.id as user_channel_id,
         pc.name,
@@ -373,6 +373,16 @@ export const playerPlaylist = async (req, res) => {
       WHERE cat.user_id = ? AND pc.stream_type != 'series'
       ORDER BY uc.sort_order
     `).all(user.id);
+
+    if (user.is_share_guest) {
+        channels = channels.filter(ch => user.allowed_channels.includes(ch.user_channel_id));
+
+        // Also check start/end time validity for the playlist itself (though stream controller enforces it too)
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+             channels = [];
+        }
+    }
 
     let playlist = '#EXTM3U\n';
     const host = getBaseUrl(req);

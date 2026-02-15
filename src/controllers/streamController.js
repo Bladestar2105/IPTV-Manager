@@ -99,6 +99,18 @@ export const proxyMpd = async (req, res) => {
         upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
     }
 
+    if (user.is_share_guest) {
+        if (!user.allowed_channels.includes(channel.user_channel_id)) {
+            console.warn(`Blocked access to restricted channel ${channel.user_channel_id} for share user`);
+            return res.sendStatus(403);
+        }
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+            console.warn('Blocked access to expired/not-started share');
+            return res.sendStatus(403);
+        }
+    }
+
     if (relativePath.endsWith('.mpd')) {
         await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res);
 
@@ -192,6 +204,18 @@ export const proxyLive = async (req, res) => {
     `).get(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
+
+    if (user.is_share_guest) {
+        if (!user.allowed_channels.includes(channel.user_channel_id)) {
+            console.warn(`Blocked access to restricted channel ${channel.user_channel_id} for share user`);
+            return res.sendStatus(403);
+        }
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+            console.warn('Blocked access to expired/not-started share');
+            return res.sendStatus(403);
+        }
+    }
 
     await streamManager.cleanupUser(user.id, req.ip);
     // Brief delay after cleanup to allow the upstream provider to register
@@ -431,6 +455,13 @@ export const proxySegment = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
+    if (user.is_share_guest) {
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+            return res.sendStatus(403);
+        }
+    }
+
     let targetUrl;
     let headers = {
         'User-Agent': DEFAULT_USER_AGENT,
@@ -520,6 +551,16 @@ export const proxyMovie = async (req, res) => {
     `).get(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
+
+    if (user.is_share_guest) {
+        if (!user.allowed_channels.includes(channel.user_channel_id)) {
+            return res.sendStatus(403);
+        }
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+            return res.sendStatus(403);
+        }
+    }
 
     await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res);
 
@@ -688,6 +729,11 @@ export const proxySeries = async (req, res) => {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) return res.sendStatus(404);
 
+    if (user.is_share_guest) {
+        // Series not currently supported in shared links
+        return res.sendStatus(403);
+    }
+
     await streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip, res);
 
     provider.password = decrypt(provider.password);
@@ -787,6 +833,16 @@ export const proxyTimeshift = async (req, res) => {
     `).get(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
+
+    if (user.is_share_guest) {
+        if (!user.allowed_channels.includes(channel.user_channel_id)) {
+            return res.sendStatus(403);
+        }
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+            return res.sendStatus(403);
+        }
+    }
 
     await streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip, res);
 

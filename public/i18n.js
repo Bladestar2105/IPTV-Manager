@@ -385,7 +385,25 @@ const translations = {
     optional: '(Optional)',
     time_h: 'h',
     time_m: 'm',
-    time_s: 's'
+    time_s: 's',
+
+    // Sharing
+    share: 'Share',
+    manageShares: 'Manage Shares',
+    createShareLink: 'Create Share Link',
+    shareName: 'Name (Optional)',
+    shareNamePlaceholder: 'e.g. Guest Access',
+    startTime: 'Start Time',
+    endTime: 'End Time',
+    leaveEmptyForNow: 'Leave empty for now',
+    leaveEmptyForNever: 'Leave empty for never',
+    selectedChannels: 'Selected Channels',
+    shareLinkCreated: 'Share Link Created:',
+    createLink: 'Create Link',
+    activeShares: 'Active Shares',
+    validity: 'Validity',
+    link: 'Link',
+    confirmDeleteShare: 'Really delete this share?'
   },
   
   de: {
@@ -770,7 +788,25 @@ const translations = {
     optional: '(Optional)',
     time_h: 'h',
     time_m: 'm',
-    time_s: 's'
+    time_s: 's',
+
+    // Sharing
+    share: 'Teilen',
+    manageShares: 'Freigaben verwalten',
+    createShareLink: 'Freigabe-Link erstellen',
+    shareName: 'Name (Optional)',
+    shareNamePlaceholder: 'z.B. Gastzugang',
+    startTime: 'Startzeit',
+    endTime: 'Endzeit',
+    leaveEmptyForNow: 'Leer lassen für sofort',
+    leaveEmptyForNever: 'Leer lassen für nie',
+    selectedChannels: 'Ausgewählte Kanäle',
+    shareLinkCreated: 'Freigabe-Link erstellt:',
+    createLink: 'Link erstellen',
+    activeShares: 'Aktive Freigaben',
+    validity: 'Gültigkeit',
+    link: 'Link',
+    confirmDeleteShare: 'Freigabe wirklich löschen?'
   },
 
   fr: {
@@ -1155,7 +1191,25 @@ const translations = {
     optional: '(Optionnel)',
     time_h: 'h',
     time_m: 'm',
-    time_s: 's'
+    time_s: 's',
+
+    // Sharing
+    share: 'Partager',
+    manageShares: 'Gérer les partages',
+    createShareLink: 'Créer un lien de partage',
+    shareName: 'Nom (Optionnel)',
+    shareNamePlaceholder: 'ex. Accès Invité',
+    startTime: 'Heure de début',
+    endTime: 'Heure de fin',
+    leaveEmptyForNow: 'Laisser vide pour maintenant',
+    leaveEmptyForNever: 'Laisser vide pour jamais',
+    selectedChannels: 'Chaînes sélectionnées',
+    shareLinkCreated: 'Lien de partage créé :',
+    createLink: 'Créer Lien',
+    activeShares: 'Partages Actifs',
+    validity: 'Validité',
+    link: 'Lien',
+    confirmDeleteShare: 'Vraiment supprimer ce partage ?'
   },
 
   el: {
@@ -1540,7 +1594,25 @@ const translations = {
     optional: '(Προαιρετικό)',
     time_h: 'ώ',
     time_m: 'λ',
-    time_s: 'δ'
+    time_s: 'δ',
+
+    // Sharing
+    share: 'Share',
+    manageShares: 'Manage Shares',
+    createShareLink: 'Create Share Link',
+    shareName: 'Name (Optional)',
+    shareNamePlaceholder: 'e.g. Guest Access',
+    startTime: 'Start Time',
+    endTime: 'End Time',
+    leaveEmptyForNow: 'Leave empty for now',
+    leaveEmptyForNever: 'Leave empty for never',
+    selectedChannels: 'Selected Channels',
+    shareLinkCreated: 'Share Link Created:',
+    createLink: 'Create Link',
+    activeShares: 'Active Shares',
+    validity: 'Validity',
+    link: 'Link',
+    confirmDeleteShare: 'Really delete this share?'
   }
 };
 

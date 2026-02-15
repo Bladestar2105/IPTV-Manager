@@ -168,6 +168,24 @@ export async function getXtreamUser(req) {
     if (!user && /^[0-9a-f]{32}$/i.test(token)) {
         user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
     }
+
+    // 3. Check Shared Links
+    if (!user) {
+        const share = db.prepare('SELECT * FROM shared_links WHERE token = ?').get(token);
+        if (share) {
+            user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(share.user_id);
+            if (user) {
+                user.is_share_guest = true;
+                user.share_start = share.start_time;
+                user.share_end = share.end_time;
+                try {
+                    user.allowed_channels = JSON.parse(share.channels);
+                } catch (e) {
+                    user.allowed_channels = [];
+                }
+            }
+        }
+    }
   }
 
   // Only try username/password if token auth didn't succeed
