@@ -114,6 +114,7 @@ export const proxyMpd = async (req, res) => {
 
     if (!(await isSafeUrl(upstreamUrl))) {
         console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(upstreamUrl)}`);
+        streamManager.localStreams.delete(connectionId);
         streamManager.remove(connectionId);
         return res.sendStatus(403);
     }
@@ -125,6 +126,8 @@ export const proxyMpd = async (req, res) => {
 
     if (!upstream.ok) {
        console.error(`MPD proxy error: ${upstream.status} for ${redactUrl(upstreamUrl)}`);
+       if (upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+       streamManager.localStreams.delete(connectionId);
        streamManager.remove(connectionId);
        return res.sendStatus(upstream.status);
     }
@@ -157,6 +160,7 @@ export const proxyMpd = async (req, res) => {
 
   } catch (e) {
     console.error('MPD proxy error:', e);
+    streamManager.localStreams.delete(connectionId);
     streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
@@ -225,6 +229,7 @@ export const proxyLive = async (req, res) => {
 
     if (!(await isSafeUrl(remoteUrl))) {
       console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -256,6 +261,8 @@ export const proxyLive = async (req, res) => {
 
         if (!upstream.ok) {
            console.error(`Transcode upstream fetch error: ${upstream.status}`);
+           if (upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+           streamManager.localStreams.delete(connectionId);
            streamManager.remove(connectionId);
            return res.sendStatus(upstream.status);
         }
@@ -311,6 +318,7 @@ export const proxyLive = async (req, res) => {
 
       } catch (e) {
         console.error('Transcode setup error:', e.message);
+        streamManager.localStreams.delete(connectionId);
         streamManager.remove(connectionId);
         return res.sendStatus(500);
       }
@@ -323,6 +331,8 @@ export const proxyLive = async (req, res) => {
 
     if (!upstream.ok || !upstream.body) {
       console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
+      if (upstream && upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       return res.sendStatus(502);
     }
@@ -406,6 +416,8 @@ export const proxyLive = async (req, res) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Stream error:', err.message);
       }
+      if (upstream && upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       if (!res.headersSent) {
         res.sendStatus(502);
@@ -418,6 +430,7 @@ export const proxyLive = async (req, res) => {
 
   } catch (e) {
     console.error('Stream proxy error:', e.message);
+    streamManager.localStreams.delete(connectionId);
     streamManager.remove(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
@@ -539,6 +552,7 @@ export const proxyMovie = async (req, res) => {
 
     if (!(await isSafeUrl(remoteUrl))) {
       console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -577,6 +591,8 @@ export const proxyMovie = async (req, res) => {
 
             if (!upstream.ok) {
                  console.error(`VOD Transcode upstream fetch error: ${upstream.status}`);
+                 if (upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+                 streamManager.localStreams.delete(connectionId);
                  streamManager.remove(connectionId);
                  return res.sendStatus(upstream.status);
             }
@@ -611,6 +627,7 @@ export const proxyMovie = async (req, res) => {
 
         } catch(e) {
             console.error('VOD Transcode error:', e);
+            streamManager.localStreams.delete(connectionId);
             streamManager.remove(connectionId);
             return res.sendStatus(500);
         }
@@ -628,6 +645,8 @@ export const proxyMovie = async (req, res) => {
     if (!upstream.ok || !upstream.body) {
       if (upstream.status !== 200 && upstream.status !== 206) {
           console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
+          if (upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+          streamManager.localStreams.delete(connectionId);
           streamManager.remove(connectionId);
           return res.sendStatus(502);
       }
@@ -661,6 +680,7 @@ export const proxyMovie = async (req, res) => {
 
   } catch (e) {
     console.error('Movie proxy error:', e.message);
+    streamManager.localStreams.delete(connectionId);
     streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
@@ -697,6 +717,7 @@ export const proxySeries = async (req, res) => {
 
     if (!(await isSafeUrl(remoteUrl))) {
       console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -718,6 +739,8 @@ export const proxySeries = async (req, res) => {
     if (!upstream.ok || !upstream.body) {
       if (upstream.status !== 200 && upstream.status !== 206) {
           console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
+          if (upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+          streamManager.localStreams.delete(connectionId);
           streamManager.remove(connectionId);
           return res.sendStatus(502);
       }
@@ -750,6 +773,7 @@ export const proxySeries = async (req, res) => {
 
   } catch (e) {
     console.error('Series proxy error:', e.message);
+    streamManager.localStreams.delete(connectionId);
     streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
@@ -798,6 +822,7 @@ export const proxyTimeshift = async (req, res) => {
 
     if (!(await isSafeUrl(remoteUrl))) {
       console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       return res.sendStatus(403);
     }
@@ -823,6 +848,8 @@ export const proxyTimeshift = async (req, res) => {
 
     if (!upstream.ok || !upstream.body) {
       console.error(`Timeshift proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
+      if (upstream && upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       return res.sendStatus(502);
     }
@@ -877,6 +904,8 @@ export const proxyTimeshift = async (req, res) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Timeshift stream error:', err.message);
       }
+      if (upstream && upstream.body && !upstream.body.destroyed) try { upstream.body.destroy(); } catch(e) {}
+      streamManager.localStreams.delete(connectionId);
       streamManager.remove(connectionId);
       if (!res.headersSent) {
         res.sendStatus(500);
@@ -892,6 +921,7 @@ export const proxyTimeshift = async (req, res) => {
 
   } catch (e) {
     console.error('Timeshift proxy error:', e.message);
+    streamManager.localStreams.delete(connectionId);
     streamManager.remove(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
