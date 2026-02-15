@@ -1,5 +1,6 @@
 import fs from 'fs';
 import zlib from 'zlib';
+import crypto from 'crypto';
 import db from '../database/db.js';
 import streamManager from '../stream_manager.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
@@ -310,11 +311,36 @@ export const importData = (req, res) => {
         const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(user.username);
         if (existing) {
           console.log(`Skipping existing user: ${user.username}`);
+          userIdMap.set(user.id, existing.id);
           stats.users_skipped++;
           continue;
         }
 
-        const info = db.prepare('INSERT INTO users (username, password, is_active) VALUES (?, ?, ?)').run(user.username, user.password, user.is_active);
+        let hdhrToken = user.hdhr_token;
+        const hdhrEnabled = user.hdhr_enabled ? 1 : 0;
+
+        if (hdhrEnabled && !hdhrToken) {
+           hdhrToken = crypto.randomBytes(16).toString('hex');
+        }
+
+        const webuiAccess = user.webui_access !== undefined ? (user.webui_access ? 1 : 0) : 1;
+        const otpEnabled = user.otp_enabled ? 1 : 0;
+        const otpSecret = user.otp_secret || null;
+
+        const info = db.prepare(`
+          INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          user.username,
+          user.password,
+          user.is_active,
+          webuiAccess,
+          hdhrEnabled,
+          hdhrToken,
+          otpEnabled,
+          otpSecret
+        );
+
         userIdMap.set(user.id, info.lastInsertRowid);
         stats.users_imported++;
       }
@@ -326,9 +352,19 @@ export const importData = (req, res) => {
         const newPassword = encrypt(p.password);
 
         const info = db.prepare(`
-          INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(p.name, p.url, p.username, newPassword, p.epg_url, newUserId, p.epg_update_interval, p.epg_enabled);
+          INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          p.name,
+          p.url,
+          p.username,
+          newPassword,
+          p.epg_url,
+          newUserId,
+          p.epg_update_interval,
+          p.epg_enabled,
+          p.expiry_date || null
+        );
 
         providerIdMap.set(p.id, info.lastInsertRowid);
         stats.providers++;
@@ -337,8 +373,12 @@ export const importData = (req, res) => {
       const provChannels = importData.channels.filter(c => !c.type && providerIdMap.has(c.provider_id));
 
       const insertProvChannel = db.prepare(`
-        INSERT INTO provider_channels (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO provider_channels (
+          provider_id, remote_stream_id, name, original_category_id, logo, stream_type,
+          epg_channel_id, original_sort_order, tv_archive, tv_archive_duration,
+          mime_type, metadata, rating, rating_5based, added, plot, "cast", director, genre, releaseDate, youtube_trailer, episode_run_time
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const ch of provChannels) {
@@ -353,7 +393,19 @@ export const importData = (req, res) => {
           ch.epg_channel_id,
           ch.original_sort_order,
           ch.tv_archive || 0,
-          ch.tv_archive_duration || 0
+          ch.tv_archive_duration || 0,
+          ch.mime_type || null,
+          ch.metadata || null,
+          ch.rating || null,
+          ch.rating_5based || 0,
+          ch.added || null,
+          ch.plot || null,
+          ch.cast || null,
+          ch.director || null,
+          ch.genre || null,
+          ch.releaseDate || null,
+          ch.youtube_trailer || null,
+          ch.episode_run_time || null
         );
         providerChannelIdMap.set(ch.id, info.lastInsertRowid);
       }
