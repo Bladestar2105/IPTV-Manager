@@ -231,6 +231,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserPasswords(db);
             migrations.migrateProviderExpiry(db);
             migrations.migrateHdhrColumns(db);
+            migrations.migrateTemporaryTokensSchema(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

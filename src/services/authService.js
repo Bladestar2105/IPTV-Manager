@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import db from '../database/db.js';
 import { decrypt, JWT_SECRET } from '../utils/crypto.js';
-import { getSetting } from '../utils/helpers.js';
+import { getSetting, getCookie } from '../utils/helpers.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE } from '../config/constants.js';
 
 // Authentication Cache
@@ -150,9 +150,18 @@ export async function getXtreamUser(req) {
   if (token) {
     const now = Math.floor(Date.now() / 1000);
     // 1. Check temporary tokens
-    const valid = db.prepare('SELECT user_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
-    if (valid) {
-      user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(valid.user_id);
+    const row = db.prepare('SELECT user_id, session_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
+
+    if (row) {
+        if (row.session_id) {
+            const cookieSession = getCookie(req, 'player_session');
+            if (cookieSession === row.session_id) {
+                 user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
+            }
+        } else {
+            // Legacy/Fallback for tokens without session_id (optional backward compat)
+            user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
+        }
     }
 
     // 2. Check HDHR tokens (if not found yet and token length matches hex string)
