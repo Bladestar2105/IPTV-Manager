@@ -326,6 +326,7 @@ export const importData = (req, res) => {
         const webuiAccess = user.webui_access !== undefined ? (user.webui_access ? 1 : 0) : 1;
         const otpEnabled = user.otp_enabled ? 1 : 0;
         const otpSecret = user.otp_secret || null;
+        const isActive = user.is_active !== undefined ? (user.is_active ? 1 : 0) : 1;
 
         const info = db.prepare(`
           INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret)
@@ -333,7 +334,7 @@ export const importData = (req, res) => {
         `).run(
           user.username,
           user.password,
-          user.is_active,
+          isActive,
           webuiAccess,
           hdhrEnabled,
           hdhrToken,
