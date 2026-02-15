@@ -4,7 +4,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import db from '../database/db.js';
 import streamManager from '../stream_manager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { isSafeUrl, getBaseUrl } from '../utils/helpers.js';
+import { getBaseUrl } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
@@ -124,12 +124,6 @@ export const proxyMpd = async (req, res) => {
         }
     }
 
-    if (!(await isSafeUrl(upstreamUrl))) {
-        console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(upstreamUrl)}`);
-        streamManager.remove(connectionId);
-        return res.sendStatus(403);
-    }
-
     const upstream = await fetch(upstreamUrl, {
       headers,
       redirect: 'follow'
@@ -246,12 +240,6 @@ export const proxyLive = async (req, res) => {
     const wantsTranscode = (req.query.transcode === 'true');
     const remoteExt = (reqExt === 'm3u8' && !wantsTranscode) ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
-
-    if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
-      streamManager.remove(connectionId);
-      return res.sendStatus(403);
-    }
 
     let meta = {};
     try {
@@ -488,15 +476,6 @@ export const proxySegment = async (req, res) => {
 
     if (!targetUrl) return res.sendStatus(400);
 
-    // Always run SSRF check, even for signed payloads (Defense in Depth)
-    // This protects against:
-    // 1. Replay attacks pointing to now-internal IPs (if network changed)
-    // 2. Upstream providers malicious redirection to internal IPs
-    if (!(await isSafeUrl(targetUrl))) {
-      console.warn(`🛡️ SSRF Attempt Blocked: ${targetUrl} (IP: ${req.ip})`);
-      return res.status(403).send('Access Denied: Unsafe URL');
-    }
-
     const upstream = await fetch(targetUrl, {
       headers,
       redirect: 'follow'
@@ -577,12 +556,6 @@ export const proxyMovie = async (req, res) => {
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
-
-    if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
-      streamManager.remove(connectionId);
-      return res.sendStatus(403);
-    }
 
     let meta = {};
     try {
@@ -741,12 +714,6 @@ export const proxySeries = async (req, res) => {
     const base = provider.url.replace(/\/+$/, '');
     const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
 
-    if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
-      streamManager.remove(connectionId);
-      return res.sendStatus(403);
-    }
-
     const headers = {
       'User-Agent': DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
@@ -851,12 +818,6 @@ export const proxyTimeshift = async (req, res) => {
     const base = channel.provider_url.replace(/\/+$/, '');
     const reqExt = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
-
-    if (!(await isSafeUrl(remoteUrl))) {
-      console.warn(`🛡️ Blocked unsafe upstream URL: ${redactUrl(remoteUrl)}`);
-      streamManager.remove(connectionId);
-      return res.sendStatus(403);
-    }
 
     let meta = {};
     try {
