@@ -1121,9 +1121,9 @@
 
     hls = new Hls({
       enableWorker: true,
-      lowLatencyMode: type === 'live',
-      maxBufferLength: type === 'live' ? 15 : 60,
-      maxMaxBufferLength: type === 'live' ? 30 : 120,
+      lowLatencyMode: false,
+      maxBufferLength: type === 'live' ? 30 : 60,
+      maxMaxBufferLength: type === 'live' ? 60 : 120,
       startFragPrefetch: true,
       testBandwidth: true,
       progressive: true,
@@ -1209,8 +1209,8 @@
     }, {
       enableWorker: true,
       liveBufferLatencyChasing: isLive,
-      liveBufferLatencyMaxLatency: 5,
-      liveBufferLatencyMinRemain: 1
+      liveBufferLatencyMaxLatency: 20,
+      liveBufferLatencyMinRemain: 3
     });
 
     flvPlayer.attachMediaElement(video);
