@@ -186,6 +186,7 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM sync_logs WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM category_mappings WHERE user_id = ?').run(id);
 
+      db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
 
