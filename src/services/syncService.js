@@ -269,7 +269,7 @@ export async function performSync(providerId, userId, isManual = false) {
     const existingChannels = db.prepare(`
       SELECT id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id,
              original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type,
-             rating, rating_5based, added, plot, cast, director, genre, releaseDate,
+             rating, rating_5based, added, plot, "cast", director, genre, releaseDate,
              youtube_trailer, episode_run_time
       FROM provider_channels
       WHERE provider_id = ?
