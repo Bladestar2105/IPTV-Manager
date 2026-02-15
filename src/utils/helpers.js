@@ -86,3 +86,11 @@ export function getSetting(db, key, defaultValue) {
     return defaultValue;
   }
 }
+
+export function getCookie(req, name) {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  if (match) return match[2];
+  return null;
+}
