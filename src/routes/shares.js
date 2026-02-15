@@ -5,6 +5,7 @@ import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 router.post('/', authenticateToken, shareController.createShare);
+router.put('/:token', authenticateToken, shareController.updateShare);
 router.get('/', authenticateToken, shareController.getShares);
 router.delete('/:token', authenticateToken, shareController.deleteShare);
 
