@@ -92,6 +92,15 @@ async function fetchJSON(url, options = {}) {
   return res.json();
 }
 
+function getProxiedUrl(url) {
+  if (!url) return '';
+  // If we are on HTTPS and the URL is HTTP, use proxy
+  if (window.location.protocol === 'https:' && url.startsWith('http://')) {
+    return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
 let currentUser = null;
 let selectedUser = null;
 let selectedUserId = null;
@@ -1335,7 +1344,7 @@ function renderProviderChannels(channels) {
     
     if (ch.logo) {
       const img = document.createElement('img');
-      img.src = ch.logo;
+      img.src = getProxiedUrl(ch.logo);
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
@@ -1464,7 +1473,7 @@ async function loadUserCategoryChannels() {
     
     if (ch.logo) {
       const img = document.createElement('img');
-      img.src = ch.logo;
+      img.src = getProxiedUrl(ch.logo);
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
@@ -2781,7 +2790,7 @@ async function loadStatistics() {
             tr.innerHTML = `
                 <td>${idx+1}</td>
                 <td>
-                    ${ch.logo ? `<img src="${ch.logo}" width="20" class="me-1" onerror="this.style.display='none'">` : ''}
+                    ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" width="20" class="me-1" onerror="this.style.display='none'">` : ''}
                     ${ch.name}
                 </td>
                 <td>${ch.views}</td>
@@ -3048,7 +3057,7 @@ function renderEpgMappingChannels() {
       <td>${idx + 1}</td>
       <td>
         <div class="d-flex align-items-center">
-          ${ch.logo ? `<img src="${ch.logo}" width="24" height="24" class="me-2" onerror="this.style.display='none'">` : ''}
+          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" width="24" height="24" class="me-2" onerror="this.style.display='none'">` : ''}
           <span>${ch.name}</span>
         </div>
       </td>
@@ -3201,7 +3210,7 @@ function filterEpgSelectionList() {
           <strong>${epg.name}</strong> <br>
           <small class="text-muted">${epg.id}</small>
         </div>
-        ${epg.logo ? `<img src="${epg.logo}" height="30" onerror="this.style.display='none'">` : ''}
+        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" height="30" onerror="this.style.display='none'">` : ''}
       </div>
     `;
 
