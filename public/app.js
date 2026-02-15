@@ -388,6 +388,35 @@ function renderUserDetails(u) {
     const label = document.getElementById('selected-user-label');
     if (label) label.textContent = `${u.username} (id=${u.id})`;
 
+    const playBtn = document.getElementById('header-play-btn');
+    if (playBtn) {
+        playBtn.style.display = 'block';
+        playBtn.onclick = async () => {
+            const newWindow = window.open('', '_blank');
+            if (newWindow) {
+                newWindow.document.write('Loading player...');
+            } else {
+                alert(t('popupBlocked'));
+                return;
+            }
+
+            try {
+                playBtn.disabled = true;
+                const res = await fetchJSON('/api/player/token', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: u.id})
+                });
+                newWindow.location.href = `player.html?token=${encodeURIComponent(res.token)}`;
+            } catch(e) {
+                newWindow.close();
+                alert(t('errorPrefix') + ' ' + e.message);
+            } finally {
+                playBtn.disabled = false;
+            }
+        };
+    }
+
     const baseUrl = window.location.origin;
     const pass = u.plain_password || '********';
 
