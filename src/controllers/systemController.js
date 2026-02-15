@@ -222,7 +222,7 @@ export const exportData = (req, res) => {
 
        const providerIds = [];
        for (const p of providers) {
-          p.password = decrypt(p.password);
+          p.password = decrypt(p.password) || p.password;
           exportData.providers.push(p);
           providerIds.push(p.id);
        }
