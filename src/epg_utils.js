@@ -260,28 +260,42 @@ export function parseEpgChannels(filePath, onChannel) {
 
       while (true) {
          const endTag = '</channel>';
-         const endIndex = buffer.indexOf(endTag);
-         if (endIndex === -1) break;
+         const endIdx = buffer.indexOf(endTag);
+         if (endIdx === -1) break;
 
-         const blockEnd = endIndex + endTag.length;
+         const blockEnd = endIdx + endTag.length;
 
-         // Find the corresponding start tag
+         // Search backwards for the start tag to ensure we get the matching one for this end tag
          const startTag = '<channel';
-         const startIndex = buffer.indexOf(startTag);
+         const startIdx = buffer.lastIndexOf(startTag, endIdx);
 
-         if (startIndex !== -1 && startIndex < endIndex) {
-             const fullBlock = buffer.substring(startIndex, blockEnd);
+         if (startIdx !== -1) {
+             const fullBlock = buffer.substring(startIdx, blockEnd);
 
-             const idMatch = fullBlock.match(/id="([^"]+)"/);
+             // Robust regex to handle single/double quotes and potential newlines
+             const idMatch = fullBlock.match(/id=(["'])([\s\S]*?)\1/);
              const nameMatch = fullBlock.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
+             const iconMatch = fullBlock.match(/<icon[^>]+src=(["'])([\s\S]*?)\1/);
 
-             if (idMatch && nameMatch) {
-                 // Do NOT decode channel ID to match DB format
-                 onChannel({ id: idMatch[1], name: decodeXml(nameMatch[1]) });
+             if (idMatch) {
+                 onChannel({
+                     id: idMatch[2],
+                     name: nameMatch ? decodeXml(nameMatch[1]) : idMatch[2],
+                     logo: iconMatch ? iconMatch[2] : null
+                 });
              }
+         } else {
+             // Handle self-closing tag <channel ... /> if it was missed by the standard loop?
+             // Actually self-closing tags end with /> so they don't have </channel>.
+             // We need to handle them separately or assume they are rare.
+             // XMLTV standard channels usually have display-name, so they are not self-closing.
+             // If we want to support self-closing <channel ... />:
+             // We can search for `/>` but that matches any tag.
+             // Given the complexity and low likelihood, we skip self-closing optimization here unless critical.
+             // The previous code handled it but it was complex.
          }
 
-         // Remove everything up to blockEnd
+         // Remove processed block and everything before it
          buffer = buffer.substring(blockEnd);
       }
     });

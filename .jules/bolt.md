@@ -12,3 +12,11 @@
 ## 2026-02-13 - [Bit Signature Optimization]
 **Learning:** Inverted Indexes (Map<Bigram, List<Channel>>) can be slower than brute force for fuzzy matching when candidate sets are small (< 5000) and bigrams have low selectivity (common bigrams map to many candidates). The overhead of iterating long lists outweighs the cost of iterating all candidates. Bit Signatures (Bloom filter style) provide a constant-time O(32) intersection check that is significantly faster than Set.has() loop O(Bigrams), and avoids the memory/iteration overhead of Inverted Indexes.
 **Action:** For fuzzy matching sets of tokens (like bigrams) against a few thousand candidates, prefer Bit Signatures (popcount intersection) over Inverted Indexes or Set intersections. Ensure denominator uses popcount(A)+popcount(B) to maintain identity property (Similarity(A,A)=1.0).
+
+## 2025-06-15 - Partial XML Parser Reuse
+**Learning:** Existing parsers (`parseEpgChannels`) may extract only a subset of fields (e.g., missing `logo`), causing consumers (`loadAllEpgChannels`) to re-implement inefficient full-file reads.
+**Action:** Always enhance shared streaming parsers to support all required fields (via optional callbacks or fuller objects) rather than falling back to `fs.readFile` in consumers.
+
+## 2025-06-15 - Stream Processing Chunk Boundaries
+**Learning:** Relying on `readline` or line-based assumptions for XML parsing fails with minified files or multiple tags per line.
+**Action:** Use chunk-based state machines that accumulate buffers and search for delimiters (start/end tags) to robustly handle arbitrary formatting.
