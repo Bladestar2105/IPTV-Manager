@@ -454,6 +454,25 @@ export const importCategories = async (req, res) => {
     const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 
+    // Pre-fetch channels for all categories being imported to avoid N+1 queries
+    const categoriesToImportChannels = categories.filter(c => c.import_channels && c.id);
+    const categoryIds = [...new Set(categoriesToImportChannels.map(c => Number(c.id)))];
+    const channelsMap = new Map();
+
+    if (categoryIds.length > 0) {
+      const allChannels = db.prepare(`
+        SELECT id, original_category_id, stream_type FROM provider_channels
+        WHERE provider_id = ? AND original_category_id IN (${categoryIds.map(() => '?').join(',')})
+        ORDER BY original_sort_order ASC, name ASC
+      `).all(providerId, ...categoryIds);
+
+      allChannels.forEach(ch => {
+        const key = `${ch.original_category_id}_${ch.stream_type}`;
+        if (!channelsMap.has(key)) channelsMap.set(key, []);
+        channelsMap.get(key).push(ch);
+      });
+    }
+
     db.transaction(() => {
       let maxSort = getMaxSort.get(user_id).max_sort;
 
@@ -481,11 +500,7 @@ export const importCategories = async (req, res) => {
           if(catType === 'movie') streamType = 'movie';
           if(catType === 'series') streamType = 'series';
 
-          const channels = db.prepare(`
-            SELECT id FROM provider_channels
-            WHERE provider_id = ? AND original_category_id = ? AND stream_type = ?
-            ORDER BY original_sort_order ASC, name ASC
-          `).all(providerId, Number(cat.id), streamType);
+          const channels = channelsMap.get(`${Number(cat.id)}_${streamType}`) || [];
 
           channels.forEach((ch, idx) => {
             insertChannel.run(newCategoryId, ch.id, idx);
