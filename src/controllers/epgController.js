@@ -4,7 +4,7 @@ import { Worker } from 'worker_threads';
 import fetch from 'node-fetch';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
-import { parseEpgXml } from '../epg_utils.js';
+import { parseEpgXml } from '../utils/epgUtils.js';
 import { getEpgFiles, loadAllEpgChannels, updateEpgSource, generateConsolidatedEpg } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
 import { isSafeUrl } from '../utils/helpers.js';
@@ -445,7 +445,7 @@ export const autoMapping = async (req, res) => {
         return res.status(503).json({error: 'EPG data not ready. Please update EPG sources.'});
     }
 
-    const worker = new Worker(path.join(process.cwd(), 'src', 'epg_worker.js'), {
+    const worker = new Worker(path.join(process.cwd(), 'src', 'workers', 'epgWorker.js'), {
       workerData: {
         channels,
         epgXmlFile,

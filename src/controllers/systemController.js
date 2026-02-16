@@ -2,7 +2,7 @@ import fs from 'fs';
 import zlib from 'zlib';
 import crypto from 'crypto';
 import db from '../database/db.js';
-import streamManager from '../stream_manager.js';
+import streamManager from '../services/streamManager.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
 import { startSyncScheduler } from '../services/schedulerService.js';
 import { calculateNextSync } from '../services/syncService.js';

@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 
 import app from './app.js';
 import db, { initDb } from './database/db.js';
-import streamManager from './stream_manager.js';
+import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler } from './services/schedulerService.js';
 import { startSSDP } from './services/ssdpService.js';
 import { createDefaultAdmin } from './services/authService.js';

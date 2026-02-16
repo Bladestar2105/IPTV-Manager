@@ -34,7 +34,7 @@ vi.mock('../src/utils/helpers.js', () => ({
 }));
 
 // Also need to mock playlist_parser since it's imported
-vi.mock('../src/playlist_parser.js', () => ({
+vi.mock('../src/utils/playlistParser.js', () => ({
     parseM3uStream: () => ({ isM3u: false })
 }));
 

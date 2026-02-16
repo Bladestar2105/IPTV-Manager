@@ -2,7 +2,9 @@
   "name": "iptv-manager",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@iptv/xtream-api": "^1.2.1",
