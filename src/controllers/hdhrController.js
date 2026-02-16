@@ -10,6 +10,8 @@ export const discover = async (req, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    if (user.is_share_guest) return res.status(403).json({ error: 'Access denied' });
+
     if (!user.hdhr_enabled) {
         return res.status(403).json({ error: 'HDHomeRun emulation is disabled for this user' });
     }
@@ -40,6 +42,7 @@ export const lineupStatus = async (req, res) => {
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    if (user.is_share_guest) return res.status(403).json({ error: 'Access denied' });
     if (!user.hdhr_enabled) return res.status(403).json({ error: 'Disabled' });
 
     res.json({
@@ -60,6 +63,7 @@ export const lineup = async (req, res) => {
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    if (user.is_share_guest) return res.status(403).json({ error: 'Access denied' });
     if (!user.hdhr_enabled) return res.status(403).json({ error: 'Disabled' });
 
     const channels = db.prepare(`
@@ -102,6 +106,7 @@ export const auto = async (req, res) => {
     if (!user) {
       return res.status(401).send('Unauthorized');
     }
+    if (user.is_share_guest) return res.status(403).send('Access denied');
     if (!user.hdhr_enabled) return res.status(403).send('Disabled');
 
     const channelId = req.params.channelId;
@@ -144,6 +149,7 @@ export const deviceXml = async (req, res) => {
     if (!user) {
       return res.status(401).send('Unauthorized');
     }
+    if (user.is_share_guest) return res.status(403).send('Access denied');
     if (!user.hdhr_enabled) {
       return res.status(403).send('Disabled');
     }

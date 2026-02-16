@@ -3,6 +3,7 @@ import fetch from 'node-fetch';
 import http from 'http';
 import https from 'https';
 import { isSafeUrl, safeLookup } from '../utils/helpers.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -10,7 +11,7 @@ const router = express.Router();
 const httpAgent = new http.Agent({ lookup: safeLookup });
 const httpsAgent = new https.Agent({ lookup: safeLookup });
 
-router.get('/image', async (req, res) => {
+router.get('/image', authenticateToken, async (req, res) => {
   const { url } = req.query;
 
   if (!url) {

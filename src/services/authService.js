@@ -144,6 +144,8 @@ export async function getXtreamUser(req) {
   const password = (req.params.password || req.query.password || '').trim();
   const token = (req.query.token || req.params.token || '').trim();
 
+  // console.log('DEBUG getXtreamUser token:', token);
+
   let user = null;
 
   // Check token auth first (avoids logging failed attempts for placeholder credentials)
