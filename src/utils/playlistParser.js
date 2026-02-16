@@ -5,7 +5,6 @@
 import readline from 'readline';
 
 export function parseM3u(content) {
-  const lines = content.split('\n');
   const channels = [];
   const categories = new Map();
 
@@ -13,8 +12,17 @@ export function parseM3u(content) {
   let currentHeaders = {};
   let currentDrm = {};
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+  let start = 0;
+  let end = 0;
+  const len = content.length;
+
+  while (start < len) {
+    end = content.indexOf('\n', start);
+    if (end === -1) end = len;
+
+    const line = content.substring(start, end).trim();
+    start = end + 1; // Move past \n
+
     if (!line) continue;
 
     if (line.startsWith('#EXTINF:')) {
