@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import fetch from 'node-fetch';
 import { createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { mergeEpgFiles, filterEpgFile, decodeXml, parseEpgChannels } from '../utils/epgUtils.js';
@@ -70,21 +71,30 @@ export async function updateEpgSource(sourceId, skipRegenerate = false) {
     const response = await fetch(source.url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const epgData = await response.text();
-    const now = Math.floor(Date.now() / 1000);
+    const contentType = response.headers.get('content-type');
+    let charset = 'utf-8';
+    if (contentType) {
+      const match = contentType.match(/charset=([^;]+)/i);
+      if (match) charset = match[1].trim().replace(/^["']|["']$/g, '');
+    }
 
+    const now = Math.floor(Date.now() / 1000);
     const cacheFile = path.join(EPG_CACHE_DIR, `epg_${sourceId}.xml`);
-    await fs.promises.writeFile(cacheFile, epgData, 'utf8');
+    const fileStream = createWriteStream(cacheFile);
+
+    await pipeline(response.body, new TextDecoderStream(charset), fileStream);
+
+    const sizeInBytes = fileStream.bytesWritten;
 
     db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
 
-    console.log(`✅ EPG updated: ${source.name} (${(epgData.length / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`✅ EPG updated: ${source.name} (${(sizeInBytes / 1024 / 1024).toFixed(2)} MB)`);
 
     if (!skipRegenerate) {
         await generateConsolidatedEpg();
     }
 
-    return { success: true, size: epgData.length };
+    return { success: true, size: sizeInBytes };
   } catch (e) {
     console.error(`❌ EPG update failed: ${source.name}`, e.message);
     db.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
