@@ -109,6 +109,8 @@ export function startCleanupScheduler() {
       db.prepare('DELETE FROM client_logs WHERE timestamp < ?').run(now - retention);
       db.prepare('DELETE FROM security_logs WHERE timestamp < ?').run(now - retention);
       db.prepare('DELETE FROM blocked_ips WHERE expires_at < ?').run(now);
+      // Clean expired shares
+      db.prepare('DELETE FROM shared_links WHERE end_time IS NOT NULL AND end_time < ?').run(now);
     } catch (e) {
       console.error('Cleanup error:', e);
     }
