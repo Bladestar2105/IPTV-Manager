@@ -96,7 +96,8 @@ function getProxiedUrl(url) {
   if (!url) return '';
   // If we are on HTTPS and the URL is HTTP, use proxy
   if (window.location.protocol === 'https:' && url.startsWith('http://')) {
-    return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+    const token = getToken();
+    return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
   }
   return url;
 }

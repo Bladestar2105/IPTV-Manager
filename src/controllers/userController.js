@@ -53,6 +53,24 @@ export const createUser = async (req, res) => {
       });
     }
 
+    // Check for duplicate username (users)
+    const duplicate = db.prepare('SELECT id FROM users WHERE username = ?').get(u);
+    if (duplicate) {
+        return res.status(400).json({
+            error: 'username_taken',
+            message: 'Username is already taken'
+        });
+    }
+
+    // Check for duplicate username (admin_users)
+    const duplicateAdmin = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(u);
+    if (duplicateAdmin) {
+        return res.status(400).json({
+            error: 'username_taken',
+            message: 'Username is reserved by an administrator'
+        });
+    }
+
     // Validate password
     if (p.length < 8) {
       return res.status(400).json({
@@ -110,6 +128,9 @@ export const updateUser = async (req, res) => {
         if (u !== existing.username) {
            const duplicate = db.prepare('SELECT id FROM users WHERE username = ?').get(u);
            if (duplicate) return res.status(400).json({ error: 'username_taken' });
+
+           const duplicateAdmin = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(u);
+           if (duplicateAdmin) return res.status(400).json({ error: 'username_taken' });
         }
         updates.push('username = ?');
         params.push(u);

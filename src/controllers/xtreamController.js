@@ -20,6 +20,10 @@ export const playerApi = async (req, res) => {
       return res.json({user_info: {auth: 0, message: 'Invalid credentials'}});
     }
 
+    if (user.is_share_guest) {
+        return res.json({user_info: {auth: 0, message: 'Access denied'}});
+    }
+
     const now = Math.floor(Date.now() / 1000);
 
     if (!action || action === '') {
@@ -249,6 +253,8 @@ export const getPlaylist = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
+    if (user.is_share_guest) return res.sendStatus(403);
+
     const rows = db.prepare(`
       SELECT uc.id as user_channel_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
@@ -311,6 +317,8 @@ export const xmltv = async (req, res) => {
   try {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
+
+    if (user.is_share_guest) return res.sendStatus(403);
 
     const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
     if (fs.existsSync(consolidatedFile)) {
