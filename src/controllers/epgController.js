@@ -27,7 +27,8 @@ export const getEpgNow = async (req, res) => {
     if (!user) return res.status(401).json({error: 'Unauthorized'});
 
     const now = Math.floor(Date.now() / 1000);
-    const epgFiles = getEpgFiles().map(f => f.file);
+    const epgFilesObj = await getEpgFiles();
+    const epgFiles = epgFilesObj.map(f => f.file);
     const currentPrograms = {};
 
     const promises = epgFiles.map(file => {
@@ -68,7 +69,8 @@ export const getEpgSchedule = async (req, res) => {
     const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200);
     const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);
 
-    const epgFiles = getEpgFiles().map(f => f.file);
+    const epgFilesObj = await getEpgFiles();
+    const epgFiles = epgFilesObj.map(f => f.file);
 
     const schedule = {};
 

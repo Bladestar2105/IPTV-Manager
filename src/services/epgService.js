@@ -11,27 +11,36 @@ import { isSafeUrl } from '../utils/helpers.js';
 
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 
-export function getEpgFiles() {
-  const epgFiles = [];
+export async function getEpgFiles() {
   const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
-  for (const provider of providers) {
-    const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-    if (fs.existsSync(cacheFile)) {
-      epgFiles.push({ file: cacheFile, source: `Provider ${provider.id}` });
-    }
-  }
   const sources = db.prepare('SELECT id, name FROM epg_sources WHERE enabled = 1').all();
-  for (const source of sources) {
-    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
-    if (fs.existsSync(cacheFile)) {
-      epgFiles.push({ file: cacheFile, source: source.name });
+
+  const providerChecks = providers.map(async (provider) => {
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
+    try {
+      await fs.promises.access(cacheFile, fs.constants.F_OK);
+      return { file: cacheFile, source: `Provider ${provider.id}` };
+    } catch {
+      return null;
     }
-  }
-  return epgFiles;
+  });
+
+  const sourceChecks = sources.map(async (source) => {
+    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
+    try {
+      await fs.promises.access(cacheFile, fs.constants.F_OK);
+      return { file: cacheFile, source: source.name };
+    } catch {
+      return null;
+    }
+  });
+
+  const results = await Promise.all([...providerChecks, ...sourceChecks]);
+  return results.filter(Boolean);
 }
 
 export async function loadAllEpgChannels(files = null) {
-  const epgFiles = files || getEpgFiles();
+  const epgFiles = files || await getEpgFiles();
   const allChannels = [];
   const seenIds = new Set();
 
@@ -109,23 +118,8 @@ export async function generateConsolidatedEpg() {
   const tempFilteredFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
 
   try {
-    const epgFiles = [];
-
-    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
-    for (const provider of providers) {
-      const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-      if (fs.existsSync(cacheFile)) {
-        epgFiles.push(cacheFile);
-      }
-    }
-
-    const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
-    for (const source of sources) {
-      const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
-      if (fs.existsSync(cacheFile)) {
-        epgFiles.push(cacheFile);
-      }
-    }
+    const epgFilesObjects = await getEpgFiles();
+    const epgFiles = epgFilesObjects.map(f => f.file);
 
     console.log(`ℹ️ Generating Full EPG from ${epgFiles.length} sources`);
     const writeStreamFull = createWriteStream(tempFullFile);
