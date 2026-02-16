@@ -1,8 +1,14 @@
 import express from 'express';
 import fetch from 'node-fetch';
-import { isSafeUrl } from '../utils/helpers.js';
+import http from 'http';
+import https from 'https';
+import { isSafeUrl, safeLookup } from '../utils/helpers.js';
 
 const router = express.Router();
+
+// Custom Agents with DNS Rebinding Protection
+const httpAgent = new http.Agent({ lookup: safeLookup });
+const httpsAgent = new https.Agent({ lookup: safeLookup });
 
 router.get('/image', async (req, res) => {
   const { url } = req.query;
@@ -12,14 +18,16 @@ router.get('/image', async (req, res) => {
   }
 
   try {
-    // 1. SSRF Protection
+    // 1. SSRF Protection (Initial Check)
     if (!(await isSafeUrl(url))) {
       console.warn(`[Proxy] Blocked unsafe URL: ${url}`);
       return res.status(403).send('Access denied (unsafe URL)');
     }
 
-    // 2. Fetch Image
+    // 2. Fetch Image with DNS Rebinding Protection
+    // The custom agent uses safeLookup to validate the IP at connection time
     const response = await fetch(url, {
+        agent: (_parsedUrl) => _parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent,
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
@@ -57,6 +65,9 @@ router.get('/image', async (req, res) => {
 
   } catch (error) {
     console.error('Proxy Error:', error);
+    if (error.message && error.message.includes('unsafe IP')) {
+        return res.status(403).send('Access denied (DNS Rebinding detected)');
+    }
     res.status(500).send('Internal Server Error');
   }
 });

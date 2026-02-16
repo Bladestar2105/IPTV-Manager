@@ -1,4 +1,4 @@
-import dns from 'dns/promises';
+import dns from 'dns';
 import { isIP } from 'net';
 
 export function getBaseUrl(req) {
@@ -16,6 +16,40 @@ export function getBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
+export function isPrivateIP(ip) {
+    const ipVer = isIP(ip);
+    if (ipVer === 0) return false;
+
+    if (ipVer === 4) {
+        if (ip === '0.0.0.0' ||
+            ip.startsWith('127.') ||
+            ip.startsWith('10.') ||
+            ip.startsWith('192.168.') ||
+            ip.startsWith('169.254.') ||
+            ip.startsWith('192.0.0.') || // IETF Protocol Assignments
+            ip.startsWith('192.0.2.') || // TEST-NET-1
+            ip.startsWith('198.51.100.') || // TEST-NET-2
+            ip.startsWith('203.0.113.') || // TEST-NET-3
+            ip.startsWith('240.')) return true; // Class E (Reserved)
+
+        if (ip.startsWith('172.')) {
+            const parts = ip.split('.');
+            const second = parseInt(parts[1], 10);
+            if (second >= 16 && second <= 31) return true;
+        }
+
+        // CGNAT (100.64.0.0/10)
+        if (ip.startsWith('100.')) {
+            const parts = ip.split('.');
+            const second = parseInt(parts[1], 10);
+            if (second >= 64 && second <= 127) return true;
+        }
+    } else if (ipVer === 6) {
+         if (ip === '::' || ip === '::1' || ip.includes('::ffff:') || ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd')) return true;
+    }
+    return false;
+}
+
 export async function isSafeUrl(urlStr) {
   try {
     const parsed = new URL(urlStr);
@@ -28,44 +62,23 @@ export async function isSafeUrl(urlStr) {
     if (hostname === 'metadata.google.internal') return false;
 
     // Resolve DNS
-    const { address } = await dns.lookup(hostname);
+    const { address } = await dns.promises.lookup(hostname);
 
     // Check resolved IP
-    const ipVer = isIP(address);
-    if (ipVer === 0) return false;
-
-    if (ipVer === 4) {
-        if (address === '0.0.0.0' ||
-            address.startsWith('127.') ||
-            address.startsWith('10.') ||
-            address.startsWith('192.168.') ||
-            address.startsWith('169.254.') ||
-            address.startsWith('192.0.0.') || // IETF Protocol Assignments
-            address.startsWith('192.0.2.') || // TEST-NET-1
-            address.startsWith('198.51.100.') || // TEST-NET-2
-            address.startsWith('203.0.113.') || // TEST-NET-3
-            address.startsWith('240.')) return false; // Class E (Reserved)
-
-        if (address.startsWith('172.')) {
-            const parts = address.split('.');
-            const second = parseInt(parts[1], 10);
-            if (second >= 16 && second <= 31) return false;
-        }
-
-        // CGNAT (100.64.0.0/10)
-        if (address.startsWith('100.')) {
-            const parts = address.split('.');
-            const second = parseInt(parts[1], 10);
-            if (second >= 64 && second <= 127) return false;
-        }
-    } else if (ipVer === 6) {
-         if (address === '::' || address === '::1' || address.includes('::ffff:') || address.startsWith('fe80:') || address.startsWith('fc') || address.startsWith('fd')) return false;
-    }
-
-    return true;
+    return !isPrivateIP(address);
   } catch (e) {
     return false;
   }
+}
+
+export function safeLookup(hostname, options, callback) {
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (err) return callback(err);
+    if (isPrivateIP(address)) {
+      return callback(new Error(`DNS Lookup resolved to unsafe IP: ${address}`));
+    }
+    callback(null, address, family);
+  });
 }
 
 export function isAdultCategory(name) {
