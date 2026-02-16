@@ -1,7 +1,7 @@
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import streamManager from '../src/stream_manager.js';
+import streamManager from '../src/services/streamManager.js';
 
 describe('StreamManager (SQLite)', () => {
     let db;

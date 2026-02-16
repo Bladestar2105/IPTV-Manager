@@ -1,7 +1,7 @@
 import { parentPort, workerData } from 'worker_threads';
 import fs from 'fs';
-import { parseEpgChannels, cleanName } from './epg_utils.js';
-import { ChannelMatcher } from './channel_matcher.js';
+import { parseEpgChannels, cleanName } from '../utils/epgUtils.js';
+import { ChannelMatcher } from '../services/channelMatcher.js';
 
 export function matchChannels(channels, allEpgChannels, globalMappings) {
     const updates = [];

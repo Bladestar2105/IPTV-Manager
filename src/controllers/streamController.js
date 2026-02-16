@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 import crypto from 'crypto';
 import ffmpeg from 'fluent-ffmpeg';
 import db from '../database/db.js';
-import streamManager from '../stream_manager.js';
+import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';

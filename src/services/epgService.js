@@ -5,7 +5,7 @@ import fetch from 'node-fetch';
 import { createWriteStream } from 'fs';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
-import { mergeEpgFiles, filterEpgFile, decodeXml, parseEpgChannels } from '../epg_utils.js';
+import { mergeEpgFiles, filterEpgFile, decodeXml, parseEpgChannels } from '../utils/epgUtils.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });

@@ -134,6 +134,13 @@ The application will be available at `http://localhost:3000`. Data (database, ca
 
 The application will be available at `http://localhost:3000`.
 
+### Testing
+
+To run the test suite:
+```bash
+npm test
+```
+
 ### First Time Setup
 - On first start, a default admin user is automatically created.
 - Credentials are displayed in the console (or set via `INITIAL_ADMIN_PASSWORD` environment variable).

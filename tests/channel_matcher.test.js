@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { ChannelMatcher } from '../src/channel_matcher.js';
+import { ChannelMatcher } from '../src/services/channelMatcher.js';
 
 describe('ChannelMatcher', () => {
     const epgChannels = [
