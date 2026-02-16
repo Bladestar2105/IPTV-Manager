@@ -144,11 +144,9 @@ export class ChannelMatcher {
           return {
             baseName: baseName,
             language: this.normalizeLanguage(lang),
-            original: original,
-            bigrams: bigrams,
+            bigramCount: bigrams.size,
             signature: sig,
             signaturePopcount: this.countSignatureBits(sig),
-            numbers: numbers,
             // Pre-compute sorted numbers string for O(1) matching
             numbersString: [...numbers].sort().join(',')
           };
@@ -164,11 +162,9 @@ export class ChannelMatcher {
     return {
       baseName: baseName,
       language: null,
-      original: original,
-      bigrams: bigrams,
+      bigramCount: bigrams.size,
       signature: sig,
       signaturePopcount: this.countSignatureBits(sig),
-      numbers: numbers,
       // Pre-compute sorted numbers string for O(1) matching
       numbersString: [...numbers].sort().join(',')
     };
@@ -383,7 +379,8 @@ export class ChannelMatcher {
     for (const cand of candidates) {
         // Length check optimization
         if (threshold > 0) {
-            const lenB = cand.parsed.bigrams.size;
+            // Use bigramCount property instead of bigrams.size to save memory
+            const lenB = cand.parsed.bigramCount !== undefined ? cand.parsed.bigramCount : (cand.parsed.bigrams ? cand.parsed.bigrams.size : 0);
             if (lenB < minLen || lenB > maxLen) continue;
         }
 
@@ -391,10 +388,12 @@ export class ChannelMatcher {
         if (searchBaseName === cand.parsed.baseName) {
             score = 1;
         } else {
+            // Always rely on signature comparison as bigrams are not stored for candidates to save memory
             if (searchSignature && cand.parsed.signature) {
                 const candPopcount = cand.parsed.signaturePopcount !== undefined ? cand.parsed.signaturePopcount : this.countSignatureBits(cand.parsed.signature);
                 score = this.calculateDiceCoefficientSignature(searchSignature, cand.parsed.signature, searchPopcount, candPopcount);
-            } else {
+            } else if (cand.parsed.bigrams) {
+                // Fallback only if bigrams are available (legacy or test objects)
                 score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
             }
         }
