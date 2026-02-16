@@ -33,6 +33,36 @@ export const createShare = (req, res) => {
   }
 };
 
+export const updateShare = (req, res) => {
+  try {
+    const token = req.params.token;
+    const { channels, name, start_time, end_time } = req.body;
+
+    const startTime = start_time ? Math.floor(new Date(start_time).getTime() / 1000) : null;
+    const endTime = end_time ? Math.floor(new Date(end_time).getTime() / 1000) : null;
+
+    if (!channels || !Array.isArray(channels) || channels.length === 0) {
+      return res.status(400).json({ error: 'Channels array required' });
+    }
+
+    let info;
+    if (req.user.is_admin) {
+        info = db.prepare('UPDATE shared_links SET channels = ?, name = ?, start_time = ?, end_time = ? WHERE token = ?')
+                 .run(JSON.stringify(channels), name || 'Shared Link', startTime, endTime, token);
+    } else {
+        info = db.prepare('UPDATE shared_links SET channels = ?, name = ?, start_time = ?, end_time = ? WHERE token = ? AND user_id = ?')
+                 .run(JSON.stringify(channels), name || 'Shared Link', startTime, endTime, token, req.user.id);
+    }
+
+    if (info.changes === 0) return res.status(404).json({ error: 'Share not found' });
+
+    res.json({ success: true, token });
+  } catch (e) {
+    console.error('Update share error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
 export const deleteShare = (req, res) => {
   try {
     const token = req.params.token;

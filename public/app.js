@@ -107,6 +107,8 @@ let selectedUserId = null;
 let selectedCategoryId = null;
 let categorySortable = null;
 let channelSortable = null;
+let globalSelectedChannels = new Set();
+let editingShareToken = null;
 
 // Pagination State
 let channelPage = 1;
@@ -392,6 +394,9 @@ function copyAllXtreamCredentials(btnElement) {
 }
 
 function renderUserDetails(u) {
+    if (selectedUserId !== u.id) {
+        globalSelectedChannels.clear();
+    }
     selectedUser = u;
     selectedUserId = u.id;
     const label = document.getElementById('selected-user-label');
@@ -1471,7 +1476,19 @@ async function loadUserCategoryChannels() {
     checkbox.type = 'checkbox';
     checkbox.className = 'form-check-input user-chan-check';
     checkbox.value = ch.user_channel_id;
-    checkbox.onclick = (e) => { e.stopPropagation(); updateChanBulkDeleteBtn(); };
+    if (globalSelectedChannels.has(ch.user_channel_id)) {
+        checkbox.checked = true;
+    }
+    checkbox.onclick = (e) => {
+        e.stopPropagation();
+        const val = Number(checkbox.value);
+        if (checkbox.checked) {
+            globalSelectedChannels.add(val);
+        } else {
+            globalSelectedChannels.delete(val);
+        }
+        updateChanBulkDeleteBtn();
+    };
     checkDiv.appendChild(checkbox);
     li.appendChild(checkDiv);
 
@@ -2387,7 +2404,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const chanSelectAll = document.getElementById('chan-select-all-toggle');
   if (chanSelectAll) {
     chanSelectAll.addEventListener('change', (e) => {
-      document.querySelectorAll('.user-chan-check').forEach(cb => cb.checked = e.target.checked);
+      document.querySelectorAll('.user-chan-check').forEach(cb => {
+          cb.checked = e.target.checked;
+          const val = Number(cb.value);
+          if (e.target.checked) globalSelectedChannels.add(val);
+          else globalSelectedChannels.delete(val);
+      });
       updateChanBulkDeleteBtn();
     });
   }
@@ -2395,7 +2417,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const chanBulkDeleteBtn = document.getElementById('chan-bulk-delete-btn');
   if (chanBulkDeleteBtn) {
     chanBulkDeleteBtn.addEventListener('click', async () => {
-       const selected = Array.from(document.querySelectorAll('.user-chan-check:checked')).map(cb => Number(cb.value));
+       const selected = Array.from(globalSelectedChannels);
        if (selected.length === 0) return;
 
        if (!confirm(t('deleteChannelConfirm', {count: selected.length}))) return;
@@ -2406,6 +2428,7 @@ document.addEventListener('DOMContentLoaded', () => {
            headers: {'Content-Type': 'application/json'},
            body: JSON.stringify({ids: selected})
          });
+         globalSelectedChannels.clear();
          loadUserCategoryChannels();
          if (chanSelectAll) chanSelectAll.checked = false;
          updateChanBulkDeleteBtn();
@@ -3608,7 +3631,7 @@ async function handleChangePassword(event) {
 }
 
 function updateChanBulkDeleteBtn() {
-    const count = document.querySelectorAll('.user-chan-check:checked').length;
+    const count = globalSelectedChannels.size;
     const btn = document.getElementById('chan-bulk-delete-btn');
     const shareBtn = document.getElementById('chan-bulk-share-btn');
 
@@ -3672,19 +3695,34 @@ function showToast(message, type = 'primary') {
 
 // === Share Logic ===
 function openShareModal() {
-    const selected = Array.from(document.querySelectorAll('.user-chan-check:checked')).map(cb => Number(cb.value));
-    if (selected.length === 0) {
+    // If not editing, ensure there is a selection
+    if (!editingShareToken && globalSelectedChannels.size === 0) {
         alert(t('noSelection'));
         return;
     }
 
     const modal = new bootstrap.Modal(document.getElementById('share-modal'));
-    document.getElementById('share-form').reset();
-    document.getElementById('share-result').style.display = 'none';
-    document.getElementById('share-channel-count').textContent = `${selected.length} channels`;
-    document.getElementById('create-share-btn').style.display = 'block';
+    const cancelBtn = document.getElementById('cancel-share-edit-btn');
 
-    document.getElementById('share-modal').dataset.channels = JSON.stringify(selected);
+    // Set UI state based on editing mode
+    if (!editingShareToken) {
+        document.getElementById('share-form').reset();
+        const btn = document.getElementById('create-share-btn');
+        if (btn) btn.textContent = t('createLink') || 'Create Link';
+        if (cancelBtn) cancelBtn.style.display = 'none';
+    } else {
+        const btn = document.getElementById('create-share-btn');
+        if (btn) btn.textContent = t('updateShare') || 'Update Link';
+        if (cancelBtn) {
+            cancelBtn.style.display = 'block';
+            cancelBtn.onclick = cancelEditShare;
+        }
+    }
+
+    const selectedCount = globalSelectedChannels.size;
+    document.getElementById('share-result').style.display = 'none';
+    document.getElementById('share-channel-count').textContent = `${selectedCount} channels`;
+    document.getElementById('create-share-btn').style.display = 'block';
 
     modal.show();
 }
@@ -3695,14 +3733,21 @@ if (createShareBtn) {
     createShareBtn.addEventListener('click', createShare);
 }
 
+// Add event listener for banner cancel button
+const bannerCancelBtn = document.getElementById('banner-cancel-edit-btn');
+if (bannerCancelBtn) {
+    bannerCancelBtn.addEventListener('click', cancelEditShare);
+}
+
 async function createShare() {
-    const selected = JSON.parse(document.getElementById('share-modal').dataset.channels || '[]');
+    // Use the current global selection
+    const selected = Array.from(globalSelectedChannels);
     const name = document.getElementById('share-name').value;
     const start = document.getElementById('share-start-time').value;
     const end = document.getElementById('share-end-time').value;
     const btn = document.getElementById('create-share-btn');
 
-    setLoadingState(btn, true, 'creating');
+    setLoadingState(btn, true, editingShareToken ? 'saving' : 'creating');
 
     try {
         // Fix timezone: Send ISO string (UTC) to backend
@@ -3717,15 +3762,35 @@ async function createShare() {
         };
         if (selectedUserId) body.user_id = selectedUserId;
 
-        const res = await fetchJSON('/api/shares', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        });
+        let res;
+        if (editingShareToken) {
+             res = await fetchJSON(`/api/shares/${editingShareToken}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
 
-        document.getElementById('share-link-output').value = res.link;
-        document.getElementById('share-result').style.display = 'block';
-        btn.style.display = 'none';
+            // Success - Reset state (which closes modal)
+            cancelEditShare();
+
+            // Re-open shares list
+            setTimeout(showSharesList, 500);
+
+        } else {
+             res = await fetchJSON('/api/shares', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+
+            document.getElementById('share-link-output').value = res.link;
+            document.getElementById('share-result').style.display = 'block';
+            btn.style.display = 'none';
+
+            // Clear selection on success
+            globalSelectedChannels.clear();
+            updateChanBulkDeleteBtn();
+        }
 
     } catch(e) {
         alert(t('errorPrefix') + ' ' + e.message);
@@ -3772,6 +3837,7 @@ async function loadSharesList() {
                     </div>
                 </td>
                 <td>
+                    <button class="btn btn-sm btn-outline-secondary me-1" onclick='editShare(${JSON.stringify(s).replace(/'/g, "&#39;")})'>✏️</button>
                     <button class="btn btn-sm btn-outline-danger" onclick="deleteShare('${s.token}')">🗑</button>
                 </td>
             `;
@@ -3781,6 +3847,81 @@ async function loadSharesList() {
     } catch(e) {
         tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${e.message}</td></tr>`;
     }
+}
+
+window.editShare = function(s) {
+    editingShareToken = s.token;
+    globalSelectedChannels.clear();
+    try {
+        const channels = JSON.parse(s.channels || '[]');
+        channels.forEach(id => globalSelectedChannels.add(id));
+    } catch(e) {}
+
+    // Fill form
+    document.getElementById('share-name').value = s.name || '';
+
+    // Date inputs expect "YYYY-MM-DDTHH:mm"
+    if (s.start_time) {
+        const d = new Date(s.start_time * 1000);
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        document.getElementById('share-start-time').value = d.toISOString().slice(0, 16);
+    } else {
+        document.getElementById('share-start-time').value = '';
+    }
+
+    if (s.end_time) {
+        const d = new Date(s.end_time * 1000);
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        document.getElementById('share-end-time').value = d.toISOString().slice(0, 16);
+    } else {
+        document.getElementById('share-end-time').value = '';
+    }
+
+    // Hide list modal
+    const listModal = bootstrap.Modal.getInstance(document.getElementById('shares-list-modal'));
+    if (listModal) listModal.hide();
+
+    // Show Banner
+    const banner = document.getElementById('editing-share-banner');
+    if (banner) {
+        banner.style.setProperty('display', 'flex', 'important');
+        const nameSpan = document.getElementById('editing-share-name-display');
+        if (nameSpan) nameSpan.textContent = s.name || 'Untitled';
+    }
+
+    // Update Main Share Button
+    const shareBtn = document.getElementById('chan-bulk-share-btn');
+    if (shareBtn) {
+        shareBtn.style.display = 'block';
+        shareBtn.textContent = t('updateShare') || 'Update Share';
+    }
+
+    updateChanBulkDeleteBtn(); // To refresh button visibility/text based on populated channels
+    loadUserCategoryChannels(); // Refresh checkmarks if we are in view
+
+    // Open share modal to show metadata
+    openShareModal();
+};
+
+function cancelEditShare() {
+    editingShareToken = null;
+    globalSelectedChannels.clear();
+
+    // Hide Banner
+    const banner = document.getElementById('editing-share-banner');
+    if (banner) banner.style.setProperty('display', 'none', 'important');
+
+    // Reset Share Button
+    const shareBtn = document.getElementById('chan-bulk-share-btn');
+    if (shareBtn) shareBtn.textContent = t('share');
+
+    // Close Share Modal if open
+    const modalEl = document.getElementById('share-modal');
+    const modal = bootstrap.Modal.getInstance(modalEl);
+    if (modal) modal.hide();
+
+    updateChanBulkDeleteBtn();
+    loadUserCategoryChannels(); // Refresh checkmarks
 }
 
 window.deleteShare = async function(token) {
