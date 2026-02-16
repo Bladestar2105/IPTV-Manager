@@ -1353,6 +1353,7 @@ function renderProviderChannels(channels) {
     
     const nameSpan = document.createElement('span');
     nameSpan.textContent = ch.name;
+    nameSpan.title = ch.name; // Tooltip for full name
     nameSpan.style.flex = '1';
     nameSpan.style.overflow = 'hidden';
     nameSpan.style.textOverflow = 'ellipsis';
@@ -1361,6 +1362,7 @@ function renderProviderChannels(channels) {
     if (ch.logo) {
       const img = document.createElement('img');
       img.src = getProxiedUrl(ch.logo);
+      img.alt = ch.name; // Accessible alt text
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
@@ -1371,6 +1373,7 @@ function renderProviderChannels(channels) {
     const btn = document.createElement('button');
     btn.className = 'btn btn-sm btn-success ms-2';
     btn.textContent = t('add');
+    btn.setAttribute('aria-label', `${t('add')} ${ch.name}`); // Accessible label
     btn.onclick = async () => {
       if (!selectedUserId || !selectedCategoryId) {
         alert(t('selectUserAndCategory'));
@@ -1484,12 +1487,14 @@ async function loadUserCategoryChannels() {
     
     const nameSpan = document.createElement('span');
     nameSpan.textContent = ch.name;
+    nameSpan.title = ch.name; // Tooltip for full name
     nameSpan.style.flex = '1';
     li.appendChild(nameSpan);
     
     if (ch.logo) {
       const img = document.createElement('img');
       img.src = getProxiedUrl(ch.logo);
+      img.alt = ch.name; // Accessible alt text
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
@@ -1500,7 +1505,7 @@ async function loadUserCategoryChannels() {
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger ms-2';
     delBtn.textContent = t('delete');
-    delBtn.setAttribute('aria-label', t('deleteAction'));
+    delBtn.setAttribute('aria-label', `${t('deleteAction')} ${ch.name}`); // Accessible label
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
@@ -2806,8 +2811,8 @@ async function loadStatistics() {
             tr.innerHTML = `
                 <td>${idx+1}</td>
                 <td>
-                    ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" width="20" class="me-1" onerror="this.style.display='none'">` : ''}
-                    ${ch.name}
+                    ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="20" class="me-1" onerror="this.style.display='none'">` : ''}
+                    <span title="${ch.name}">${ch.name}</span>
                 </td>
                 <td>${ch.views}</td>
                 <td>${lastDate}</td>
@@ -3073,8 +3078,8 @@ function renderEpgMappingChannels() {
       <td>${idx + 1}</td>
       <td>
         <div class="d-flex align-items-center">
-          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" width="24" height="24" class="me-2" onerror="this.style.display='none'">` : ''}
-          <span>${ch.name}</span>
+          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="24" height="24" class="me-2" onerror="this.style.display='none'">` : ''}
+          <span title="${ch.name}">${ch.name}</span>
         </div>
       </td>
       <td>${displayEpgId}</td>
@@ -3226,7 +3231,7 @@ function filterEpgSelectionList() {
           <strong>${epg.name}</strong> <br>
           <small class="text-muted">${epg.id}</small>
         </div>
-        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" height="30" onerror="this.style.display='none'">` : ''}
+        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${epg.name}" height="30" onerror="this.style.display='none'">` : ''}
       </div>
     `;
 
