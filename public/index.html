@@ -137,6 +137,7 @@
                      <div class="input-group input-group-sm">
                         <input class="form-control" name="password" id="new-user-password" type="password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
                         <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('new-user-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                        <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard(document.getElementById('new-user-password').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                      </div>
                   </div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
@@ -1002,6 +1003,7 @@
               <div class="input-group">
                 <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
                 <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('edit-user-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard(document.getElementById('edit-user-password').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
               </div>
             </div>
             <div class="mb-3 form-check">
