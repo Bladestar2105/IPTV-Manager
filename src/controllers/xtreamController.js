@@ -328,7 +328,7 @@ export const xmltv = async (req, res) => {
       return;
     }
 
-    const epgFiles = getEpgFiles();
+    const epgFiles = await getEpgFiles();
 
     if (epgFiles.length === 0) {
       const provider = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' LIMIT 1").get();
