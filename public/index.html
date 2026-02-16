@@ -80,6 +80,15 @@
 
     <!-- View: Dashboard -->
     <div id="view-dashboard">
+      <!-- Editing Banner -->
+      <div id="editing-share-banner" class="alert alert-warning d-flex justify-content-between align-items-center mb-3" style="display:none !important;">
+         <div>
+            <strong data-i18n="editingShare">Editing Share:</strong> <span id="editing-share-name-display"></span>.
+            <span data-i18n="editShareInstructions">Modify channel selection and click 'Update Share'.</span>
+         </div>
+         <button class="btn btn-sm btn-outline-dark" id="banner-cancel-edit-btn" data-i18n="cancel">Cancel</button>
+      </div>
+
       <!-- Stats Cards -->
       <div class="row mb-4" id="dashboard-stats-bar">
         <div class="col-md-3">
@@ -1167,6 +1176,7 @@
           </form>
         </div>
         <div class="modal-footer">
+          <button type="button" class="btn btn-warning me-auto" id="cancel-share-edit-btn" style="display:none;" data-i18n="cancelEdit">Cancel Edit</button>
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
           <button type="button" class="btn btn-primary" id="create-share-btn" data-i18n="createLink">Create Link</button>
         </div>
