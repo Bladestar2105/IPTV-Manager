@@ -2,9 +2,18 @@ import crypto from 'crypto';
 import db from '../database/db.js';
 import { getBaseUrl } from '../utils/helpers.js';
 
+function generateSlug(name) {
+    return name.toString().toLowerCase()
+        .replace(/\s+/g, '-')           // Replace spaces with -
+        .replace(/[^\w\-]+/g, '')       // Remove all non-word chars
+        .replace(/\-\-+/g, '-')         // Replace multiple - with single -
+        .replace(/^-+/, '')             // Trim - from start
+        .replace(/-+$/, '');            // Trim - from end
+}
+
 export const createShare = (req, res) => {
   try {
-    const { channels, name, start_time, end_time } = req.body;
+    const { channels, name, start_time, end_time, create_slug } = req.body;
     let user_id = req.user.id;
 
     if (req.user.is_admin && req.body.user_id) {
@@ -19,14 +28,31 @@ export const createShare = (req, res) => {
     const startTime = start_time ? Math.floor(new Date(start_time).getTime() / 1000) : null;
     const endTime = end_time ? Math.floor(new Date(end_time).getTime() / 1000) : null;
 
+    let slug = null;
+    if (create_slug && name) {
+        let baseSlug = generateSlug(name);
+        if (!baseSlug) baseSlug = 'share';
+
+        slug = baseSlug;
+        let counter = 1;
+        while (true) {
+            const existing = db.prepare('SELECT token FROM shared_links WHERE slug = ?').get(slug);
+            if (!existing) break;
+            slug = `${baseSlug}-${counter}`;
+            counter++;
+        }
+    }
+
     db.prepare(`
-      INSERT INTO shared_links (token, user_id, name, channels, start_time, end_time)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(token, user_id, name || 'Shared Link', JSON.stringify(channels), startTime, endTime);
+      INSERT INTO shared_links (token, user_id, name, channels, start_time, end_time, slug)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(token, user_id, name || 'Shared Link', JSON.stringify(channels), startTime, endTime, slug);
 
-    const link = `${getBaseUrl(req)}/player.html?token=${encodeURIComponent(token)}`;
+    const baseUrl = getBaseUrl(req);
+    const link = `${baseUrl}/player.html?token=${encodeURIComponent(token)}`;
+    const shortLink = slug ? `${baseUrl}/share/${slug}` : null;
 
-    res.json({ success: true, token, link });
+    res.json({ success: true, token, link, short_link: shortLink, slug });
   } catch (e) {
     console.error('Create share error:', e);
     res.status(500).json({ error: e.message });
@@ -44,6 +70,9 @@ export const updateShare = (req, res) => {
     if (!channels || !Array.isArray(channels) || channels.length === 0) {
       return res.status(400).json({ error: 'Channels array required' });
     }
+
+    // Note: We don't currently support updating the slug to avoid breaking existing links
+    // If user wants a new slug, they can recreate the share.
 
     let info;
     if (req.user.is_admin) {
@@ -98,6 +127,7 @@ export const getShares = (req, res) => {
         return {
             ...s,
             link: `${baseUrl}/player.html?token=${encodeURIComponent(s.token)}`,
+            short_link: s.slug ? `${baseUrl}/share/${s.slug}` : null,
             channel_count: count
         };
     });
@@ -106,4 +136,23 @@ export const getShares = (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+};
+
+export const handleShortLink = (req, res) => {
+    try {
+        const slug = req.params.slug;
+        if (!slug) return res.status(404).send('Not Found');
+
+        const share = db.prepare('SELECT token FROM shared_links WHERE slug = ?').get(slug);
+
+        if (!share) {
+            return res.status(404).send('Share link not found or expired');
+        }
+
+        const baseUrl = getBaseUrl(req);
+        res.redirect(`${baseUrl}/player.html?token=${encodeURIComponent(share.token)}`);
+    } catch (e) {
+        console.error('Short link error:', e);
+        res.status(500).send('Internal Server Error');
+    }
 };

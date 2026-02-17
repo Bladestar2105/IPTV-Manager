@@ -505,3 +505,32 @@ export function migrateSharedLinksSchema(db) {
     console.error('Shared Links Schema migration error:', e);
   }
 }
+
+export function migrateProviderBackupUrls(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('backup_urls')) {
+      db.exec('ALTER TABLE providers ADD COLUMN backup_urls TEXT');
+      console.log('✅ DB Migration: backup_urls column added to providers');
+    }
+  } catch (e) {
+    console.error('Provider Backup URLs migration error:', e);
+  }
+}
+
+export function migrateSharedLinkSlug(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(shared_links)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('slug')) {
+      db.exec('ALTER TABLE shared_links ADD COLUMN slug TEXT UNIQUE');
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_links_slug ON shared_links(slug)');
+      console.log('✅ DB Migration: slug column added to shared_links');
+    }
+  } catch (e) {
+    console.error('Shared Link Slug migration error:', e);
+  }
+}

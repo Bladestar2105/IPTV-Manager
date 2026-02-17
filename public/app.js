@@ -844,6 +844,11 @@ function prepareEditProvider(p) {
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
 
+  const backupInput = document.getElementById('provider-backup-urls');
+  if (backupInput) {
+      backupInput.value = (p.backup_urls || []).join('\n');
+  }
+
   const expiryInput = document.getElementById('provider-expiry-date');
   if (expiryInput) {
       if (p.expiry_date) {
@@ -1598,6 +1603,12 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
   const f = e.target;
   const id = f.provider_id.value;
 
+  let backupUrls = [];
+  const backupInput = document.getElementById('provider-backup-urls');
+  if (backupInput && backupInput.value.trim()) {
+      backupUrls = backupInput.value.split('\n').map(u => u.trim()).filter(u => u);
+  }
+
   const body = {
     name: f.name.value,
     url: f.url.value,
@@ -1606,7 +1617,8 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     epg_url: f.epg_url.value || null,
     user_id: f.user_id.value || null,
     epg_update_interval: f.epg_update_interval.value,
-    epg_enabled: f.epg_enabled.checked
+    epg_enabled: f.epg_enabled.checked,
+    backup_urls: backupUrls
   };
 
   try {
@@ -3751,6 +3763,7 @@ async function createShare() {
     const name = document.getElementById('share-name').value;
     const start = document.getElementById('share-start-time').value;
     const end = document.getElementById('share-end-time').value;
+    const createSlug = document.getElementById('share-create-slug') ? document.getElementById('share-create-slug').checked : false;
     const btn = document.getElementById('create-share-btn');
 
     setLoadingState(btn, true, editingShareToken ? 'saving' : 'creating');
@@ -3764,7 +3777,8 @@ async function createShare() {
             channels: selected,
             name: name,
             start_time: startTime,
-            end_time: endTime
+            end_time: endTime,
+            create_slug: createSlug
         };
         if (selectedUserId) body.user_id = selectedUserId;
 
@@ -3790,6 +3804,13 @@ async function createShare() {
             });
 
             document.getElementById('share-link-output').value = res.link;
+            if (res.short_link) {
+                // If we have a short link, append it or show it.
+                // For simplicity, let's append it to the message or replace value if preferred.
+                // Let's replace the value to show the short link primarily, or show both?
+                // The UI has one input. Let's show the short link if available as it's nicer.
+                document.getElementById('share-link-output').value = res.short_link;
+            }
             document.getElementById('share-result').style.display = 'block';
             btn.style.display = 'none';
 
@@ -3838,8 +3859,8 @@ async function loadSharesList() {
                 <td>${startStr}<br>↓<br>${endStr}</td>
                 <td>
                     <div class="input-group input-group-sm" style="max-width: 200px;">
-                       <input class="form-control" value="${s.link}" readonly>
-                       <button class="btn btn-outline-secondary" onclick="copyToClipboard('${s.link}', this)">📋</button>
+                       <input class="form-control" value="${s.short_link || s.link}" readonly>
+                       <button class="btn btn-outline-secondary" onclick="copyToClipboard('${s.short_link || s.link}', this)">📋</button>
                     </div>
                 </td>
                 <td>

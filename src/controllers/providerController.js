@@ -44,11 +44,19 @@ export const getProviders = (req, res) => {
         plainPassword = decrypt(p.password);
       }
 
+      let backupUrls = [];
+      try {
+          if (p.backup_urls) {
+              backupUrls = JSON.parse(p.backup_urls);
+          }
+      } catch (e) { /* ignore */ }
+
       return {
         ...p,
         password: '********',
         plain_password: plainPassword || '********',
-        epg_last_updated: lastUpdate
+        epg_last_updated: lastUpdate,
+        backup_urls: backupUrls
       };
     });
     res.json(safeProviders);
@@ -58,7 +66,7 @@ export const getProviders = (req, res) => {
 export const createProvider = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
+    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
 
     if (!/^https?:\/\//i.test(url.trim())) {
@@ -66,6 +74,32 @@ export const createProvider = async (req, res) => {
     }
     if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
+    }
+
+    // Process backup URLs
+    let processedBackupUrls = '[]';
+    if (backup_urls) {
+        let urls = [];
+        if (Array.isArray(backup_urls)) {
+            urls = backup_urls;
+        } else if (typeof backup_urls === 'string') {
+            try {
+                urls = JSON.parse(backup_urls);
+            } catch (e) {
+                urls = backup_urls.split('\n');
+            }
+        }
+
+        const validUrls = [];
+        for (const u of urls) {
+            const trimmed = u.trim();
+            if (trimmed && /^https?:\/\//i.test(trimmed)) {
+                if (await isSafeUrl(trimmed)) {
+                    validUrls.push(trimmed);
+                }
+            }
+        }
+        processedBackupUrls = JSON.stringify(validUrls);
     }
 
     let finalEpgUrl = (epg_url || '').trim();
@@ -99,8 +133,8 @@ export const createProvider = async (req, res) => {
     const encryptedPassword = encrypt(password.trim());
 
     const info = db.prepare(`
-      INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       name.trim(),
       url.trim(),
@@ -109,7 +143,8 @@ export const createProvider = async (req, res) => {
       finalEpgUrl,
       user_id ? Number(user_id) : null,
       epg_update_interval ? Number(epg_update_interval) : 86400,
-      epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1
+      epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1,
+      processedBackupUrls
     );
 
     // Check expiry
@@ -123,7 +158,7 @@ export const updateProvider = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled } = req.body;
+    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls } = req.body;
     if (!name || !url || !username || !password) {
       return res.status(400).json({error: 'missing fields'});
     }
@@ -147,6 +182,32 @@ export const updateProvider = async (req, res) => {
     const existing = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({error: 'provider not found'});
 
+    // Process backup URLs
+    let processedBackupUrls = existing.backup_urls || '[]';
+    if (backup_urls !== undefined) {
+        let urls = [];
+        if (Array.isArray(backup_urls)) {
+            urls = backup_urls;
+        } else if (typeof backup_urls === 'string') {
+            try {
+                urls = JSON.parse(backup_urls);
+            } catch (e) {
+                urls = backup_urls.split('\n');
+            }
+        }
+
+        const validUrls = [];
+        for (const u of urls) {
+            const trimmed = u.trim();
+            if (trimmed && /^https?:\/\//i.test(trimmed)) {
+                if (await isSafeUrl(trimmed)) {
+                    validUrls.push(trimmed);
+                }
+            }
+        }
+        processedBackupUrls = JSON.stringify(validUrls);
+    }
+
     let finalPassword = existing.password;
     if (password.trim() !== '********') {
        finalPassword = encrypt(password.trim());
@@ -165,7 +226,7 @@ export const updateProvider = async (req, res) => {
 
     db.prepare(`
       UPDATE providers
-      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?
+      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?
       WHERE id = ?
     `).run(
       name.trim(),
@@ -176,6 +237,7 @@ export const updateProvider = async (req, res) => {
       user_id !== undefined ? (user_id ? Number(user_id) : null) : existing.user_id,
       epg_update_interval ? Number(epg_update_interval) : existing.epg_update_interval,
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
+      processedBackupUrls,
       id
     );
 

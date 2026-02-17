@@ -9,7 +9,6 @@ import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
 // Redact credentials from upstream URLs before logging.
-// Matches patterns like /live/user/pass/, /movie/user/pass/, /timeshift/user/pass/ etc.
 function redactUrl(url) {
   try {
     return url.replace(
@@ -21,17 +20,34 @@ function redactUrl(url) {
   }
 }
 
-// Detect if the request comes from a web browser.
-// Only browsers need server-side transcoding for MKV/AVI since they can't
-// play these containers natively. All other clients (IPTV apps, media players,
-// set-top boxes, etc.) handle MKV/AVI and their codecs natively.
-// Default: NO transcoding. Only transcode when a browser is detected.
 function isBrowser(req) {
   const ua = (req.headers['user-agent'] || '');
-  // Browsers always include 'Mozilla/' AND at least one of these engine/browser tokens.
-  // IPTV apps may include 'Mozilla/' in their UA but won't have these browser-specific tokens.
   if (!/Mozilla\//i.test(ua)) return false;
   return /Chrome|Firefox|Safari|Edge|OPR|Opera|Vivaldi|Brave|SamsungBrowser|UCBrowser|MSIE|Trident/i.test(ua);
+}
+
+// Helper for failover fetching
+async function fetchWithBackups(primaryUrl, backupUrls, options) {
+    const urls = [primaryUrl, ...(backupUrls || [])];
+    let lastError = null;
+
+    for (const u of urls) {
+        if (!u) continue;
+        try {
+            const res = await fetch(u, options);
+            if (res.ok) {
+                return { response: res, successfulUrl: u };
+            }
+            // If 404/403/etc, we might want to try backup? Yes.
+            console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
+            lastError = new Error(`HTTP ${res.status}`);
+        } catch (e) {
+            if (e.name === 'AbortError') throw e;
+            console.warn(`Connection error to ${redactUrl(u)}: ${e.message}`);
+            lastError = e;
+        }
+    }
+    throw lastError || new Error('All connection attempts failed');
 }
 
 // --- MPD Proxy ---
@@ -55,7 +71,8 @@ export const proxyMpd = async (req, res) => {
         pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
-        p.password as provider_pass
+        p.password as provider_pass,
+        p.backup_urls
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -80,6 +97,8 @@ export const proxyMpd = async (req, res) => {
     }
 
     let upstreamUrl = '';
+    let backupStreamUrls = [];
+
     if (meta && meta.original_url) {
         if (relativePath === 'manifest.mpd' || relativePath === '') {
             upstreamUrl = meta.original_url;
@@ -89,7 +108,6 @@ export const proxyMpd = async (req, res) => {
               const basePath = urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1);
               upstreamUrl = new URL(relativePath, urlObj.origin + basePath).toString();
             } catch(e) {
-              console.error('URL resolution error:', e);
               return res.sendStatus(400);
             }
         }
@@ -97,25 +115,27 @@ export const proxyMpd = async (req, res) => {
         channel.provider_pass = decrypt(channel.provider_pass);
         const base = channel.provider_url.replace(/\/+$/, '');
         upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
+
+        try {
+            if (channel.backup_urls) {
+                const backups = JSON.parse(channel.backup_urls);
+                backupStreamUrls = backups.map(bUrl => {
+                    const bBase = bUrl.replace(/\/+$/, '');
+                    return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
+                });
+            }
+        } catch (e) {}
     }
 
     if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) {
-            console.warn(`Blocked access to restricted channel ${channel.user_channel_id} for share user`);
-            return res.sendStatus(403);
-        }
+        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
         const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-            console.warn('Blocked access to expired/not-started share');
-            return res.sendStatus(403);
-        }
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
     if (relativePath.endsWith('.mpd')) {
         await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res);
-
-        const startTime = Date.now();
-        const now = Math.floor(startTime / 1000);
+        const now = Math.floor(Date.now() / 1000);
         const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
         if (existingStat) {
           db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
@@ -124,27 +144,26 @@ export const proxyMpd = async (req, res) => {
         }
     }
 
-    const upstream = await fetch(upstreamUrl, {
-      headers,
-      redirect: 'follow'
-    });
-
-    if (!upstream.ok) {
-       console.error(`MPD proxy error: ${upstream.status} for ${redactUrl(upstreamUrl)}`);
-       streamManager.remove(connectionId);
-       return res.sendStatus(upstream.status);
+    let upstream, successfulUrl;
+    try {
+        const result = await fetchWithBackups(upstreamUrl, backupStreamUrls, {
+            headers,
+            redirect: 'follow'
+        });
+        upstream = result.response;
+        successfulUrl = result.successfulUrl;
+    } catch (e) {
+        console.error(`MPD proxy failed: ${e.message}`);
+        streamManager.remove(connectionId);
+        return res.sendStatus(502);
     }
 
     if (relativePath.endsWith('.mpd')) {
         const text = await upstream.text();
         const baseUrl = `${getBaseUrl(req)}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
-
-        let newText = text;
-        newText = newText.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
-
+        let newText = text.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
         res.setHeader('Content-Type', 'application/dash+xml');
         res.send(newText);
-
         streamManager.remove(connectionId);
         return;
     }
@@ -189,7 +208,8 @@ export const proxyLive = async (req, res) => {
         pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
-        p.password as provider_pass
+        p.password as provider_pass,
+        p.backup_urls
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -200,26 +220,16 @@ export const proxyLive = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) {
-            console.warn(`Blocked access to restricted channel ${channel.user_channel_id} for share user`);
-            return res.sendStatus(403);
-        }
+        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
         const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-            console.warn('Blocked access to expired/not-started share');
-            return res.sendStatus(403);
-        }
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
     await streamManager.cleanupUser(user.id, req.ip);
-    // Brief delay after cleanup to allow the upstream provider to register
-    // the closed connection before we open a new one (important for providers
-    // that limit concurrent connections per user)
     await new Promise(resolve => setTimeout(resolve, 100));
     await streamManager.add(connectionId, user, channel.name, req.ip, res);
 
-    const startTime = Date.now();
-    const now = Math.floor(startTime / 1000);
+    const now = Math.floor(Date.now() / 1000);
     const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
     if (existingStat) {
       db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
@@ -229,17 +239,26 @@ export const proxyLive = async (req, res) => {
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
-    const base = channel.provider_url.replace(/\/+$/, '');
-
     let reqExt = 'ts';
     if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
     if (req.path.endsWith('.mp4')) reqExt = 'mp4';
 
-    // When requesting .m3u8 without transcode, fetch upstream .m3u8 (HLS manifest)
-    // Otherwise always fetch .ts (raw MPEG-TS stream for direct proxy or transcoding)
     const wantsTranscode = (req.query.transcode === 'true');
     const remoteExt = (reqExt === 'm3u8' && !wantsTranscode) ? 'm3u8' : 'ts';
+
+    const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
+
+    let backupStreamUrls = [];
+    try {
+        if (channel.backup_urls) {
+            const backups = JSON.parse(channel.backup_urls);
+            backupStreamUrls = backups.map(bUrl => {
+                const bBase = bUrl.replace(/\/+$/, '');
+                return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
+            });
+        }
+    } catch(e) {}
 
     let meta = {};
     try {
@@ -261,16 +280,11 @@ export const proxyLive = async (req, res) => {
       console.log(`🎬 Starting audio transcoding for stream ${streamId} (${reqExt})`);
 
       try {
-        const upstream = await fetch(remoteUrl, {
+        const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
           headers: fetchHeaders,
           redirect: 'follow'
         });
-
-        if (!upstream.ok) {
-           console.error(`Transcode upstream fetch error: ${upstream.status}`);
-           streamManager.remove(connectionId);
-           return res.sendStatus(upstream.status);
-        }
+        const upstream = result.response;
 
         const isMp4 = (reqExt === 'mp4');
         const outputFormat = isMp4 ? 'mp4' : 'mpegts';
@@ -306,7 +320,6 @@ export const proxyLive = async (req, res) => {
 
         command.pipe(res, { end: true });
 
-        // Register cleanup for channel switching — kill FFmpeg and upstream connection
         streamManager.localStreams.set(connectionId, {
           destroy: () => {
             try { command.kill('SIGKILL'); } catch(e) {}
@@ -315,43 +328,37 @@ export const proxyLive = async (req, res) => {
           }
         });
 
-        req.on('close', () => {
-          streamManager.remove(connectionId);
-        });
-
+        req.on('close', () => streamManager.remove(connectionId));
         return;
 
       } catch (e) {
         console.error('Transcode setup error:', e.message);
         streamManager.remove(connectionId);
-        return res.sendStatus(500);
+        return res.sendStatus(502);
       }
     }
 
-    const upstream = await fetch(remoteUrl, {
-      headers: fetchHeaders,
-      redirect: 'follow'
-    });
-
-    if (!upstream.ok || !upstream.body) {
-      console.error(`Stream proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
-      streamManager.remove(connectionId);
-      return res.sendStatus(502);
+    let upstream, successfulUrl;
+    try {
+        const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
+            headers: fetchHeaders,
+            redirect: 'follow'
+        });
+        upstream = result.response;
+        successfulUrl = result.successfulUrl;
+    } catch(e) {
+        console.error(`Stream proxy error: ${e.message} for ${redactUrl(remoteUrl)}`);
+        streamManager.remove(connectionId);
+        return res.sendStatus(502);
     }
 
     const cookies = upstream.headers.get('set-cookie');
 
     if (reqExt === 'm3u8') {
       const text = await upstream.text();
-      // Use the final URL after redirects as base for resolving relative segment URLs.
-      // The Xtream API often redirects .m3u8 requests to a CDN URL with a different path,
-      // so using the original remoteUrl would resolve relative segments incorrectly.
-      const baseUrl = upstream.url || remoteUrl;
+      const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
-      // Check if the provider origin is safe (public). If so, we enforce SSRF protection on segments.
-      // If the provider is private (e.g. local IPTV server), we allow segments to be private too.
-      // We check channel.provider_url because that is the root of trust.
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
       const headersToForward = { ...fetchHeaders };
@@ -365,7 +372,7 @@ export const proxyLive = async (req, res) => {
           const payload = {
               u: absoluteUrl,
               h: headersToForward,
-              s: isProviderSafe // Pass safe flag
+              s: isProviderSafe
           };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}${tokenParam}`;
@@ -404,16 +411,10 @@ export const proxyLive = async (req, res) => {
     res.setHeader('Expires', '0');
 
     const contentLength = upstream.headers.get('content-length');
-    if (contentLength) {
-      res.setHeader('Content-Length', contentLength);
-    }
+    if (contentLength) res.setHeader('Content-Length', contentLength);
 
     upstream.body.pipe(res);
 
-    // Register the upstream body with the stream manager so it gets destroyed
-    // when the user switches channels (cleanupUser). This ensures the upstream
-    // connection to the provider is closed before opening a new one — critical
-    // for providers that limit concurrent connections per user.
     streamManager.localStreams.set(connectionId, {
       destroy: () => {
         try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
@@ -426,21 +427,15 @@ export const proxyLive = async (req, res) => {
         console.error('Stream error:', err.message);
       }
       streamManager.remove(connectionId);
-      if (!res.headersSent) {
-        res.sendStatus(502);
-      }
+      if (!res.headersSent) res.sendStatus(502);
     });
 
-    req.on('close', () => {
-      streamManager.remove(connectionId);
-    });
+    req.on('close', () => streamManager.remove(connectionId));
 
   } catch (e) {
     console.error('Stream proxy error:', e.message);
     streamManager.remove(connectionId);
-    if (!res.headersSent) {
-      res.sendStatus(500);
-    }
+    if (!res.headersSent) res.sendStatus(500);
   }
 };
 
@@ -472,26 +467,17 @@ export const proxySegment = async (req, res) => {
 
             const payload = JSON.parse(decrypted);
             if (payload.u) targetUrl = payload.u;
-            if (payload.h) {
-                // Forward all headers from the payload (these were captured during
-                // the m3u8 fetch and are needed for segment authentication)
-                Object.assign(headers, payload.h);
-            }
-            // If 's' (safe) flag is explicitly false, it means the original provider was private,
-            // so we allow private segments. Default to true (safe/public) for security.
+            if (payload.h) Object.assign(headers, payload.h);
             if (payload.s === false) isOriginSafe = false;
         } catch(e) {
-            console.error('Segment data decode error:', e.message);
             return res.sendStatus(400);
         }
     }
 
     if (!targetUrl) return res.sendStatus(400);
 
-    // SSRF Protection: If the origin provider was public (or unknown), enforce public segments.
     if (isOriginSafe) {
         if (!(await isSafeUrl(targetUrl))) {
-            console.warn(`[SSRF Protection] Blocked unsafe segment URL: ${targetUrl}`);
             return res.sendStatus(403);
         }
     }
@@ -541,7 +527,8 @@ export const proxyMovie = async (req, res) => {
         pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
-        p.password as provider_pass
+        p.password as provider_pass,
+        p.backup_urls
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -552,19 +539,14 @@ export const proxyMovie = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) {
-            return res.sendStatus(403);
-        }
+        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
         const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-            return res.sendStatus(403);
-        }
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
     await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res);
 
-    const startTime = Date.now();
-    const now = Math.floor(startTime / 1000);
+    const now = Math.floor(Date.now() / 1000);
     const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
     if (existingStat) {
       db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
@@ -576,6 +558,17 @@ export const proxyMovie = async (req, res) => {
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+
+    let backupStreamUrls = [];
+    try {
+        if (channel.backup_urls) {
+            const backups = JSON.parse(channel.backup_urls);
+            backupStreamUrls = backups.map(bUrl => {
+                const bBase = bUrl.replace(/\/+$/, '');
+                return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+            });
+        }
+    } catch(e) {}
 
     let meta = {};
     try {
@@ -591,29 +584,19 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
-    // Default: NO transcoding. Only auto-transcode MKV/AVI for web browsers,
-    // which can't play these containers natively. All IPTV apps (Apple TV, VLC,
-    // Kodi, TiviMate, etc.) handle MKV/AVI and their codecs without issues.
-    // Explicit transcode=true query param always forces transcoding (web player toggle).
     const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && (ext === 'mkv' || ext === 'avi'));
 
     if (shouldTranscode) {
         console.log(`🎬 Starting VOD transcoding for stream ${streamId} (${ext} -> mp4)`);
-
         const transcodeHeaders = { ...headers };
         delete transcodeHeaders['Range'];
 
         try {
-            const upstream = await fetch(remoteUrl, {
+            const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
                 redirect: 'follow'
             });
-
-            if (!upstream.ok) {
-                 console.error(`VOD Transcode upstream fetch error: ${upstream.status}`);
-                 streamManager.remove(connectionId);
-                 return res.sendStatus(upstream.status);
-            }
+            const upstream = result.response;
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');
@@ -631,9 +614,7 @@ export const proxyMovie = async (req, res) => {
                 }
                 streamManager.remove(connectionId);
               })
-              .on('end', () => {
-                streamManager.remove(connectionId);
-              });
+              .on('end', () => streamManager.remove(connectionId));
 
             command.pipe(res, { end: true });
 
@@ -654,47 +635,46 @@ export const proxyMovie = async (req, res) => {
         headers['Range'] = req.headers.range;
     }
 
-    const upstream = await fetch(remoteUrl, {
-      headers,
-      redirect: 'follow'
-    });
+    try {
+        const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
+            headers,
+            redirect: 'follow'
+        });
+        const upstream = result.response;
 
-    if (!upstream.ok || !upstream.body) {
-      if (upstream.status !== 200 && upstream.status !== 206) {
-          console.error(`Movie proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
+        res.status(upstream.status);
+
+        const contentType = upstream.headers.get('content-type');
+        if (contentType) res.setHeader('Content-Type', contentType);
+
+        const contentLength = upstream.headers.get('content-length');
+        if (contentLength) res.setHeader('Content-Length', contentLength);
+
+        const contentRange = upstream.headers.get('content-range');
+        if (contentRange) res.setHeader('Content-Range', contentRange);
+
+        const acceptRanges = upstream.headers.get('accept-ranges');
+        if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+
+        upstream.body.pipe(res);
+
+        upstream.body.on('error', (err) => {
+          console.error('Movie stream error:', err.message);
           streamManager.remove(connectionId);
-          return res.sendStatus(502);
-      }
+        });
+
+        req.on('close', () => {
+          streamManager.remove(connectionId);
+          if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
+        });
+    } catch (e) {
+        console.error('Movie proxy error:', e.message);
+        streamManager.remove(connectionId);
+        if (!res.headersSent) res.sendStatus(502);
     }
 
-    res.status(upstream.status);
-
-    const contentType = upstream.headers.get('content-type');
-    if (contentType) res.setHeader('Content-Type', contentType);
-
-    const contentLength = upstream.headers.get('content-length');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
-
-    const contentRange = upstream.headers.get('content-range');
-    if (contentRange) res.setHeader('Content-Range', contentRange);
-
-    const acceptRanges = upstream.headers.get('accept-ranges');
-    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
-
-    upstream.body.pipe(res);
-
-    upstream.body.on('error', (err) => {
-      console.error('Movie stream error:', err.message);
-      streamManager.remove(connectionId);
-    });
-
-    req.on('close', () => {
-      streamManager.remove(connectionId);
-      if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
-    });
-
   } catch (e) {
-    console.error('Movie proxy error:', e.message);
+    console.error('Movie proxy setup error:', e.message);
     streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
@@ -722,10 +702,7 @@ export const proxySeries = async (req, res) => {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) return res.sendStatus(404);
 
-    if (user.is_share_guest) {
-        // Series not currently supported in shared links
-        return res.sendStatus(403);
-    }
+    if (user.is_share_guest) return res.sendStatus(403);
 
     await streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip, res);
 
@@ -733,6 +710,17 @@ export const proxySeries = async (req, res) => {
 
     const base = provider.url.replace(/\/+$/, '');
     const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
+
+    let backupStreamUrls = [];
+    try {
+        if (provider.backup_urls) {
+            const backups = JSON.parse(provider.backup_urls);
+            backupStreamUrls = backups.map(bUrl => {
+                const bBase = bUrl.replace(/\/+$/, '');
+                return `${bBase}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
+            });
+        }
+    } catch(e) {}
 
     const headers = {
       'User-Agent': DEFAULT_USER_AGENT,
@@ -743,46 +731,45 @@ export const proxySeries = async (req, res) => {
         headers['Range'] = req.headers.range;
     }
 
-    const upstream = await fetch(remoteUrl, {
-      headers,
-      redirect: 'follow'
-    });
+    try {
+        const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
+            headers,
+            redirect: 'follow'
+        });
+        const upstream = result.response;
 
-    if (!upstream.ok || !upstream.body) {
-      if (upstream.status !== 200 && upstream.status !== 206) {
-          console.error(`Series proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
+        res.status(upstream.status);
+
+        const contentType = upstream.headers.get('content-type');
+        if (contentType) res.setHeader('Content-Type', contentType);
+        const contentLength = upstream.headers.get('content-length');
+        if (contentLength) res.setHeader('Content-Length', contentLength);
+
+        const contentRange = upstream.headers.get('content-range');
+        if (contentRange) res.setHeader('Content-Range', contentRange);
+
+        const acceptRanges = upstream.headers.get('accept-ranges');
+        if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+
+        upstream.body.pipe(res);
+
+        upstream.body.on('error', (err) => {
+          console.error('Series stream error:', err.message);
           streamManager.remove(connectionId);
-          return res.sendStatus(502);
-      }
+        });
+
+        req.on('close', () => {
+          streamManager.remove(connectionId);
+          if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
+        });
+    } catch(e) {
+        console.error('Series proxy error:', e.message);
+        streamManager.remove(connectionId);
+        if (!res.headersSent) res.sendStatus(502);
     }
 
-    res.status(upstream.status);
-
-    const contentType = upstream.headers.get('content-type');
-    if (contentType) res.setHeader('Content-Type', contentType);
-    const contentLength = upstream.headers.get('content-length');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
-
-    const contentRange = upstream.headers.get('content-range');
-    if (contentRange) res.setHeader('Content-Range', contentRange);
-
-    const acceptRanges = upstream.headers.get('accept-ranges');
-    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
-
-    upstream.body.pipe(res);
-
-    upstream.body.on('error', (err) => {
-      console.error('Series stream error:', err.message);
-      streamManager.remove(connectionId);
-    });
-
-    req.on('close', () => {
-      streamManager.remove(connectionId);
-      if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
-    });
-
-  } catch (e) {
-    console.error('Series proxy error:', e.message);
+  } catch(e) {
+    console.error('Series proxy setup error:', e.message);
     streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
@@ -811,7 +798,8 @@ export const proxyTimeshift = async (req, res) => {
         pc.metadata,
         p.url as provider_url,
         p.username as provider_user,
-        p.password as provider_pass
+        p.password as provider_pass,
+        p.backup_urls
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -822,13 +810,9 @@ export const proxyTimeshift = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) {
-            return res.sendStatus(403);
-        }
+        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
         const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-            return res.sendStatus(403);
-        }
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
     await streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip, res);
@@ -838,6 +822,17 @@ export const proxyTimeshift = async (req, res) => {
     const base = channel.provider_url.replace(/\/+$/, '');
     const reqExt = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
+
+    let backupStreamUrls = [];
+    try {
+        if (channel.backup_urls) {
+            const backups = JSON.parse(channel.backup_urls);
+            backupStreamUrls = backups.map(bUrl => {
+                const bBase = bUrl.replace(/\/+$/, '');
+                return `${bBase}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
+            });
+        }
+    } catch(e) {}
 
     let meta = {};
     try {
@@ -853,24 +848,25 @@ export const proxyTimeshift = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
-    const upstream = await fetch(remoteUrl, {
-      headers,
-      redirect: 'follow'
-    });
-
-    if (!upstream.ok || !upstream.body) {
-      console.error(`Timeshift proxy error: ${upstream.status} ${upstream.statusText} for ${redactUrl(remoteUrl)}`);
-      streamManager.remove(connectionId);
-      return res.sendStatus(502);
+    let upstream, successfulUrl;
+    try {
+        const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
+            headers,
+            redirect: 'follow'
+        });
+        upstream = result.response;
+        successfulUrl = result.successfulUrl;
+    } catch(e) {
+        console.error(`Timeshift proxy error: ${e.message}`);
+        streamManager.remove(connectionId);
+        return res.sendStatus(502);
     }
 
     if (reqExt === 'm3u8') {
-      // Rewrite HLS manifest: resolve relative segment URLs through our proxy
       const text = await upstream.text();
-      const baseUrl = upstream.url || remoteUrl;
+      const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
-      // Check provider safety
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
       const headersToForward = { ...headers };
@@ -931,7 +927,7 @@ export const proxyTimeshift = async (req, res) => {
     });
 
   } catch (e) {
-    console.error('Timeshift proxy error:', e.message);
+    console.error('Timeshift proxy setup error:', e.message);
     streamManager.remove(connectionId);
     if (!res.headersSent) {
       res.sendStatus(500);
