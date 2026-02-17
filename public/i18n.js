@@ -393,6 +393,7 @@ const translations = {
 
     // Sharing
     share: 'Share',
+    updateShare: 'Update Share',
     manageShares: 'Manage Shares',
     createShareLink: 'Create Share Link',
     shareName: 'Name (Optional)',
@@ -801,6 +802,7 @@ const translations = {
 
     // Sharing
     share: 'Teilen',
+    updateShare: 'Freigabe aktualisieren',
     manageShares: 'Freigaben verwalten',
     createShareLink: 'Freigabe-Link erstellen',
     shareName: 'Name (Optional)',
@@ -1209,6 +1211,7 @@ const translations = {
 
     // Sharing
     share: 'Partager',
+    updateShare: 'Mettre à jour le partage',
     manageShares: 'Gérer les partages',
     createShareLink: 'Créer un lien de partage',
     shareName: 'Nom (Optionnel)',
@@ -1617,6 +1620,7 @@ const translations = {
 
     // Sharing
     share: 'Κοινοποίηση',
+    updateShare: 'Ενημέρωση Κοινοποίησης',
     manageShares: 'Διαχείριση Κοινοποιήσεων',
     createShareLink: 'Δημιουργία Συνδέσμου',
     shareName: 'Όνομα (Προαιρετικό)',

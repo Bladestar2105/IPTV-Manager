@@ -3659,7 +3659,7 @@ function updateChanBulkDeleteBtn() {
     }
 
     if (shareBtn) {
-        shareBtn.textContent = t('share');
+        shareBtn.textContent = editingShareToken ? t('updateShare') : t('share');
     }
 }
 
@@ -3920,7 +3920,6 @@ window.editShare = function(s) {
     const shareBtn = document.getElementById('chan-bulk-share-btn');
     if (shareBtn) {
         shareBtn.style.display = 'block';
-        shareBtn.textContent = t('updateShare') || 'Update Share';
     }
 
     updateChanBulkDeleteBtn(); // To refresh button visibility/text based on populated channels
