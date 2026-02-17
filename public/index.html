@@ -1107,6 +1107,10 @@
                 <input class="form-control" name="epg_url" data-i18n-placeholder="optional" placeholder="(Optional)">
              </div>
              <div class="mb-3">
+                <label class="form-label" data-i18n="backupUrls">Backup URLs</label>
+                <textarea class="form-control" name="backup_urls" id="provider-backup-urls" rows="3" data-i18n-placeholder="backupUrlsPlaceholder" placeholder="One URL per line (Optional)"></textarea>
+             </div>
+             <div class="mb-3">
                 <label class="form-label" data-i18n="expiryDate">Expiry Date</label>
                 <input class="form-control" id="provider-expiry-date" readonly disabled>
              </div>
@@ -1150,6 +1154,12 @@
              <div class="mb-3">
                <label class="form-label" data-i18n="shareName">Name (Optional)</label>
                <input class="form-control" id="share-name" data-i18n-placeholder="shareNamePlaceholder" placeholder="e.g. Guest Access">
+             </div>
+             <div class="mb-3">
+                <div class="form-check">
+                   <input class="form-check-input" type="checkbox" id="share-create-slug">
+                   <label class="form-check-label" for="share-create-slug" data-i18n="generateShortUrl">Generate Short URL</label>
+                </div>
              </div>
              <div class="row mb-3">
                <div class="col-6">

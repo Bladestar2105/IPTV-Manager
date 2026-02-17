@@ -18,6 +18,7 @@ import systemRoutes from './routes/system.js';
 import hdhrRoutes from './routes/hdhr.js';
 import proxyRoutes from './routes/proxy.js';
 import shareRoutes from './routes/shares.js';
+import * as shareController from './controllers/shareController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,6 +72,9 @@ app.use('/api', apiLimiter);
 app.use('/player_api.php', apiLimiter);
 app.use('/xmltv.php', apiLimiter);
 app.use('/get.php', apiLimiter);
+
+// Short Link Route (before static to take precedence if name conflicts, though unlikely with /share prefix)
+app.get('/share/:slug', shareController.handleShortLink);
 
 // Static Files
 app.use(express.static(path.join(__dirname, '../public')));
