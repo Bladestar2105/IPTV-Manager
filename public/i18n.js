@@ -20,6 +20,8 @@ const translations = {
     addUser: 'Add User',
     deleteUserConfirm: 'Really delete user "{name}"?',
     userCreated: '✅ User created',
+    hdhrDisabled: 'HDHomeRun emulation is disabled for this user.',
+    enableInEditUser: 'Enable it in the Edit User menu.',
     
     // Provider Section
     totalProviders: 'Total Providers',
@@ -426,6 +428,8 @@ const translations = {
     addUser: 'User+',
     deleteUserConfirm: 'User "{name}" wirklich löschen?',
     userCreated: '✅ User angelegt',
+    hdhrDisabled: 'HDHomeRun-Emulation ist für diesen Benutzer deaktiviert.',
+    enableInEditUser: 'Aktivieren Sie es im Menü "Benutzer bearbeiten".',
     
     // Provider Section
     totalProviders: 'Anzahl Provider',
@@ -832,6 +836,8 @@ const translations = {
     addUser: 'Ajouter Utilisateur',
     deleteUserConfirm: 'Supprimer vraiment l\'utilisateur "{name}" ?',
     userCreated: '✅ Utilisateur créé',
+    hdhrDisabled: "L'émulation HDHomeRun est désactivée pour cet utilisateur.",
+    enableInEditUser: 'Activez-la dans le menu "Modifier Utilisateur".',
     
     // Provider Section
     totalProviders: 'Fournisseurs Totaux',
@@ -1238,6 +1244,8 @@ const translations = {
     addUser: 'Προσθήκη Χρήστη',
     deleteUserConfirm: 'Διαγραφή χρήστη "{name}";',
     userCreated: '✅ Χρήστης δημιουργήθηκε',
+    hdhrDisabled: 'Η εξομοίωση HDHomeRun είναι απενεργοποιημένη για αυτόν τον χρήστη.',
+    enableInEditUser: 'Ενεργοποιήστε το στο μενού "Επεξεργασία Χρήστη".',
     
     // Provider Section
     totalProviders: 'Σύνολο Παρόχων',

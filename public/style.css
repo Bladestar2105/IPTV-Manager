@@ -107,6 +107,12 @@ h5, h6 {
   color: var(--tv-text-muted);
 }
 
+.form-control:disabled, .form-control[readonly] {
+  background-color: rgba(17, 24, 39, 0.6);
+  color: var(--tv-text-muted);
+  opacity: 1;
+}
+
 .form-select option {
   background: #1f2937;
   color: var(--tv-text-primary);
@@ -368,6 +374,12 @@ hr {
   background: rgba(239, 68, 68, 0.1);
   border-color: var(--tv-red);
   color: var(--tv-red);
+}
+
+.alert-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: var(--tv-yellow);
+  color: var(--tv-yellow);
 }
 
 .form-check-input {
