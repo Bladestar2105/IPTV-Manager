@@ -20,3 +20,7 @@
 ## 2025-06-15 - Stream Processing Chunk Boundaries
 **Learning:** Relying on `readline` or line-based assumptions for XML parsing fails with minified files or multiple tags per line.
 **Action:** Use chunk-based state machines that accumulate buffers and search for delimiters (start/end tags) to robustly handle arbitrary formatting.
+
+## 2026-06-21 - [Set<Number> vs Set<String> for Bigrams]
+**Learning:** Storing thousands of small strings in `Set` for bigram matching creates massive GC pressure and memory allocation overhead. Packing 2 ASCII characters into a 32-bit integer `(c1 << 16) | c2` and using `Set<number>` is significantly faster and lighter on memory in V8.
+**Action:** Always prefer packed integers over short strings for high-volume set operations (like bigrams/trigrams) in critical paths.

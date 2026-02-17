@@ -68,15 +68,6 @@ const LANGUAGE_MAP = (() => {
 })();
 
 // Helper functions for bit signature optimization
-function hashBigram(bg) {
-    let hash = 0;
-    for (let i = 0; i < bg.length; i++) {
-        hash = ((hash << 5) - hash) + bg.charCodeAt(i);
-        hash |= 0;
-    }
-    return Math.abs(hash);
-}
-
 function popcount(n) {
     n = n - ((n >>> 1) & 0x55555555);
     n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
@@ -348,25 +339,35 @@ export class ChannelMatcher {
   findBestSimilarity(parsedSearch, candidates, threshold = 0) {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
-    let searchBaseName, searchBigrams, searchSignature, searchPopcount;
+    let searchBaseName, searchBigrams, searchSignature, searchPopcount, searchLen;
     if (typeof parsedSearch === 'string') {
         searchBaseName = this.normalizeBaseName(parsedSearch);
         searchBigrams = this.getBigrams(searchBaseName);
         searchSignature = this.createSignature(searchBigrams);
         searchPopcount = this.countSignatureBits(searchSignature);
+        searchLen = searchBigrams.size;
     } else {
         searchBaseName = parsedSearch.baseName;
-        // Safety fallback if bigrams not pre-computed
-        searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
-        searchSignature = parsedSearch.signature || this.createSignature(searchBigrams);
-        searchPopcount = parsedSearch.signaturePopcount !== undefined ? parsedSearch.signaturePopcount : this.countSignatureBits(searchSignature);
+        searchSignature = parsedSearch.signature;
+        searchPopcount = parsedSearch.signaturePopcount;
+        searchLen = parsedSearch.bigramCount;
+
+        // Lazy load bigrams/signature if missing (should rarely happen for parsed objects)
+        if (!searchSignature || searchLen === undefined) {
+             searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
+             if (!searchSignature) searchSignature = this.createSignature(searchBigrams);
+             if (searchLen === undefined) searchLen = searchBigrams.size;
+             if (searchPopcount === undefined) searchPopcount = this.countSignatureBits(searchSignature);
+        } else if (searchPopcount === undefined) {
+             searchPopcount = this.countSignatureBits(searchSignature);
+        }
     }
 
     // Optimization: Prune candidates based on length if threshold is set
     let minLen = 0;
     let maxLen = Infinity;
     if (threshold > 0) {
-        const lenA = searchBigrams.size;
+        const lenA = searchLen;
         // B >= A * T / (2 - T)
         minLen = Math.ceil(lenA * threshold / (2 - threshold));
         // B <= A * (2 - T) / T
@@ -394,6 +395,7 @@ export class ChannelMatcher {
                 score = this.calculateDiceCoefficientSignature(searchSignature, cand.parsed.signature, searchPopcount, candPopcount);
             } else if (cand.parsed.bigrams) {
                 // Fallback only if bigrams are available (legacy or test objects)
+                if (!searchBigrams) searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
                 score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
             }
         }
@@ -448,9 +450,16 @@ export class ChannelMatcher {
 
   getBigrams(str) {
     const bigrams = new Set();
-    if (!str) return bigrams;
+    if (!str || str.length < 2) return bigrams;
+
+    // Optimization: Pack bigrams into 32-bit integers instead of substrings
+    // This reduces memory allocation and GC pressure significantly
+    let c1 = str.charCodeAt(0);
     for (let i = 0; i < str.length - 1; i++) {
-        bigrams.add(str.substring(i, i + 2));
+        const c2 = str.charCodeAt(i + 1);
+        const val = (c1 << 16) | c2;
+        bigrams.add(val);
+        c1 = c2;
     }
     return bigrams;
   }
@@ -458,8 +467,11 @@ export class ChannelMatcher {
   createSignature(bigrams) {
       // 1024 bits = 32 x 32-bit integers
       const sig = new Uint32Array(32);
-      for (const bg of bigrams) {
-          const h = hashBigram(bg) % 1024;
+      for (const val of bigrams) {
+          // Optimized hash for packed integer (matches approx old behavior: 31*c1 + c2)
+          let h = (31 * (val >>> 16) + (val & 0xFFFF));
+          h = Math.abs(h | 0) % 1024;
+
           const idx = Math.floor(h / 32);
           const bit = h % 32;
           sig[idx] |= (1 << bit);
