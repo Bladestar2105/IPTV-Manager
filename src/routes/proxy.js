@@ -11,6 +11,33 @@ const router = express.Router();
 const httpAgent = new http.Agent({ lookup: safeLookup });
 const httpsAgent = new https.Agent({ lookup: safeLookup });
 
+export async function fetchSafe(url, options = {}, redirectCount = 0) {
+  if (redirectCount > 5) {
+    throw new Error('Too many redirects');
+  }
+
+  // Ensure URL is valid and safe
+  if (!(await isSafeUrl(url))) {
+    throw new Error(`Unsafe URL: ${url}`);
+  }
+
+  const fetchOptions = {
+    ...options,
+    redirect: 'manual',
+    agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent),
+  };
+
+  const response = await fetch(url, fetchOptions);
+
+  if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+    const location = response.headers.get('location');
+    const nextUrl = new URL(location, url).toString(); // Handle relative URLs
+    return fetchSafe(nextUrl, options, redirectCount + 1);
+  }
+
+  return response;
+}
+
 router.get('/image', authenticateToken, async (req, res) => {
   const { url } = req.query;
 
@@ -19,20 +46,13 @@ router.get('/image', authenticateToken, async (req, res) => {
   }
 
   try {
-    // 1. SSRF Protection (Initial Check)
-    if (!(await isSafeUrl(url))) {
-      console.warn(`[Proxy] Blocked unsafe URL: ${url}`);
-      return res.status(403).send('Access denied (unsafe URL)');
-    }
-
-    // 2. Fetch Image with DNS Rebinding Protection
-    // The custom agent uses safeLookup to validate the IP at connection time
-    const response = await fetch(url, {
-        agent: (_parsedUrl) => _parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent,
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-        }
+    // 1. Fetch Image with Safe Handling (SSRF + Redirect Protection)
+    const response = await fetchSafe(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      },
     });
 
     if (!response.ok) {
@@ -66,9 +86,23 @@ router.get('/image', authenticateToken, async (req, res) => {
 
   } catch (error) {
     console.error('Proxy Error:', error);
-    if (error.message && error.message.includes('unsafe IP')) {
-        return res.status(403).send('Access denied (DNS Rebinding detected)');
+
+    if (error.message.includes('unsafe IP') || error.message.includes('Unsafe URL')) {
+      return res.status(403).send('Access denied (Unsafe URL or DNS Rebinding detected)');
     }
+
+    if (error.code === 'EHOSTUNREACH' || error.code === 'ECONNREFUSED') {
+      return res.status(502).send('Bad Gateway (Upstream Unreachable)');
+    }
+
+    if (error.code === 'ETIMEDOUT') {
+      return res.status(504).send('Gateway Timeout');
+    }
+
+    if (error.message === 'Too many redirects') {
+      return res.status(502).send('Bad Gateway (Too many redirects)');
+    }
+
     res.status(500).send('Internal Server Error');
   }
 });
