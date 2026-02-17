@@ -2,7 +2,7 @@ import express from 'express';
 import * as systemController from '../controllers/systemController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
-import { apiLimiter } from '../middleware/security.js';
+import { clientLogLimiter } from '../middleware/security.js';
 
 const router = express.Router();
 
@@ -10,7 +10,7 @@ router.get('/settings', authenticateToken, systemController.getSettings);
 router.post('/settings', authenticateToken, systemController.updateSettings);
 
 router.get('/client-logs', authenticateToken, systemController.getClientLogs);
-router.post('/client-logs', apiLimiter, systemController.createClientLog);
+router.post('/client-logs', clientLogLimiter, systemController.createClientLog);
 router.delete('/client-logs', authenticateToken, systemController.deleteClientLogs);
 
 router.get('/security/logs', authenticateToken, systemController.getSecurityLogs);
