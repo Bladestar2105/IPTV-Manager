@@ -4,7 +4,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getBaseUrl } from '../utils/helpers.js';
+import { getBaseUrl, isSafeUrl } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
@@ -349,6 +349,11 @@ export const proxyLive = async (req, res) => {
       const baseUrl = upstream.url || remoteUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
+      // Check if the provider origin is safe (public). If so, we enforce SSRF protection on segments.
+      // If the provider is private (e.g. local IPTV server), we allow segments to be private too.
+      // We check channel.provider_url because that is the root of trust.
+      const isProviderSafe = await isSafeUrl(channel.provider_url);
+
       const headersToForward = { ...fetchHeaders };
       if (cookies) headersToForward['Cookie'] = cookies;
 
@@ -359,7 +364,8 @@ export const proxyLive = async (req, res) => {
           const absoluteUrl = new URL(line, baseUrl).toString();
           const payload = {
               u: absoluteUrl,
-              h: headersToForward
+              h: headersToForward,
+              s: isProviderSafe // Pass safe flag
           };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}${tokenParam}`;
@@ -371,7 +377,8 @@ export const proxyLive = async (req, res) => {
           const absoluteUrl = new URL(p1, baseUrl).toString();
           const payload = {
               u: absoluteUrl,
-              h: headersToForward
+              h: headersToForward,
+              s: isProviderSafe
           };
           const encrypted = encrypt(JSON.stringify(payload));
           return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}${tokenParam}"`;
@@ -456,6 +463,8 @@ export const proxySegment = async (req, res) => {
         'Connection': 'keep-alive'
     };
 
+    let isOriginSafe = true;
+
     if (req.query.data) {
         try {
             const decrypted = decrypt(req.query.data);
@@ -468,6 +477,9 @@ export const proxySegment = async (req, res) => {
                 // the m3u8 fetch and are needed for segment authentication)
                 Object.assign(headers, payload.h);
             }
+            // If 's' (safe) flag is explicitly false, it means the original provider was private,
+            // so we allow private segments. Default to true (safe/public) for security.
+            if (payload.s === false) isOriginSafe = false;
         } catch(e) {
             console.error('Segment data decode error:', e.message);
             return res.sendStatus(400);
@@ -475,6 +487,14 @@ export const proxySegment = async (req, res) => {
     }
 
     if (!targetUrl) return res.sendStatus(400);
+
+    // SSRF Protection: If the origin provider was public (or unknown), enforce public segments.
+    if (isOriginSafe) {
+        if (!(await isSafeUrl(targetUrl))) {
+            console.warn(`[SSRF Protection] Blocked unsafe segment URL: ${targetUrl}`);
+            return res.sendStatus(403);
+        }
+    }
 
     const upstream = await fetch(targetUrl, {
       headers,
@@ -850,6 +870,9 @@ export const proxyTimeshift = async (req, res) => {
       const baseUrl = upstream.url || remoteUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
+      // Check provider safety
+      const isProviderSafe = await isSafeUrl(channel.provider_url);
+
       const headersToForward = { ...headers };
       const cookies = upstream.headers.get('set-cookie');
       if (cookies) headersToForward['Cookie'] = cookies;
@@ -859,7 +882,7 @@ export const proxyTimeshift = async (req, res) => {
         if (!line) return match;
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
-          const payload = { u: absoluteUrl, h: headersToForward };
+          const payload = { u: absoluteUrl, h: headersToForward, s: isProviderSafe };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}${tokenParam}`;
         } catch (e) {
