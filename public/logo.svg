@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="screenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0e27;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e3a8a;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Monitor Stand -->
+  <path d="M196 460 L316 460 L336 490 L176 490 Z" fill="#1f2937" stroke="#4b5563" stroke-width="4"/>
+
+  <!-- TV Body/Frame -->
+  <rect x="36" y="86" width="440" height="340" rx="20" ry="20" fill="#050812" stroke="#4b5563" stroke-width="8" />
+
+  <!-- Screen Area -->
+  <rect x="56" y="106" width="400" height="300" rx="10" ry="10" fill="url(#screenGradient)" stroke="#1e3a8a" stroke-width="2" />
+
+  <!-- Play Button Triangle (Cyan) -->
+  <path d="M220 190 L320 256 L220 322 Z" fill="#22d3ee" filter="url(#glow)" opacity="0.9"/>
+
+  <!-- Text "IPTV" (hidden or small, or maybe part of the frame?) -->
+  <!-- Let's put "IPTV" text at the bottom of the frame -->
+  <text x="256" y="415" font-family="Arial, sans-serif" font-weight="bold" font-size="24" text-anchor="middle" fill="#60a5fa" letter-spacing="4">IPTV</text>
+
+  <!-- Wi-Fi / Signal Icon (Top Right) -->
+  <path d="M410 130 A 40 40 0 0 1 440 145" fill="none" stroke="#34d399" stroke-width="4" stroke-linecap="round"/>
+  <path d="M400 145 A 25 25 0 0 1 425 155" fill="none" stroke="#34d399" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="395" cy="165" r="3" fill="#34d399" />
+
+</svg>
