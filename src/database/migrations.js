@@ -526,10 +526,11 @@ export function migrateSharedLinkSlug(db) {
     const columns = tableInfo.map(c => c.name);
 
     if (!columns.includes('slug')) {
-      db.exec('ALTER TABLE shared_links ADD COLUMN slug TEXT UNIQUE');
-      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_links_slug ON shared_links(slug)');
+      db.exec('ALTER TABLE shared_links ADD COLUMN slug TEXT');
       console.log('✅ DB Migration: slug column added to shared_links');
     }
+
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_links_slug ON shared_links(slug)');
   } catch (e) {
     console.error('Shared Link Slug migration error:', e);
   }
