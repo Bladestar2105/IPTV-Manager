@@ -8,6 +8,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>IPTV-Manager</title>
+  <link rel="icon" type="image/png" href="logo.png">
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
   <style>
@@ -39,7 +40,10 @@
   <!-- Navbar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4" id="main-navbar" style="display: none;">
     <div class="container">
-      <a class="navbar-brand" href="#" onclick="return false;">IPTV-Manager</a>
+      <a class="navbar-brand d-flex align-items-center gap-2" href="#" onclick="return false;">
+        <img src="logo.png" alt="Logo" width="30" height="30" class="d-inline-block align-text-top">
+        IPTV-Manager
+      </a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
         <span class="navbar-toggler-icon"></span>
       </button>
@@ -929,6 +933,9 @@
           <h5 class="modal-title" data-i18n="login">Login</h5>
         </div>
         <div class="modal-body">
+          <div class="text-center mb-4">
+             <img src="logo.png" alt="Logo" width="80" height="80">
+          </div>
           <form id="login-form" onsubmit="handleLogin(event)">
             <div class="mb-3">
               <label for="login-username" class="form-label" data-i18n="username">Username</label>
