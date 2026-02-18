@@ -236,9 +236,18 @@ export const proxyLive = async (req, res) => {
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
-    await streamManager.cleanupUser(user.id, req.ip);
-    await new Promise(resolve => setTimeout(resolve, 100));
-    await streamManager.add(connectionId, user, channel.name, req.ip, res);
+    let reqExt = 'ts';
+    if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
+    if (req.path.endsWith('.mp4')) reqExt = 'mp4';
+
+    const wantsTranscode = (req.query.transcode === 'true');
+
+    // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
+    if (reqExt !== 'm3u8' || wantsTranscode) {
+        await streamManager.cleanupUser(user.id, req.ip);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await streamManager.add(connectionId, user, channel.name, req.ip, res);
+    }
 
     const now = Math.floor(Date.now() / 1000);
     const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
@@ -250,11 +259,6 @@ export const proxyLive = async (req, res) => {
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
-    let reqExt = 'ts';
-    if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
-    if (req.path.endsWith('.mp4')) reqExt = 'mp4';
-
-    const wantsTranscode = (req.query.transcode === 'true');
     const remoteExt = (reqExt === 'm3u8' && !wantsTranscode) ? 'm3u8' : 'ts';
 
     const base = channel.provider_url.replace(/\/+$/, '');
@@ -410,7 +414,9 @@ export const proxyLive = async (req, res) => {
       res.setHeader('Expires', '0');
       res.send(newText);
 
-      streamManager.remove(connectionId);
+      if (reqExt !== 'm3u8') {
+          streamManager.remove(connectionId);
+      }
       return;
     }
 
