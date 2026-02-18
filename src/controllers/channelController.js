@@ -70,16 +70,23 @@ export const bulkDeleteUserCategories = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
+    const placeholders = ids.map(() => '?').join(',');
+
     db.transaction(() => {
-      for (const id of ids) {
-         if (!req.user.is_admin) {
-             const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-             if (!cat || cat.user_id !== req.user.id) throw new Error('Access denied');
-         }
-         db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
-         db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
-         db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
+      if (!req.user.is_admin) {
+        const cats = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
+        const catMap = new Map(cats.map(c => [c.id, c.user_id]));
+        for (const id of ids) {
+          const catUserId = catMap.get(Number(id));
+          if (catUserId === undefined || catUserId !== req.user.id) {
+            throw new Error('Access denied');
+          }
+        }
       }
+
+      db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...ids);
+      db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...ids);
+      db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...ids);
     })();
 
     res.json({success: true, deleted: ids.length});
