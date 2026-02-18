@@ -1,132 +1,111 @@
-
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import request from 'supertest';
-import app from '../../src/app.js';
-import db, { initDb } from '../../src/database/db.js';
-import { encrypt } from '../../src/utils/crypto.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as streamController from '../../src/controllers/streamController.js';
 import * as helpers from '../../src/utils/helpers.js';
+import fetch from 'node-fetch';
 
-// Mock isSafeUrl to return true for public IPs and false for private
-vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
-    const actual = await importOriginal();
-    return {
-        ...actual,
-        isSafeUrl: vi.fn().mockImplementation(async (url) => {
-            if (url.includes('127.0.0.1') || url.includes('localhost') || url.includes('private')) {
-                return false;
-            }
-            return true;
-        }),
-        getBaseUrl: actual.getBaseUrl
-    };
+// Mock dependencies
+vi.mock('../../src/services/authService.js', () => ({
+  getXtreamUser: vi.fn().mockResolvedValue({ id: 1, username: 'testuser' })
+}));
+
+vi.mock('../../src/utils/crypto.js', () => ({
+  decrypt: vi.fn((text) => {
+      if (text === 'encrypted_base_unsafe') return JSON.stringify({ s: false });
+      if (text === 'encrypted_data') return JSON.stringify({ u: 'http://unsafe.local/segment.ts' });
+      if (text === 'encrypted_base_safe') return JSON.stringify({ s: true });
+      if (text === 'encrypted_data_safe') return JSON.stringify({ u: 'http://safe.remote/segment.ts' });
+      return null;
+  }),
+  encrypt: vi.fn((text) => 'encrypted')
+}));
+
+vi.mock('../../src/utils/helpers.js', () => ({
+  isSafeUrl: vi.fn().mockResolvedValue(false),
+  getBaseUrl: () => 'http://localhost:3000',
+  getSetting: () => null,
+  safeLookup: vi.fn()
+}));
+
+vi.mock('node-fetch', () => ({
+  default: vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'video/mp2t' },
+      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() }
+  })
+}));
+
+vi.mock('../../src/database/db.js', () => ({
+  default: { prepare: () => ({ get: () => ({}), run: () => ({}) }) }
+}));
+
+vi.mock('../../src/services/streamManager.js', () => ({
+  default: { add: vi.fn(), remove: vi.fn(), cleanupUser: vi.fn(), localStreams: new Map() }
+}));
+
+vi.mock('fluent-ffmpeg', () => {
+  return {
+    default: () => ({
+      inputFormat: () => ({ outputOptions: () => ({ on: () => ({ on: () => ({ pipe: () => {} }) }) }) }),
+      outputOptions: () => ({ on: () => ({ on: () => ({ pipe: () => {} }) }) })
+    })
+  };
 });
 
-// Mock fetch to simulate upstream
-vi.mock('node-fetch', () => {
-    return {
-        default: vi.fn().mockImplementation(async (url) => {
-            return {
-                ok: true,
-                status: 200,
-                headers: {
-                    get: (name) => {
-                        if (name.toLowerCase() === 'content-type') return 'video/mp2t';
-                        if (name.toLowerCase() === 'content-length') return '18';
-                        return null;
-                    }
-                },
-                body: {
-                    pipe: (res) => {
-                        res.write('fake video content');
-                        res.end();
-                    },
-                    on: () => {},
-                    destroy: () => {}
-                }
-            };
-        })
+describe('proxySegment SSRF Protection', () => {
+  let req, res;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    req = {
+      query: {},
+      ip: '127.0.0.1',
+      headers: {},
+      user: { id: 1, username: 'testuser' }
     };
-});
 
-describe('SSRF Protection in proxySegment', () => {
-    let userToken;
-    let userId;
-    const username = 'ssrf_test_user';
+    res = {
+      sendStatus: vi.fn(),
+      setHeader: vi.fn(),
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn(),
+      json: vi.fn()
+    };
+  });
 
-    beforeAll(async () => {
-        initDb(true);
+  it('should BLOCK unsafe URL even if s=false is provided in encrypted base/data', async () => {
+    req.query.base = 'encrypted_base_unsafe';
+    req.query.data = 'encrypted_data';
 
-        // Clean up if exists from previous run
-        try {
-            const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-            if (existing) {
-                db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(existing.id);
-                db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
-            }
-        } catch(e) {}
+    // Mock isSafeUrl to return false
+    helpers.isSafeUrl.mockResolvedValue(false);
 
-        const info = db.prepare('INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled) VALUES (?, ?, 1, 1, 0)').run(username, 'password');
-        userId = info.lastInsertRowid;
+    await streamController.proxySegment(req, res);
 
-        const token = 'ssrf-valid-token-123';
-        const now = Math.floor(Date.now() / 1000);
-        db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, now + 3600);
-        userToken = token;
-    });
+    expect(helpers.isSafeUrl).toHaveBeenCalledWith('http://unsafe.local/segment.ts');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(res.sendStatus).toHaveBeenCalledWith(403);
+  });
 
-    afterAll(() => {
-        try {
-            db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
-            db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-        } catch(e) {}
-    });
+  it('should call fetch with agent for SAFE URL', async () => {
+    req.query.base = 'encrypted_base_safe';
+    req.query.data = 'encrypted_data_safe';
 
-    it('should BLOCK access to private IP if payload does not explicitly allow it', async () => {
-        const targetUrl = 'http://127.0.0.1:8080/private-data';
-        const payload = {
-            u: targetUrl,
-            h: {},
-            s: true // Simulating public origin or default
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
+    // Mock isSafeUrl to true
+    helpers.isSafeUrl.mockResolvedValue(true);
 
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
+    await streamController.proxySegment(req, res);
 
-        expect(res.status).toBe(403);
-    });
+    expect(helpers.isSafeUrl).toHaveBeenCalledWith('http://safe.remote/segment.ts');
+    expect(fetch).toHaveBeenCalled();
 
-    it('should ALLOW access to public IP', async () => {
-        const targetUrl = 'http://example.com/video.ts';
-        const payload = {
-            u: targetUrl,
-            h: {},
-            s: true
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
+    const calls = fetch.mock.calls;
+    expect(calls.length).toBe(1);
+    expect(calls[0][0]).toBe('http://safe.remote/segment.ts');
 
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
-
-        expect(res.status).toBe(200);
-    });
-
-    it('should ALLOW access to private IP if origin is marked as unsafe (s: false)', async () => {
-        // This simulates a scenario where the admin configured a local provider
-        const targetUrl = 'http://127.0.0.1:8080/private-stream.ts';
-        const payload = {
-            u: targetUrl,
-            h: {},
-            s: false // Origin is unsafe/private
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
-
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
-
-        expect(res.status).toBe(200);
-    });
+    const options = calls[0][1];
+    expect(options).toBeDefined();
+    expect(options.agent).toBeDefined();
+    expect(typeof options.agent).toBe('function');
+  });
 });
