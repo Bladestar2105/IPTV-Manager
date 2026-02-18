@@ -552,3 +552,48 @@ span {
 .table-danger:hover > td {
    background-color: rgba(239, 68, 68, 0.4) !important;
 }
+
+/* Extracted from index.html */
+.sortable-ghost {
+  opacity: 0.4;
+  background: #f0f0f0;
+}
+.sortable-drag {
+  opacity: 0.8;
+}
+.drag-handle {
+  cursor: move;
+  padding: 0 8px;
+  color: #999;
+}
+.drag-handle:hover {
+  color: #333;
+}
+.lang-switcher {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+}
+
+/* Helper Classes to remove inline styles */
+.w-150px { width: 150px; }
+.w-250px { width: 250px; }
+.flex-grow-1 { flex-grow: 1; }
+.z-1100 { z-index: 1100; }
+
+.max-h-200-scroll { max-height: 200px; overflow: auto; }
+.max-h-300-scroll { max-height: 300px; overflow-y: auto; }
+.max-h-400-scroll { max-height: 400px; overflow-y: auto; }
+.max-h-600-scroll { max-height: 600px; overflow-y: auto; }
+
+.tv-container-border {
+  border: 1px solid var(--tv-border);
+  border-radius: 8px;
+}
+
+.th-w-5 { width: 5%; }
+.th-w-15 { width: 15%; }
+.th-w-25 { width: 25%; }
+.th-w-30 { width: 30%; }
+.qr-code-img { max-width: 200px; }

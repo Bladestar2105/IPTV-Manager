@@ -36,9 +36,9 @@ export const securityHeaders = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      scriptSrcAttr: ["'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      scriptSrcAttr: ["'none'"],
+      styleSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "http:", "https:"],
       connectSrc: ["'self'", "http:", "https:"],
       mediaSrc: ["'self'", "blob:", "http:", "https:"],
