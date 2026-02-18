@@ -76,6 +76,11 @@ export async function authUser(username, password) {
 
     if (isValid) {
       const { password, otp_secret, ...safeUser } = user;
+      // Convert force_password_change to boolean
+      if (safeUser.force_password_change !== undefined) {
+          safeUser.force_password_change = !!safeUser.force_password_change;
+      }
+
       authCache.set(cacheKey, {
         user: safeUser,
         expiry: Date.now() + AUTH_CACHE_TTL
@@ -121,7 +126,7 @@ export async function createDefaultAdmin() {
       const username = 'admin';
       const hashedPassword = await bcrypt.hash(passwordToUse, BCRYPT_ROUNDS);
 
-      db.prepare('INSERT INTO admin_users (username, password, is_active) VALUES (?, ?, 1)')
+      db.prepare('INSERT INTO admin_users (username, password, is_active, force_password_change) VALUES (?, ?, 1, 1)')
         .run(username, hashedPassword);
 
       console.log('\\n' + '='.repeat(60));

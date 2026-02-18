@@ -41,9 +41,12 @@ export const createClientLog = (req, res) => {
     let safeLevel = (level || 'error').toString().toLowerCase();
     if (!allowedLevels.includes(safeLevel)) safeLevel = 'error';
 
-    const safeMessage = (message || 'Unknown').toString().substring(0, 1000);
-    const safeStack = (stack || '').toString().substring(0, 2000);
-    const safeUserAgent = (user_agent || '').toString().substring(0, 200);
+    // Strip HTML tags and limit length
+    const stripHtml = (str) => (str || '').toString().replace(/<[^>]*>?/gm, '');
+
+    const safeMessage = stripHtml(message || 'Unknown').substring(0, 500);
+    const safeStack = stripHtml(stack || '').substring(0, 1000);
+    const safeUserAgent = stripHtml(user_agent || '').substring(0, 200);
 
     const now = Math.floor(Date.now() / 1000);
     db.prepare('INSERT INTO client_logs (level, message, stack, user_agent, timestamp) VALUES (?, ?, ?, ?, ?)')
@@ -155,7 +158,7 @@ export const whitelistIp = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { ip, description } = req.body;
-    if (!ip) return res.status(400).json({error: 'ip required'});
+    if (!ip || isIP(ip) === 0) return res.status(400).json({error: 'Valid IP required'});
 
     db.prepare('INSERT OR REPLACE INTO whitelisted_ips (ip, description) VALUES (?, ?)').run(ip, description || '');
     const info = db.prepare('DELETE FROM blocked_ips WHERE ip = ?').run(ip);

@@ -48,6 +48,9 @@
 - **npm**: 9.x+
 - **SQLite**: 3.x (included)
 
+### Production Deployment
+For production environments, it is strongly recommended to set `NODE_ENV=production` and run the application behind a reverse proxy (like Nginx or Traefik) that handles HTTPS. The application will enforce secure cookies when in production mode.
+
 ## 🐳 Docker Installation (Recommended)
 
 ### Using Docker Compose

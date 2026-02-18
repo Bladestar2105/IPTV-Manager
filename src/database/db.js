@@ -236,6 +236,7 @@ export function initDb(isPrimary) {
             migrations.migrateProviderBackupUrls(db);
             migrations.migrateSharedLinkSlug(db);
             migrations.migrateProviderUserAgent(db);
+            migrations.migrateAdminForcePasswordChange(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
