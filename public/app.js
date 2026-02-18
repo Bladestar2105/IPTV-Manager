@@ -141,6 +141,17 @@ function makeAccessible(element, clickHandler) {
   };
 }
 
+// Utility: XSS Protection
+function escapeHtml(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 // Utility: Loading State Helper
 function setLoadingState(btn, isLoading, textKey = 'loading', showText = true) {
   if (!btn) return;
@@ -151,7 +162,7 @@ function setLoadingState(btn, isLoading, textKey = 'loading', showText = true) {
     }
     const spinner = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
     if (showText) {
-      const text = t(textKey) || 'Loading...';
+      const text = escapeHtml(t(textKey) || 'Loading...');
       btn.innerHTML = `${spinner} ${text}`;
     } else {
       btn.innerHTML = spinner;
@@ -741,7 +752,7 @@ async function loadProviders(filterUserId = null) {
 
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
-    row.innerHTML = `<div><strong>${p.name}</strong> <small>(${p.url})</small>${ownerInfo}${expiryInfo}${epgInfo}</div>`;
+    row.innerHTML = `<div><strong>${escapeHtml(p.name)}</strong> <small>(${escapeHtml(p.url)})</small>${ownerInfo}${expiryInfo}${epgInfo}</div>`;
     
     const btnGroup = document.createElement('div');
     const isAdmin = currentUser && currentUser.is_admin;
@@ -950,7 +961,7 @@ async function loadUserCategories() {
     li.appendChild(dragHandle);
     
     const span = document.createElement('span');
-    span.textContent = c.is_adult ? `🔞 ${c.name}` : c.name;
+    span.textContent = c.is_adult ? `🔞 ${c.name}` : c.name; // textContent is safe
     span.style.cursor = 'pointer';
     span.style.flex = '1';
     makeAccessible(span, () => {
@@ -1135,8 +1146,8 @@ function renderProviderCategories() {
     const info = document.createElement('div');
     const catNameDisplay = cat.is_adult ? `🔞 ${cat.category_name}` : cat.category_name;
     info.innerHTML = `
-      <strong>${catNameDisplay}</strong><br>
-      <small class="text-muted">${cat.channel_count} ${t('channels')}</small>
+      <strong>${escapeHtml(catNameDisplay)}</strong><br>
+      <small class="text-muted">${cat.channel_count} ${escapeHtml(t('channels'))}</small>
     `;
     row.appendChild(info);
     
@@ -1369,7 +1380,7 @@ function renderProviderChannels(channels) {
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = ch.name;
+    nameSpan.textContent = ch.name; // textContent is safe
     nameSpan.title = ch.name; // Tooltip for full name
     nameSpan.style.flex = '1';
     nameSpan.style.overflow = 'hidden';
@@ -1378,7 +1389,7 @@ function renderProviderChannels(channels) {
     
     if (ch.logo) {
       const img = document.createElement('img');
-      img.src = getProxiedUrl(ch.logo);
+      img.src = getProxiedUrl(ch.logo); // URL is attribute, relatively safe if protocol checked, but src should be fine
       img.alt = ch.name; // Accessible alt text
       img.style.width = '20px';
       img.style.height = '20px';
@@ -1515,7 +1526,7 @@ async function loadUserCategoryChannels() {
     li.appendChild(dragHandle);
     
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = ch.name;
+    nameSpan.textContent = ch.name; // textContent is safe
     nameSpan.title = ch.name; // Tooltip for full name
     nameSpan.style.flex = '1';
     li.appendChild(nameSpan);
@@ -1855,8 +1866,8 @@ async function loadEpgSources() {
       
       const info = document.createElement('div');
       info.innerHTML = `
-        <strong>${source.name}</strong>
-        <br><small class="text-muted">${source.url}</small>
+        <strong>${escapeHtml(source.name)}</strong>
+        <br><small class="text-muted">${escapeHtml(source.url)}</small>
         <br><small>${enabledStatus} | ${t('updateInterval')}: ${source.update_interval / 3600}h | ${t('lastEpgUpdate')}: ${lastUpdate} ${isUpdating}</small>
       `;
       
@@ -2033,7 +2044,7 @@ function renderAvailableEpgSources() {
     
     const info = document.createElement('div');
     info.innerHTML = `
-      <strong>${source.name}</strong>
+      <strong>${escapeHtml(source.name)}</strong>
       <br><small class="text-muted">${(source.size / 1024 / 1024).toFixed(2)} MB</small>
     `;
     
@@ -2919,10 +2930,10 @@ async function loadStatistics() {
         data.active_streams.forEach(s => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${s.username}</td>
-                <td>${s.channel_name}</td>
+                <td>${escapeHtml(s.username)}</td>
+                <td>${escapeHtml(s.channel_name)}</td>
                 <td>${formatDuration(s.duration)}</td>
-                <td>${s.ip || '-'}</td>
+                <td>${escapeHtml(s.ip || '-')}</td>
             `;
             activeTbody.appendChild(tr);
         });
@@ -2938,15 +2949,36 @@ async function loadStatistics() {
         data.top_channels.forEach((ch, idx) => {
             const tr = document.createElement('tr');
             const lastDate = ch.last_viewed ? new Date(ch.last_viewed * 1000).toLocaleString() : '-';
-            tr.innerHTML = `
-                <td>${idx+1}</td>
-                <td>
-                    ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="20" class="me-1" data-on-error="hide">` : ''}
-                    <span title="${ch.name}">${ch.name}</span>
-                </td>
-                <td>${ch.views}</td>
-                <td>${lastDate}</td>
-            `;
+
+            const tdIndex = document.createElement('td');
+            tdIndex.textContent = idx + 1;
+
+            const tdName = document.createElement('td');
+            if (ch.logo) {
+                const img = document.createElement('img');
+                img.src = getProxiedUrl(ch.logo);
+                img.alt = ch.name;
+                img.width = 20;
+                img.className = 'me-1';
+                img.dataset.onError = 'hide'; // Handled by global listener
+                tdName.appendChild(img);
+            }
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = ch.name;
+            nameSpan.title = ch.name;
+            tdName.appendChild(nameSpan);
+
+            const tdViews = document.createElement('td');
+            tdViews.textContent = ch.views;
+
+            const tdDate = document.createElement('td');
+            tdDate.textContent = lastDate;
+
+            tr.appendChild(tdIndex);
+            tr.appendChild(tdName);
+            tr.appendChild(tdViews);
+            tr.appendChild(tdDate);
+
             topTbody.appendChild(tr);
         });
     }
@@ -3205,15 +3237,20 @@ function renderEpgMappingChannels() {
       tr.classList.add('table-info');
     }
 
-    const displayEpgId = ch.manual_epg_id || ch.current_epg_id || '<span class="text-muted">-</span>';
-    const manualDisplay = ch.manual_epg_id ? `<b>${ch.manual_epg_id}</b>` : '<span class="text-muted">-</span>';
+    // Escape all user data
+    const safeName = escapeHtml(ch.name);
+    const safeManualId = ch.manual_epg_id ? escapeHtml(ch.manual_epg_id) : null;
+    const safeCurrentId = ch.current_epg_id ? escapeHtml(ch.current_epg_id) : null;
+
+    const displayEpgId = safeManualId || safeCurrentId || '<span class="text-muted">-</span>';
+    const manualDisplay = safeManualId ? `<b>${safeManualId}</b>` : '<span class="text-muted">-</span>';
 
     tr.innerHTML = `
       <td>${idx + 1}</td>
       <td>
         <div class="d-flex align-items-center">
-          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="24" height="24" class="me-2" data-on-error="hide">` : ''}
-          <span title="${ch.name}">${ch.name}</span>
+          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${safeName}" width="24" height="24" class="me-2" data-on-error="hide">` : ''}
+          <span title="${safeName}">${safeName}</span>
         </div>
       </td>
       <td>${displayEpgId}</td>
@@ -3359,13 +3396,15 @@ function filterEpgSelectionList() {
     const li = document.createElement('li');
     li.className = 'list-group-item list-group-item-action';
     li.style.cursor = 'pointer';
+    const safeName = escapeHtml(epg.name);
+    const safeId = escapeHtml(epg.id);
     li.innerHTML = `
       <div class="d-flex justify-content-between align-items-center">
         <div>
-          <strong>${epg.name}</strong> <br>
-          <small class="text-muted">${epg.id}</small>
+          <strong>${safeName}</strong> <br>
+          <small class="text-muted">${safeId}</small>
         </div>
-        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${epg.name}" height="30" data-on-error="hide">` : ''}
+        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${safeName}" height="30" data-on-error="hide">` : ''}
       </div>
     `;
 
@@ -3435,6 +3474,13 @@ async function checkAuthentication() {
     currentUser = res.user;
     
     // Apply role-based UI
+    if (currentUser.force_password_change) {
+        showChangePasswordModal();
+        alert(t('force_password_change') || 'You must change your password immediately.');
+        // Do NOT show main UI
+        return true;
+    }
+
     applyPermissions();
 
     // Show the main UI if token is valid
@@ -3543,6 +3589,14 @@ async function handleLogin(event) {
     currentUser = data.user;
     
     hideLoginModal();
+
+    if (currentUser.force_password_change) {
+        showChangePasswordModal();
+        // Force the modal to be non-closable or just persistent
+        alert(t('force_password_change') || 'You must change your password immediately.');
+        return;
+    }
+
     applyPermissions();
     
     // Show the main UI after successful login
@@ -3737,6 +3791,17 @@ async function handleChangePassword(event) {
     setTimeout(() => {
       const modal = bootstrap.Modal.getInstance(document.getElementById('change-password-modal'));
       if (modal) modal.hide();
+
+      // If this was forced, now we can show the UI
+      if (currentUser && currentUser.force_password_change) {
+          currentUser.force_password_change = false; // Optimistic update
+          applyPermissions();
+          document.getElementById('main-navbar').classList.remove('d-none');
+          document.getElementById('main-content').classList.remove('d-none');
+          loadUsers();
+          loadProviders();
+          loadEpgSources();
+      }
     }, 2000);
     
   } catch (error) {

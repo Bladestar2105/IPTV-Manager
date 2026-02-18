@@ -549,3 +549,17 @@ export function migrateProviderUserAgent(db) {
     console.error('Provider User-Agent migration error:', e);
   }
 }
+
+export function migrateAdminForcePasswordChange(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(admin_users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('force_password_change')) {
+      db.exec('ALTER TABLE admin_users ADD COLUMN force_password_change INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: force_password_change column added to admin_users');
+    }
+  } catch (e) {
+    console.error('Admin Force Password Change migration error:', e);
+  }
+}

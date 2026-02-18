@@ -48,6 +48,9 @@
 - **npm**: 9.x+
 - **SQLite**: 3.x (included)
 
+### Production Deployment
+For production environments, it is strongly recommended to set `NODE_ENV=production` and run the application behind a reverse proxy (like Nginx or Traefik) that handles HTTPS. The application will enforce secure cookies when in production mode.
+
 ## 🐳 Docker Installation (Recommended)
 
 ### Using Docker Compose
@@ -78,6 +81,13 @@
 - **Default Username**: `admin`
 - **Default Password**: Random 16-char hex string (check console output).
 - **Important**: Change password immediately after login.
+
+### CORS Configuration
+The application blocks Cross-Origin Resource Sharing (CORS) by default for security. If you need to access the API or streams from another domain (e.g., an external web player), you must configure the `ALLOWED_ORIGINS` environment variable.
+
+- **Default**: Cross-origin requests are blocked (`false`).
+- **Setup**: Add `ALLOWED_ORIGINS=https://your-web-player.com,https://another-site.com` to your `.env` file.
+- **Allow All**: Set `ALLOWED_ORIGINS=*` to allow all domains (⚠️ Not recommended for production).
 
 ## 📸 Screenshots
 

@@ -79,7 +79,8 @@ export const login = async (req, res) => {
             username: user.username,
             is_active: user.is_active,
             is_admin: user.is_admin,
-            otp_enabled: !!user.otp_enabled
+            otp_enabled: !!user.otp_enabled,
+            force_password_change: !!user.force_password_change
           },
           expiresIn: JWT_EXPIRES_IN
         });
@@ -221,7 +222,12 @@ export const changePassword = async (req, res) => {
     const newPasswordStored = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
     // Update password
-    db.prepare(`UPDATE ${table} SET password = ? WHERE id = ?`).run(newPasswordStored, userId);
+    // Also clear force_password_change flag if it was set
+    if (isAdmin) {
+       db.prepare(`UPDATE ${table} SET password = ?, force_password_change = 0 WHERE id = ?`).run(newPasswordStored, userId);
+    } else {
+       db.prepare(`UPDATE ${table} SET password = ? WHERE id = ?`).run(newPasswordStored, userId);
+    }
 
     console.log(`✅ Password changed for ${isAdmin ? 'admin' : 'user'}: ${user.username}`);
 
@@ -262,7 +268,8 @@ export const createPlayerToken = (req, res) => {
         httpOnly: true,
         sameSite: 'strict',
         path: '/',
-        maxAge: 21600000 // 6 hours
+        maxAge: 21600000, // 6 hours
+        secure: process.env.NODE_ENV === 'production' || req.secure
     });
 
     // Cleanup old tokens

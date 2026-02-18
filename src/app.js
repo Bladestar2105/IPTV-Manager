@@ -45,7 +45,7 @@ app.use(securityHeaders);
 // Middleware
 app.use(bodyParser.json({ limit: '1mb' }));
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS || '*',
+  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : false,
   credentials: true
 }));
 
