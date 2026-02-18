@@ -22,6 +22,16 @@ export const apiLimiter = rateLimit({
   validate: { trustProxy: false }
 });
 
+// Stricter rate limiting for client logs (DoS protection)
+export const clientLogLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20, // Limit each IP to 20 log requests per hour
+  message: { error: 'Too many log requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false }
+});
+
 export const securityHeaders = helmet({
   contentSecurityPolicy: {
     directives: {
