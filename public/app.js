@@ -3860,12 +3860,12 @@ async function loadSharesList() {
                 <td>
                     <div class="input-group input-group-sm" style="max-width: 200px;">
                        <input class="form-control" value="${s.short_link || s.link}" readonly>
-                       <button class="btn btn-outline-secondary" onclick="copyToClipboard('${s.short_link || s.link}', this)">📋</button>
+                       <button class="btn btn-outline-secondary" onclick="copyToClipboard('${s.short_link || s.link}', this)" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}">📋</button>
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary me-1" onclick='editShare(${JSON.stringify(s).replace(/'/g, "&#39;")})'>✏️</button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteShare('${s.token}')">🗑</button>
+                    <button class="btn btn-sm btn-outline-secondary me-1" onclick='editShare(${JSON.stringify(s).replace(/'/g, "&#39;")})' title="${t('updateShare')}" aria-label="${t('updateShare')}">✏️</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteShare('${s.token}')" title="${t('deleteAction')}" aria-label="${t('deleteAction')}">🗑</button>
                 </td>
             `;
             tbody.appendChild(tr);
