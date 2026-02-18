@@ -8,6 +8,60 @@ import { getBaseUrl, isSafeUrl } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
+// --- Prepared Statements (Lazy Initialization) ---
+
+const stmts = {
+    getChannel: null,
+    getStat: null,
+    updateStat: null,
+    insertStat: null,
+    getProvider: null
+};
+
+function getChannel(streamId, userId) {
+    if (!stmts.getChannel) {
+        stmts.getChannel = db.prepare(`
+      SELECT
+        uc.id as user_channel_id,
+        pc.id as provider_channel_id,
+        pc.remote_stream_id,
+        pc.name,
+        pc.metadata,
+        p.url as provider_url,
+        p.username as provider_user,
+        p.password as provider_pass,
+        p.backup_urls,
+        p.user_agent
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      WHERE uc.id = ? AND cat.user_id = ?
+    `);
+    }
+    return stmts.getChannel.get(streamId, userId);
+}
+
+function getStat(channelId) {
+    if (!stmts.getStat) stmts.getStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?');
+    return stmts.getStat.get(channelId);
+}
+
+function updateStat(lastViewed, id) {
+    if (!stmts.updateStat) stmts.updateStat = db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?');
+    return stmts.updateStat.run(lastViewed, id);
+}
+
+function insertStat(channelId, lastViewed) {
+    if (!stmts.insertStat) stmts.insertStat = db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)');
+    return stmts.insertStat.run(channelId, lastViewed);
+}
+
+function getProvider(id) {
+    if (!stmts.getProvider) stmts.getProvider = db.prepare('SELECT * FROM providers WHERE id = ?');
+    return stmts.getProvider.get(id);
+}
+
 // Redact credentials from upstream URLs before logging.
 function redactUrl(url) {
   try {
@@ -71,24 +125,7 @@ export const proxyMpd = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const channel = db.prepare(`
-      SELECT
-        uc.id as user_channel_id,
-        pc.id as provider_channel_id,
-        pc.remote_stream_id,
-        pc.name,
-        pc.metadata,
-        p.url as provider_url,
-        p.username as provider_user,
-        p.password as provider_pass,
-        p.backup_urls,
-        p.user_agent
-      FROM user_channels uc
-      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN providers p ON p.id = pc.provider_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE uc.id = ? AND cat.user_id = ?
-    `).get(streamId, user.id);
+    const channel = getChannel(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
 
@@ -146,11 +183,11 @@ export const proxyMpd = async (req, res) => {
     if (relativePath.endsWith('.mpd')) {
         await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res);
         const now = Math.floor(Date.now() / 1000);
-        const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
+        const existingStat = getStat(channel.provider_channel_id);
         if (existingStat) {
-          db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
+          updateStat(now, existingStat.id);
         } else {
-          db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
+          insertStat(channel.provider_channel_id, now);
         }
     }
 
@@ -209,24 +246,7 @@ export const proxyLive = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const channel = db.prepare(`
-      SELECT
-        uc.id as user_channel_id,
-        pc.id as provider_channel_id,
-        pc.remote_stream_id,
-        pc.name,
-        pc.metadata,
-        p.url as provider_url,
-        p.username as provider_user,
-        p.password as provider_pass,
-        p.backup_urls,
-        p.user_agent
-      FROM user_channels uc
-      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN providers p ON p.id = pc.provider_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE uc.id = ? AND cat.user_id = ?
-    `).get(streamId, user.id);
+    const channel = getChannel(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
 
@@ -250,11 +270,11 @@ export const proxyLive = async (req, res) => {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
+    const existingStat = getStat(channel.provider_channel_id);
     if (existingStat) {
-      db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
+      updateStat(now, existingStat.id);
     } else {
-      db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
+      insertStat(channel.provider_channel_id, now);
     }
 
     channel.provider_pass = decrypt(channel.provider_pass);
@@ -549,24 +569,7 @@ export const proxyMovie = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const channel = db.prepare(`
-      SELECT
-        uc.id as user_channel_id,
-        pc.id as provider_channel_id,
-        pc.remote_stream_id,
-        pc.name,
-        pc.metadata,
-        p.url as provider_url,
-        p.username as provider_user,
-        p.password as provider_pass,
-        p.backup_urls,
-        p.user_agent
-      FROM user_channels uc
-      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN providers p ON p.id = pc.provider_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE uc.id = ? AND cat.user_id = ?
-    `).get(streamId, user.id);
+    const channel = getChannel(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
 
@@ -579,11 +582,11 @@ export const proxyMovie = async (req, res) => {
     await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res);
 
     const now = Math.floor(Date.now() / 1000);
-    const existingStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?').get(channel.provider_channel_id);
+    const existingStat = getStat(channel.provider_channel_id);
     if (existingStat) {
-      db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?').run(now, existingStat.id);
+      updateStat(now, existingStat.id);
     } else {
-      db.prepare('INSERT INTO stream_stats (channel_id, views, last_viewed) VALUES (?, 1, ?)').run(channel.provider_channel_id, now);
+      insertStat(channel.provider_channel_id, now);
     }
 
     channel.provider_pass = decrypt(channel.provider_pass);
@@ -731,7 +734,7 @@ export const proxySeries = async (req, res) => {
 
     if (!providerId || !remoteEpisodeId) return res.sendStatus(404);
 
-    const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+    const provider = getProvider(providerId);
     if (!provider) return res.sendStatus(404);
 
     if (user.is_share_guest) return res.sendStatus(403);
@@ -821,24 +824,7 @@ export const proxyTimeshift = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const channel = db.prepare(`
-      SELECT
-        uc.id as user_channel_id,
-        pc.id as provider_channel_id,
-        pc.remote_stream_id,
-        pc.name,
-        pc.metadata,
-        p.url as provider_url,
-        p.username as provider_user,
-        p.password as provider_pass,
-        p.backup_urls,
-        p.user_agent
-      FROM user_channels uc
-      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN providers p ON p.id = pc.provider_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE uc.id = ? AND cat.user_id = ?
-    `).get(streamId, user.id);
+    const channel = getChannel(streamId, user.id);
 
     if (!channel) return res.sendStatus(404);
 
