@@ -364,31 +364,30 @@ export const proxyLive = async (req, res) => {
       const headersToForward = { ...fetchHeaders };
       if (cookies) headersToForward['Cookie'] = cookies;
 
+      // Optimization: Encrypt headers and safe-check once
+      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const baseEncrypted = encrypt(JSON.stringify(basePayload));
+      const baseEncoded = encodeURIComponent(baseEncrypted);
+
       const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
         const line = match.trim();
         if (!line) return match;
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
-          const payload = {
-              u: absoluteUrl,
-              h: headersToForward,
-              s: isProviderSafe
-          };
+          // Only encrypt the changing URL part
+          const payload = { u: absoluteUrl };
           const encrypted = encrypt(JSON.stringify(payload));
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}${tokenParam}`;
+          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
           return match;
         }
       }).replace(/URI="([^"]+)"/g, (match, p1) => {
         try {
           const absoluteUrl = new URL(p1, baseUrl).toString();
-          const payload = {
-              u: absoluteUrl,
-              h: headersToForward,
-              s: isProviderSafe
-          };
+          // Only encrypt the changing URL part
+          const payload = { u: absoluteUrl };
           const encrypted = encrypt(JSON.stringify(payload));
-          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}${tokenParam}"`;
+          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
         } catch (e) {
           return match;
         }
@@ -460,6 +459,18 @@ export const proxySegment = async (req, res) => {
 
     let isOriginSafe = true;
 
+    // Handle 'base' param for optimized static headers/settings
+    if (req.query.base) {
+        try {
+            const decryptedBase = decrypt(req.query.base);
+            if (decryptedBase) {
+                const basePayload = JSON.parse(decryptedBase);
+                if (basePayload.h) Object.assign(headers, basePayload.h);
+                if (basePayload.s === false) isOriginSafe = false;
+            }
+        } catch(e) {}
+    }
+
     if (req.query.data) {
         try {
             const decrypted = decrypt(req.query.data);
@@ -467,8 +478,11 @@ export const proxySegment = async (req, res) => {
 
             const payload = JSON.parse(decrypted);
             if (payload.u) targetUrl = payload.u;
+            // Merge per-segment overrides (if any, legacy support)
             if (payload.h) Object.assign(headers, payload.h);
-            if (payload.s === false) isOriginSafe = false;
+            if (payload.s !== undefined) {
+                 if (payload.s === false) isOriginSafe = false;
+            }
         } catch(e) {
             return res.sendStatus(400);
         }
@@ -873,14 +887,20 @@ export const proxyTimeshift = async (req, res) => {
       const cookies = upstream.headers.get('set-cookie');
       if (cookies) headersToForward['Cookie'] = cookies;
 
+      // Optimization: Encrypt headers and safe-check once
+      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const baseEncrypted = encrypt(JSON.stringify(basePayload));
+      const baseEncoded = encodeURIComponent(baseEncrypted);
+
       const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
         const line = match.trim();
         if (!line) return match;
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
-          const payload = { u: absoluteUrl, h: headersToForward, s: isProviderSafe };
+          // Only encrypt the changing URL part
+          const payload = { u: absoluteUrl };
           const encrypted = encrypt(JSON.stringify(payload));
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}${tokenParam}`;
+          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
           return match;
         }
