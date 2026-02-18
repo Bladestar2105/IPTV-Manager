@@ -1,6 +1,6 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getEpgFiles, streamEpgContent } from '../services/epgService.js';
+import { getEpgFiles, streamEpgContent, getEpgPrograms } from '../services/epgService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
@@ -234,6 +234,50 @@ export const playerApi = async (req, res) => {
          console.error('get_series_info error:', e);
          return res.json({});
       }
+    }
+
+    if (action === 'get_short_epg') {
+      const streamId = Number(req.query.stream_id);
+      const limit = Number(req.query.limit) || 1;
+
+      if (!streamId) return res.json({epg_listings: []});
+
+      const channel = db.prepare(`
+        SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        WHERE uc.id = ? AND cat.user_id = ?
+      `).get(streamId, user.id);
+
+      if (!channel) return res.json({epg_listings: []});
+
+      const epgId = channel.manual_epg_id || channel.epg_channel_id;
+      if (!epgId) return res.json({epg_listings: []});
+
+      const programs = await getEpgPrograms(epgId, limit);
+
+      const listings = programs.map(p => {
+          // Format dates as YYYY-MM-DD HH:MM:SS
+          // p.start and p.stop are unix timestamps (seconds)
+          const format = (ts) => new Date(ts * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+          return {
+              id: String(p.start), // Unique ID for program? usually random or timestamp
+              epg_id: epgId,
+              title: p.title ? Buffer.from(p.title).toString('base64') : '',
+              lang: '',
+              start: format(p.start),
+              end: format(p.stop),
+              description: p.desc ? Buffer.from(p.desc).toString('base64') : '',
+              channel_id: epgId,
+              start_timestamp: String(p.start),
+              stop_timestamp: String(p.stop)
+          };
+      });
+
+      return res.json({epg_listings: listings});
     }
 
     res.status(400).json([]);

@@ -6,7 +6,7 @@ import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
-import { mergeEpgFiles, filterEpgFile, decodeXml, parseEpgChannels } from '../utils/epgUtils.js';
+import { mergeEpgFiles, filterEpgFile, decodeXml, parseEpgChannels, parseEpgXml } from '../utils/epgUtils.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
@@ -37,6 +37,38 @@ export async function getEpgFiles() {
 
   const results = await Promise.all([...providerChecks, ...sourceChecks]);
   return results.filter(Boolean);
+}
+
+export async function getEpgPrograms(channelId, limit = 1) {
+  const cacheFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+  if (!fs.existsSync(cacheFile)) return [];
+
+  const programs = [];
+  const now = Math.floor(Date.now() / 1000);
+
+  // We need to scan the whole file because programs for a channel might be anywhere
+  // However, usually they are grouped. But we can't guarantee it.
+  // Optimization: If we find programs for the channel, and then encounter a different channel, we MIGHT assume we're done IF the XML is grouped by channel.
+  // But standard XMLTV doesn't strictly enforce grouping.
+  // Given the performance constraint, let's assume standard behavior:
+  // 1. Filter by channel_id
+  // 2. Filter by stop time > now (future or current programs)
+  // 3. Collect up to limit
+
+  // Note: If XML is not sorted by time, we might get random future programs.
+  // Usually they are sorted.
+
+  await parseEpgXml(cacheFile, (prog) => {
+      if (prog.channel_id === channelId) {
+          if (prog.stop > now) {
+              programs.push(prog);
+              if (programs.length >= limit) return false; // Stop
+          }
+      }
+      return true; // Continue
+  });
+
+  return programs;
 }
 
 export async function loadAllEpgChannels(files = null) {

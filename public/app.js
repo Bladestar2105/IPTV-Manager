@@ -845,6 +845,7 @@ function prepareEditProvider(p) {
   form.username.value = p.username;
   form.password.value = p.plain_password || '********';
   form.epg_url.value = p.epg_url || '';
+  form.user_agent.value = p.user_agent || '';
   form.user_id.value = p.user_id || '';
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
@@ -1620,6 +1621,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     username: f.username.value,
     password: f.password.value,
     epg_url: f.epg_url.value || null,
+    user_agent: f.user_agent.value || null,
     user_id: f.user_id.value || null,
     epg_update_interval: f.epg_update_interval.value,
     epg_enabled: f.epg_enabled.checked,
