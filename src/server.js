@@ -1,3 +1,4 @@
+import './utils/logger.js';
 import cluster from 'cluster';
 import os from 'os';
 import ffmpeg from 'fluent-ffmpeg';

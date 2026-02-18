@@ -62,7 +62,7 @@ morgan.token('url', (req, res) => {
   url = url.replace(/([?&])password=[^&]*/gi, '$1password=********');
   return url;
 });
-app.use(morgan(':method :url :status :response-time ms - :res[content-length]'));
+app.use(morgan('[:date[iso]] :method :url :status :response-time ms - :res[content-length]'));
 
 // IP Blocking
 app.use(ipBlocker);
