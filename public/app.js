@@ -195,7 +195,8 @@ function initClearableInput(inputId) {
   if (!clearBtn) return;
 
   const updateVisibility = () => {
-    clearBtn.style.display = input.value ? 'block' : 'none';
+    if (input.value) clearBtn.classList.remove('d-none');
+    else clearBtn.classList.add('d-none');
   };
 
   input.addEventListener('input', updateVisibility);
@@ -405,7 +406,7 @@ function renderUserDetails(u) {
 
     const playBtn = document.getElementById('header-play-btn');
     if (playBtn) {
-        playBtn.style.display = 'block';
+        playBtn.classList.remove('d-none');
         playBtn.onclick = async () => {
             const newWindow = window.open('', '_blank');
             if (newWindow) {
@@ -437,14 +438,15 @@ function renderUserDetails(u) {
         // Show for admins or self-management
         // Allow if admin OR if viewing own profile
         const canManage = (currentUser && currentUser.is_admin) || (currentUser && currentUser.id === u.id);
-        sharesBtn.style.display = canManage ? 'block' : 'none';
+        if (canManage) sharesBtn.classList.remove('d-none');
+        else sharesBtn.classList.add('d-none');
         sharesBtn.onclick = showSharesList;
     }
 
     // Show Share Button in Channel List
     const shareBtn = document.getElementById('chan-bulk-share-btn');
     if (shareBtn) {
-        shareBtn.style.display = 'block';
+        shareBtn.classList.remove('d-none');
         shareBtn.onclick = openShareModal;
     }
 
@@ -473,15 +475,15 @@ function renderUserDetails(u) {
 
     if (hdhrEnabledSection && hdhrDisabledSection) {
         if (u.hdhr_enabled) {
-            hdhrEnabledSection.style.display = 'block';
-            hdhrDisabledSection.style.display = 'none';
+            hdhrEnabledSection.classList.remove('d-none');
+            hdhrDisabledSection.classList.add('d-none');
             const protocol = window.location.protocol;
             const host = window.location.host;
             // u.hdhr_token is returned by GET /api/users
             if (hdhrUrlInput) hdhrUrlInput.value = `${protocol}//${host}/hdhr/${u.hdhr_token}/discover.json`;
         } else {
-            hdhrEnabledSection.style.display = 'none';
-            hdhrDisabledSection.style.display = 'block';
+            hdhrEnabledSection.classList.add('d-none');
+            hdhrDisabledSection.classList.remove('d-none');
             if (hdhrUrlInput) hdhrUrlInput.value = '';
         }
     }
@@ -699,7 +701,10 @@ async function loadProviders(filterUserId = null) {
 
   const targetUserId = filterUserId || selectedUserId;
   const section = document.getElementById('provider-section');
-  if (section) section.style.display = targetUserId ? 'block' : 'none';
+  if (section) {
+      if (targetUserId) section.classList.remove('d-none');
+      else section.classList.add('d-none');
+  }
 
   // Hide "Add Provider" button for non-admins
   const addProviderBtn = document.getElementById('add-provider-btn');
@@ -1723,9 +1728,9 @@ async function showSyncConfigModal(providerId) {
   if (config && config.last_sync) {
     const date = new Date(config.last_sync * 1000);
     lastSyncInfo.textContent = `${t('lastSync')}: ${date.toLocaleString()}`;
-    lastSyncInfo.style.display = 'block';
+    lastSyncInfo.classList.remove('d-none');
   } else {
-    lastSyncInfo.style.display = 'none';
+    lastSyncInfo.classList.add('d-none');
   }
   
   const bsModal = new bootstrap.Modal(modal);
@@ -2986,19 +2991,22 @@ function renderEpgMappingControls() {
     const switcher = document.getElementById('epg-mode-switcher');
 
     // Switcher Visibility
-    if (switcher) switcher.style.display = isAdmin ? 'block' : 'none';
+    if (switcher) {
+        if (isAdmin) switcher.classList.remove('d-none');
+        else switcher.classList.add('d-none');
+    }
 
     // Force mode for non-admin
     if (!isAdmin) epgMappingMode = 'category';
 
     // Show/Hide Containers
     if (epgMappingMode === 'provider') {
-        if (providerContainer) providerContainer.style.display = 'block';
-        if (categoryContainer) categoryContainer.style.display = 'none';
+        if (providerContainer) providerContainer.classList.remove('d-none');
+        if (categoryContainer) categoryContainer.classList.add('d-none');
         loadEpgMappingProviders();
     } else {
-        if (providerContainer) providerContainer.style.display = 'none';
-        if (categoryContainer) categoryContainer.style.display = 'block';
+        if (providerContainer) providerContainer.classList.add('d-none');
+        if (categoryContainer) categoryContainer.classList.remove('d-none');
 
         // User Select Visibility (Admin only)
         const userSelectContainer = document.getElementById('epg-category-user-select-container');
@@ -3122,8 +3130,8 @@ async function loadEpgMappingChannels() {
 
       renderLoadingTable('epg-mapping-tbody', 5);
       const resetMapBtn = document.getElementById('reset-map-btn');
-      if(autoMapBtn) autoMapBtn.style.display = 'none';
-      if(resetMapBtn) resetMapBtn.style.display = 'none';
+      if(autoMapBtn) autoMapBtn.style.display = 'none'; // No d-none in HTML
+      if(resetMapBtn) resetMapBtn.classList.add('d-none');
 
       try {
           const channels = await fetchJSON(`/api/user-categories/${catId}/channels`);
@@ -3158,11 +3166,12 @@ function finishLoadingMapping() {
         }
         if (resetMapBtn) {
             resetMapBtn.disabled = false;
-            resetMapBtn.style.display = 'inline-block';
+            resetMapBtn.classList.remove('d-none');
+            // resetMapBtn also has style.display removed implicitly by switching to classList removal of d-none if it was d-none
         }
     } else {
         if (autoMapBtn) autoMapBtn.style.display = 'none';
-        if (resetMapBtn) resetMapBtn.style.display = 'none';
+        if (resetMapBtn) resetMapBtn.classList.add('d-none');
     }
 }
 
@@ -3427,8 +3436,8 @@ async function checkAuthentication() {
     applyPermissions();
 
     // Show the main UI if token is valid
-    document.getElementById('main-navbar').style.display = 'block';
-    document.getElementById('main-content').style.display = 'block';
+    document.getElementById('main-navbar').classList.remove('d-none');
+    document.getElementById('main-content').classList.remove('d-none');
     
     loadUsers();
     loadProviders();
@@ -3453,7 +3462,8 @@ function applyPermissions() {
     // Hide EPG "Only used" checkbox for non-admins
     const onlyUsedContainer = document.getElementById('only-used-container');
     if (onlyUsedContainer) {
-        onlyUsedContainer.style.display = isAdmin ? 'block' : 'none';
+        if (isAdmin) onlyUsedContainer.classList.remove('d-none');
+        else onlyUsedContainer.classList.add('d-none');
     }
 
     // Hide Add User form
@@ -3494,12 +3504,12 @@ async function handleLogin(event) {
   
   if (!username || !password) {
     errorDiv.textContent = t('missing_credentials');
-    errorDiv.style.display = 'block';
+    errorDiv.classList.remove('d-none');
     return;
   }
   
   setLoadingState(loginBtn, true, 'logging_in');
-  errorDiv.style.display = 'none';
+  errorDiv.classList.add('d-none');
   
   try {
     const body = { username, password };
@@ -3515,10 +3525,10 @@ async function handleLogin(event) {
 
     if (response.status === 401 && data.require_otp) {
         // Show OTP field
-        otpGroup.style.display = 'block';
+        otpGroup.classList.remove('d-none');
         document.getElementById('login-otp').focus();
         // Hide error if any previous
-        errorDiv.style.display = 'none';
+        errorDiv.classList.add('d-none');
         // Allow retry
         throw new Error('otp_required'); // Custom error to stop flow but keep UI open
     }
@@ -3534,8 +3544,8 @@ async function handleLogin(event) {
     applyPermissions();
     
     // Show the main UI after successful login
-    document.getElementById('main-navbar').style.display = 'block';
-    document.getElementById('main-content').style.display = 'block';
+    document.getElementById('main-navbar').classList.remove('d-none');
+    document.getElementById('main-content').classList.remove('d-none');
     
     loadUsers();
     loadProviders();
@@ -3549,14 +3559,14 @@ async function handleLogin(event) {
     document.getElementById('login-username').value = '';
     document.getElementById('login-password').value = '';
     document.getElementById('login-otp').value = '';
-    otpGroup.style.display = 'none';
+    otpGroup.classList.add('d-none');
     
   } catch (error) {
     if (error.message === 'otp_required') {
        // Just stop, UI is updated
     } else {
        errorDiv.textContent = t(error.message) || t('login_failed');
-       errorDiv.style.display = 'block';
+       errorDiv.classList.remove('d-none');
     }
   } finally {
     setLoadingState(loginBtn, false);
@@ -3569,20 +3579,20 @@ async function showOtpModal() {
     modal.show();
 
     // Reset UI
-    document.getElementById('otp-setup-step-1').style.display = 'none';
-    document.getElementById('otp-status-active').style.display = 'none';
+    document.getElementById('otp-setup-step-1').classList.add('d-none');
+    document.getElementById('otp-status-active').classList.add('d-none');
     document.getElementById('otp-verify-input').value = '';
 
     if (currentUser && currentUser.otp_enabled) {
-        document.getElementById('otp-status-active').style.display = 'block';
+        document.getElementById('otp-status-active').classList.remove('d-none');
     } else {
-        document.getElementById('otp-setup-step-1').style.display = 'block';
+        document.getElementById('otp-setup-step-1').classList.remove('d-none');
         // Generate new secret
         try {
             const res = await fetchJSON('/api/auth/otp/generate', { method: 'POST' });
             const img = document.getElementById('otp-qr-code');
             img.src = res.qrCodeUrl;
-            img.style.display = 'inline-block';
+            img.classList.remove('d-none');
             document.getElementById('otp-secret-text').textContent = `Secret: ${res.secret}`;
             document.getElementById('otp-modal').dataset.secret = res.secret;
         } catch(e) {
@@ -3640,8 +3650,8 @@ function handleLogout() {
   }
 
   // Hide the main UI when logging out
-  document.getElementById('main-navbar').style.display = 'none';
-  document.getElementById('main-content').style.display = 'none';
+  document.getElementById('main-navbar').classList.add('d-none');
+  document.getElementById('main-content').classList.add('d-none');
   
   showLoginModal();
 }
@@ -3654,8 +3664,8 @@ function showChangePasswordModal() {
     document.getElementById('old-password').value = '';
     document.getElementById('new-password').value = '';
     document.getElementById('confirm-password').value = '';
-    document.getElementById('change-password-error').style.display = 'none';
-    document.getElementById('change-password-success').style.display = 'none';
+    document.getElementById('change-password-error').classList.add('d-none');
+    document.getElementById('change-password-success').classList.add('d-none');
     
     const bsModal = new bootstrap.Modal(modal);
     bsModal.show();
@@ -3673,20 +3683,20 @@ async function handleChangePassword(event) {
   const successDiv = document.getElementById('change-password-success');
   
   // Hide previous messages
-  errorDiv.style.display = 'none';
-  successDiv.style.display = 'none';
+  errorDiv.classList.add('d-none');
+  successDiv.classList.add('d-none');
   
   // Validate passwords match
   if (newPassword !== confirmPassword) {
     errorDiv.textContent = t('passwords_dont_match');
-    errorDiv.style.display = 'block';
+    errorDiv.classList.remove('d-none');
     return;
   }
   
   // Validate password length
   if (newPassword.length < 8) {
     errorDiv.textContent = t('password_too_short');
-    errorDiv.style.display = 'block';
+    errorDiv.classList.remove('d-none');
     return;
   }
   
@@ -3714,7 +3724,7 @@ async function handleChangePassword(event) {
     
     // Success
     successDiv.textContent = t('password_changed_successfully');
-    successDiv.style.display = 'block';
+    successDiv.classList.remove('d-none');
     
     // Clear form
     document.getElementById('old-password').value = '';
@@ -3729,7 +3739,7 @@ async function handleChangePassword(event) {
     
   } catch (error) {
     errorDiv.textContent = t(error.message) || t('change_password_failed');
-    errorDiv.style.display = 'block';
+    errorDiv.classList.remove('d-none');
   } finally {
     setLoadingState(changePasswordBtn, false);
   }
@@ -3741,7 +3751,8 @@ function updateChanBulkDeleteBtn() {
     const shareBtn = document.getElementById('chan-bulk-share-btn');
 
     if (btn) {
-        btn.style.display = count > 0 ? 'block' : 'none';
+        if (count > 0) btn.classList.remove('d-none');
+        else btn.classList.add('d-none');
         btn.textContent = `${t('deleteSelected')} (${count})`;
     }
 
@@ -3754,7 +3765,8 @@ function updateCatBulkDeleteBtn() {
     const count = document.querySelectorAll('.user-cat-check:checked').length;
     const btn = document.getElementById('cat-bulk-delete-btn');
     if (btn) {
-        btn.style.display = count > 0 ? 'block' : 'none';
+        if (count > 0) btn.classList.remove('d-none');
+        else btn.classList.add('d-none');
         btn.textContent = `${t('deleteSelected')} (${count})`;
     }
 }
@@ -3814,20 +3826,20 @@ function openShareModal() {
         document.getElementById('share-form').reset();
         const btn = document.getElementById('create-share-btn');
         if (btn) btn.textContent = t('createLink') || 'Create Link';
-        if (cancelBtn) cancelBtn.style.display = 'none';
+        if (cancelBtn) cancelBtn.classList.add('d-none');
     } else {
         const btn = document.getElementById('create-share-btn');
         if (btn) btn.textContent = t('updateShare') || 'Update Link';
         if (cancelBtn) {
-            cancelBtn.style.display = 'block';
+            cancelBtn.classList.remove('d-none');
             cancelBtn.onclick = cancelEditShare;
         }
     }
 
     const selectedCount = globalSelectedChannels.size;
-    document.getElementById('share-result').style.display = 'none';
+    document.getElementById('share-result').classList.add('d-none');
     document.getElementById('share-channel-count').textContent = `${selectedCount} channels`;
-    document.getElementById('create-share-btn').style.display = 'block';
+    document.getElementById('create-share-btn').classList.remove('d-none');
 
     modal.show();
 }
@@ -3898,8 +3910,8 @@ async function createShare() {
                 // The UI has one input. Let's show the short link if available as it's nicer.
                 document.getElementById('share-link-output').value = res.short_link;
             }
-            document.getElementById('share-result').style.display = 'block';
-            btn.style.display = 'none';
+            document.getElementById('share-result').classList.remove('d-none');
+            btn.classList.add('d-none');
 
             // Clear selection on success
             globalSelectedChannels.clear();
@@ -3998,7 +4010,7 @@ window.editShare = function(s) {
     // Show Banner
     const banner = document.getElementById('editing-share-banner');
     if (banner) {
-        banner.style.setProperty('display', 'flex', 'important');
+        banner.classList.remove('d-none');
         const nameSpan = document.getElementById('editing-share-name-display');
         if (nameSpan) nameSpan.textContent = s.name || 'Untitled';
     }
@@ -4006,7 +4018,7 @@ window.editShare = function(s) {
     // Update Main Share Button
     const shareBtn = document.getElementById('chan-bulk-share-btn');
     if (shareBtn) {
-        shareBtn.style.display = 'block';
+        shareBtn.classList.remove('d-none');
     }
 
     updateChanBulkDeleteBtn(); // To refresh button visibility/text based on populated channels
@@ -4022,7 +4034,7 @@ function cancelEditShare() {
 
     // Hide Banner
     const banner = document.getElementById('editing-share-banner');
-    if (banner) banner.style.setProperty('display', 'none', 'important');
+    if (banner) banner.classList.add('d-none');
 
     // Reset Share Button
     const shareBtn = document.getElementById('chan-bulk-share-btn');
