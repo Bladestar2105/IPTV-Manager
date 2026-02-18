@@ -235,6 +235,7 @@ export function initDb(isPrimary) {
             migrations.migrateSharedLinksSchema(db);
             migrations.migrateProviderBackupUrls(db);
             migrations.migrateSharedLinkSlug(db);
+            migrations.migrateProviderUserAgent(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

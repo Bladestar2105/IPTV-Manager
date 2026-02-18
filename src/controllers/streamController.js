@@ -38,8 +38,17 @@ async function fetchWithBackups(primaryUrl, backupUrls, options) {
             if (res.ok) {
                 return { response: res, successfulUrl: u };
             }
-            // If 404/403/etc, we might want to try backup? Yes.
+            // If 404/403/407/etc, we might want to try backup? Yes.
             console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
+
+            if (res.status === 407) {
+                const authHeader = res.headers.get('proxy-authenticate') || res.headers.get('www-authenticate');
+                console.warn(`Stream proxy error: HTTP 407 for ${redactUrl(u)}`);
+                if (authHeader) {
+                    console.warn(`Upstream requested authentication: ${authHeader}`);
+                }
+            }
+
             lastError = new Error(`HTTP ${res.status}`);
         } catch (e) {
             if (e.name === 'AbortError') throw e;
@@ -72,7 +81,8 @@ export const proxyMpd = async (req, res) => {
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass,
-        p.backup_urls
+        p.backup_urls,
+        p.user_agent
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -88,7 +98,7 @@ export const proxyMpd = async (req, res) => {
     } catch(e) {}
 
     const headers = {
-      'User-Agent': DEFAULT_USER_AGENT,
+      'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
 
@@ -209,7 +219,8 @@ export const proxyLive = async (req, res) => {
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass,
-        p.backup_urls
+        p.backup_urls,
+        p.user_agent
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -266,7 +277,7 @@ export const proxyLive = async (req, res) => {
     } catch(e) {}
 
     const fetchHeaders = {
-        'User-Agent': DEFAULT_USER_AGENT,
+        'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
         'Connection': 'keep-alive'
     };
 
@@ -542,7 +553,8 @@ export const proxyMovie = async (req, res) => {
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass,
-        p.backup_urls
+        p.backup_urls,
+        p.user_agent
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -590,7 +602,7 @@ export const proxyMovie = async (req, res) => {
     } catch(e) {}
 
     const headers = {
-        'User-Agent': DEFAULT_USER_AGENT,
+        'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
         'Connection': 'keep-alive'
     };
 
@@ -737,7 +749,7 @@ export const proxySeries = async (req, res) => {
     } catch(e) {}
 
     const headers = {
-      'User-Agent': DEFAULT_USER_AGENT,
+      'User-Agent': provider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
 
@@ -813,7 +825,8 @@ export const proxyTimeshift = async (req, res) => {
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass,
-        p.backup_urls
+        p.backup_urls,
+        p.user_agent
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -854,7 +867,7 @@ export const proxyTimeshift = async (req, res) => {
     } catch(e) {}
 
     const headers = {
-        'User-Agent': DEFAULT_USER_AGENT,
+        'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
         'Connection': 'keep-alive'
     };
 

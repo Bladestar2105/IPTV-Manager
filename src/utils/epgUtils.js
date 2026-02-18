@@ -230,13 +230,18 @@ export async function parseEpgXml(filePath, onProgramme) {
               const stop = parseXmltvDate(stopMatch[1]);
 
               if (channelId && start && stop && title) {
-                  onProgramme({
+                  const shouldContinue = onProgramme({
                       channel_id: channelId,
                       title: title,
                       desc: desc,
                       start: start,
                       stop: stop
                   });
+                  if (shouldContinue === false) {
+                      rl.close();
+                      fileStream.destroy();
+                      return;
+                  }
               }
           }
           buffer = '';

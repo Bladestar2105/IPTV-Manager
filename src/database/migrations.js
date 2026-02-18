@@ -535,3 +535,17 @@ export function migrateSharedLinkSlug(db) {
     console.error('Shared Link Slug migration error:', e);
   }
 }
+
+export function migrateProviderUserAgent(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('user_agent')) {
+      db.exec('ALTER TABLE providers ADD COLUMN user_agent TEXT');
+      console.log('✅ DB Migration: user_agent column added to providers');
+    }
+  } catch (e) {
+    console.error('Provider User-Agent migration error:', e);
+  }
+}

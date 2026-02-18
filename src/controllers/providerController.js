@@ -66,7 +66,7 @@ export const getProviders = (req, res) => {
 export const createProvider = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls } = req.body;
+    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls, user_agent } = req.body;
     if (!name || !url || !username || !password) return res.status(400).json({error: 'missing'});
 
     if (!/^https?:\/\//i.test(url.trim())) {
@@ -133,8 +133,8 @@ export const createProvider = async (req, res) => {
     const encryptedPassword = encrypt(password.trim());
 
     const info = db.prepare(`
-      INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls, user_agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       name.trim(),
       url.trim(),
@@ -144,7 +144,8 @@ export const createProvider = async (req, res) => {
       user_id ? Number(user_id) : null,
       epg_update_interval ? Number(epg_update_interval) : 86400,
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1,
-      processedBackupUrls
+      processedBackupUrls,
+      user_agent ? user_agent.trim() : null
     );
 
     // Check expiry
@@ -158,7 +159,7 @@ export const updateProvider = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls } = req.body;
+    const { name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, backup_urls, user_agent } = req.body;
     if (!name || !url || !username || !password) {
       return res.status(400).json({error: 'missing fields'});
     }
@@ -226,7 +227,7 @@ export const updateProvider = async (req, res) => {
 
     db.prepare(`
       UPDATE providers
-      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?
+      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?, user_agent = ?
       WHERE id = ?
     `).run(
       name.trim(),
@@ -238,6 +239,7 @@ export const updateProvider = async (req, res) => {
       epg_update_interval ? Number(epg_update_interval) : existing.epg_update_interval,
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
       processedBackupUrls,
+      user_agent ? user_agent.trim() : null,
       id
     );
 
