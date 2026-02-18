@@ -2538,6 +2538,16 @@ document.addEventListener('DOMContentLoaded', () => {
       importForm.addEventListener('submit', handleImport);
   }
 
+  const loginForm = document.getElementById('login-form');
+  if (loginForm) {
+      loginForm.addEventListener('submit', handleLogin);
+  }
+
+  const changePasswordForm = document.getElementById('change-password-form');
+  if (changePasswordForm) {
+      changePasswordForm.addEventListener('submit', handleChangePassword);
+  }
+
   // Check authentication on page load
   checkAuthentication();
 
@@ -2550,6 +2560,83 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize clearable inputs
   ['channel-search', 'epg-mapping-search', 'category-import-search', 'epg-browse-search', 'epg-select-search'].forEach(id => {
       initClearableInput(id);
+  });
+
+  // Global Error Handler for Images (Delegation)
+  document.addEventListener('error', (e) => {
+      if (e.target.tagName === 'IMG' && e.target.dataset.onError === 'hide') {
+          e.target.style.display = 'none';
+      }
+  }, true);
+
+  // Global Click Handlers (Delegation)
+  document.addEventListener('click', (e) => {
+    // 1. switchView links
+    const viewBtn = e.target.closest('[data-view]');
+    if (viewBtn) {
+        e.preventDefault();
+        switchView(viewBtn.dataset.view);
+        return;
+    }
+
+    // 2. copyToClipboard buttons
+    const copyBtn = e.target.closest('[data-copy-target]');
+    if (copyBtn) {
+        const targetId = copyBtn.dataset.copyTarget;
+        const targetEl = document.getElementById(targetId);
+        if (targetEl) {
+            copyToClipboard(targetEl.value || targetEl.textContent, copyBtn);
+        }
+        return;
+    }
+    const copyTextBtn = e.target.closest('[data-copy-text]');
+    if (copyTextBtn) {
+        copyToClipboard(copyTextBtn.dataset.copyText, copyTextBtn);
+        return;
+    }
+
+    // 3. togglePasswordVisibility buttons
+    const togglePassBtn = e.target.closest('[data-toggle-password]');
+    if (togglePassBtn) {
+        togglePasswordVisibility(togglePassBtn.dataset.togglePassword, togglePassBtn);
+        return;
+    }
+
+    // 4. Simple action buttons (no args)
+    const actionMap = {
+        'action-logout': handleLogout,
+        'action-show-change-password': showChangePasswordModal,
+        'action-show-otp': showOtpModal,
+        'action-generate-user': generateUser,
+        'action-add-provider': showAddProviderModal,
+        'action-copy-all-xtream': () => copyAllXtreamCredentials(e.target.closest('[data-action]')),
+        'action-clear-security-logs': clearSecurityLogs,
+        'action-clear-client-logs': clearClientLogs,
+        'action-disable-otp': disableOtp,
+        'action-verify-otp': verifyAndEnableOtp
+    };
+
+    const actionBtn = e.target.closest('[data-action]');
+    if (actionBtn) {
+        const action = actionBtn.dataset.action;
+        if (actionMap[action]) {
+            actionMap[action]();
+            return;
+        }
+
+        // Actions with parameters (via data attributes)
+        if (action === 'action-edit-share') {
+            try {
+                const data = JSON.parse(actionBtn.dataset.share);
+                editShare(data);
+            } catch(e) { console.error('Failed to parse share data', e); }
+            return;
+        }
+        if (action === 'action-delete-share') {
+            deleteShare(actionBtn.dataset.token);
+            return;
+        }
+    }
   });
 
   console.log('✅ IPTV-Manager loaded with i18n & local assets');
@@ -2847,7 +2934,7 @@ async function loadStatistics() {
             tr.innerHTML = `
                 <td>${idx+1}</td>
                 <td>
-                    ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="20" class="me-1" onerror="this.style.display='none'">` : ''}
+                    ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="20" class="me-1" data-on-error="hide">` : ''}
                     <span title="${ch.name}">${ch.name}</span>
                 </td>
                 <td>${ch.views}</td>
@@ -3114,7 +3201,7 @@ function renderEpgMappingChannels() {
       <td>${idx + 1}</td>
       <td>
         <div class="d-flex align-items-center">
-          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="24" height="24" class="me-2" onerror="this.style.display='none'">` : ''}
+          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${ch.name}" width="24" height="24" class="me-2" data-on-error="hide">` : ''}
           <span title="${ch.name}">${ch.name}</span>
         </div>
       </td>
@@ -3267,7 +3354,7 @@ function filterEpgSelectionList() {
           <strong>${epg.name}</strong> <br>
           <small class="text-muted">${epg.id}</small>
         </div>
-        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${epg.name}" height="30" onerror="this.style.display='none'">` : ''}
+        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${epg.name}" height="30" data-on-error="hide">` : ''}
       </div>
     `;
 
@@ -3860,12 +3947,12 @@ async function loadSharesList() {
                 <td>
                     <div class="input-group input-group-sm" style="max-width: 200px;">
                        <input class="form-control" value="${s.short_link || s.link}" readonly>
-                       <button class="btn btn-outline-secondary" onclick="copyToClipboard('${s.short_link || s.link}', this)" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}">📋</button>
+                       <button class="btn btn-outline-secondary" data-copy-text="${s.short_link || s.link}" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}">📋</button>
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary me-1" onclick='editShare(${JSON.stringify(s).replace(/'/g, "&#39;")})' title="${t('updateShare')}" aria-label="${t('updateShare')}">✏️</button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteShare('${s.token}')" title="${t('deleteAction')}" aria-label="${t('deleteAction')}">🗑</button>
+                    <button class="btn btn-sm btn-outline-secondary me-1" data-action="action-edit-share" data-share='${JSON.stringify(s).replace(/'/g, "&#39;")}' title="${t('updateShare')}" aria-label="${t('updateShare')}">✏️</button>
+                    <button class="btn btn-sm btn-outline-danger" data-action="action-delete-share" data-token="${s.token}" title="${t('deleteAction')}" aria-label="${t('deleteAction')}">🗑</button>
                 </td>
             `;
             tbody.appendChild(tr);

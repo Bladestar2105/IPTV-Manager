@@ -11,36 +11,13 @@
   <link rel="icon" type="image/png" href="logo.png">
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
-  <style>
-    .sortable-ghost {
-      opacity: 0.4;
-      background: #f0f0f0;
-    }
-    .sortable-drag {
-      opacity: 0.8;
-    }
-    .drag-handle {
-      cursor: move;
-      padding: 0 8px;
-      color: #999;
-    }
-    .drag-handle:hover {
-      color: #333;
-    }
-    .lang-switcher {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      z-index: 1000;
-    }
-  </style>
 </head>
 <body>
 
   <!-- Navbar -->
-  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4" id="main-navbar" style="display: none;">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 d-none" id="main-navbar">
     <div class="container">
-      <a class="navbar-brand d-flex align-items-center gap-2" href="#" onclick="return false;">
+      <a class="navbar-brand d-flex align-items-center gap-2" href="#">
         <img src="logo.png" alt="Logo" width="30" height="30" class="d-inline-block align-text-top">
         IPTV-Manager
       </a>
@@ -50,42 +27,42 @@
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav me-auto">
           <li class="nav-item">
-            <a class="nav-link active" href="#" onclick="switchView('dashboard'); return false;" id="nav-dashboard" data-i18n="dashboard">Dashboard</a>
+            <a class="nav-link active" href="#" data-view="dashboard" id="nav-dashboard" data-i18n="dashboard">Dashboard</a>
           </li>
           <li class="nav-item">
-            <a class="nav-link" href="#" onclick="switchView('epg-mapping'); return false;" id="nav-epg-mapping" data-i18n="epgMapping">EPG Mapping</a>
+            <a class="nav-link" href="#" data-view="epg-mapping" id="nav-epg-mapping" data-i18n="epgMapping">EPG Mapping</a>
           </li>
           <li class="nav-item">
-            <a class="nav-link" href="#" onclick="switchView('statistics'); return false;" id="nav-statistics" data-i18n="statistics">Statistics</a>
+            <a class="nav-link" href="#" data-view="statistics" id="nav-statistics" data-i18n="statistics">Statistics</a>
           </li>
           <li class="nav-item">
-            <a class="nav-link" href="#" onclick="switchView('security'); return false;" id="nav-security" data-i18n="security">Security</a>
+            <a class="nav-link" href="#" data-view="security" id="nav-security" data-i18n="security">Security</a>
           </li>
           <li class="nav-item">
-            <a class="nav-link" href="#" onclick="switchView('import-export'); return false;" id="nav-import-export" data-i18n="importExport">Import/Export</a>
+            <a class="nav-link" href="#" data-view="import-export" id="nav-import-export" data-i18n="importExport">Import/Export</a>
           </li>
         </ul>
         <div class="d-flex align-items-center gap-2">
-          <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto;">
+          <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary w-auto">
             <option value="en">🇬🇧 English</option>
             <option value="de">🇩🇪 Deutsch</option>
             <option value="fr">🇫🇷 Français</option>
             <option value="el">🇬🇷 Ελληνικά</option>
           </select>
-          <button class="btn btn-outline-info btn-sm" onclick="showChangePasswordModal()" data-i18n="change_password">Change Password</button>
-          <button class="btn btn-outline-warning btn-sm" onclick="showOtpModal()" data-i18n="setup_2fa">2FA</button>
-          <button class="btn btn-outline-secondary btn-sm" onclick="handleLogout()" data-i18n="logout">Logout</button>
+          <button class="btn btn-outline-info btn-sm" data-action="action-show-change-password" data-i18n="change_password">Change Password</button>
+          <button class="btn btn-outline-warning btn-sm" data-action="action-show-otp" data-i18n="setup_2fa">2FA</button>
+          <button class="btn btn-outline-secondary btn-sm" data-action="action-logout" data-i18n="logout">Logout</button>
         </div>
       </div>
     </div>
   </nav>
 
-  <div class="container py-4" id="main-content" style="display: none;">
+  <div class="container py-4 d-none" id="main-content">
 
     <!-- View: Dashboard -->
     <div id="view-dashboard">
       <!-- Editing Banner -->
-      <div id="editing-share-banner" class="alert alert-warning d-flex justify-content-between align-items-center mb-3" style="display:none !important;">
+      <div id="editing-share-banner" class="alert alert-warning d-flex justify-content-between align-items-center mb-3 d-none">
          <div>
             <strong data-i18n="editingShare">Editing Share:</strong> <span id="editing-share-name-display"></span>.
             <span data-i18n="editShareInstructions">Modify channel selection and click 'Update Share'.</span>
@@ -140,27 +117,27 @@
                   <div class="col-4">
                      <div class="input-group input-group-sm">
                         <input class="form-control" name="password" id="new-user-password" type="password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
-                        <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('new-user-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
-                        <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard(document.getElementById('new-user-password').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                        <button class="btn btn-outline-secondary" type="button" data-copy-target="new-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                      </div>
                   </div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
-                  <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" onclick="generateUser()" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
+                  <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
                </form>
-               <ul id="user-list" class="list-group list-group-flush" style="max-height: 400px; overflow-y: auto;"></ul>
+               <ul id="user-list" class="list-group list-group-flush max-h-400-scroll"></ul>
             </div>
           </div>
         </div>
 
         <!-- Provider Selection (Visible only when User Selected) -->
-        <div class="col-md-6" id="provider-section" style="display:none;">
+        <div class="col-md-6 d-none" id="provider-section">
           <div class="card h-100">
              <div class="card-header" data-i18n="providerManagement">Providers</div>
              <div class="card-body">
                 <div id="provider-list-container">
                    <p class="text-muted small" data-i18n="selectUserHint">Providers for selected user:</p>
                    <ul id="provider-list" class="list-group list-group-flush mb-3"></ul>
-                   <button id="add-provider-btn" class="btn btn-sm btn-outline-primary w-100" onclick="showAddProviderModal()" data-i18n="addProvider">Add Provider</button>
+                   <button id="add-provider-btn" class="btn btn-sm btn-outline-primary w-100" data-action="action-add-provider" data-i18n="addProvider">Add Provider</button>
                 </div>
              </div>
           </div>
@@ -177,8 +154,8 @@
                     <span data-i18n="selectedUser">Selected User</span>: <span id="selected-user-label" class="fw-bold">-</span>
                  </div>
                  <div>
-                     <button id="header-shares-btn" class="btn btn-sm btn-warning me-1" style="display:none;" data-i18n="manageShares">Manage Shares</button>
-                     <button id="header-play-btn" class="btn btn-sm btn-success" style="display:none;" data-i18n="openWebPlayer">Open Web Player</button>
+                     <button id="header-shares-btn" class="btn btn-sm btn-warning me-1 d-none" data-i18n="manageShares">Manage Shares</button>
+                     <button id="header-play-btn" class="btn btn-sm btn-success d-none" data-i18n="openWebPlayer">Open Web Player</button>
                  </div>
               </div>
               <div class="card-body">
@@ -222,9 +199,9 @@
                                    <input class="form-check-input" type="checkbox" id="cat-select-all-toggle">
                                    <label class="form-check-label small" for="cat-select-all-toggle" data-i18n="all">All</label>
                                 </div>
-                                <button class="btn btn-sm btn-danger py-0" id="cat-bulk-delete-btn" style="display:none;" data-i18n="del">Del</button>
+                                <button class="btn btn-sm btn-danger py-0 d-none" id="cat-bulk-delete-btn" data-i18n="del">Del</button>
                              </div>
-                             <ul id="category-list" class="list-group small" style="max-height: 400px; overflow-y: auto;"></ul>
+                             <ul id="category-list" class="list-group small max-h-400-scroll"></ul>
                              <button id="import-categories-btn" class="btn btn-outline-primary btn-sm w-100 mt-2" data-i18n="importCategories">Import Categories</button>
                           </div>
                           <div class="col-md-7">
@@ -244,13 +221,13 @@
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
                              <div class="input-group input-group-sm mb-2">
                                 <input type="text" id="channel-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search..." disabled />
-                                <button class="btn btn-outline-secondary" type="button" id="channel-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+                                <button class="btn btn-outline-secondary d-none" type="button" id="channel-search-clear" aria-label="Clear search">✕</button>
                              </div>
 
                              <div class="row g-2">
                                 <div class="col-6">
                                    <div class="border rounded p-1 small text-center" id="available-channels-header">Available</div>
-                                   <ul id="provider-channel-list" class="list-group small mt-1" style="max-height: 300px; overflow-y: auto;"></ul>
+                                   <ul id="provider-channel-list" class="list-group small mt-1 max-h-300-scroll"></ul>
                                 </div>
                                 <div class="col-6">
                                    <div class="border rounded p-1 small text-center" id="assigned-channels-header">Assigned</div>
@@ -259,11 +236,11 @@
                                          <input class="form-check-input" type="checkbox" id="chan-select-all-toggle">
                                       </div>
                                       <div>
-                                          <button class="btn btn-sm btn-info py-0 me-1" id="chan-bulk-share-btn" style="display:none;" data-i18n="share">Share</button>
-                                          <button class="btn btn-sm btn-danger py-0" id="chan-bulk-delete-btn" style="display:none;" data-i18n="del">Del</button>
+                                          <button class="btn btn-sm btn-info py-0 me-1 d-none" id="chan-bulk-share-btn" data-i18n="share">Share</button>
+                                          <button class="btn btn-sm btn-danger py-0 d-none" id="chan-bulk-delete-btn" data-i18n="del">Del</button>
                                       </div>
                                    </div>
-                                   <ul id="user-channel-list" class="list-group small mt-1" style="max-height: 300px; overflow-y: auto;"></ul>
+                                   <ul id="user-channel-list" class="list-group small mt-1 max-h-300-scroll"></ul>
                                 </div>
                              </div>
                           </div>
@@ -276,7 +253,7 @@
                           <label class="form-label small fw-bold" data-i18n="url">URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="xtream-url" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-url').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" data-copy-target="xtream-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -285,14 +262,14 @@
                              <label class="form-label small fw-bold" data-i18n="username">Username</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-user" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-user').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" data-copy-target="xtream-user" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                           <div class="col-md-6">
                              <label class="form-label small fw-bold" data-i18n="password">Password</label>
                              <div class="input-group input-group-sm">
                                 <input type="password" class="form-control" id="xtream-pass" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('xtream-pass').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" data-copy-target="xtream-pass" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                        </div>
@@ -301,7 +278,7 @@
                           <label class="form-label small fw-bold" data-i18n="epgUrlLabel">EPG URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="epg-url" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('epg-url').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" data-copy-target="epg-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
@@ -309,16 +286,16 @@
                           <label class="form-label small fw-bold" data-i18n="m3uLink">M3U Link</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="m3u-link" readonly>
-                             <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('m3u-link').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" data-copy-target="m3u-link" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                           </div>
                        </div>
 
-                       <button class="btn btn-primary w-100" onclick="copyAllXtreamCredentials(this)" data-i18n="copyAll">Copy All Credentials</button>
+                       <button class="btn btn-primary w-100" data-action="action-copy-all-xtream" data-i18n="copyAll">Copy All Credentials</button>
                     </div>
 
                     <!-- HDHomeRun Tab -->
                     <div class="tab-pane fade" id="tab-hdhr">
-                       <div id="hdhr-enabled-section" style="display:none;">
+                       <div id="hdhr-enabled-section" class="d-none">
                           <div class="alert alert-info small">
                              Use the URL below to configure Plex DVR or Emby Live TV.
                              <br><strong>Note:</strong> This feature emulates an HDHomeRun tuner.
@@ -327,11 +304,11 @@
                              <label class="form-label small fw-bold">Device URL</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="hdhr-url" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyToClipboard(document.getElementById('hdhr-url').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" data-copy-target="hdhr-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                        </div>
-                       <div id="hdhr-disabled-section" style="display:none;">
+                       <div id="hdhr-disabled-section" class="d-none">
                           <div class="alert alert-warning small">
                              <span data-i18n="hdhrDisabled">HDHomeRun emulation is disabled for this user.</span>
                              <br><span data-i18n="enableInEditUser">Enable it in the Edit User menu.</span>
@@ -399,9 +376,9 @@
          <div class="col-md-6">
             <h5 data-i18n="blockIp">Block IP</h5>
             <form id="block-ip-form" class="d-flex gap-2 mb-2 align-items-center">
-               <input class="form-control form-control-sm" name="ip" data-i18n-label="ip" placeholder="IP Address" required style="width: 150px;">
-               <input class="form-control form-control-sm" name="reason" data-i18n-placeholder="whitelistReason" data-i18n-label="whitelistReason" placeholder="Reason" style="flex-grow: 1;">
-               <select class="form-select form-select-sm" name="duration" style="width: auto;">
+               <input class="form-control form-control-sm w-150px" name="ip" data-i18n-label="ip" placeholder="IP Address" required>
+               <input class="form-control form-control-sm flex-grow-1" name="reason" data-i18n-placeholder="whitelistReason" data-i18n-label="whitelistReason" placeholder="Reason">
+               <select class="form-select form-select-sm w-auto" name="duration">
                   <option value="3600">1h</option>
                   <option value="21600">6h</option>
                   <option value="43200">12h</option>
@@ -410,7 +387,7 @@
                </select>
                <button class="btn btn-sm btn-danger" data-i18n="block">Block</button>
             </form>
-            <ul id="blocked-ip-list" class="list-group small" style="max-height: 200px; overflow:auto;"></ul>
+            <ul id="blocked-ip-list" class="list-group small max-h-200-scroll"></ul>
          </div>
          <div class="col-md-6">
             <h5 data-i18n="whitelistIp">Whitelist IP</h5>
@@ -419,16 +396,16 @@
                <input class="form-control form-control-sm" name="description" data-i18n-placeholder="reasonPlaceholder" data-i18n-label="whitelistReason" placeholder="Reason">
                <button class="btn btn-sm btn-success" data-i18n="whitelist">Whitelist</button>
             </form>
-            <ul id="whitelisted-ip-list" class="list-group small" style="max-height: 200px; overflow:auto;"></ul>
+            <ul id="whitelisted-ip-list" class="list-group small max-h-200-scroll"></ul>
          </div>
       </div>
 
       <div class="d-flex justify-content-between align-items-center mb-2">
          <h5 data-i18n="securityLogs">Security Logs</h5>
-         <button class="btn btn-sm btn-outline-danger" onclick="clearSecurityLogs()" data-i18n="clearLogs">Clear Logs</button>
+         <button class="btn btn-sm btn-outline-danger" data-action="action-clear-security-logs" data-i18n="clearLogs">Clear Logs</button>
       </div>
       <div class="card mb-4">
-        <div class="card-body p-0 table-responsive" style="max-height: 300px;">
+        <div class="card-body p-0 table-responsive max-h-300-scroll">
           <table class="table table-sm table-striped mb-0 small">
              <thead>
                <tr>
@@ -447,10 +424,10 @@
 
       <div class="d-flex justify-content-between align-items-center mb-2">
          <h5 data-i18n="clientLogs">Client Logs</h5>
-         <button class="btn btn-sm btn-outline-danger" onclick="clearClientLogs()" data-i18n="clearLogs">Clear Logs</button>
+         <button class="btn btn-sm btn-outline-danger" data-action="action-clear-client-logs" data-i18n="clearLogs">Clear Logs</button>
       </div>
       <div class="card">
-        <div class="card-body p-0 table-responsive" style="max-height: 300px;">
+        <div class="card-body p-0 table-responsive max-h-300-scroll">
           <table class="table table-sm table-striped mb-0 small">
              <thead>
                <tr>
@@ -535,7 +512,7 @@
              <h3 data-i18n="activeStreams" class="m-0 border-0">Active Streams</h3>
              <span class="badge bg-primary" id="active-stream-count">0</span>
           </div>
-          <div class="table-responsive" style="max-height: 400px; border: 1px solid var(--tv-border); border-radius: 8px;">
+          <div class="table-responsive max-h-400-scroll tv-container-border">
               <table class="table table-striped mb-0 small">
                 <thead>
                   <tr>
@@ -558,7 +535,7 @@
              <h3 data-i18n="topChannels" class="m-0 border-0">Top Channels</h3>
              <button id="reset-stats-btn" class="btn btn-sm btn-outline-danger" data-i18n="resetStats">Reset</button>
           </div>
-          <div class="table-responsive" style="max-height: 400px; border: 1px solid var(--tv-border); border-radius: 8px;">
+          <div class="table-responsive max-h-400-scroll tv-container-border">
               <table class="table table-striped mb-0 small">
                 <thead>
                   <tr>
@@ -582,7 +559,7 @@
       <h3 data-i18n="configuration" class="mt-4">Configuration</h3>
 
       <!-- Mode Switcher -->
-      <div class="mb-3" id="epg-mode-switcher" style="display:none;">
+      <div class="mb-3 d-none" id="epg-mode-switcher">
          <div class="btn-group" role="group">
             <input type="radio" class="btn-check" name="epg-mode" id="epg-mode-provider" value="provider" checked>
             <label class="btn btn-outline-primary" for="epg-mode-provider" data-i18n="modeProvider">By Provider</label>
@@ -603,19 +580,19 @@
             </div>
             <div class="col-md-7 text-end">
               <div class="d-flex justify-content-end align-items-center gap-3">
-                 <div class="form-check" id="only-used-container" style="display:none;">
+                 <div class="form-check d-none" id="only-used-container">
                    <input class="form-check-input" type="checkbox" id="epg-only-used">
                    <label class="form-check-label" for="epg-only-used" data-i18n="only_used_channels">Only used channels</label>
                  </div>
                  <button id="auto-map-btn" class="btn btn-warning" disabled data-i18n="autoMap">⚡ Auto Map</button>
-                 <button id="reset-map-btn" class="btn btn-danger ms-2" style="display:none;" data-i18n="resetMapping">Reset Mapping</button>
+                 <button id="reset-map-btn" class="btn btn-danger ms-2 d-none" data-i18n="resetMapping">Reset Mapping</button>
               </div>
             </div>
           </div>
       </div>
 
       <!-- Category Controls -->
-      <div id="epg-mapping-category-container" style="display:none;">
+      <div id="epg-mapping-category-container" class="d-none">
           <div class="row align-items-end mb-4">
             <div class="col-md-4" id="epg-category-user-select-container">
                <label class="form-label" data-i18n="selectUser">Select User</label>
@@ -634,21 +611,21 @@
 
       <div class="d-flex justify-content-between align-items-center mb-2">
          <h3 data-i18n="channelMappingList" class="m-0 border-0">Channel List</h3>
-         <div class="input-group input-group-sm" style="width: 250px;">
+         <div class="input-group input-group-sm w-250px">
             <input type="text" id="epg-mapping-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search channels...">
-            <button class="btn btn-outline-secondary" type="button" id="epg-mapping-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+            <button class="btn btn-outline-secondary d-none" type="button" id="epg-mapping-search-clear" aria-label="Clear search">✕</button>
          </div>
       </div>
 
-      <div class="table-responsive" style="max-height: 600px; border: 1px solid var(--tv-border); border-radius: 8px;">
+      <div class="table-responsive max-h-600-scroll tv-container-border">
         <table class="table table-striped table-hover mb-0 sticky-top-header">
           <thead>
             <tr>
-              <th style="width: 5%">#</th>
-              <th style="width: 30%" data-i18n="channelName">Channel</th>
-              <th style="width: 25%" data-i18n="currentEpgId">Current EPG ID</th>
-              <th style="width: 25%" data-i18n="manualMapping">Manual Mapping</th>
-              <th style="width: 15%" data-i18n="actions">Actions</th>
+              <th class="th-w-5">#</th>
+              <th class="th-w-30" data-i18n="channelName">Channel</th>
+              <th class="th-w-25" data-i18n="currentEpgId">Current EPG ID</th>
+              <th class="th-w-25" data-i18n="manualMapping">Manual Mapping</th>
+              <th class="th-w-15" data-i18n="actions">Actions</th>
             </tr>
           </thead>
           <tbody id="epg-mapping-tbody">
@@ -688,7 +665,7 @@
           </div>
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="category-import-search" class="form-control" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="🔍 Search categories..." />
-             <button class="btn btn-outline-secondary" type="button" id="category-import-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+             <button class="btn btn-outline-secondary d-none" type="button" id="category-import-search-clear" aria-label="Clear search">✕</button>
           </div>
           <div class="d-flex justify-content-between mb-2">
              <div>
@@ -699,7 +676,7 @@
                <span id="cat-selected-count" class="badge bg-info">0</span>
              </div>
           </div>
-          <ul id="provider-categories-list" class="list-group" style="max-height:400px; overflow:auto;">
+          <ul id="provider-categories-list" class="list-group max-h-400-scroll">
             <li class="list-group-item text-muted" data-i18n="loadingCategories">Loading categories...</li>
           </ul>
         </div>
@@ -763,7 +740,7 @@
               </div>
             </div>
             
-            <div id="last-sync-info" class="alert alert-info" style="display:none;"></div>
+            <div id="last-sync-info" class="alert alert-info d-none"></div>
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
@@ -912,9 +889,9 @@
         <div class="modal-body">
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
-             <button class="btn btn-outline-secondary" type="button" id="epg-browse-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+             <button class="btn btn-outline-secondary d-none" type="button" id="epg-browse-search-clear" aria-label="Clear search">✕</button>
           </div>
-          <ul id="available-epg-sources-list" class="list-group" style="max-height:400px; overflow:auto;">
+          <ul id="available-epg-sources-list" class="list-group max-h-400-scroll">
             <li class="list-group-item text-muted" data-i18n="loading">Loading...</li>
           </ul>
         </div>
@@ -936,7 +913,7 @@
           <div class="text-center mb-4">
              <img src="logo.png" alt="Logo" width="80" height="80">
           </div>
-          <form id="login-form" onsubmit="handleLogin(event)">
+          <form id="login-form" >
             <div class="mb-3">
               <label for="login-username" class="form-label" data-i18n="username">Username</label>
               <input type="text" class="form-control" id="login-username" required>
@@ -945,14 +922,14 @@
               <label for="login-password" class="form-label" data-i18n="password">Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="login-password" required>
-                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('login-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="login-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
               </div>
             </div>
-            <div class="mb-3" id="login-otp-group" style="display:none;">
+            <div class="mb-3 d-none" id="login-otp-group">
               <label for="login-otp" class="form-label" data-i18n="otp_code">2FA Code</label>
               <input type="text" class="form-control" id="login-otp" autocomplete="off" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
             </div>
-            <div id="login-error" class="alert alert-danger" style="display: none;"></div>
+            <div id="login-error" class="alert alert-danger d-none"></div>
             <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
           </form>
         </div>
@@ -971,19 +948,19 @@
         <div class="modal-body">
           <div id="otp-setup-step-1">
              <div class="text-center mb-3">
-                <img id="otp-qr-code" src="" alt="QR Code" class="img-fluid" style="display:none; max-width: 200px;">
+                <img id="otp-qr-code" src="" alt="QR Code" class="img-fluid d-none qr-code-img">
                 <div id="otp-secret-text" class="mt-2 text-muted small"></div>
              </div>
              <p data-i18n="scan_qr">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
              <div class="input-group mb-3">
                 <input type="text" id="otp-verify-input" class="form-control" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
-                <button class="btn btn-primary" onclick="verifyAndEnableOtp()" data-i18n="verify">Verify</button>
+                <button class="btn btn-primary" data-action="action-verify-otp" data-i18n="verify">Verify</button>
              </div>
           </div>
 
-          <div id="otp-status-active" style="display:none;" class="text-center">
+          <div id="otp-status-active" class="text-center d-none">
              <div class="alert alert-success" data-i18n="2fa_enabled">2FA is currently enabled on your account.</div>
-             <button class="btn btn-danger" onclick="disableOtp()" data-i18n="disable_2fa">Disable 2FA</button>
+             <button class="btn btn-danger" data-action="action-disable-otp" data-i18n="disable_2fa">Disable 2FA</button>
           </div>
         </div>
       </div>
@@ -1009,8 +986,8 @@
               <label class="form-label" data-i18n="new_password">New Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
-                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('edit-user-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
-                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard(document.getElementById('edit-user-password').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="edit-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-copy-target="edit-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
               </div>
             </div>
             <div class="mb-3 form-check">
@@ -1040,19 +1017,19 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <form id="change-password-form" onsubmit="handleChangePassword(event)">
+          <form id="change-password-form" >
             <div class="mb-3">
               <label for="old-password" class="form-label" data-i18n="old_password">Old Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="old-password" required>
-                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('old-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="old-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
               </div>
             </div>
             <div class="mb-3">
               <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="new-password" required minlength="8">
-                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('new-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
               </div>
               <small class="form-text text-secondary" data-i18n="password_min_length">Minimum 8 characters</small>
             </div>
@@ -1060,11 +1037,11 @@
               <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="confirm-password" required minlength="8">
-                <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('confirm-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="confirm-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
               </div>
             </div>
-            <div id="change-password-error" class="alert alert-danger" style="display: none;"></div>
-            <div id="change-password-success" class="alert alert-success" style="display: none;"></div>
+            <div id="change-password-error" class="alert alert-danger d-none"></div>
+            <div id="change-password-success" class="alert alert-success d-none"></div>
             <button type="submit" class="btn btn-primary w-100" id="change-password-btn" data-i18n="change_password">Change Password</button>
           </form>
         </div>
@@ -1105,7 +1082,7 @@
                    <label class="form-label" data-i18n="password">Password</label>
                    <div class="input-group">
                      <input class="form-control" name="password" id="provider-password" type="password" required>
-                     <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('provider-password', this)" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                     <button class="btn btn-outline-secondary" type="button" data-toggle-password="provider-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
                    </div>
                 </div>
              </div>
@@ -1185,17 +1162,17 @@
                <div class="form-control" id="share-channel-count" readonly>0 channels</div>
              </div>
 
-             <div id="share-result" style="display:none;">
+             <div id="share-result" class="d-none">
                 <label class="form-label fw-bold text-success" data-i18n="shareLinkCreated">Share Link Created:</label>
                 <div class="input-group">
                    <input class="form-control" id="share-link-output" readonly>
-                   <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard(document.getElementById('share-link-output').value, this)" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                   <button class="btn btn-outline-secondary" type="button" data-copy-target="share-link-output" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                 </div>
              </div>
           </form>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-warning me-auto" id="cancel-share-edit-btn" style="display:none;" data-i18n="cancelEdit">Cancel Edit</button>
+          <button type="button" class="btn btn-warning me-auto d-none" id="cancel-share-edit-btn" data-i18n="cancelEdit">Cancel Edit</button>
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="close">Close</button>
           <button type="button" class="btn btn-primary" id="create-share-btn" data-i18n="createLink">Create Link</button>
         </div>
@@ -1247,9 +1224,9 @@
         <div class="modal-body">
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="epg-select-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search EPG channels...">
-             <button class="btn btn-outline-secondary" type="button" id="epg-select-search-clear" style="display:none;" aria-label="Clear search">✕</button>
+             <button class="btn btn-outline-secondary d-none" type="button" id="epg-select-search-clear" aria-label="Clear search">✕</button>
           </div>
-          <ul id="epg-select-list" class="list-group" style="max-height:400px; overflow:auto;">
+          <ul id="epg-select-list" class="list-group max-h-400-scroll">
              <li class="list-group-item text-center text-muted">Loading...</li>
           </ul>
         </div>
@@ -1266,6 +1243,6 @@
   <script src="app.js"></script>
 
   <!-- Toast Container -->
-  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" style="z-index: 1100;"></div>
+  <div class="toast-container position-fixed bottom-0 end-0 p-3 z-1100" id="toast-container"></div>
 </body>
 </html>
