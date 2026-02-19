@@ -3055,6 +3055,7 @@ function formatDuration(sec) {
 // === EPG Mapping Logic ===
 let epgMappingChannels = [];
 let availableEpgChannels = [];
+let isLoadingEpgChannels = false;
 let epgMappingMode = 'provider'; // 'provider' or 'category'
 
 function renderEpgMappingControls() {
@@ -3348,10 +3349,20 @@ function updateMappingStats() {
 }
 
 async function loadAvailableEpgChannels() {
+  if (isLoadingEpgChannels) return;
+  isLoadingEpgChannels = true;
   try {
     availableEpgChannels = await fetchJSON('/api/epg/channels');
   } catch (e) {
     console.error('Failed to load EPG channels', e);
+    showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+  } finally {
+    isLoadingEpgChannels = false;
+    // If modal is open, refresh the list
+    const modalEl = document.getElementById('epg-select-modal');
+    if (modalEl && modalEl.classList.contains('show')) {
+        filterEpgSelectionList();
+    }
   }
 }
 
@@ -3441,6 +3452,14 @@ function filterEpgSelectionList() {
   const search = document.getElementById('epg-select-search').value.toLowerCase();
 
   list.innerHTML = '';
+
+  if (isLoadingEpgChannels) {
+    list.innerHTML = `<li class="list-group-item text-center text-muted py-3">
+      <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+      ${t('loading')}
+    </li>`;
+    return;
+  }
 
   const filtered = availableEpgChannels.filter(epg =>
     epg.name.toLowerCase().includes(search) ||
