@@ -350,6 +350,8 @@ export const manualMapping = async (req, res) => {
       ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
     `).run(Number(provider_channel_id), epg_channel_id);
 
+    await regenerateFilteredEpg();
+
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -400,6 +402,8 @@ export const resetMapping = async (req, res) => {
         SELECT id FROM provider_channels WHERE provider_id = ?
       )
     `).run(Number(provider_id));
+
+    await regenerateFilteredEpg();
 
     res.json({success: true});
   } catch (e) {
@@ -492,6 +496,8 @@ export const autoMapping = async (req, res) => {
           insert.run(u.pid, u.eid);
         }
       })();
+
+      await regenerateFilteredEpg();
     }
 
     res.json({success: true, matched});
