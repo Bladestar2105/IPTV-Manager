@@ -33,12 +33,13 @@ vi.mock('../../src/utils/crypto.js', () => {
 // Import modules AFTER mocking
 import db, { initDb } from '../../src/database/db.js';
 import * as epgController from '../../src/controllers/epgController.js';
+import * as xtreamController from '../../src/controllers/xtreamController.js';
 
 describe('EPG Mapping Reproduction', () => {
     beforeEach(() => {
         // Clear DB
         initDb(true);
-        const tables = ['epg_channel_mappings', 'provider_channels', 'providers', 'users', 'epg_sources'];
+        const tables = ['epg_channel_mappings', 'provider_channels', 'providers', 'users', 'user_categories', 'user_channels', 'epg_sources'];
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
 
         // Setup initial data
@@ -54,6 +55,12 @@ describe('EPG Mapping Reproduction', () => {
   </channel>
   <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="TEST_EPG_ID">
     <title>Test Program</title>
+  </programme>
+  <channel id="OTHER_EPG_ID">
+    <display-name>Other Channel</display-name>
+  </channel>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="OTHER_EPG_ID">
+    <title>Other Program</title>
   </programme>
 </tv>`;
         fs.writeFileSync(path.join(TEST_EPG_DIR, 'epg_full.xml'), xmlContent);
@@ -131,5 +138,61 @@ describe('EPG Mapping Reproduction', () => {
          // Verify epg.xml update
          epgContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), 'utf8');
          expect(epgContent).not.toContain('TEST_EPG_ID');
+    });
+
+    it('should serve filtered XMLTV data for specific user', async () => {
+        // Setup:
+        // User 1 has Channel 1 (TEST_EPG_ID)
+        // User 2 has Channel 2 (OTHER_EPG_ID)
+
+        db.prepare("INSERT INTO users (id, username, password) VALUES (2, 'user2', 'pass')").run();
+
+        db.prepare("INSERT INTO provider_channels (id, provider_id, remote_stream_id, name, stream_type, epg_channel_id) VALUES (2, 1, 101, 'Other Channel', 'live', 'OTHER_EPG_ID')").run();
+        db.prepare("UPDATE provider_channels SET epg_channel_id = 'TEST_EPG_ID' WHERE id = 1").run();
+
+        // Assign channels
+        db.prepare("INSERT INTO user_categories (id, user_id, name) VALUES (1, 1, 'MyCat'), (2, 2, 'User2Cat')").run();
+        db.prepare("INSERT INTO user_channels (user_category_id, provider_channel_id) VALUES (1, 1), (2, 2)").run();
+
+        // Update epg.xml to contain BOTH (simulating global state)
+        // We can just copy epg_full.xml to epg.xml for this test
+        const fullContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg_full.xml'));
+        fs.writeFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), fullContent);
+
+        // Mock Response
+        let output = '';
+        const res = {
+            setHeader: vi.fn(),
+            write: (chunk) => { output += chunk; },
+            end: vi.fn(),
+            status: vi.fn().mockReturnThis(),
+            sendStatus: vi.fn(),
+            headersSent: false
+        };
+
+        // Mock Request for User 1
+        // We mock getXtreamUser manually or mock the auth service
+        // Since we can't easily mock authService here without affecting other tests (it's imported by controller),
+        // we can assume the controller uses req.query to find user if auth fails or we can inject it?
+        // Actually xtreamController calls getXtreamUser.
+        // We can mock getXtreamUser in the test file if we mock the module.
+        // But we already imported the controller.
+
+        // NOTE: For this integration test, we might rely on the fact that we can't easily mock inner functions
+        // without a module mocker at the top.
+        // Let's assume we can mock `req` such that `getXtreamUser` finds the user in DB.
+        const req = {
+            query: { username: 'admin', password: 'admin' }, // User 1
+            headers: {},
+            get: () => {}
+        };
+
+        await xtreamController.xmltv(req, res);
+
+        // Assertions
+        expect(output).toContain('TEST_EPG_ID');
+        expect(output).toContain('Test Program');
+        expect(output).not.toContain('OTHER_EPG_ID');
+        expect(output).not.toContain('Other Program');
     });
 });
