@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="TEST_EPG_ID">
+    <display-name>Test Channel EPG</display-name>
+  </channel>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="TEST_EPG_ID">
+    <title>Test Program</title>
+  </programme>
+  <channel id="OTHER_EPG_ID">
+    <display-name>Other Channel</display-name>
+  </channel>
+  <programme start="20230101000000 +0000" stop="20230101010000 +0000" channel="OTHER_EPG_ID">
+    <title>Other Program</title>
+  </programme>
+</tv>

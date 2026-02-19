@@ -2,6 +2,7 @@ import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgFiles, streamEpgContent, getEpgPrograms } from '../services/epgService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
+import { filterEpgFile } from '../utils/epgUtils.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
 import path from 'path';
@@ -364,40 +365,61 @@ export const xmltv = async (req, res) => {
 
     if (user.is_share_guest) return res.sendStatus(403);
 
+    // Get allowed EPG IDs for this user
+    const rows = db.prepare(`
+        SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        WHERE cat.user_id = ?
+        AND (map.epg_channel_id IS NOT NULL OR pc.epg_channel_id IS NOT NULL)
+    `).all(user.id);
+
+    const allowedIds = new Set(rows.map(r => r.epg_id).filter(id => id));
+
     const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+    const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
+    let sourceFile = null;
+
     if (fs.existsSync(consolidatedFile)) {
-      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-      const stream = fs.createReadStream(consolidatedFile);
-      stream.pipe(res);
-      return;
-    }
-
-    const epgFiles = await getEpgFiles();
-
-    if (epgFiles.length === 0) {
-      const provider = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' LIMIT 1").get();
-      if (provider && provider.epg_url) {
-        const upstream = await fetch(provider.epg_url);
-        if (upstream.ok && upstream.body) {
-          res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-          return upstream.body.pipe(res);
-        }
-      }
-      return res.status(404).send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
+        sourceFile = consolidatedFile;
+    } else if (fs.existsSync(fullFile)) {
+        sourceFile = fullFile;
     }
 
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
-    for (const fileObj of epgFiles) {
-      await streamEpgContent(fileObj.file, res);
+    if (sourceFile && allowedIds.size > 0) {
+        res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
+        await filterEpgFile(sourceFile, res, allowedIds);
+        res.write('</tv>');
+        res.end();
+        return;
     }
 
-    res.write('</tv>');
+    // Fallback if no local EPG or no channels
+    if (!sourceFile) {
+        const provider = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' LIMIT 1").get();
+        if (provider && provider.epg_url) {
+            const upstream = await fetch(provider.epg_url);
+            if (upstream.ok && upstream.body) {
+               // We cannot filter upstream stream easily without buffering or using a complex transform stream.
+               // Given the requirement "only for channels in use", streaming raw provider EPG is risky but better than nothing if cache is broken.
+               // However, standard behavior usually implies we should have cache.
+               // Let's just pipe it for now as emergency fallback.
+               return upstream.body.pipe(res);
+            }
+        }
+    }
+
+    res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv></tv>');
     res.end();
+
   } catch (e) {
     console.error('xmltv error:', e.message);
-    res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
+    if (!res.headersSent) res.status(500);
+    res.end('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
   }
 };
 

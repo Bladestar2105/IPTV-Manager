@@ -145,9 +145,7 @@ export async function updateEpgSource(sourceId, skipRegenerate = false) {
 
 export async function generateConsolidatedEpg() {
   const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
-  const filteredFile = path.join(EPG_CACHE_DIR, 'epg.xml');
   const tempFullFile = path.join(EPG_CACHE_DIR, `epg_full.xml.tmp.${crypto.randomUUID()}`);
-  const tempFilteredFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
 
   try {
     const epgFilesObjects = await getEpgFiles();
@@ -166,13 +164,35 @@ export async function generateConsolidatedEpg() {
     await fs.promises.rename(tempFullFile, fullFile);
     console.log('✅ Full Consolidated EPG generated');
 
+    await regenerateFilteredEpg();
+
+  } catch (e) {
+    console.error('Failed to regenerate consolidated EPG:', e);
+    try { if (fs.existsSync(tempFullFile)) await fs.promises.unlink(tempFullFile); } catch (e) {}
+  }
+}
+
+export async function regenerateFilteredEpg() {
+  const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
+  const filteredFile = path.join(EPG_CACHE_DIR, 'epg.xml');
+  const tempFilteredFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
+
+  if (!fs.existsSync(fullFile)) {
+    // If full file doesn't exist, we can't filter.
+    // However, if we have sources, maybe we should trigger a full update?
+    // For now, assume full update is triggered separately.
+    console.warn('⚠️ epg_full.xml not found, skipping filtered EPG generation.');
+    return;
+  }
+
+  try {
     const usedIds = new Set();
     const mappings = db.prepare('SELECT DISTINCT epg_channel_id FROM epg_channel_mappings').all();
     mappings.forEach(r => { if(r.epg_channel_id) usedIds.add(r.epg_channel_id); });
     const direct = db.prepare("SELECT DISTINCT epg_channel_id FROM provider_channels WHERE epg_channel_id IS NOT NULL AND epg_channel_id != ''").all();
     direct.forEach(r => { if(r.epg_channel_id) usedIds.add(r.epg_channel_id); });
 
-    console.log(`ℹ️ Generating Filtered EPG for ${usedIds.size} unique channels`);
+    console.log(`ℹ️ Regenerating Filtered EPG for ${usedIds.size} unique channels`);
 
     const writeStreamFiltered = createWriteStream(tempFilteredFile);
     writeStreamFiltered.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
@@ -184,11 +204,9 @@ export async function generateConsolidatedEpg() {
         writeStreamFiltered.on('error', reject);
     });
     await fs.promises.rename(tempFilteredFile, filteredFile);
-    console.log('✅ Filtered Consolidated EPG generated');
-
+    console.log('✅ Filtered Consolidated EPG regenerated');
   } catch (e) {
-    console.error('Failed to regenerate consolidated EPG:', e);
-    try { if (fs.existsSync(tempFullFile)) await fs.promises.unlink(tempFullFile); } catch (e) {}
+    console.error('Failed to regenerate filtered EPG:', e);
     try { if (fs.existsSync(tempFilteredFile)) await fs.promises.unlink(tempFilteredFile); } catch (e) {}
   }
 }
