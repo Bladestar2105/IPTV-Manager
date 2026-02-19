@@ -2587,6 +2587,40 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   }, true);
 
+  // Global Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    // '/' to focus search
+    // Ensure no modifier keys are pressed and we are not in an input/editable field
+    if (e.key === '/' &&
+        !e.ctrlKey && !e.metaKey && !e.altKey &&
+        !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) &&
+        !document.activeElement.isContentEditable) {
+
+      e.preventDefault();
+
+      const candidates = [
+        // Modals (Higher priority)
+        'category-import-search',
+        'epg-browse-search',
+        'epg-select-search',
+        // Views
+        'channel-search',
+        'epg-mapping-search'
+      ];
+
+      for (const id of candidates) {
+        const el = document.getElementById(id);
+        // Check if element exists, is visible (has dimensions), and not disabled
+        if (el && (el.offsetWidth > 0 || el.offsetHeight > 0) && !el.disabled) {
+          el.focus();
+          // Select text if any
+          if (el.value) el.select();
+          break;
+        }
+      }
+    }
+  });
+
   // Global Click Handlers (Delegation)
   document.addEventListener('click', (e) => {
     // 1. switchView links
