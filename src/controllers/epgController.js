@@ -5,7 +5,7 @@ import fetch from 'node-fetch';
 import db from '../database/db.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 import { parseEpgXml } from '../utils/epgUtils.js';
-import { getEpgFiles, loadAllEpgChannels, updateEpgSource, generateConsolidatedEpg } from '../services/epgService.js';
+import { getEpgFiles, loadAllEpgChannels, updateEpgSource, generateConsolidatedEpg, regenerateFilteredEpg } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 import jwt from 'jsonwebtoken';
@@ -329,7 +329,7 @@ export const getEpgChannels = async (req, res) => {
   }
 };
 
-export const manualMapping = (req, res) => {
+export const manualMapping = async (req, res) => {
   try {
     const { provider_channel_id, epg_channel_id } = req.body;
     if (!provider_channel_id || !epg_channel_id) return res.status(400).json({error: 'missing fields'});
@@ -350,13 +350,15 @@ export const manualMapping = (req, res) => {
       ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
     `).run(Number(provider_channel_id), epg_channel_id);
 
+    await regenerateFilteredEpg();
+
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
   }
 };
 
-export const deleteMapping = (req, res) => {
+export const deleteMapping = async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!req.user.is_admin) {
@@ -369,6 +371,9 @@ export const deleteMapping = (req, res) => {
         if (!used) return res.status(403).json({error: 'Access denied: Channel not in your categories'});
     }
     db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
+
+    await regenerateFilteredEpg();
+
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -387,7 +392,7 @@ export const getMappings = (req, res) => {
   }
 };
 
-export const resetMapping = (req, res) => {
+export const resetMapping = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const { provider_id } = req.body;
@@ -399,6 +404,8 @@ export const resetMapping = (req, res) => {
         SELECT id FROM provider_channels WHERE provider_id = ?
       )
     `).run(Number(provider_id));
+
+    await regenerateFilteredEpg();
 
     res.json({success: true});
   } catch (e) {
@@ -481,6 +488,8 @@ export const autoMapping = async (req, res) => {
           insert.run(u.pid, u.eid);
         }
       })();
+
+      await regenerateFilteredEpg();
     }
 
     res.json({success: true, matched});
