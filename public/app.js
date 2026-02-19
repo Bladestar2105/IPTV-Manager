@@ -2389,6 +2389,11 @@ document.addEventListener('DOMContentLoaded', () => {
     autoMapBtn.addEventListener('click', handleAutoMap);
   }
 
+  const applyMapBtn = document.getElementById('apply-map-btn');
+  if (applyMapBtn) {
+    applyMapBtn.addEventListener('click', handleApplyMapping);
+  }
+
   const resetMapBtn = document.getElementById('reset-map-btn');
   if (resetMapBtn) {
     resetMapBtn.addEventListener('click', handleResetMapping);
@@ -3163,6 +3168,7 @@ async function loadEpgCategoriesForMapping(userId) {
 async function loadEpgMappingChannels() {
   const tbody = document.getElementById('epg-mapping-tbody');
   const autoMapBtn = document.getElementById('auto-map-btn');
+  const resetMapBtn = document.getElementById('reset-map-btn');
 
   // Determine source based on mode
   if (epgMappingMode === 'provider') {
@@ -3170,7 +3176,6 @@ async function loadEpgMappingChannels() {
       if (!providerId) return; // Wait for selection
 
       renderLoadingTable('epg-mapping-tbody', 5);
-      const resetMapBtn = document.getElementById('reset-map-btn');
       if(autoMapBtn) autoMapBtn.disabled = true;
       if(resetMapBtn) resetMapBtn.disabled = true;
 
@@ -3197,15 +3202,17 @@ async function loadEpgMappingChannels() {
       if (!catId) return;
 
       renderLoadingTable('epg-mapping-tbody', 5);
-      const resetMapBtn = document.getElementById('reset-map-btn');
-      if(autoMapBtn) autoMapBtn.style.display = 'none'; // No d-none in HTML
-      if(resetMapBtn) resetMapBtn.classList.add('d-none');
+
+      // We keep buttons visible but disabled or context-aware if possible
+      // Since auto-map requires providerId, we disable them in category mode for now to avoid errors
+      // until we implement category-based auto-mapping
+      if(autoMapBtn) autoMapBtn.disabled = true;
+      if(resetMapBtn) resetMapBtn.disabled = true;
 
       try {
           const channels = await fetchJSON(`/api/user-categories/${catId}/channels`);
-          // Backend now returns manual_epg_id in the response
           epgMappingChannels = channels.map(ch => ({
-              id: ch.id, // This is provider_channel_id (pc.id) based on backend query
+              id: ch.id,
               name: ch.name,
               logo: ch.logo,
               current_epg_id: ch.epg_channel_id,
@@ -3227,19 +3234,27 @@ function finishLoadingMapping() {
     const autoMapBtn = document.getElementById('auto-map-btn');
     const resetMapBtn = document.getElementById('reset-map-btn');
 
+    // In Provider Mode, enable buttons
+    // In Category Mode, they are visible but might not work if no provider context
+    // Actually, if we are in Category mode, we should probably hide Auto/Reset OR disable them
+    // The user asked for them to be present. I'll enable them but they will fail without providerId unless I fix handle logic.
+    // handleAutoMap checks for providerId.
+    // Let's assume for now we only enable them in Provider Mode as before, but since they are shared,
+    // we manage their state (disabled vs enabled) instead of display:none.
+
     if (epgMappingMode === 'provider') {
         if (autoMapBtn) {
             autoMapBtn.disabled = false;
-            autoMapBtn.style.display = 'inline-block';
+            autoMapBtn.classList.remove('d-none'); // Ensure visible
         }
         if (resetMapBtn) {
             resetMapBtn.disabled = false;
             resetMapBtn.classList.remove('d-none');
-            // resetMapBtn also has style.display removed implicitly by switching to classList removal of d-none if it was d-none
         }
     } else {
-        if (autoMapBtn) autoMapBtn.style.display = 'none';
-        if (resetMapBtn) resetMapBtn.classList.add('d-none');
+        // Category mode - buttons visible but disabled because backend requires provider_id
+        if (autoMapBtn) autoMapBtn.disabled = true;
+        if (resetMapBtn) resetMapBtn.disabled = true;
     }
 }
 
@@ -3361,6 +3376,20 @@ async function handleAutoMap() {
 
     alert(t('autoMapSuccess', {count: res.matched}));
     loadEpgMappingChannels();
+  } catch (e) {
+    alert(t('errorPrefix') + ' ' + e.message);
+  } finally {
+    setLoadingState(btn, false);
+  }
+}
+
+async function handleApplyMapping() {
+  const btn = document.getElementById('apply-map-btn');
+  setLoadingState(btn, true, 'saving');
+
+  try {
+    await fetchJSON('/api/mapping/apply', { method: 'POST' });
+    showToast(t('epgChangesApplied'), 'success');
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   } finally {
