@@ -16,7 +16,10 @@ vi.mock('../../src/config/constants.js', async () => {
         EPG_CACHE_DIR: '/app/tests/temp_epg',
         DATA_DIR: '/app/tests/temp_db',
         PORT: 3000,
-        BCRYPT_ROUNDS: 1
+        BCRYPT_ROUNDS: 1,
+        JWT_EXPIRES_IN: '1h',
+        AUTH_CACHE_TTL: 60000,
+        AUTH_CACHE_MAX_SIZE: 100
     };
 });
 
@@ -69,7 +72,7 @@ describe('EPG Mapping Reproduction', () => {
         fs.writeFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n</tv>');
     });
 
-    it('should update epg.xml when a manual mapping is added', async () => {
+    it('should NOT update epg.xml immediately when manual mapping is added', async () => {
         // 1. Verify initial state: epg.xml should NOT contain TEST_EPG_ID
         let epgContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), 'utf8');
         expect(epgContent).not.toContain('TEST_EPG_ID');
@@ -96,17 +99,23 @@ describe('EPG Mapping Reproduction', () => {
         expect(mapping).toBeDefined();
         expect(mapping.epg_channel_id).toBe('TEST_EPG_ID');
 
-        // 3. Verify epg.xml is updated
+        // 3. Verify epg.xml is NOT updated yet
+        epgContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), 'utf8');
+        expect(epgContent).not.toContain('TEST_EPG_ID');
+
+        // 4. Call applyMapping
+        await epgController.applyMapping(req, res);
+
+        // 5. Verify epg.xml IS updated
         epgContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), 'utf8');
         expect(epgContent).toContain('TEST_EPG_ID');
     });
 
-    it('should update epg.xml when a manual mapping is deleted', async () => {
+    it('should NOT update epg.xml immediately when manual mapping is deleted', async () => {
          // Setup: Add mapping first
          db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'TEST_EPG_ID')").run();
 
          // Generate EPG so it has the channel initially (we need to simulate initial state)
-         // Since we can't easily call generateConsolidatedEpg without setup, let's just write the file manually
          const initialXml = `<?xml version="1.0" encoding="UTF-8"?>
 <tv>
   <channel id="TEST_EPG_ID">
@@ -135,7 +144,14 @@ describe('EPG Mapping Reproduction', () => {
          const mapping = db.prepare('SELECT * FROM epg_channel_mappings WHERE provider_channel_id = 1').get();
          expect(mapping).toBeUndefined();
 
-         // Verify epg.xml update
+         // Verify epg.xml NOT updated
+         epgContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), 'utf8');
+         expect(epgContent).toContain('TEST_EPG_ID');
+
+         // Call applyMapping
+         await epgController.applyMapping(req, res);
+
+         // Verify epg.xml IS updated
          epgContent = fs.readFileSync(path.join(TEST_EPG_DIR, 'epg.xml'), 'utf8');
          expect(epgContent).not.toContain('TEST_EPG_ID');
     });
@@ -183,8 +199,10 @@ describe('EPG Mapping Reproduction', () => {
         // Let's assume we can mock `req` such that `getXtreamUser` finds the user in DB.
         const req = {
             query: { username: 'admin', password: 'admin' }, // User 1
+            params: {},
             headers: {},
-            get: () => {}
+            get: () => {},
+            ip: '127.0.0.1'
         };
 
         await xtreamController.xmltv(req, res);

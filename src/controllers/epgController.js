@@ -372,8 +372,6 @@ export const deleteMapping = async (req, res) => {
     }
     db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
 
-    await regenerateFilteredEpg();
-
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -410,6 +408,16 @@ export const resetMapping = async (req, res) => {
     res.json({success: true});
   } catch (e) {
     console.error('Reset mapping error:', e);
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const applyMapping = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+    await regenerateFilteredEpg();
+    res.json({success: true});
+  } catch (e) {
     res.status(500).json({error: e.message});
   }
 };
