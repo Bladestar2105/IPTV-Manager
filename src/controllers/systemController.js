@@ -4,7 +4,6 @@ import crypto from 'crypto';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
-import { startSyncScheduler } from '../services/schedulerService.js';
 import { calculateNextSync } from '../services/syncService.js';
 import { isIP } from 'net';
 
@@ -527,8 +526,6 @@ export const createSyncConfig = (req, res) => {
       auto_add_channels ? 1 : 0
     );
 
-    startSyncScheduler();
-
     res.json({id: info.lastInsertRowid});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -559,8 +556,6 @@ export const updateSyncConfig = (req, res) => {
       id
     );
 
-    startSyncScheduler();
-
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -572,8 +567,6 @@ export const deleteSyncConfig = (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
     db.prepare('DELETE FROM sync_configs WHERE id = ?').run(id);
-
-    startSyncScheduler();
 
     res.json({success: true});
   } catch (e) {
