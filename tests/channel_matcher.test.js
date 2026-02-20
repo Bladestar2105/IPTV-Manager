@@ -25,6 +25,7 @@ describe('ChannelMatcher', () => {
     it('matches exact names ignoring case and suffix', () => {
         const result = matcher.match('ARD Das Erste HD');
         expect(result.epgChannel.id).toBe('1');
+        // Confidence might vary but should be high
         expect(result.confidence).toBeGreaterThan(0.8);
     });
 
@@ -39,9 +40,6 @@ describe('ChannelMatcher', () => {
     });
 
     it('matches numbers correctly', () => {
-        // RTL II in EPG, RTL 2 in search. Current matcher might not handle roman numerals conversion.
-        // Let's test what it DOES handle, e.g. "RTL 2" vs "RTL 2" or just skip this specific roman numeral case if not implemented.
-        // Checking "DAZN 1" vs "DAZN 1"
         const result = matcher.match('DAZN 1');
         expect(result.epgChannel.id).toBe('12');
     });
@@ -53,7 +51,6 @@ describe('ChannelMatcher', () => {
 
     it('does not match completely different names', () => {
         const result = matcher.match('Cartoon Network');
-        // It might match something with low confidence, but definitely not high
         if (result.epgChannel) {
              expect(result.confidence).toBeLessThan(0.5);
         } else {
@@ -62,19 +59,25 @@ describe('ChannelMatcher', () => {
     });
 
     it('prioritizes language match', () => {
-        // "US: CNN International" vs "CNN" (if existed)
-        // Here we just check if it parses language correctly
         const parsed = matcher.parseChannelName('US: CNN');
         expect(parsed.language).toBe('en');
     });
 
     it('verifies memory optimization changes do not break logic', () => {
-        // Ensure parsed object does not have bigrams
-        const parsed = matcher.parsedEpgChannels[0].parsed;
-        expect(parsed.bigrams).toBeUndefined();
-        expect(parsed.original).toBeUndefined();
-        expect(parsed.numbers).toBeUndefined();
-        expect(parsed.bigramCount).toBeDefined();
-        expect(parsed.bigramCount).toBeGreaterThan(0);
+        // Ensure parsed object structure is flattened and optimized
+        const item = matcher.parsedEpgChannels[0];
+
+        // Check flattened properties
+        expect(item.channel).toBeDefined();
+        expect(item.baseName).toBeDefined();
+        expect(item.numbersString).toBeDefined();
+
+        // Check removed properties
+        expect(item.parsed).toBeUndefined(); // Flattened
+        expect(item.bigramCount).toBeUndefined(); // Removed
+
+        // Check new/renamed properties
+        expect(item.signaturePopcount).toBeDefined();
+        expect(item.signaturePopcount).toBeGreaterThan(0);
     });
 });

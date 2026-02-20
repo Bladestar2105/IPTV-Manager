@@ -80,10 +80,13 @@ export class ChannelMatcher {
     this.languageMap = LANGUAGE_MAP;
 
     // Pre-parse EPG channels to avoid re-parsing on every match
-    this.parsedEpgChannels = this.epgChannels.map(c => ({
-        channel: c,
-        parsed: this.parseChannelName(c.name)
-    }));
+    this.parsedEpgChannels = this.epgChannels.map(c => {
+        const parsed = this.parseChannelName(c.name);
+        return {
+            channel: c,
+            ...parsed
+        };
+    });
 
     // Optimization: Build indexes for O(1) lookups
     this.baseNameIndex = new Map();
@@ -91,18 +94,23 @@ export class ChannelMatcher {
 
     for (const item of this.parsedEpgChannels) {
         // Index by baseName
-        const baseKey = item.parsed.baseName;
+        const baseKey = item.baseName;
         if (!this.baseNameIndex.has(baseKey)) {
             this.baseNameIndex.set(baseKey, []);
         }
         this.baseNameIndex.get(baseKey).push(item);
 
         // Index by numbersString
-        const numKey = item.parsed.numbersString;
+        const numKey = item.numbersString;
         if (!this.numbersIndex.has(numKey)) {
             this.numbersIndex.set(numKey, []);
         }
         this.numbersIndex.get(numKey).push(item);
+    }
+
+    // Sort numbersIndex lists by signaturePopcount for binary search pruning
+    for (const list of this.numbersIndex.values()) {
+        list.sort((a, b) => a.signaturePopcount - b.signaturePopcount);
     }
   }
 
@@ -113,7 +121,6 @@ export class ChannelMatcher {
     if (!channelName) return {
         baseName: '',
         language: null,
-        bigramCount: 0,
         signature: new Uint32Array(32),
         signaturePopcount: 0,
         numbersString: ''
@@ -145,9 +152,8 @@ export class ChannelMatcher {
           return {
             baseName: baseName,
             language: this.normalizeLanguage(lang),
-      bigramCount: popcount, // Approximate length based on signature complexity
             signature: sig,
-      signaturePopcount: popcount,
+            signaturePopcount: popcount,
             // Pre-compute sorted numbers string for O(1) matching
             numbersString: [...numbers].sort().join(',')
           };
@@ -166,7 +172,6 @@ export class ChannelMatcher {
     return {
       baseName: baseName,
       language: null,
-      bigramCount: popcount, // Approximate length based on signature complexity
       signature: sig,
       signaturePopcount: popcount,
       // Pre-compute sorted numbers string for O(1) matching
@@ -213,8 +218,8 @@ export class ChannelMatcher {
 
     // Helper to verify numbers match
     // Optimized: compares pre-computed sorted number strings to avoid repeated regex and sorting in loops
-    const checkNumbers = (epgParsed) => {
-        return iptvNumsString === epgParsed.numbersString;
+    const checkNumbers = (epgItem) => {
+        return iptvNumsString === epgItem.numbersString;
     };
 
     // 1. Suche nach exaktem Match (Name + Sprache)
@@ -246,7 +251,7 @@ export class ChannelMatcher {
       // 3. Filtere nach Sprache falls vorhanden
       if (parsed.language) {
         const langFiltered = candidates.filter(c => {
-          return c.parsed.language === parsed.language;
+          return c.language === parsed.language;
         });
 
         if (langFiltered.length === 1) {
@@ -287,12 +292,35 @@ export class ChannelMatcher {
     // Optimization: Use index instead of filtering all channels O(N) -> O(1)
     const potentialCandidates = this.numbersIndex.get(iptvNumsString) || [];
 
+    // Optimization: Prune using binary search on signaturePopcount
+    // B >= A * T / (2 - T)
+    // B <= A * (2 - T) / T
+    const searchPopcount = parsed.signaturePopcount;
+    const threshold = 0.8;
+    const minLen = Math.ceil(searchPopcount * threshold / (2 - threshold));
+    const maxLen = Math.floor(searchPopcount * (2 - threshold) / threshold);
+
+    const startIdx = this.findLowerBound(potentialCandidates, minLen);
+    const endIdx = this.findUpperBound(potentialCandidates, maxLen);
+
+    // If range is empty or invalid, skip
+    if (startIdx >= endIdx) {
+        return {
+            epgChannel: null,
+            confidence: 0,
+            method: 'no_match',
+            parsed: parsed
+        };
+    }
+
+    const fuzzyCandidates = potentialCandidates.slice(startIdx, endIdx);
+
     // If language is known, prefer that language, but allow others if score is very high
     // Optimization: Pass parsed object and threshold 0.8
-    const bestGlobal = this.findBestSimilarity(parsed, potentialCandidates, 0.8);
+    const bestGlobal = this.findBestSimilarity(parsed, fuzzyCandidates, 0.8);
 
     if (bestGlobal.score > 0.8) {
-        const candLang = bestGlobal.channel.parsed.language;
+        const candLang = bestGlobal.channel.language;
         if (parsed.language && candLang && parsed.language !== candLang) {
              return {
                  epgChannel: null,
@@ -318,6 +346,34 @@ export class ChannelMatcher {
     };
   }
 
+  findLowerBound(list, value) {
+      let left = 0;
+      let right = list.length;
+      while (left < right) {
+          const mid = (left + right) >>> 1;
+          if (list[mid].signaturePopcount < value) {
+              left = mid + 1;
+          } else {
+              right = mid;
+          }
+      }
+      return left;
+  }
+
+  findUpperBound(list, value) {
+      let left = 0;
+      let right = list.length;
+      while (left < right) {
+          const mid = (left + right) >>> 1;
+          if (list[mid].signaturePopcount <= value) {
+              left = mid + 1;
+          } else {
+              right = mid;
+          }
+      }
+      return left;
+  }
+
   extractNumbers(str) {
       const matches = str.match(/\d+/g);
       return matches ? matches : [];
@@ -329,8 +385,8 @@ export class ChannelMatcher {
     if (!candidates) return undefined;
 
     return candidates.find(epg => {
-      return epg.parsed.language === parsed.language &&
-             checkNumbers(epg.parsed);
+      return epg.language === parsed.language &&
+             checkNumbers(epg);
     });
   }
 
@@ -339,7 +395,7 @@ export class ChannelMatcher {
     const candidates = this.baseNameIndex.get(baseName);
     if (!candidates) return [];
 
-    return candidates.filter(epg => checkNumbers(epg.parsed));
+    return candidates.filter(epg => checkNumbers(epg));
   }
 
   /**
@@ -394,23 +450,23 @@ export class ChannelMatcher {
     for (const cand of candidates) {
         // Length check optimization
         if (threshold > 0) {
-            // Use bigramCount property instead of bigrams.size to save memory
-            const lenB = cand.parsed.bigramCount !== undefined ? cand.parsed.bigramCount : (cand.parsed.bigrams ? cand.parsed.bigrams.size : 0);
+            // Use signaturePopcount property instead of bigrams.size to save memory
+            const lenB = cand.signaturePopcount !== undefined ? cand.signaturePopcount : (cand.bigrams ? cand.bigrams.size : 0);
             if (lenB < minLen || lenB > maxLen) continue;
         }
 
         let score = 0;
-        if (searchBaseName === cand.parsed.baseName) {
+        if (searchBaseName === cand.baseName) {
             score = 1;
         } else {
             // Always rely on signature comparison as bigrams are not stored for candidates to save memory
-            if (searchSignature && cand.parsed.signature) {
-                const candPopcount = cand.parsed.signaturePopcount !== undefined ? cand.parsed.signaturePopcount : this.countSignatureBits(cand.parsed.signature);
-                score = this.calculateDiceCoefficientSignature(searchSignature, cand.parsed.signature, searchPopcount, candPopcount);
-            } else if (cand.parsed.bigrams) {
+            if (searchSignature && cand.signature) {
+                const candPopcount = cand.signaturePopcount !== undefined ? cand.signaturePopcount : this.countSignatureBits(cand.signature);
+                score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
+            } else if (cand.bigrams) {
                 // Fallback only if bigrams are available (legacy or test objects)
                 if (!searchBigrams) searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
-                score = this.calculateDiceCoefficientSets(searchBigrams, cand.parsed.bigrams);
+                score = this.calculateDiceCoefficientSets(searchBigrams, cand.bigrams);
             }
         }
 
