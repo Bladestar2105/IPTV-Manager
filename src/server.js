@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 
 import app from './app.js';
 import db, { initDb } from './database/db.js';
+import { initEpgDb } from './database/epgDb.js';
 import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler } from './services/schedulerService.js';
 import { startSSDP } from './services/ssdpService.js';
@@ -37,6 +38,7 @@ let redisClient = null;
   if (cluster.isPrimary) {
     // Init DB and Run Migrations
     initDb(true);
+    initEpgDb();
   }
 
   // Initialize Stream Manager (Redis or SQLite)

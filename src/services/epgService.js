@@ -1,269 +1,354 @@
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
 import fetch from 'node-fetch';
-import { createWriteStream } from 'fs';
-import { pipeline } from 'stream/promises';
-import db from '../database/db.js';
-import { EPG_CACHE_DIR } from '../config/constants.js';
-import { mergeEpgFiles, filterEpgFile, decodeXml, parseEpgChannels, parseEpgXml } from '../utils/epgUtils.js';
+import readline from 'readline';
+import db from '../database/epgDb.js';
+import mainDb from '../database/db.js';
 import { isSafeUrl } from '../utils/helpers.js';
+import { decodeXml } from '../utils/epgUtils.js';
 
-if (!fs.existsSync(EPG_CACHE_DIR)) fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
-
-export async function getEpgFiles() {
-  const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
-  const sources = db.prepare('SELECT id, name FROM epg_sources WHERE enabled = 1').all();
-
-  const providerChecks = providers.map(async (provider) => {
-    const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-    try {
-      await fs.promises.access(cacheFile, fs.constants.F_OK);
-      return { file: cacheFile, source: `Provider ${provider.id}` };
-    } catch {
-      return null;
-    }
-  });
-
-  const sourceChecks = sources.map(async (source) => {
-    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${source.id}.xml`);
-    try {
-      await fs.promises.access(cacheFile, fs.constants.F_OK);
-      return { file: cacheFile, source: source.name };
-    } catch {
-      return null;
-    }
-  });
-
-  const results = await Promise.all([...providerChecks, ...sourceChecks]);
-  return results.filter(Boolean);
-}
-
-export async function getEpgPrograms(channelId, limit = 1) {
-  const cacheFile = path.join(EPG_CACHE_DIR, 'epg.xml');
-  if (!fs.existsSync(cacheFile)) return [];
-
-  const programs = [];
-  const now = Math.floor(Date.now() / 1000);
-
-  // We need to scan the whole file because programs for a channel might be anywhere
-  // However, usually they are grouped. But we can't guarantee it.
-  // Optimization: If we find programs for the channel, and then encounter a different channel, we MIGHT assume we're done IF the XML is grouped by channel.
-  // But standard XMLTV doesn't strictly enforce grouping.
-  // Given the performance constraint, let's assume standard behavior:
-  // 1. Filter by channel_id
-  // 2. Filter by stop time > now (future or current programs)
-  // 3. Collect up to limit
-
-  // Note: If XML is not sorted by time, we might get random future programs.
-  // Usually they are sorted.
-
-  await parseEpgXml(cacheFile, (prog) => {
-      if (prog.channel_id === channelId) {
-          if (prog.stop > now) {
-              programs.push(prog);
-              if (programs.length >= limit) return false; // Stop
-          }
-      }
-      return true; // Continue
-  });
-
-  return programs;
-}
-
-export async function loadAllEpgChannels(files = null) {
-  const epgFiles = files || await getEpgFiles();
-  const allChannels = [];
-  const seenIds = new Set();
-
-  for (const item of epgFiles) {
-    try {
-      await parseEpgChannels(item.file, (channel) => {
-        if (seenIds.has(channel.id)) return;
-
-        allChannels.push({
-            id: channel.id,
-            name: channel.name,
-            logo: channel.logo,
-            source: item.source
-        });
-        seenIds.add(channel.id);
-      });
-    } catch (e) {
-      console.error(`Error reading EPG file ${item.file}:`, e);
-    }
-  }
-  return allChannels;
-}
-
-export async function updateEpgSource(sourceId, skipRegenerate = false) {
-  const source = db.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
-  if (!source) throw new Error('EPG source not found');
-
-  db.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
-
-  try {
-    console.log(`📡 Fetching EPG from: ${source.name}`);
-
-    if (!(await isSafeUrl(source.url))) {
-      throw new Error(`Unsafe URL blocked: ${source.url}`);
+export async function importEpgFromUrl(url, sourceType, sourceId) {
+    if (!(await isSafeUrl(url))) {
+        throw new Error(`Unsafe URL blocked: ${url}`);
     }
 
-    const response = await fetch(source.url);
+    console.log(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
+    const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const contentType = response.headers.get('content-type');
-    let charset = 'utf-8';
-    if (contentType) {
-      const match = contentType.match(/charset=([^;]+)/i);
-      if (match) charset = match[1].trim().replace(/^["']|["']$/g, '');
+    // Update status in main DB
+    if (sourceType === 'custom') {
+        mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const cacheFile = path.join(EPG_CACHE_DIR, `epg_${sourceId}.xml`);
-    const fileStream = createWriteStream(cacheFile);
+    try {
+        // Clear existing data for this source
+        db.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        db.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
 
-    await pipeline(response.body, new TextDecoderStream(charset), fileStream);
+        const rl = readline.createInterface({
+            input: response.body,
+            crlfDelay: Infinity
+        });
 
-    const sizeInBytes = fileStream.bytesWritten;
+        const insertChannel = db.prepare(`
+            INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
+            VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
+        `);
 
-    db.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
+        const insertProgram = db.prepare(`
+            INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
+            VALUES (@channelId, @sourceType, @sourceId, @start, @stop, @title, @desc, @lang)
+        `);
 
-    console.log(`✅ EPG updated: ${source.name} (${(sizeInBytes / 1024 / 1024).toFixed(2)} MB)`);
+        let channelBatch = [];
+        let programBatch = [];
+        const BATCH_SIZE = 500;
+        const now = Math.floor(Date.now() / 1000);
 
-    if (!skipRegenerate) {
-        await generateConsolidatedEpg();
-    }
-
-    return { success: true, size: sizeInBytes };
-  } catch (e) {
-    console.error(`❌ EPG update failed: ${source.name}`, e.message);
-    db.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
-    throw e;
-  }
-}
-
-export async function generateConsolidatedEpg() {
-  const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
-  const tempFullFile = path.join(EPG_CACHE_DIR, `epg_full.xml.tmp.${crypto.randomUUID()}`);
-
-  try {
-    const epgFilesObjects = await getEpgFiles();
-    const epgFiles = epgFilesObjects.map(f => f.file);
-
-    console.log(`ℹ️ Generating Full EPG from ${epgFiles.length} sources`);
-    const writeStreamFull = createWriteStream(tempFullFile);
-    writeStreamFull.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
-    await mergeEpgFiles(epgFiles, writeStreamFull);
-    writeStreamFull.write('</tv>');
-    writeStreamFull.end();
-    await new Promise((resolve, reject) => {
-        writeStreamFull.on('finish', resolve);
-        writeStreamFull.on('error', reject);
-    });
-    await fs.promises.rename(tempFullFile, fullFile);
-    console.log('✅ Full Consolidated EPG generated');
-
-    await regenerateFilteredEpg();
-
-  } catch (e) {
-    console.error('Failed to regenerate consolidated EPG:', e);
-    try { if (fs.existsSync(tempFullFile)) await fs.promises.unlink(tempFullFile); } catch (e) {}
-  }
-}
-
-export async function regenerateFilteredEpg() {
-  const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
-  const filteredFile = path.join(EPG_CACHE_DIR, 'epg.xml');
-  const tempFilteredFile = path.join(EPG_CACHE_DIR, `epg.xml.tmp.${crypto.randomUUID()}`);
-
-  if (!fs.existsSync(fullFile)) {
-    // If full file doesn't exist, we can't filter.
-    // However, if we have sources, maybe we should trigger a full update?
-    // For now, assume full update is triggered separately.
-    console.warn('⚠️ epg_full.xml not found, skipping filtered EPG generation.');
-    return;
-  }
-
-  try {
-    const usedIds = new Set();
-    const mappings = db.prepare('SELECT DISTINCT epg_channel_id FROM epg_channel_mappings').all();
-    mappings.forEach(r => { if(r.epg_channel_id) usedIds.add(r.epg_channel_id); });
-    const direct = db.prepare("SELECT DISTINCT epg_channel_id FROM provider_channels WHERE epg_channel_id IS NOT NULL AND epg_channel_id != ''").all();
-    direct.forEach(r => { if(r.epg_channel_id) usedIds.add(r.epg_channel_id); });
-
-    console.log(`ℹ️ Regenerating Filtered EPG for ${usedIds.size} unique channels`);
-
-    const writeStreamFiltered = createWriteStream(tempFilteredFile);
-    writeStreamFiltered.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
-    await filterEpgFile(fullFile, writeStreamFiltered, usedIds);
-    writeStreamFiltered.write('</tv>');
-    writeStreamFiltered.end();
-    await new Promise((resolve, reject) => {
-        writeStreamFiltered.on('finish', resolve);
-        writeStreamFiltered.on('error', reject);
-    });
-    await fs.promises.rename(tempFilteredFile, filteredFile);
-    console.log('✅ Filtered Consolidated EPG regenerated');
-  } catch (e) {
-    console.error('Failed to regenerate filtered EPG:', e);
-    try { if (fs.existsSync(tempFilteredFile)) await fs.promises.unlink(tempFilteredFile); } catch (e) {}
-  }
-}
-
-export async function streamEpgContent(file, outputStream) {
-    if (!fs.existsSync(file)) return;
-
-    await new Promise((resolve, reject) => {
-        const stream = fs.createReadStream(file, { encoding: 'utf8', highWaterMark: 64 * 1024 });
         let buffer = '';
-        let foundStart = false;
+        let inChannel = false;
+        let inProgram = false;
 
-        stream.on('data', (chunk) => {
-            let currentChunk = buffer + chunk;
-            buffer = '';
+        const processBatches = () => {
+            if (channelBatch.length > 0 || programBatch.length > 0) {
+                const updateTx = db.transaction(() => {
+                    for (const ch of channelBatch) insertChannel.run(ch);
+                    for (const prog of programBatch) insertProgram.run(prog);
+                });
+                updateTx();
+                channelBatch = [];
+                programBatch = [];
+            }
+        };
 
-            if (!foundStart) {
-                const startMatch = currentChunk.match(/<tv[^>]*>/);
-                if (startMatch) {
-                    foundStart = true;
-                    const startIndex = startMatch.index + startMatch[0].length;
-                    currentChunk = currentChunk.substring(startIndex);
+        for await (const line of rl) {
+            const trimmed = line.trim();
+
+            // Channel Start
+            if (!inChannel && !inProgram && trimmed.startsWith('<channel')) {
+                inChannel = true;
+                buffer = trimmed;
+                if (trimmed.endsWith('/>') || trimmed.includes('</channel>')) {
+                    // One-liner
                 } else {
-                    const lastLt = currentChunk.lastIndexOf('<');
-                    if (lastLt !== -1) {
-                        buffer = currentChunk.substring(lastLt);
-                    }
-                    return;
+                    continue;
                 }
             }
 
-            if (foundStart) {
-                const endMatch = currentChunk.indexOf('</tv>');
-                if (endMatch !== -1) {
-                    outputStream.write(currentChunk.substring(0, endMatch));
-                    stream.destroy();
-                    resolve();
-                    return;
+            // Programme Start
+            if (!inChannel && !inProgram && trimmed.startsWith('<programme')) {
+                inProgram = true;
+                buffer = trimmed;
+                if (trimmed.endsWith('/>') || trimmed.includes('</programme>')) {
+                     // One-liner
                 } else {
-                    if (currentChunk.length >= 5) {
-                        const toWrite = currentChunk.substring(0, currentChunk.length - 4);
-                        outputStream.write(toWrite);
-                        buffer = currentChunk.substring(currentChunk.length - 4);
-                    } else {
-                        buffer = currentChunk;
-                    }
+                    continue;
                 }
             }
-        });
 
-        stream.on('end', () => {
-            resolve();
-        });
+            if (inChannel) {
+                if (buffer !== trimmed) buffer += ' ' + trimmed;
 
-        stream.on('error', (err) => {
-            console.error(`Error streaming EPG file ${file}:`, err.message);
-            resolve();
-        });
+                if (buffer.includes('</channel>') || buffer.endsWith('/>')) {
+                    inChannel = false;
+                    // Parse Channel
+                    const idMatch = buffer.match(/id=(["'])([\s\S]*?)\1/);
+                    const nameMatch = buffer.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
+                    const iconMatch = buffer.match(/<icon[^>]+src=(["'])([\s\S]*?)\1/);
+
+                    if (idMatch) {
+                        channelBatch.push({
+                            id: idMatch[2],
+                            name: nameMatch ? decodeXml(nameMatch[1]) : idMatch[2],
+                            logo: iconMatch ? iconMatch[2] : null,
+                            sourceType,
+                            sourceId,
+                            updatedAt: now
+                        });
+                    }
+                    buffer = '';
+                }
+            }
+
+            if (inProgram) {
+                if (buffer !== trimmed) buffer += ' ' + trimmed;
+
+                if (buffer.includes('</programme>') || buffer.endsWith('/>')) {
+                    inProgram = false;
+                    // Parse Programme
+                    const startMatch = buffer.match(/start="([^"]+)"/);
+                    const stopMatch = buffer.match(/stop="([^"]+)"/);
+                    const channelMatch = buffer.match(/channel="([^"]+)"/);
+                    const titleMatch = buffer.match(/<title[^>]*>([^<]+)<\/title>/);
+                    const descMatch = buffer.match(/<desc[^>]*>([^<]+)<\/desc>/);
+
+                    if (startMatch && stopMatch && channelMatch && titleMatch) {
+                         const start = parseXmltvDate(startMatch[1]);
+                         const stop = parseXmltvDate(stopMatch[1]);
+
+                         // Skip programs that ended more than 24h ago to save DB space immediately
+                         if (stop > now - 86400) {
+                             programBatch.push({
+                                 channelId: channelMatch[1],
+                                 sourceType,
+                                 sourceId,
+                                 start,
+                                 stop,
+                                 title: decodeXml(titleMatch[1]),
+                                 desc: descMatch ? decodeXml(descMatch[1]) : '',
+                                 lang: '' // Language extraction if needed
+                             });
+                         }
+                    }
+                    buffer = '';
+                }
+            }
+
+            if (channelBatch.length >= BATCH_SIZE || programBatch.length >= BATCH_SIZE) {
+                processBatches();
+            }
+        }
+
+        // Final batch
+        processBatches();
+
+        if (sourceType === 'custom') {
+            mainDb.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
+        }
+
+        console.log(`✅ EPG updated for ${sourceType} ${sourceId}`);
+        return { success: true };
+
+    } catch (e) {
+        console.error(`❌ EPG update failed: ${url}`, e.message);
+        if (sourceType === 'custom') {
+            mainDb.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
+        }
+        throw e;
+    }
+}
+
+export async function updateEpgSource(sourceId, skipPrune = false) {
+    const source = mainDb.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
+    if (!source) throw new Error('EPG source not found');
+
+    await importEpgFromUrl(source.url, 'custom', sourceId);
+    if (!skipPrune) pruneOldEpgData();
+}
+
+export async function updateProviderEpg(providerId, skipPrune = false) {
+    const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+    if (!provider || !provider.epg_url) throw new Error('Provider EPG not found');
+
+    await importEpgFromUrl(provider.epg_url, 'provider', providerId);
+    if (!skipPrune) pruneOldEpgData();
+}
+
+export function pruneOldEpgData(days = 7) {
+    const cutoff = Math.floor(Date.now() / 1000) - (days * 86400);
+    const result = db.prepare('DELETE FROM epg_programs WHERE stop < ?').run(cutoff);
+    console.log(`🧹 Pruned ${result.changes} old EPG programs`);
+}
+
+export function deleteEpgSourceData(sourceId, sourceType) {
+    db.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+    db.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+}
+
+export async function loadAllEpgChannels() {
+    // Return distinct channels by ID (preferring provider source if duplicate?)
+    // Actually just return all unique IDs.
+    // epg_channels PK is (id, source_type, source_id).
+    // Use GROUP BY id to get unique channels list for mapping.
+    const channels = db.prepare(`
+        SELECT id, name, logo
+        FROM epg_channels
+        GROUP BY id
+        ORDER BY name
+    `).all();
+    return channels;
+}
+
+export async function getEpgPrograms(channelId, limit = 1000) {
+    const now = Math.floor(Date.now() / 1000);
+    // Get future/current programs
+    return db.prepare(`
+        SELECT start, stop, title, desc, lang, channel_id
+        FROM epg_programs
+        WHERE channel_id = ? AND stop > ?
+        ORDER BY start ASC
+        LIMIT ?
+    `).all(channelId, now, limit);
+}
+
+export function getProgramsNow() {
+    const now = Math.floor(Date.now() / 1000);
+    return db.prepare(`
+        SELECT channel_id, title, desc, start, stop
+        FROM epg_programs
+        WHERE start <= ? AND stop >= ?
+    `).all(now, now);
+}
+
+export function getProgramsSchedule(start, end) {
+    return db.prepare(`
+        SELECT channel_id, title, desc, start, stop
+        FROM epg_programs
+        WHERE stop >= ? AND start <= ?
+        ORDER BY start ASC
+    `).all(start, end);
+}
+
+export function getLastEpgUpdate(sourceType, sourceId) {
+    const row = db.prepare('SELECT MAX(updated_at) as last_update FROM epg_channels WHERE source_type = ? AND source_id = ?').get(sourceType, sourceId);
+    return row ? row.last_update : 0;
+}
+
+export async function* getEpgXmlForChannels(channelIds) {
+    // channelIds is a Set or Array of strings (xml_id)
+    if (!channelIds || channelIds.size === 0) return;
+
+    const ids = Array.from(channelIds);
+    const BATCH_SIZE = 900; // SQLite limit
+
+    // 1. Fetch Channels
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const placeholders = batch.map(() => '?').join(',');
+        const channels = db.prepare(`
+            SELECT id, name, logo
+            FROM epg_channels
+            WHERE id IN (${placeholders})
+            GROUP BY id
+        `).all(batch);
+
+        for (const ch of channels) {
+            yield `<channel id="${escapeXml(ch.id)}">
+    <display-name>${escapeXml(ch.name)}</display-name>
+    <icon src="${escapeXml(ch.logo || '')}" />
+  </channel>\n`;
+        }
+    }
+
+    // 2. Fetch Programs (Current + Future + 24h past for catchup?)
+    // User asked for catchup 7 days.
+    // If this is for XMLTV export, we probably want 7 days history if available?
+    // Or just "Now"? Usually XMLTV is for next 24-48h.
+    // But user mentioned catchup.
+    // Let's provide -1 day to +2 days for standard.
+    // Or should I fetch everything in DB?
+    // Since we prune DB to 7 days, returning everything is fine if the client handles it.
+    // Let's stream everything in DB for these channels.
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const placeholders = batch.map(() => '?').join(',');
+
+        // We need to stream programs to avoid memory issues.
+        // better-sqlite3 iterate() is good for this.
+        const stmt = db.prepare(`
+            SELECT start, stop, title, desc, channel_id
+            FROM epg_programs
+            WHERE channel_id IN (${placeholders})
+            ORDER BY start ASC
+        `);
+
+        for (const prog of stmt.iterate(batch)) {
+            yield `<programme start="${formatXmltvDate(prog.start)}" stop="${formatXmltvDate(prog.stop)}" channel="${escapeXml(prog.channel_id)}">
+    <title>${escapeXml(prog.title)}</title>
+    <desc>${escapeXml(prog.desc || '')}</desc>
+  </programme>\n`;
+        }
+    }
+}
+
+// Helper: Escape XML
+function escapeXml(unsafe) {
+    if (!unsafe) return '';
+    return unsafe.replace(/[<>&'"]/g, c => {
+        switch (c) {
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '&': return '&amp;';
+            case '\'': return '&apos;';
+            case '"': return '&quot;';
+        }
     });
 }
+
+// Helper: Parse XMLTV Date
+function parseXmltvDate(dateStr) {
+  if (!dateStr) return 0;
+  const match = dateStr.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+\-]\d{4})?$/);
+  if (!match) return 0;
+
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10) - 1;
+  const day = parseInt(match[3], 10);
+  const hour = parseInt(match[4], 10);
+  const minute = parseInt(match[5], 10);
+  const second = parseInt(match[6], 10);
+
+  let date = new Date(Date.UTC(year, month, day, hour, minute, second));
+  if (match[7]) {
+      const tz = match[7];
+      const sign = tz.charAt(0) === '+' ? 1 : -1;
+      const tzHour = parseInt(tz.substring(1, 3), 10);
+      const tzMin = parseInt(tz.substring(3, 5), 10);
+      const offsetMs = (tzHour * 60 + tzMin) * 60 * 1000 * sign;
+      date = new Date(date.getTime() - offsetMs);
+  }
+  return Math.floor(date.getTime() / 1000);
+}
+
+// Helper: Format XMLTV Date (UTC)
+function formatXmltvDate(ts) {
+    const date = new Date(ts * 1000);
+    const pad = (n) => n.toString().padStart(2, '0');
+    // Use UTC for simplicity: YYYYMMDDHHMMSS +0000
+    return `${date.getUTCFullYear()}${pad(date.getUTCMonth()+1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;
+}
+
+// Legacy exports to prevent crashes until controllers are updated
+export async function generateConsolidatedEpg() {}
+export async function regenerateFilteredEpg() {}
+export async function getEpgFiles() { return []; }

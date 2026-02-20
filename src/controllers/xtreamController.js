@@ -1,12 +1,8 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getEpgFiles, streamEpgContent, getEpgPrograms } from '../services/epgService.js';
-import { EPG_CACHE_DIR } from '../config/constants.js';
-import { filterEpgFile } from '../utils/epgUtils.js';
+import { getEpgPrograms, getEpgXmlForChannels } from '../services/epgService.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
-import path from 'path';
-import fs from 'fs';
 import fetch from 'node-fetch';
 import { PORT } from '../config/constants.js';
 
@@ -268,7 +264,7 @@ export const playerApi = async (req, res) => {
               id: String(p.start), // Unique ID for program? usually random or timestamp
               epg_id: epgId,
               title: p.title ? Buffer.from(p.title).toString('base64') : '',
-              lang: '',
+              lang: p.lang || '',
               start: format(p.start),
               end: format(p.stop),
               description: p.desc ? Buffer.from(p.desc).toString('base64') : '',
@@ -378,42 +374,15 @@ export const xmltv = async (req, res) => {
 
     const allowedIds = new Set(rows.map(r => r.epg_id).filter(id => id));
 
-    const consolidatedFile = path.join(EPG_CACHE_DIR, 'epg.xml');
-    const fullFile = path.join(EPG_CACHE_DIR, 'epg_full.xml');
-    let sourceFile = null;
-
-    if (fs.existsSync(consolidatedFile)) {
-        sourceFile = consolidatedFile;
-    } else if (fs.existsSync(fullFile)) {
-        sourceFile = fullFile;
-    }
-
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
-    if (sourceFile && allowedIds.size > 0) {
-        res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
-        await filterEpgFile(sourceFile, res, allowedIds);
-        res.write('</tv>');
-        res.end();
-        return;
+    // Use the generator to stream content
+    for await (const chunk of getEpgXmlForChannels(allowedIds)) {
+        res.write(chunk);
     }
 
-    // Fallback if no local EPG or no channels
-    if (!sourceFile) {
-        const provider = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' LIMIT 1").get();
-        if (provider && provider.epg_url) {
-            const upstream = await fetch(provider.epg_url);
-            if (upstream.ok && upstream.body) {
-               // We cannot filter upstream stream easily without buffering or using a complex transform stream.
-               // Given the requirement "only for channels in use", streaming raw provider EPG is risky but better than nothing if cache is broken.
-               // However, standard behavior usually implies we should have cache.
-               // Let's just pipe it for now as emergency fallback.
-               return upstream.body.pipe(res);
-            }
-        }
-    }
-
-    res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv></tv>');
+    res.write('</tv>');
     res.end();
 
   } catch (e) {
