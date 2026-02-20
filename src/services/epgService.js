@@ -24,6 +24,9 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         db.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
         db.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
 
+        // Keep track of channel IDs encountered in this EPG to avoid orphan programs
+        const validChannelIds = new Set();
+
         const rl = readline.createInterface({
             input: response.body,
             crlfDelay: Infinity
@@ -96,9 +99,11 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                     const iconMatch = buffer.match(/<icon[^>]+src=(["'])([\s\S]*?)\1/);
 
                     if (idMatch) {
+                        const channelId = idMatch[2];
+                        validChannelIds.add(channelId);
                         channelBatch.push({
-                            id: idMatch[2],
-                            name: nameMatch ? decodeXml(nameMatch[1]) : idMatch[2],
+                            id: channelId,
+                            name: nameMatch ? decodeXml(nameMatch[1]) : channelId,
                             logo: iconMatch ? iconMatch[2] : null,
                             sourceType,
                             sourceId,
@@ -122,13 +127,21 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                     const descMatch = buffer.match(/<desc[^>]*>([^<]+)<\/desc>/);
 
                     if (startMatch && stopMatch && channelMatch && titleMatch) {
+                         const channelId = channelMatch[1];
+
+                         // Skip programs for unknown channels (prevents foreign key errors)
+                         if (!validChannelIds.has(channelId)) {
+                             buffer = '';
+                             continue;
+                         }
+
                          const start = parseXmltvDate(startMatch[1]);
                          const stop = parseXmltvDate(stopMatch[1]);
 
                          // Skip programs that ended more than 24h ago to save DB space immediately
                          if (stop > now - 86400) {
                              programBatch.push({
-                                 channelId: channelMatch[1],
+                                 channelId,
                                  sourceType,
                                  sourceId,
                                  start,
