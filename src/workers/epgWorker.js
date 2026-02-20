@@ -1,6 +1,5 @@
 import { parentPort, workerData } from 'worker_threads';
-import fs from 'fs';
-import { parseEpgChannels, cleanName } from '../utils/epgUtils.js';
+import { cleanName } from '../utils/epgUtils.js';
 import { ChannelMatcher } from '../services/channelMatcher.js';
 
 export function matchChannels(channels, allEpgChannels, globalMappings) {
@@ -44,27 +43,10 @@ export function matchChannels(channels, allEpgChannels, globalMappings) {
 async function run() {
   if (!workerData) return; // Not running in worker thread
 
-  const { channels, epgXmlFile, globalMappings } = workerData;
+  const { channels, allEpgChannels, globalMappings } = workerData;
 
   try {
-    // 1. Load EPG Channels
-    const allEpgChannels = [];
-    const seenIds = new Set();
-
-    try {
-      await parseEpgChannels(epgXmlFile, (channel) => {
-        if (!seenIds.has(channel.id)) {
-          // Optimization: Drop logo to save memory, we only need id and name for matching
-          allEpgChannels.push({ id: channel.id, name: channel.name });
-          seenIds.add(channel.id);
-        }
-      });
-    } catch (e) {
-      // Ignore file errors
-    }
-
-    const { updates, matched } = matchChannels(channels, allEpgChannels, globalMappings);
-
+    const { updates, matched } = matchChannels(channels, allEpgChannels || [], globalMappings);
     parentPort.postMessage({ success: true, updates, matched });
 
   } catch (e) {

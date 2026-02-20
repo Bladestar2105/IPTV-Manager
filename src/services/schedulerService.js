@@ -1,10 +1,7 @@
-import fs from 'fs';
-import path from 'path';
 import fetch from 'node-fetch';
 import db from '../database/db.js';
-import { EPG_CACHE_DIR } from '../config/constants.js';
 import { performSync } from './syncService.js';
-import { updateEpgSource, generateConsolidatedEpg } from './epgService.js';
+import { updateEpgSource, updateProviderEpg, pruneOldEpgData, getLastEpgUpdate } from './epgService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 let syncInterval = null;
@@ -60,18 +57,14 @@ export function startEpgScheduler() {
     try {
       const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
       for (const provider of providers) {
-        const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${provider.id}.xml`);
-        let lastUpdate = 0;
-        if (fs.existsSync(cacheFile)) {
-          const stats = fs.statSync(cacheFile);
-          lastUpdate = Math.floor(stats.mtimeMs / 1000);
-        }
-
         const interval = provider.epg_update_interval || 86400;
 
         // Check if recently failed (Backoff: 15 minutes)
         const lastFail = failedUpdates.get(provider.id) || 0;
         if (lastFail && (lastFail + 900 > now)) continue;
+
+        // Get last update from EPG DB (since main DB doesn't track provider EPG status)
+        const lastUpdate = getLastEpgUpdate('provider', provider.id) || 0;
 
         if (lastUpdate + interval <= now) {
           try {
@@ -83,17 +76,9 @@ export function startEpgScheduler() {
               continue;
             }
 
-            const response = await fetch(provider.epg_url);
-            if (response.ok) {
-              const epgData = await response.text();
-              await fs.promises.writeFile(cacheFile, epgData, 'utf8');
-              console.log(`✅ Scheduled EPG update success: ${provider.name}`);
-              failedUpdates.delete(provider.id);
-              await generateConsolidatedEpg();
-            } else {
-              console.error(`Scheduled EPG update HTTP error ${response.status} for ${provider.name}`);
-              failedUpdates.set(provider.id, now);
-            }
+            await updateProviderEpg(provider.id);
+            failedUpdates.delete(provider.id);
+
           } catch (e) {
             console.error(`Scheduled EPG update failed for ${provider.name}:`, e.message);
             failedUpdates.set(provider.id, now);
@@ -106,6 +91,7 @@ export function startEpgScheduler() {
 }
 
 export function startCleanupScheduler() {
+  // Check every hour
   setInterval(() => {
     try {
       const now = Math.floor(Date.now() / 1000);
@@ -116,8 +102,13 @@ export function startCleanupScheduler() {
       db.prepare('DELETE FROM blocked_ips WHERE expires_at < ?').run(now);
       // Clean expired shares
       db.prepare('DELETE FROM shared_links WHERE end_time IS NOT NULL AND end_time < ?').run(now);
+
+      // Clean old EPG data (7 days)
+      pruneOldEpgData(7);
+
     } catch (e) {
       console.error('Cleanup error:', e);
     }
   }, 3600000); // Every hour
+  console.log('🧹 Cleanup Scheduler started');
 }
