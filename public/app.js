@@ -629,6 +629,7 @@ async function loadUsers() {
   // Populate provider user select
   updateProviderUserSelect(users);
   updateExportUserSelect(users);
+  updateCopyUserSelect(users);
 }
 
 function updateExportUserSelect(users) {
@@ -647,6 +648,23 @@ function updateExportUserSelect(users) {
   if (currentVal && (currentVal === 'all' || users.find(u => u.id == currentVal))) {
       select.value = currentVal;
   }
+}
+
+function updateCopyUserSelect(users) {
+  const select = document.getElementById('copy-user-select');
+  if (!select) return;
+  const currentVal = select.value;
+
+  select.innerHTML = `<option value="" data-i18n="copyFromUser">${t('copyFromUser') || 'Copy from...'}</option>`;
+
+  users.forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.id;
+    opt.textContent = u.username;
+    select.appendChild(opt);
+  });
+
+  if (currentVal) select.value = currentVal;
 }
 
 function updateProviderUserSelect(users) {
@@ -1599,10 +1617,18 @@ document.getElementById('user-form').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
   try {
+    const body = {
+        username: f.username.value,
+        password: f.password.value
+    };
+    if (f.copy_from_user_id && f.copy_from_user_id.value) {
+        body.copy_from_user_id = f.copy_from_user_id.value;
+    }
+
     await fetchJSON('/api/users', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username: f.username.value, password: f.password.value})
+      body: JSON.stringify(body)
     });
     f.reset();
     loadUsers();
