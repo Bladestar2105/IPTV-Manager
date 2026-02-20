@@ -214,6 +214,9 @@ export class ChannelMatcher {
    */
   match(iptvChannelName) {
     const parsed = this.parseChannelName(iptvChannelName);
+    // Optimization: Compute non-zero indices for sparse signature matching
+    parsed.nonZeroIndices = this.getNonZeroIndices(parsed.signature);
+
     const iptvNumsString = parsed.numbersString;
 
     // Helper to verify numbers match
@@ -408,18 +411,20 @@ export class ChannelMatcher {
   findBestSimilarity(parsedSearch, candidates, threshold = 0) {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
-    let searchBaseName, searchBigrams, searchSignature, searchPopcount, searchLen;
+    let searchBaseName, searchBigrams, searchSignature, searchPopcount, searchLen, searchNonZeroIndices;
     if (typeof parsedSearch === 'string') {
         searchBaseName = this.normalizeBaseName(parsedSearch);
         // Optimization: Use direct signature creation
         searchSignature = this.createSignatureFromBaseName(searchBaseName);
         searchPopcount = this.countSignatureBits(searchSignature);
+        searchNonZeroIndices = this.getNonZeroIndices(searchSignature);
         searchLen = searchPopcount; // Use popcount as length proxy
         // searchBigrams only created lazily if needed for fallback
     } else {
         searchBaseName = parsedSearch.baseName;
         searchSignature = parsedSearch.signature;
         searchPopcount = parsedSearch.signaturePopcount;
+        searchNonZeroIndices = parsedSearch.nonZeroIndices;
         searchLen = parsedSearch.bigramCount;
 
         // Lazy load bigrams/signature if missing (should rarely happen for parsed objects)
@@ -428,6 +433,8 @@ export class ChannelMatcher {
              if (!searchSignature) searchSignature = this.createSignature(searchBigrams);
              if (searchLen === undefined) searchLen = searchBigrams.size;
              if (searchPopcount === undefined) searchPopcount = this.countSignatureBits(searchSignature);
+             // Lazy compute indices if we just created signature
+             if (!searchNonZeroIndices) searchNonZeroIndices = this.getNonZeroIndices(searchSignature);
         } else if (searchPopcount === undefined) {
              searchPopcount = this.countSignatureBits(searchSignature);
         }
@@ -462,7 +469,14 @@ export class ChannelMatcher {
             // Always rely on signature comparison as bigrams are not stored for candidates to save memory
             if (searchSignature && cand.signature) {
                 const candPopcount = cand.signaturePopcount !== undefined ? cand.signaturePopcount : this.countSignatureBits(cand.signature);
-                score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
+
+                // Optimization: Use sparse calculation if search signature is sparse enough (< 16 blocks non-zero)
+                // This avoids iterating 32 times for short strings where most blocks are zero
+                if (searchNonZeroIndices && searchNonZeroIndices.length < 16) {
+                    score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, searchNonZeroIndices);
+                } else {
+                    score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
+                }
             } else if (cand.bigrams) {
                 // Fallback only if bigrams are available (legacy or test objects)
                 if (!searchBigrams) searchBigrams = parsedSearch.bigrams || this.getBigrams(searchBaseName);
@@ -588,6 +602,16 @@ export class ChannelMatcher {
       return count;
   }
 
+  getNonZeroIndices(sig) {
+      const indices = [];
+      for (let i = 0; i < 32; i++) {
+          if (sig[i] !== 0) {
+              indices.push(i);
+          }
+      }
+      return indices;
+  }
+
   calculateDiceCoefficientSignature(sigA, sigB, popA, popB) {
       if (popA === 0 && popB === 0) return 0;
       let intersection = 0;
@@ -597,6 +621,18 @@ export class ChannelMatcher {
           intersection += popcount(sigA[i + 1] & sigB[i + 1]);
           intersection += popcount(sigA[i + 2] & sigB[i + 2]);
           intersection += popcount(sigA[i + 3] & sigB[i + 3]);
+      }
+      return (2 * intersection) / (popA + popB);
+  }
+
+  calculateDiceCoefficientSignatureSparse(sigA, sigB, popA, popB, indicesA) {
+      if (popA === 0 && popB === 0) return 0;
+      let intersection = 0;
+      const len = indicesA.length;
+      // Iterate only over non-zero blocks of A
+      for (let k = 0; k < len; k++) {
+          const i = indicesA[k];
+          intersection += popcount(sigA[i] & sigB[i]);
       }
       return (2 * intersection) / (popA + popB);
   }
