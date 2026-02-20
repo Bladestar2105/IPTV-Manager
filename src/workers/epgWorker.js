@@ -54,7 +54,8 @@ async function run() {
     try {
       await parseEpgChannels(epgXmlFile, (channel) => {
         if (!seenIds.has(channel.id)) {
-          allEpgChannels.push(channel);
+          // Optimization: Drop logo to save memory, we only need id and name for matching
+          allEpgChannels.push({ id: channel.id, name: channel.name });
           seenIds.add(channel.id);
         }
       });
