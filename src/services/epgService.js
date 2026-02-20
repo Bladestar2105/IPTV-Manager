@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import zlib from 'zlib';
 import readline from 'readline';
 import Database from 'better-sqlite3';
 import db from '../database/epgDb.js';
@@ -34,8 +35,25 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
         importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
 
+        let stream = response.body;
+
+        // Check for GZIP signature (magic bytes 0x1f 0x8b)
+        try {
+            const [chunk, originalStream] = await peekStream(stream);
+            if (chunk && chunk.length >= 2 && chunk[0] === 0x1f && chunk[1] === 0x8b) {
+                console.log(`📦 Detected GZIP stream for ${sourceType} ${sourceId}, decompressing...`);
+                const gunzip = zlib.createGunzip();
+                originalStream.pipe(gunzip);
+                stream = gunzip;
+            } else {
+                stream = originalStream;
+            }
+        } catch (e) {
+            console.warn(`⚠️ Failed to peek stream, proceeding as plain text: ${e.message}`);
+        }
+
         const rl = readline.createInterface({
-            input: response.body,
+            input: stream,
             crlfDelay: Infinity
         });
 
@@ -421,3 +439,40 @@ function formatXmltvDate(ts) {
 export async function generateConsolidatedEpg() {}
 export async function regenerateFilteredEpg() {}
 export async function getEpgFiles() { return []; }
+
+function peekStream(stream) {
+    return new Promise((resolve, reject) => {
+        const onData = (chunk) => {
+            // Remove listeners to avoid double handling
+            stream.removeListener('data', onData);
+            stream.removeListener('error', onError);
+            stream.removeListener('end', onEnd);
+
+            // Pause stream to stop flow
+            stream.pause();
+
+            // Push chunk back to the front of the stream
+            stream.unshift(chunk);
+
+            resolve([chunk, stream]);
+        };
+
+        const onError = (err) => {
+            stream.removeListener('data', onData);
+            stream.removeListener('error', onError);
+            stream.removeListener('end', onEnd);
+            reject(err);
+        };
+
+        const onEnd = () => {
+             stream.removeListener('data', onData);
+             stream.removeListener('error', onError);
+             stream.removeListener('end', onEnd);
+             resolve([null, stream]);
+        };
+
+        stream.on('data', onData);
+        stream.on('error', onError);
+        stream.on('end', onEnd);
+    });
+}
