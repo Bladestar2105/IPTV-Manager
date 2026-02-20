@@ -1,9 +1,11 @@
 import fetch from 'node-fetch';
 import readline from 'readline';
+import Database from 'better-sqlite3';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { isSafeUrl } from '../utils/helpers.js';
 import { decodeXml } from '../utils/epgUtils.js';
+import { EPG_DB_PATH } from '../config/constants.js';
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
     if (!(await isSafeUrl(url))) {
@@ -19,22 +21,30 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
     }
 
+    // Create dedicated connection for import to handle large transactions and foreign key checks
+    const importDb = new Database(EPG_DB_PATH);
+    // Disable Foreign Keys during import to allow inserting programs before channels or missing channels
+    importDb.pragma('foreign_keys = OFF');
+    importDb.pragma('journal_mode = WAL');
+
+    const now = Math.floor(Date.now() / 1000);
+
     try {
         // Clear existing data for this source
-        db.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
-        db.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
 
         const rl = readline.createInterface({
             input: response.body,
             crlfDelay: Infinity
         });
 
-        const insertChannel = db.prepare(`
+        const insertChannel = importDb.prepare(`
             INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
             VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
         `);
 
-        const insertProgram = db.prepare(`
+        const insertProgram = importDb.prepare(`
             INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
             VALUES (@channelId, @sourceType, @sourceId, @start, @stop, @title, @desc, @lang)
         `);
@@ -42,7 +52,6 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let channelBatch = [];
         let programBatch = [];
         const BATCH_SIZE = 500;
-        const now = Math.floor(Date.now() / 1000);
 
         let buffer = '';
         let inChannel = false;
@@ -50,7 +59,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
         const processBatches = () => {
             if (channelBatch.length > 0 || programBatch.length > 0) {
-                const updateTx = db.transaction(() => {
+                const updateTx = importDb.transaction(() => {
                     for (const ch of channelBatch) insertChannel.run(ch);
                     for (const prog of programBatch) insertProgram.run(prog);
                 });
@@ -68,7 +77,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 inChannel = true;
                 buffer = trimmed;
                 if (trimmed.endsWith('/>') || trimmed.includes('</channel>')) {
-                    // One-liner
+                    // One-liner or ends on same line
                 } else {
                     continue;
                 }
@@ -79,7 +88,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 inProgram = true;
                 buffer = trimmed;
                 if (trimmed.endsWith('/>') || trimmed.includes('</programme>')) {
-                     // One-liner
+                     // One-liner or ends on same line
                 } else {
                     continue;
                 }
@@ -151,6 +160,17 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         // Final batch
         processBatches();
 
+        // Cleanup orphaned programs (programs without a valid channel in this source)
+        // This is important because we disabled foreign keys during import
+        importDb.prepare(`
+            DELETE FROM epg_programs
+            WHERE source_type = ? AND source_id = ?
+            AND channel_id NOT IN (
+                SELECT id FROM epg_channels
+                WHERE source_type = ? AND source_id = ?
+            )
+        `).run(sourceType, sourceId, sourceType, sourceId);
+
         if (sourceType === 'custom') {
             mainDb.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
         }
@@ -164,6 +184,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             mainDb.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
         }
         throw e;
+    } finally {
+        importDb.close();
     }
 }
 
