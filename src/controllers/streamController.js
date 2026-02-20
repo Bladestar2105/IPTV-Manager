@@ -1,12 +1,18 @@
 import fetch from 'node-fetch';
 import crypto from 'crypto';
+import http from 'http';
+import https from 'https';
 import ffmpeg from 'fluent-ffmpeg';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getBaseUrl, isSafeUrl } from '../utils/helpers.js';
+import { getBaseUrl, isSafeUrl, safeLookup } from '../utils/helpers.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
+
+// Custom Agents with DNS Rebinding Protection
+const httpAgent = new http.Agent({ lookup: safeLookup });
+const httpsAgent = new https.Agent({ lookup: safeLookup });
 
 // --- Prepared Statements (Lazy Initialization) ---
 
@@ -85,10 +91,15 @@ async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const urls = [primaryUrl, ...(backupUrls || [])];
     let lastError = null;
 
+    const fetchOptions = {
+        ...options,
+        agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
+    };
+
     for (const u of urls) {
         if (!u) continue;
         try {
-            const res = await fetch(u, options);
+            const res = await fetch(u, fetchOptions);
             if (res.ok) {
                 return { response: res, successfulUrl: u };
             }
@@ -535,7 +546,8 @@ export const proxySegment = async (req, res) => {
 
     const upstream = await fetch(targetUrl, {
       headers,
-      redirect: 'follow'
+      redirect: 'follow',
+      agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
     });
 
     if (!upstream.ok) {
