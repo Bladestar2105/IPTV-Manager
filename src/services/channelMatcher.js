@@ -488,16 +488,16 @@ export class ChannelMatcher {
       if (!str || str.length < 2) return sig;
 
       let c1 = str.charCodeAt(0);
-      for (let i = 0; i < str.length - 1; i++) {
+      const len = str.length;
+      for (let i = 0; i < len - 1; i++) {
           const c2 = str.charCodeAt(i + 1);
 
           // Hash logic: (31 * c1 + c2) % 1024
-          // Optimized to avoid constructing the packed integer first
-          let h = (31 * c1 + c2);
-          h = Math.abs(h | 0) % 1024;
+          // Optimized: (31 * c1 + c2) & 1023
+          const h = (31 * c1 + c2) & 1023;
 
-          const idx = Math.floor(h / 32);
-          const bit = h % 32;
+          const idx = h >>> 5; // h / 32
+          const bit = h & 31;  // h % 32
           sig[idx] |= (1 << bit);
 
           c1 = c2;
@@ -511,10 +511,10 @@ export class ChannelMatcher {
       for (const val of bigrams) {
           // Optimized hash for packed integer (matches approx old behavior: 31*c1 + c2)
           let h = (31 * (val >>> 16) + (val & 0xFFFF));
-          h = Math.abs(h | 0) % 1024;
+          h = h & 1023;
 
-          const idx = Math.floor(h / 32);
-          const bit = h % 32;
+          const idx = h >>> 5;
+          const bit = h & 31;
           sig[idx] |= (1 << bit);
       }
       return sig;
@@ -522,8 +522,12 @@ export class ChannelMatcher {
 
   countSignatureBits(sig) {
       let count = 0;
-      for (let i = 0; i < 32; i++) {
+      // Unroll loop for performance
+      for (let i = 0; i < 32; i += 4) {
           count += popcount(sig[i]);
+          count += popcount(sig[i + 1]);
+          count += popcount(sig[i + 2]);
+          count += popcount(sig[i + 3]);
       }
       return count;
   }
@@ -531,8 +535,12 @@ export class ChannelMatcher {
   calculateDiceCoefficientSignature(sigA, sigB, popA, popB) {
       if (popA === 0 && popB === 0) return 0;
       let intersection = 0;
-      for (let i = 0; i < 32; i++) {
+      // Unroll loop for performance
+      for (let i = 0; i < 32; i += 4) {
           intersection += popcount(sigA[i] & sigB[i]);
+          intersection += popcount(sigA[i + 1] & sigB[i + 1]);
+          intersection += popcount(sigA[i + 2] & sigB[i + 2]);
+          intersection += popcount(sigA[i + 3] & sigB[i + 3]);
       }
       return (2 * intersection) / (popA + popB);
   }
