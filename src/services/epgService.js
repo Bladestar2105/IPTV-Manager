@@ -199,10 +199,61 @@ export async function updateEpgSource(sourceId, skipPrune = false) {
 
 export async function updateProviderEpg(providerId, skipPrune = false) {
     const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
-    if (!provider || !provider.epg_url) throw new Error('Provider EPG not found');
+    if (!provider) throw new Error('Provider not found');
 
-    await importEpgFromUrl(provider.epg_url, 'provider', providerId);
+    if (provider.epg_url && provider.epg_url.trim() !== '') {
+        await importEpgFromUrl(provider.epg_url, 'provider', providerId);
+    } else {
+        await importChannelsFromProvider(providerId);
+    }
+
     if (!skipPrune) pruneOldEpgData();
+}
+
+async function importChannelsFromProvider(providerId) {
+    const channels = mainDb.prepare(`
+        SELECT DISTINCT epg_channel_id, name, logo
+        FROM provider_channels
+        WHERE provider_id = ? AND epg_channel_id IS NOT NULL AND epg_channel_id != ''
+    `).all(providerId);
+
+    if (channels.length === 0) return;
+
+    const importDb = new Database(EPG_DB_PATH);
+    const now = Math.floor(Date.now() / 1000);
+    const sourceType = 'provider';
+    const sourceId = providerId;
+
+    try {
+        // Clear existing data for this source
+        importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+
+        const insertChannel = importDb.prepare(`
+            INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
+            VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
+        `);
+
+        const updateTx = importDb.transaction(() => {
+            for (const ch of channels) {
+                insertChannel.run({
+                    id: ch.epg_channel_id,
+                    name: ch.name,
+                    logo: ch.logo,
+                    sourceType,
+                    sourceId,
+                    updatedAt: now
+                });
+            }
+        });
+        updateTx();
+        console.log(`✅ Imported ${channels.length} channels from provider ${providerId} into EPG DB`);
+    } catch (e) {
+        console.error(`❌ Failed to import channels from provider ${providerId}:`, e.message);
+        throw e;
+    } finally {
+        importDb.close();
+    }
 }
 
 export function pruneOldEpgData(days = 7) {
