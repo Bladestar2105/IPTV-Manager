@@ -217,15 +217,11 @@ export function deleteEpgSourceData(sourceId, sourceType) {
 }
 
 export async function loadAllEpgChannels() {
-    // Return distinct channels by ID (preferring provider source if duplicate?)
-    // Actually just return all unique IDs.
-    // epg_channels PK is (id, source_type, source_id).
-    // Use GROUP BY id to get unique channels list for mapping.
+    // Return all channels including source info
     const channels = db.prepare(`
-        SELECT id, name, logo
+        SELECT id, name, logo, source_type
         FROM epg_channels
-        GROUP BY id
-        ORDER BY name
+        ORDER BY name ASC
     `).all();
     return channels;
 }

@@ -3521,10 +3521,12 @@ function filterEpgSelectionList() {
     li.style.cursor = 'pointer';
     const safeName = escapeHtml(epg.name);
     const safeId = escapeHtml(epg.id);
+    const safeSource = epg.source_type ? `<span class="badge bg-secondary ms-2">${escapeHtml(epg.source_type)}</span>` : '';
+
     li.innerHTML = `
       <div class="d-flex justify-content-between align-items-center">
         <div>
-          <strong>${safeName}</strong> <br>
+          <strong>${safeName}</strong> ${safeSource} <br>
           <small class="text-muted">${safeId}</small>
         </div>
         ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${safeName}" height="30" data-on-error="hide">` : ''}

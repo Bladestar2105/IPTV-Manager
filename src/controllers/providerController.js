@@ -5,6 +5,7 @@ import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
+import { updateProviderEpg, getLastEpgUpdate } from '../services/epgService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 
 export const getProviders = (req, res) => {
@@ -31,12 +32,7 @@ export const getProviders = (req, res) => {
     const safeProviders = providers.map(p => {
       let lastUpdate = 0;
       if (p.epg_url) {
-         const cacheFile = path.join(EPG_CACHE_DIR, `epg_provider_${p.id}.xml`);
-         if (fs.existsSync(cacheFile)) {
-             try {
-                lastUpdate = Math.floor(fs.statSync(cacheFile).mtimeMs / 1000);
-             } catch(e) {}
-         }
+         lastUpdate = getLastEpgUpdate('provider', p.id);
       }
 
       let plainPassword = null;
@@ -151,6 +147,11 @@ export const createProvider = async (req, res) => {
     // Check expiry
     await checkProviderExpiry(info.lastInsertRowid);
 
+    // Trigger EPG update if enabled
+    if (finalEpgUrl && (epg_enabled === undefined || epg_enabled)) {
+      updateProviderEpg(info.lastInsertRowid).catch(err => console.error(`Initial EPG update failed for provider ${info.lastInsertRowid}:`, err.message));
+    }
+
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -246,6 +247,14 @@ export const updateProvider = async (req, res) => {
     // Check expiry
     await checkProviderExpiry(id);
 
+    // Trigger EPG update if enabled
+    const isEpgEnabled = epg_enabled !== undefined ? epg_enabled : existing.epg_enabled;
+    const hasEpgUrl = finalEpgUrl && finalEpgUrl.length > 0;
+
+    if (hasEpgUrl && isEpgEnabled) {
+      updateProviderEpg(id).catch(err => console.error(`EPG update failed for provider ${id}:`, err.message));
+    }
+
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -289,6 +298,9 @@ export const syncProvider = async (req, res) => {
     }
 
     const result = await performSync(id, user_id, true);
+
+    // Also trigger EPG update
+    updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
 
     if (result.errorMessage) {
       return res.status(500).json({error: result.errorMessage});
