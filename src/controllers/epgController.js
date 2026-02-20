@@ -97,7 +97,7 @@ export const getEpgSources = (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
 
-    const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval, epg_enabled FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != ''").all();
+    const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval, epg_enabled FROM providers").all();
 
     // Check main DB for provider status?
     // Actually epg_sources table tracks custom sources status.
@@ -246,7 +246,7 @@ export const updateAllEpgSources = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
-    const providers = db.prepare("SELECT id FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
+    const providers = db.prepare("SELECT id FROM providers WHERE epg_enabled = 1").all();
 
     const providerPromises = providers.map(async (provider) => {
       try {

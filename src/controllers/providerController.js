@@ -148,7 +148,7 @@ export const createProvider = async (req, res) => {
     await checkProviderExpiry(info.lastInsertRowid);
 
     // Trigger EPG update if enabled
-    if (finalEpgUrl && (epg_enabled === undefined || epg_enabled)) {
+    if (epg_enabled === undefined || epg_enabled) {
       updateProviderEpg(info.lastInsertRowid).catch(err => console.error(`Initial EPG update failed for provider ${info.lastInsertRowid}:`, err.message));
     }
 
@@ -249,9 +249,8 @@ export const updateProvider = async (req, res) => {
 
     // Trigger EPG update if enabled
     const isEpgEnabled = epg_enabled !== undefined ? epg_enabled : existing.epg_enabled;
-    const hasEpgUrl = finalEpgUrl && finalEpgUrl.length > 0;
 
-    if (hasEpgUrl && isEpgEnabled) {
+    if (isEpgEnabled) {
       updateProviderEpg(id).catch(err => console.error(`EPG update failed for provider ${id}:`, err.message));
     }
 
