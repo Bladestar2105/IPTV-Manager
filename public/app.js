@@ -2696,6 +2696,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Global Modal Autofocus
+  document.addEventListener('shown.bs.modal', function (event) {
+    const modal = event.target;
+    // Prioritize [autofocus], then first visible input
+    const input = modal.querySelector('[autofocus]') ||
+                  modal.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled])');
+    if (input) {
+      input.focus();
+      // Select text if it's a text input
+      if (input.tagName === 'INPUT' && (input.type === 'text' || input.type === 'password' || input.type === 'number')) {
+          input.select();
+      }
+    }
+  });
+
   console.log('✅ IPTV-Manager loaded with i18n & local assets');
 });
 
