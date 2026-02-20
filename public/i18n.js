@@ -53,6 +53,7 @@ const translations = {
     // Category Section
     selectedUser: 'Selected User',
     noUserSelected: 'No user selected',
+    copyFromUser: 'Copy from...',
     importCategories: '📥 Import Provider Categories',
     categoryName: 'Category Name',
     addCategory: 'Add Category',
@@ -464,6 +465,7 @@ const translations = {
     // Category Section
     selectedUser: 'Ausgewählter User',
     noUserSelected: 'Kein User gewählt',
+    copyFromUser: 'Kopieren von...',
     importCategories: '📥 Provider-Kategorien importieren',
     categoryName: 'Kategorie-Name',
     addCategory: 'Kategorie+',
@@ -875,6 +877,7 @@ const translations = {
     // Category Section
     selectedUser: 'Utilisateur Sélectionné',
     noUserSelected: 'Aucun utilisateur sélectionné',
+    copyFromUser: 'Copier de...',
     importCategories: '📥 Importer Catégories Fournisseur',
     categoryName: 'Nom de la Catégorie',
     addCategory: 'Ajouter Catégorie',
@@ -1286,6 +1289,7 @@ const translations = {
     // Category Section
     selectedUser: 'Επιλεγμένος Χρήστης',
     noUserSelected: 'Δεν επιλέχθηκε χρήστης',
+    copyFromUser: 'Αντιγραφή από...',
     importCategories: '📥 Εισαγωγή Κατηγοριών Παρόχου',
     categoryName: 'Όνομα Κατηγορίας',
     addCategory: 'Προσθήκη Κατηγορίας',
