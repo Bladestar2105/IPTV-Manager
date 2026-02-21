@@ -609,3 +609,17 @@ export function migrateCurrentStreamsProviderId(db) {
     console.error('Current Streams Provider ID migration error:', e);
   }
 }
+
+export function migrateProviderLastEpgUpdate(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('last_epg_update')) {
+      db.exec('ALTER TABLE providers ADD COLUMN last_epg_update INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: last_epg_update column added to providers');
+    }
+  } catch (e) {
+    console.error('Provider Last EPG Update migration error:', e);
+  }
+}

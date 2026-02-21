@@ -226,10 +226,20 @@ export async function updateProviderEpg(providerId, skipPrune = false) {
     const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
 
-    if (provider.epg_url && provider.epg_url.trim() !== '') {
-        await importEpgFromUrl(provider.epg_url, 'provider', providerId);
-    } else {
-        await importChannelsFromProvider(providerId);
+    const now = Math.floor(Date.now() / 1000);
+
+    try {
+        if (provider.epg_url && provider.epg_url.trim() !== '') {
+            await importEpgFromUrl(provider.epg_url, 'provider', providerId);
+        } else {
+            await importChannelsFromProvider(providerId);
+        }
+
+        mainDb.prepare('UPDATE providers SET last_epg_update = ? WHERE id = ?').run(now, providerId);
+    } catch (e) {
+        // Even on error, we might want to update last_update to prevent immediate retry loop?
+        // No, let scheduler handle backoff via failedUpdates map.
+        throw e;
     }
 
     if (!skipPrune) pruneOldEpgData();
