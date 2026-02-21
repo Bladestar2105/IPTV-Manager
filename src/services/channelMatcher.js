@@ -148,12 +148,16 @@ export class ChannelMatcher {
     // Use signature popcount as proxy for bigram count (consistent with scoring)
     const sig = this.createSignatureFromBaseName(baseName);
     const popcount = this.countSignatureBits(sig);
+    const nonZeroIndices = this.getNonZeroIndices(sig);
 
           return {
             baseName: baseName,
             language: this.normalizeLanguage(lang),
             signature: sig,
             signaturePopcount: popcount,
+            // Use popcount as proxy for bigramCount to avoid Set allocation in findBestSimilarity
+            bigramCount: popcount,
+            nonZeroIndices: nonZeroIndices,
             // Pre-compute sorted numbers string for O(1) matching
             numbersString: [...numbers].sort().join(',')
           };
@@ -168,12 +172,15 @@ export class ChannelMatcher {
     // Optimization: Skip intermediate Set creation
     const sig = this.createSignatureFromBaseName(baseName);
     const popcount = this.countSignatureBits(sig);
+    const nonZeroIndices = this.getNonZeroIndices(sig);
 
     return {
       baseName: baseName,
       language: null,
       signature: sig,
       signaturePopcount: popcount,
+      bigramCount: popcount,
+      nonZeroIndices: nonZeroIndices,
       // Pre-compute sorted numbers string for O(1) matching
       numbersString: [...numbers].sort().join(',')
     };
@@ -214,8 +221,6 @@ export class ChannelMatcher {
    */
   match(iptvChannelName) {
     const parsed = this.parseChannelName(iptvChannelName);
-    // Optimization: Compute non-zero indices for sparse signature matching
-    parsed.nonZeroIndices = this.getNonZeroIndices(parsed.signature);
 
     const iptvNumsString = parsed.numbersString;
 
@@ -470,11 +475,17 @@ export class ChannelMatcher {
             if (searchSignature && cand.signature) {
                 const candPopcount = cand.signaturePopcount !== undefined ? cand.signaturePopcount : this.countSignatureBits(cand.signature);
 
-                // Optimization: Use sparse calculation if search signature is sparse enough (< 16 blocks non-zero)
-                // This avoids iterating 32 times for short strings where most blocks are zero
+                // Optimization: Use sparse calculation if available
+                // 1. If search term is sparse (< 16 blocks), use it. This avoids accessing candidate property (fastest).
                 if (searchNonZeroIndices && searchNonZeroIndices.length < 16) {
-                    score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, searchNonZeroIndices);
-                } else {
+                     score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, searchNonZeroIndices);
+                }
+                // 2. If search is dense, check if candidate is sparse
+                else if (cand.nonZeroIndices && cand.nonZeroIndices.length < 16) {
+                     score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, cand.nonZeroIndices);
+                }
+                // 3. Both dense -> use full unrolled loop
+                else {
                     score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
                 }
             } else if (cand.bigrams) {
