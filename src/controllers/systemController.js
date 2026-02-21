@@ -355,8 +355,8 @@ export const importData = (req, res) => {
         const newPassword = encrypt(p.password);
 
         const info = db.prepare(`
-          INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           p.name,
           p.url,
@@ -366,7 +366,10 @@ export const importData = (req, res) => {
           newUserId,
           p.epg_update_interval,
           p.epg_enabled,
-          p.expiry_date || null
+          p.expiry_date || null,
+          p.backup_urls || null,
+          p.user_agent || null,
+          p.max_connections || 0
         );
 
         providerIdMap.set(p.id, info.lastInsertRowid);
