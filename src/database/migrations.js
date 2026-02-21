@@ -563,3 +563,17 @@ export function migrateAdminForcePasswordChange(db) {
     console.error('Admin Force Password Change migration error:', e);
   }
 }
+
+export function migrateUserMaxConnections(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('max_connections')) {
+      db.exec('ALTER TABLE users ADD COLUMN max_connections INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: max_connections column added to users');
+    }
+  } catch (e) {
+    console.error('User Max Connections migration error:', e);
+  }
+}
