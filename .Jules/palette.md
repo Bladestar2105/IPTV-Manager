@@ -17,3 +17,7 @@
 ## 2025-05-22 - [Clearable Search Input Pattern]
 **Learning:** Standard search inputs require users to manually delete text to reset filters, which is tedious on mobile or with long queries.
 **Action:** Implemented a reusable pattern wrapping inputs in a Bootstrap `input-group` with a hidden "X" button. A single `initClearableInput` helper handles the toggle logic and dispatches `input` events so existing live-search listeners update automatically.
+
+## 2025-05-23 - [Accessible Form Help Text]
+**Learning:** Helper text placed adjacent to inputs (like instructions for date formats or password requirements) is often visually associated but programmatically disconnected for screen reader users.
+**Action:** Assign unique IDs to helper text elements (e.g., `id="password-help"`) and explicitly link them to their inputs using `aria-describedby="password-help"`. Ensure labels also have `for` attributes matching input `id`s.

@@ -466,7 +466,7 @@
 
               <form id="export-form">
                 <div class="mb-3">
-                  <label class="form-label" data-i18n="selectUserExport">Select User to Export</label>
+                  <label class="form-label" data-i18n="selectUserExport" for="export-user-select">Select User to Export</label>
                   <select class="form-select" id="export-user-select" name="user_id">
                     <option value="all" data-i18n="allUsers">All Users</option>
                     <!-- Populated by JS -->
@@ -474,9 +474,9 @@
                 </div>
 
                 <div class="mb-3">
-                  <label class="form-label" data-i18n="encryptionPassword">Encryption Password</label>
-                  <input type="password" class="form-control" name="password" required minlength="8" data-i18n-placeholder="passwordPlaceholder">
-                  <div class="form-text" data-i18n="encryptionPasswordHint">This password will be required to decrypt and import the data.</div>
+                  <label class="form-label" data-i18n="encryptionPassword" for="export-password">Encryption Password</label>
+                  <input type="password" class="form-control" name="password" id="export-password" required minlength="8" data-i18n-placeholder="passwordPlaceholder" aria-describedby="export-password-help">
+                  <div class="form-text" data-i18n="encryptionPasswordHint" id="export-password-help">This password will be required to decrypt and import the data.</div>
                 </div>
 
                 <button type="submit" class="btn btn-primary w-100" id="export-btn" data-i18n="exportBtn">Export Data</button>
@@ -494,13 +494,13 @@
 
               <form id="import-form">
                 <div class="mb-3">
-                  <label class="form-label" data-i18n="fileSelect">Select File</label>
-                  <input type="file" class="form-control" name="file" required accept=".bin">
+                  <label class="form-label" data-i18n="fileSelect" for="import-file">Select File</label>
+                  <input type="file" class="form-control" name="file" id="import-file" required accept=".bin">
                 </div>
 
                 <div class="mb-3">
-                  <label class="form-label" data-i18n="decryptionPassword">Decryption Password</label>
-                  <input type="password" class="form-control" name="password" required data-i18n-placeholder="passwordPlaceholder">
+                  <label class="form-label" data-i18n="decryptionPassword" for="import-password">Decryption Password</label>
+                  <input type="password" class="form-control" name="password" id="import-password" required data-i18n-placeholder="passwordPlaceholder">
                 </div>
 
                 <button type="submit" class="btn btn-warning w-100" id="import-btn" data-i18n="importBtn">Import Data</button>
@@ -1043,10 +1043,10 @@
             <div class="mb-3">
               <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="new-password" required minlength="8">
+                <input type="password" class="form-control" id="new-password" required minlength="8" aria-describedby="new-password-help">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
               </div>
-              <small class="form-text text-secondary" data-i18n="password_min_length">Minimum 8 characters</small>
+              <small class="form-text text-secondary" data-i18n="password_min_length" id="new-password-help">Minimum 8 characters</small>
             </div>
             <div class="mb-3">
               <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
@@ -1172,14 +1172,14 @@
              </div>
              <div class="row mb-3">
                <div class="col-6">
-                 <label class="form-label" data-i18n="startTime">Start Time</label>
-                 <input type="datetime-local" class="form-control" id="share-start-time">
-                 <div class="form-text small" data-i18n="leaveEmptyForNow">Leave empty for now</div>
+                 <label class="form-label" data-i18n="startTime" for="share-start-time">Start Time</label>
+                 <input type="datetime-local" class="form-control" id="share-start-time" aria-describedby="share-start-time-help">
+                 <div class="form-text small" data-i18n="leaveEmptyForNow" id="share-start-time-help">Leave empty for now</div>
                </div>
                <div class="col-6">
-                 <label class="form-label" data-i18n="endTime">End Time</label>
-                 <input type="datetime-local" class="form-control" id="share-end-time">
-                 <div class="form-text small" data-i18n="leaveEmptyForNever">Leave empty for never</div>
+                 <label class="form-label" data-i18n="endTime" for="share-end-time">End Time</label>
+                 <input type="datetime-local" class="form-control" id="share-end-time" aria-describedby="share-end-time-help">
+                 <div class="form-text small" data-i18n="leaveEmptyForNever" id="share-end-time-help">Leave empty for never</div>
                </div>
              </div>
              <div class="mb-3">
