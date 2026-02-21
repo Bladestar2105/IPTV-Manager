@@ -2705,6 +2705,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'action-copy-all-xtream': () => copyAllXtreamCredentials(e.target.closest('[data-action]')),
         'action-clear-security-logs': clearSecurityLogs,
         'action-clear-client-logs': clearClientLogs,
+        'action-prune-picons': prunePiconCache,
         'action-disable-otp': disableOtp,
         'action-verify-otp': verifyAndEnableOtp
     };
@@ -3001,6 +3002,16 @@ async function removeWhitelist(id) {
         await fetchJSON(`/api/security/whitelist/${id}`, {method: 'DELETE'});
         loadSecurity();
     } catch(e) { alert(e.message); }
+}
+
+async function prunePiconCache() {
+    if (!confirm(t('confirmPrunePicons'))) return;
+    try {
+        const res = await fetchJSON('/api/proxy/picons', { method: 'DELETE' });
+        alert(t('piconsPrunedSuccess', {count: res.deleted}));
+    } catch (e) {
+        alert(t('errorPrefix') + ' ' + e.message);
+    }
 }
 
 async function loadStatistics() {
