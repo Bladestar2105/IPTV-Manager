@@ -312,12 +312,15 @@ function copyToClipboard(text, btnElement) {
         if (btnElement) {
             const originalHtml = btnElement.innerHTML;
             const originalClass = btnElement.className;
+            const originalTitle = btnElement.getAttribute('title');
+            const originalAriaLabel = btnElement.getAttribute('aria-label');
 
             // Disable button to prevent rapid clicks and state corruption
             btnElement.disabled = true;
 
             // Visual feedback
             const isSmallBtn = btnElement.textContent.trim().length <= 2;
+            const successText = t('copied') || 'Copied!';
 
             if (isSmallBtn) {
                 btnElement.innerHTML = '✅';
@@ -325,17 +328,31 @@ function copyToClipboard(text, btnElement) {
             } else {
                 const width = btnElement.offsetWidth;
                 btnElement.style.width = width + 'px'; // Fix width
-                btnElement.innerHTML = `✅ ${t('copied') || 'Copied!'}`;
+                btnElement.innerHTML = `✅ ${successText}`;
                 btnElement.className = 'btn btn-success w-100';
             }
+
+            // Accessibility: Update title and aria-label
+            btnElement.setAttribute('title', successText);
+            btnElement.setAttribute('aria-label', successText);
 
             setTimeout(() => {
                 btnElement.innerHTML = originalHtml;
                 btnElement.className = originalClass;
                 btnElement.style.width = '';
                 btnElement.disabled = false;
+
+                // Restore attributes
+                if (originalTitle) btnElement.setAttribute('title', originalTitle);
+                else btnElement.removeAttribute('title');
+
+                if (originalAriaLabel) btnElement.setAttribute('aria-label', originalAriaLabel);
+                else btnElement.removeAttribute('aria-label');
             }, 2000);
         }
+
+        // UX: Show Toast
+        showToast(t('copiedToClipboard') || 'Copied to clipboard', 'success');
     };
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
