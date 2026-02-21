@@ -112,11 +112,17 @@ export const createProvider = async (req, res) => {
         const validUrls = [];
         for (const u of urls) {
             const trimmed = u.trim();
-            if (trimmed && /^https?:\/\//i.test(trimmed)) {
-                if (await isSafeUrl(trimmed)) {
-                    validUrls.push(trimmed);
-                }
+            if (!trimmed) continue;
+
+            if (!/^https?:\/\//i.test(trimmed)) {
+                return res.status(400).json({error: 'invalid_url', message: `Backup URL must start with http:// or https://: ${trimmed}`});
             }
+
+            if (!(await isSafeUrl(trimmed))) {
+                return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe or invalid (blocked): ${trimmed}`});
+            }
+
+            validUrls.push(trimmed);
         }
         processedBackupUrls = JSON.stringify(validUrls);
     }
@@ -235,11 +241,17 @@ export const updateProvider = async (req, res) => {
         const validUrls = [];
         for (const u of urls) {
             const trimmed = u.trim();
-            if (trimmed && /^https?:\/\//i.test(trimmed)) {
-                if (await isSafeUrl(trimmed)) {
-                    validUrls.push(trimmed);
-                }
+            if (!trimmed) continue;
+
+            if (!/^https?:\/\//i.test(trimmed)) {
+                return res.status(400).json({error: 'invalid_url', message: `Backup URL must start with http:// or https://: ${trimmed}`});
             }
+
+            if (!(await isSafeUrl(trimmed))) {
+                return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe or invalid (blocked): ${trimmed}`});
+            }
+
+            validUrls.push(trimmed);
         }
         processedBackupUrls = JSON.stringify(validUrls);
     }
