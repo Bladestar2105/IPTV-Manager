@@ -1,8 +1,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as streamController from '../src/controllers/streamController.js';
+import * as streamController from '../../src/controllers/streamController.js';
 import fetch from 'node-fetch';
-import streamManager from '../src/services/streamManager.js';
+import streamManager from '../../src/services/streamManager.js';
 
 // --- Mocks ---
 
@@ -40,7 +40,7 @@ vi.mock('node-fetch', () => {
 });
 
 // Mock database
-vi.mock('../src/database/db.js', () => ({
+vi.mock('../../src/database/db.js', () => ({
     default: {
         prepare: vi.fn((query) => {
             if (query.includes('user_channels')) {
@@ -67,12 +67,12 @@ vi.mock('../src/database/db.js', () => ({
 }));
 
 // Mock auth service
-vi.mock('../src/services/authService.js', () => ({
+vi.mock('../../src/services/authService.js', () => ({
     getXtreamUser: vi.fn()
 }));
 
 // Mock stream manager
-vi.mock('../src/services/streamManager.js', () => ({
+vi.mock('../../src/services/streamManager.js', () => ({
     default: {
         add: vi.fn(),
         remove: vi.fn(),
@@ -83,7 +83,7 @@ vi.mock('../src/services/streamManager.js', () => ({
 }));
 
 // Mock helpers
-vi.mock('../src/utils/helpers.js', async (importOriginal) => {
+vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
@@ -93,12 +93,12 @@ vi.mock('../src/utils/helpers.js', async (importOriginal) => {
 });
 
 // Mock crypto
-vi.mock('../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', () => ({
     decrypt: vi.fn((val) => val),
     encrypt: vi.fn((val) => val)
 }));
 
-import { getXtreamUser } from '../src/services/authService.js';
+import { getXtreamUser } from '../../src/services/authService.js';
 
 describe('User Connection Limit', () => {
     beforeEach(() => {
