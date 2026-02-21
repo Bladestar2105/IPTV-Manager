@@ -16,15 +16,13 @@ export function getBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
-export function isPrivateIP(ip) {
+export function isUnsafeIP(ip) {
     const ipVer = isIP(ip);
     if (ipVer === 0) return false;
 
     if (ipVer === 4) {
         if (ip === '0.0.0.0' ||
             ip.startsWith('127.') ||
-            ip.startsWith('10.') ||
-            ip.startsWith('192.168.') ||
             ip.startsWith('169.254.') ||
             ip.startsWith('192.0.0.') || // IETF Protocol Assignments
             ip.startsWith('192.0.2.') || // TEST-NET-1
@@ -32,20 +30,18 @@ export function isPrivateIP(ip) {
             ip.startsWith('203.0.113.') || // TEST-NET-3
             ip.startsWith('240.')) return true; // Class E (Reserved)
 
-        if (ip.startsWith('172.')) {
-            const parts = ip.split('.');
-            const second = parseInt(parts[1], 10);
-            if (second >= 16 && second <= 31) return true;
-        }
-
-        // CGNAT (100.64.0.0/10)
-        if (ip.startsWith('100.')) {
-            const parts = ip.split('.');
-            const second = parseInt(parts[1], 10);
-            if (second >= 64 && second <= 127) return true;
-        }
     } else if (ipVer === 6) {
-         if (ip === '::' || ip === '::1' || ip.includes('::ffff:') || ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd')) return true;
+         if (ip === '::' || ip === '::1' || ip.startsWith('fe80:')) return true;
+
+         // Check for IPv4 mapped address ::ffff:127.0.0.1
+         if (ip.includes('::ffff:')) {
+            const parts = ip.split(':');
+            const ipv4 = parts[parts.length - 1];
+            if (isIP(ipv4) === 4) {
+                 return isUnsafeIP(ipv4);
+            }
+            return true;
+         }
     }
     return false;
 }
@@ -65,7 +61,7 @@ export async function isSafeUrl(urlStr) {
     const { address } = await dns.promises.lookup(hostname);
 
     // Check resolved IP
-    return !isPrivateIP(address);
+    return !isUnsafeIP(address);
   } catch (e) {
     return false;
   }
@@ -74,7 +70,7 @@ export async function isSafeUrl(urlStr) {
 export function safeLookup(hostname, options, callback) {
   dns.lookup(hostname, options, (err, address, family) => {
     if (err) return callback(err);
-    if (isPrivateIP(address)) {
+    if (isUnsafeIP(address)) {
       return callback(new Error(`DNS Lookup resolved to unsafe IP: ${address}`));
     }
     callback(null, address, family);
