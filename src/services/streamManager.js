@@ -26,6 +26,7 @@ class StreamManager {
           this.stmtRemove = this.db.prepare('DELETE FROM current_streams WHERE id = ?');
           this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
           this.stmtGetAll = this.db.prepare('SELECT * FROM current_streams');
+          this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE user_id = ?');
         } catch (e) {
           console.error('Failed to prepare statements:', e);
         }
@@ -164,6 +165,34 @@ class StreamManager {
       }
     }
     return [];
+  }
+
+  async getUserConnectionCount(userId) {
+    if (this.redis) {
+      try {
+        // Since we don't have a direct index for count, we filter getAll.
+        // Optimization: Maintain a separate counter in Redis if performance becomes an issue.
+        const all = await this.getAll();
+        return all.filter(s => s.user_id === userId).length;
+      } catch (e) {
+        console.error('Redis Count Error:', e);
+        return 0;
+      }
+    } else if (this.db) {
+      try {
+        if (this.stmtCountUser) {
+          const res = this.stmtCountUser.get(userId);
+          return res ? res.count : 0;
+        } else {
+          const res = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE user_id = ?').get(userId);
+          return res ? res.count : 0;
+        }
+      } catch (e) {
+        console.error('DB Count Error:', e);
+        return 0;
+      }
+    }
+    return 0;
   }
 }
 

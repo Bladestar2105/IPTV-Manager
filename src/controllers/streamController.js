@@ -192,6 +192,11 @@ export const proxyMpd = async (req, res) => {
     }
 
     if (relativePath.endsWith('.mpd')) {
+        if (user.max_connections > 0) {
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+        }
+
         await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res);
         const now = Math.floor(Date.now() / 1000);
         const existingStat = getStat(channel.provider_channel_id);
@@ -276,6 +281,12 @@ export const proxyLive = async (req, res) => {
     // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
     if (reqExt !== 'm3u8' || wantsTranscode) {
         await streamManager.cleanupUser(user.id, req.ip);
+
+        if (user.max_connections > 0) {
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+        }
+
         await new Promise(resolve => setTimeout(resolve, 100));
         await streamManager.add(connectionId, user, channel.name, req.ip, res);
     }
@@ -591,6 +602,11 @@ export const proxyMovie = async (req, res) => {
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
+    if (user.max_connections > 0) {
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+    }
+
     await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res);
 
     const now = Math.floor(Date.now() / 1000);
@@ -751,6 +767,11 @@ export const proxySeries = async (req, res) => {
 
     if (user.is_share_guest) return res.sendStatus(403);
 
+    if (user.max_connections > 0) {
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+    }
+
     await streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip, res);
 
     provider.password = decrypt(provider.password);
@@ -844,6 +865,11 @@ export const proxyTimeshift = async (req, res) => {
         if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
         const nowSec = Date.now() / 1000;
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
+    }
+
+    if (user.max_connections > 0) {
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
     }
 
     await streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip, res);

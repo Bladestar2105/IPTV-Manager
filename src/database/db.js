@@ -84,7 +84,8 @@ export function initDb(isPrimary) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      is_active INTEGER DEFAULT 1
+      is_active INTEGER DEFAULT 1,
+      max_connections INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS user_categories (
@@ -237,6 +238,7 @@ export function initDb(isPrimary) {
             migrations.migrateSharedLinkSlug(db);
             migrations.migrateProviderUserAgent(db);
             migrations.migrateAdminForcePasswordChange(db);
+            migrations.migrateUserMaxConnections(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
