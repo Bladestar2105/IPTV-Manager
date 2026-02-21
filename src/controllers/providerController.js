@@ -8,6 +8,32 @@ import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { updateProviderEpg, getLastEpgUpdate } from '../services/epgService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 
+const fetchProviderDetails = async (url, username, password) => {
+  try {
+    const baseUrl = url.trim().replace(/\/+$/, '');
+    const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username.trim())}&password=${encodeURIComponent(password.trim())}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+    const resp = await fetch(apiUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data && data.user_info && data.user_info.max_connections) {
+        const maxCon = parseInt(data.user_info.max_connections, 10);
+        if (!isNaN(maxCon)) {
+          return maxCon;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch provider details:', e.message);
+  }
+  return null;
+};
+
 export const getProviders = (req, res) => {
   try {
     let { user_id } = req.query;
@@ -126,6 +152,16 @@ export const createProvider = async (req, res) => {
       }
     }
 
+    // Auto-fetch max_connections if not provided or 0
+    let finalMaxConnections = max_connections ? Number(max_connections) : 0;
+    if (finalMaxConnections === 0) {
+        const fetchedLimit = await fetchProviderDetails(url, username, password);
+        if (fetchedLimit !== null) {
+            finalMaxConnections = fetchedLimit;
+            console.log(`✅ Auto-detected max_connections for provider: ${finalMaxConnections}`);
+        }
+    }
+
     const encryptedPassword = encrypt(password.trim());
 
     const info = db.prepare(`
@@ -142,7 +178,7 @@ export const createProvider = async (req, res) => {
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : 1,
       processedBackupUrls,
       user_agent ? user_agent.trim() : null,
-      max_connections ? Number(max_connections) : 0
+      finalMaxConnections
     );
 
     // Check expiry
@@ -227,6 +263,23 @@ export const updateProvider = async (req, res) => {
        } catch(e) {}
     }
 
+    // Auto-fetch max_connections if not provided or 0
+    let finalMaxConnections = max_connections ? Number(max_connections) : (existing.max_connections || 0);
+
+    // If current limit is 0 (unlimited) or we are updating credentials, try to fetch
+    // Use the password we are about to save (or existing if not changed)
+    const pwdForFetch = password.trim() === '********' ? decrypt(existing.password) : password.trim();
+
+    // Only attempt fetch if we don't have a specific override in the request (i.e., user sent 0 or nothing)
+    // AND if we have credentials
+    if ((!max_connections || Number(max_connections) === 0) && pwdForFetch) {
+        const fetchedLimit = await fetchProviderDetails(url, username, pwdForFetch);
+        if (fetchedLimit !== null) {
+            finalMaxConnections = fetchedLimit;
+             console.log(`✅ Auto-detected max_connections for provider update: ${finalMaxConnections}`);
+        }
+    }
+
     db.prepare(`
       UPDATE providers
       SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?, user_agent = ?, max_connections = ?
@@ -242,7 +295,7 @@ export const updateProvider = async (req, res) => {
       epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
       processedBackupUrls,
       user_agent ? user_agent.trim() : null,
-      max_connections ? Number(max_connections) : (existing.max_connections || 0),
+      finalMaxConnections,
       id
     );
 
