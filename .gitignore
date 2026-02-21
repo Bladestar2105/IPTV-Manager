@@ -12,3 +12,6 @@ playwright-report/
 db.sqlite-shm
 db.sqlite-wal
 jwt.secret
+epg.db
+epg.db-shm
+epg.db-wal
