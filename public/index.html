@@ -126,8 +126,11 @@
                         <option value="" data-i18n="copyFromUser">Copy from...</option>
                      </select>
                   </div>
+                  <div class="col-1">
+                     <input type="number" class="form-control form-control-sm" name="max_connections" data-i18n-placeholder="maxConnectionsShort" data-i18n-label="maxConnections" placeholder="Max" min="0">
+                  </div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
-                  <div class="col-2"><button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
+                  <div class="col-1"><button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
                </form>
                <ul id="user-list" class="list-group list-group-flush max-h-400-scroll"></ul>
             </div>
@@ -998,6 +1001,10 @@
                 <button class="btn btn-outline-secondary" type="button" data-copy-target="edit-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
               </div>
             </div>
+            <div class="mb-3">
+              <label class="form-label" data-i18n="maxConnections">Max Connections</label>
+              <input type="number" class="form-control" id="edit-user-max-connections" placeholder="0 = Unlimited" min="0">
+            </div>
             <div class="mb-3 form-check">
               <input type="checkbox" class="form-check-input" id="edit-user-webui-access">
               <label class="form-check-label" for="edit-user-webui-access" data-i18n="webui_access">Web UI Access</label>
@@ -1106,9 +1113,15 @@
                 <label class="form-label" data-i18n="backupUrls">Backup URLs</label>
                 <textarea class="form-control" name="backup_urls" id="provider-backup-urls" rows="3" data-i18n-placeholder="backupUrlsPlaceholder" placeholder="One URL per line (Optional)"></textarea>
              </div>
-             <div class="mb-3">
-                <label class="form-label" data-i18n="expiryDate">Expiry Date</label>
-                <input class="form-control" id="provider-expiry-date" readonly disabled>
+             <div class="row mb-3">
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="maxConnections">Max Connections</label>
+                   <input type="number" class="form-control" name="max_connections" id="provider-max-connections" placeholder="0 = Unlimited" min="0">
+                </div>
+                <div class="col-md-6">
+                   <label class="form-label" data-i18n="expiryDate">Expiry Date</label>
+                   <input class="form-control" id="provider-expiry-date" readonly disabled>
+                </div>
              </div>
              <div class="row">
                 <div class="col-md-6">

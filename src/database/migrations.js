@@ -563,3 +563,49 @@ export function migrateAdminForcePasswordChange(db) {
     console.error('Admin Force Password Change migration error:', e);
   }
 }
+
+export function migrateUserMaxConnections(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('max_connections')) {
+      db.exec('ALTER TABLE users ADD COLUMN max_connections INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: max_connections column added to users');
+    }
+  } catch (e) {
+    console.error('User Max Connections migration error:', e);
+  }
+}
+
+export function migrateProviderMaxConnections(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('max_connections')) {
+      db.exec('ALTER TABLE providers ADD COLUMN max_connections INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: max_connections column added to providers');
+    }
+  } catch (e) {
+    console.error('Provider Max Connections migration error:', e);
+  }
+}
+
+export function migrateCurrentStreamsProviderId(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(current_streams)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('provider_id')) {
+      // Since current_streams is often cleared/recreated, we can just drop/recreate OR alter.
+      // But db.js does "CREATE TABLE IF NOT EXISTS".
+      // If we are in initDb, it might be cleared.
+      // Safest is ALTER.
+      db.exec('ALTER TABLE current_streams ADD COLUMN provider_id INTEGER');
+      console.log('✅ DB Migration: provider_id column added to current_streams');
+    }
+  } catch (e) {
+    console.error('Current Streams Provider ID migration error:', e);
+  }
+}

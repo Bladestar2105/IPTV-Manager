@@ -686,6 +686,7 @@ function showEditUserModal(user) {
   document.getElementById('edit-user-id').value = user.id;
   document.getElementById('edit-user-username').value = user.username;
   document.getElementById('edit-user-password').value = '';
+  document.getElementById('edit-user-max-connections').value = user.max_connections || 0;
   // Checkbox handling: default to true if undefined/null (legacy users), else use value
   const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
   document.getElementById('edit-user-webui-access').checked = webuiAccess;
@@ -698,10 +699,16 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const id = document.getElementById('edit-user-id').value;
   const username = document.getElementById('edit-user-username').value;
   const password = document.getElementById('edit-user-password').value;
+  const maxConnections = document.getElementById('edit-user-max-connections').value;
   const webuiAccess = document.getElementById('edit-user-webui-access').checked;
   const hdhrEnabled = document.getElementById('edit-user-hdhr-enabled').checked;
 
-  const body = { username, webui_access: webuiAccess, hdhr_enabled: hdhrEnabled };
+  const body = {
+      username,
+      webui_access: webuiAccess,
+      hdhr_enabled: hdhrEnabled,
+      max_connections: maxConnections
+  };
   if (password) body.password = password;
 
   try {
@@ -878,6 +885,7 @@ function prepareEditProvider(p) {
   form.user_id.value = p.user_id || '';
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
+  form.max_connections.value = p.max_connections || 0;
 
   const backupInput = document.getElementById('provider-backup-urls');
   if (backupInput) {
@@ -1619,7 +1627,8 @@ document.getElementById('user-form').addEventListener('submit', async e => {
   try {
     const body = {
         username: f.username.value,
-        password: f.password.value
+        password: f.password.value,
+        max_connections: f.max_connections ? f.max_connections.value : 0
     };
     if (f.copy_from_user_id && f.copy_from_user_id.value) {
         body.copy_from_user_id = f.copy_from_user_id.value;
@@ -1662,7 +1671,8 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     user_id: f.user_id.value || null,
     epg_update_interval: f.epg_update_interval.value,
     epg_enabled: f.epg_enabled.checked,
-    backup_urls: backupUrls
+    backup_urls: backupUrls,
+    max_connections: f.max_connections.value || 0
   };
 
   try {

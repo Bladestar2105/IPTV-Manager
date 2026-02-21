@@ -7,7 +7,7 @@ import { BCRYPT_ROUNDS } from '../config/constants.js';
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, is_active, webui_access, hdhr_enabled, hdhr_token FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections FROM users ORDER BY id').all();
     const result = users.map(u => {
         return {
             id: u.id,
@@ -15,7 +15,8 @@ export const getUsers = (req, res) => {
             is_active: u.is_active,
             webui_access: u.webui_access,
             hdhr_enabled: u.hdhr_enabled,
-            hdhr_token: u.hdhr_token
+            hdhr_token: u.hdhr_token,
+            max_connections: u.max_connections || 0
         };
     });
     res.json(result);
@@ -25,7 +26,7 @@ export const getUsers = (req, res) => {
 export const createUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password, webui_access, hdhr_enabled, copy_from_user_id } = req.body;
+    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections } = req.body;
 
     // Validation
     if (!username || !password) {
@@ -91,12 +92,13 @@ export const createUser = async (req, res) => {
     // Use transaction for atomic creation + copying
     db.transaction(() => {
         // Insert user
-        const info = db.prepare('INSERT INTO users (username, password, webui_access, hdhr_enabled, hdhr_token) VALUES (?, ?, ?, ?, ?)').run(
+        const info = db.prepare('INSERT INTO users (username, password, webui_access, hdhr_enabled, hdhr_token, max_connections) VALUES (?, ?, ?, ?, ?, ?)').run(
             u,
             hashedPassword,
             webui_access !== undefined ? (webui_access ? 1 : 0) : 1,
             isHdhrEnabled,
-            hdhrToken
+            hdhrToken,
+            max_connections ? Number(max_connections) : 0
         );
         const newUserId = info.lastInsertRowid;
 
@@ -284,7 +286,7 @@ export const updateUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password, webui_access, hdhr_enabled } = req.body;
+    const { username, password, webui_access, hdhr_enabled, max_connections } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -335,6 +337,11 @@ export const updateUser = async (req, res) => {
             updates.push('hdhr_token = ?');
             params.push(token);
         }
+    }
+
+    if (max_connections !== undefined) {
+        updates.push('max_connections = ?');
+        params.push(Number(max_connections));
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update

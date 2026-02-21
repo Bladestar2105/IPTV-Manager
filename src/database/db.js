@@ -28,7 +28,8 @@ export function initDb(isPrimary) {
       epg_url TEXT,
       user_id INTEGER,
       epg_update_interval INTEGER DEFAULT 86400,
-      epg_enabled INTEGER DEFAULT 1
+      epg_enabled INTEGER DEFAULT 1,
+      max_connections INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS provider_channels (
@@ -61,7 +62,8 @@ export function initDb(isPrimary) {
       channel_name TEXT,
       start_time INTEGER,
       ip TEXT,
-      worker_pid INTEGER
+      worker_pid INTEGER,
+      provider_id INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS admin_users (
@@ -84,7 +86,8 @@ export function initDb(isPrimary) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      is_active INTEGER DEFAULT 1
+      is_active INTEGER DEFAULT 1,
+      max_connections INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS user_categories (
@@ -237,6 +240,9 @@ export function initDb(isPrimary) {
             migrations.migrateSharedLinkSlug(db);
             migrations.migrateProviderUserAgent(db);
             migrations.migrateAdminForcePasswordChange(db);
+            migrations.migrateUserMaxConnections(db);
+            migrations.migrateProviderMaxConnections(db);
+            migrations.migrateCurrentStreamsProviderId(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

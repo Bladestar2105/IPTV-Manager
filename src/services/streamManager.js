@@ -20,12 +20,14 @@ class StreamManager {
       if (this.db) {
         try {
           this.stmtAdd = this.db.prepare(`
-            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid, provider_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `);
           this.stmtRemove = this.db.prepare('DELETE FROM current_streams WHERE id = ?');
           this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
           this.stmtGetAll = this.db.prepare('SELECT * FROM current_streams');
+          this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE user_id = ?');
+          this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE provider_id = ?');
         } catch (e) {
           console.error('Failed to prepare statements:', e);
         }
@@ -33,7 +35,7 @@ class StreamManager {
     }
   }
 
-  async add(id, user, channelName, ip, resource = null) {
+  async add(id, user, channelName, ip, resource = null, providerId = 0) {
     const data = {
       id,
       user_id: user.id,
@@ -41,7 +43,8 @@ class StreamManager {
       channel_name: channelName,
       start_time: Date.now(),
       ip,
-      worker_pid: this.pid
+      worker_pid: this.pid,
+      provider_id: providerId
     };
 
     if (this.redis) {
@@ -58,12 +61,12 @@ class StreamManager {
     } else if (this.db) {
       try {
         if (this.stmtAdd) {
-          this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, ip, this.pid);
+          this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, ip, this.pid, providerId);
         } else {
           this.db.prepare(`
-            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(id, user.id, user.username, channelName, data.start_time, ip, this.pid);
+            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid, provider_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(id, user.id, user.username, channelName, data.start_time, ip, this.pid, providerId);
         }
       } catch (e) {
         console.error('DB Add Error:', e.message);
@@ -164,6 +167,62 @@ class StreamManager {
       }
     }
     return [];
+  }
+
+  async getUserConnectionCount(userId) {
+    if (this.redis) {
+      try {
+        // Since we don't have a direct index for count, we filter getAll.
+        // Optimization: Maintain a separate counter in Redis if performance becomes an issue.
+        const all = await this.getAll();
+        return all.filter(s => s.user_id === userId).length;
+      } catch (e) {
+        console.error('Redis Count Error:', e);
+        return 0;
+      }
+    } else if (this.db) {
+      try {
+        if (this.stmtCountUser) {
+          const res = this.stmtCountUser.get(userId);
+          return res ? res.count : 0;
+        } else {
+          const res = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE user_id = ?').get(userId);
+          return res ? res.count : 0;
+        }
+      } catch (e) {
+        console.error('DB Count Error:', e);
+        return 0;
+      }
+    }
+    return 0;
+  }
+
+  async getProviderConnectionCount(providerId) {
+    if (!providerId) return 0;
+
+    if (this.redis) {
+      try {
+        const all = await this.getAll();
+        return all.filter(s => s.provider_id === providerId).length;
+      } catch (e) {
+        console.error('Redis Provider Count Error:', e);
+        return 0;
+      }
+    } else if (this.db) {
+      try {
+        if (this.stmtCountProvider) {
+          const res = this.stmtCountProvider.get(providerId);
+          return res ? res.count : 0;
+        } else {
+          const res = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE provider_id = ?').get(providerId);
+          return res ? res.count : 0;
+        }
+      } catch (e) {
+        console.error('DB Provider Count Error:', e);
+        return 0;
+      }
+    }
+    return 0;
   }
 }
 
