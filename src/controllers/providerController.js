@@ -5,7 +5,7 @@ import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
-import { updateProviderEpg, getLastEpgUpdate } from '../services/epgService.js';
+import { updateProviderEpg } from '../services/epgService.js';
 import { EPG_CACHE_DIR } from '../config/constants.js';
 
 const fetchProviderDetails = async (url, username, password) => {
@@ -56,10 +56,7 @@ export const getProviders = (req, res) => {
 
     const providers = db.prepare(query).all(...params);
     const safeProviders = providers.map(p => {
-      let lastUpdate = 0;
-      if (p.epg_url) {
-         lastUpdate = getLastEpgUpdate('provider', p.id);
-      }
+      let lastUpdate = p.last_epg_update || 0;
 
       let plainPassword = null;
       if (req.user.is_admin) {
