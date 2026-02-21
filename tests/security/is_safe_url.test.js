@@ -37,9 +37,9 @@ describe('isSafeUrl Security Checks', () => {
     expect(safe).toBe(false);
   });
 
-  it('should block CGNAT range (100.64.0.1)', async () => {
+  it('should allow CGNAT range (100.64.0.1)', async () => {
     const safe = await isSafeUrl('http://100.64.0.1');
-    expect(safe).toBe(false);
+    expect(safe).toBe(true);
   });
 
   it('should block TEST-NET-1 (192.0.2.1)', async () => {

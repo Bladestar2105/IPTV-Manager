@@ -18,7 +18,7 @@ vi.mock('../src/database/db.js', () => ({
 
 vi.mock('../src/utils/helpers.js', () => ({
     getBaseUrl: vi.fn(() => 'http://localhost:3000'),
-    isPrivateIP: vi.fn(() => false),
+    isUnsafeIP: vi.fn(() => false),
     isSafeUrl: vi.fn(async () => true),
     isAdultCategory: vi.fn(() => false)
 }));
