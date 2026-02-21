@@ -63,8 +63,7 @@ export function startEpgScheduler() {
         const lastFail = failedUpdates.get(provider.id) || 0;
         if (lastFail && (lastFail + 900 > now)) continue;
 
-        // Get last update from EPG DB (since main DB doesn't track provider EPG status)
-        const lastUpdate = getLastEpgUpdate('provider', provider.id) || 0;
+        const lastUpdate = provider.last_epg_update || 0;
 
         if (lastUpdate + interval <= now) {
           try {

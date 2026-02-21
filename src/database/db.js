@@ -29,7 +29,8 @@ export function initDb(isPrimary) {
       user_id INTEGER,
       epg_update_interval INTEGER DEFAULT 86400,
       epg_enabled INTEGER DEFAULT 1,
-      max_connections INTEGER DEFAULT 0
+      max_connections INTEGER DEFAULT 0,
+      last_epg_update INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS provider_channels (
@@ -243,6 +244,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserMaxConnections(db);
             migrations.migrateProviderMaxConnections(db);
             migrations.migrateCurrentStreamsProviderId(db);
+            migrations.migrateProviderLastEpgUpdate(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
