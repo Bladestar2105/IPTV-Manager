@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 import db from '../database/db.js';
 import { performSync } from './syncService.js';
-import { updateEpgSource, updateProviderEpg, pruneOldEpgData, getLastEpgUpdate } from './epgService.js';
+import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 let syncInterval = null;
