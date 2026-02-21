@@ -44,6 +44,7 @@ vi.mock('../../src/utils/crypto.js', () => ({
 vi.mock('../../src/utils/helpers.js', () => ({
   getBaseUrl: vi.fn(() => 'http://localhost'),
   isSafeUrl: vi.fn(() => Promise.resolve(true)),
+  safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4)),
 }));
 
 // We don't mock ffmpeg here because it's not strictly needed for m3u8 logic test,
@@ -123,8 +124,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
     req.query.transcode = 'true';
     vi.useFakeTimers();
 
-    await streamController.proxyLive(req, res);
+    const promise = streamController.proxyLive(req, res);
     await vi.runAllTimersAsync();
+    await promise;
 
     expect(streamManager.cleanupUser).toHaveBeenCalled();
     expect(streamManager.add).toHaveBeenCalled();
@@ -136,8 +138,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
     req.path = '/live/user/pass/1.ts';
     vi.useFakeTimers();
 
-    await streamController.proxyLive(req, res);
+    const promise = streamController.proxyLive(req, res);
     await vi.runAllTimersAsync();
+    await promise;
 
     expect(streamManager.cleanupUser).toHaveBeenCalled();
     expect(streamManager.add).toHaveBeenCalled();
