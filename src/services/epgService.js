@@ -1,6 +1,5 @@
 import fetch from 'node-fetch';
 import zlib from 'zlib';
-import readline from 'readline';
 import Database from 'better-sqlite3';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
@@ -52,11 +51,6 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             console.warn(`⚠️ Failed to peek stream, proceeding as plain text: ${e.message}`);
         }
 
-        const rl = readline.createInterface({
-            input: stream,
-            crlfDelay: Infinity
-        });
-
         const insertChannel = importDb.prepare(`
             INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
             VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
@@ -71,10 +65,6 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let programBatch = [];
         const BATCH_SIZE = 500;
 
-        let buffer = '';
-        let inChannel = false;
-        let inProgram = false;
-
         const processBatches = () => {
             if (channelBatch.length > 0 || programBatch.length > 0) {
                 const updateTx = importDb.transaction(() => {
@@ -87,40 +77,65 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             }
         };
 
-        for await (const line of rl) {
-            const trimmed = line.trim();
+        if (stream.setEncoding) {
+            stream.setEncoding('utf8');
+        }
 
-            // Channel Start
-            if (!inChannel && !inProgram && trimmed.startsWith('<channel')) {
-                inChannel = true;
-                buffer = trimmed;
-                if (trimmed.endsWith('/>') || trimmed.includes('</channel>')) {
-                    // One-liner or ends on same line
-                } else {
-                    continue;
+        let buffer = '';
+
+        for await (const chunk of stream) {
+            buffer += chunk;
+
+            while (true) {
+                const channelIdx = buffer.indexOf('<channel');
+                const progIdx = buffer.indexOf('<programme');
+
+                let startTag = null;
+                let startIndex = -1;
+
+                if (channelIdx !== -1 && (progIdx === -1 || channelIdx < progIdx)) {
+                    startTag = 'channel';
+                    startIndex = channelIdx;
+                } else if (progIdx !== -1) {
+                    startTag = 'programme';
+                    startIndex = progIdx;
                 }
-            }
 
-            // Programme Start
-            if (!inChannel && !inProgram && trimmed.startsWith('<programme')) {
-                inProgram = true;
-                buffer = trimmed;
-                if (trimmed.endsWith('/>') || trimmed.includes('</programme>')) {
-                     // One-liner or ends on same line
-                } else {
-                    continue;
+                if (startIndex === -1) {
+                    // Keep the last part of buffer in case a tag is split
+                    if (buffer.length > 50) {
+                        buffer = buffer.slice(-50);
+                    }
+                    break;
                 }
-            }
 
-            if (inChannel) {
-                if (buffer !== trimmed) buffer += ' ' + trimmed;
+                // Check for self-closing or end tag
+                const endTag = `</${startTag}>`;
+                const nextGT = buffer.indexOf('>', startIndex);
 
-                if (buffer.includes('</channel>') || buffer.endsWith('/>')) {
-                    inChannel = false;
-                    // Parse Channel
-                    const idMatch = buffer.match(/id=(["'])([\s\S]*?)\1/);
-                    const nameMatch = buffer.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
-                    const iconMatch = buffer.match(/<icon[^>]+src=(["'])([\s\S]*?)\1/);
+                if (nextGT === -1) {
+                    break; // Wait for more data
+                }
+
+                let endIndex = -1;
+                // Check if self-closing: ends with /> (ignoring spaces? standard XMLTV usually strict)
+                // But let's check correctly: buffer[nextGT-1] === '/'
+                if (buffer[nextGT - 1] === '/') {
+                    endIndex = nextGT + 1;
+                } else {
+                    const endTagIdx = buffer.indexOf(endTag, startIndex);
+                    if (endTagIdx === -1) {
+                        break; // Wait for more data
+                    }
+                    endIndex = endTagIdx + endTag.length;
+                }
+
+                const element = buffer.substring(startIndex, endIndex);
+
+                if (startTag === 'channel') {
+                    const idMatch = element.match(/id=(["'])([\s\S]*?)\1/);
+                    const nameMatch = element.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
+                    const iconMatch = element.match(/<icon[^>]+src=(["'])([\s\S]*?)\1/);
 
                     if (idMatch) {
                         channelBatch.push({
@@ -132,27 +147,17 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                             updatedAt: now
                         });
                     }
-                    buffer = '';
-                }
-            }
-
-            if (inProgram) {
-                if (buffer !== trimmed) buffer += ' ' + trimmed;
-
-                if (buffer.includes('</programme>') || buffer.endsWith('/>')) {
-                    inProgram = false;
-                    // Parse Programme
-                    const startMatch = buffer.match(/start="([^"]+)"/);
-                    const stopMatch = buffer.match(/stop="([^"]+)"/);
-                    const channelMatch = buffer.match(/channel="([^"]+)"/);
-                    const titleMatch = buffer.match(/<title[^>]*>([^<]+)<\/title>/);
-                    const descMatch = buffer.match(/<desc[^>]*>([^<]+)<\/desc>/);
+                } else if (startTag === 'programme') {
+                    const startMatch = element.match(/start="([^"]+)"/);
+                    const stopMatch = element.match(/stop="([^"]+)"/);
+                    const channelMatch = element.match(/channel="([^"]+)"/);
+                    const titleMatch = element.match(/<title[^>]*>([^<]+)<\/title>/);
+                    const descMatch = element.match(/<desc[^>]*>([^<]+)<\/desc>/);
 
                     if (startMatch && stopMatch && channelMatch && titleMatch) {
                          const start = parseXmltvDate(startMatch[1]);
                          const stop = parseXmltvDate(stopMatch[1]);
 
-                         // Skip programs that ended more than 24h ago to save DB space immediately
                          if (stop > now - 86400) {
                              programBatch.push({
                                  channelId: channelMatch[1],
@@ -162,16 +167,18 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                                  stop,
                                  title: decodeXml(titleMatch[1]),
                                  desc: descMatch ? decodeXml(descMatch[1]) : '',
-                                 lang: '' // Language extraction if needed
+                                 lang: ''
                              });
                          }
                     }
-                    buffer = '';
                 }
-            }
 
-            if (channelBatch.length >= BATCH_SIZE || programBatch.length >= BATCH_SIZE) {
-                processBatches();
+                // Remove processed part
+                buffer = buffer.slice(endIndex);
+
+                if (channelBatch.length >= BATCH_SIZE || programBatch.length >= BATCH_SIZE) {
+                    processBatches();
+                }
             }
         }
 
