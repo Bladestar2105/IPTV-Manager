@@ -49,7 +49,7 @@ function removeToken() {
 function isTokenExpired() {
   const token = getToken();
   if (!token) return true;
-  
+
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
     return payload.exp * 1000 < Date.now();
@@ -67,16 +67,16 @@ async function fetchJSON(url, options = {}) {
       'Authorization': `Bearer ${token}`
     };
   }
-  
+
   const res = await fetch(url, options);
-  
+
   // Handle token expiration
   if (res.status === 401 || res.status === 403) {
     removeToken();
     showLoginModal();
     throw new Error('Authentication required');
   }
-  
+
   if (!res.ok) {
     // Try to parse error response
     try {
@@ -230,7 +230,7 @@ function translatePage() {
     const key = el.getAttribute('data-i18n');
     el.textContent = t(key);
   });
-  
+
   // Platzhalter übersetzen
   document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
     const key = el.getAttribute('data-i18n-placeholder');
@@ -248,13 +248,13 @@ function translatePage() {
     const key = el.getAttribute('data-i18n-title');
     el.title = t(key);
   });
-  
+
   // HTML title
   document.title = t('title');
-  
+
   // HTML lang Attribut
   document.documentElement.lang = currentLang;
-  
+
   console.log(`🌍 Page translated to: ${currentLang}`);
 }
 
@@ -533,18 +533,18 @@ async function loadUsers() {
   updateStatsCounters('users', users.length);
   const list = document.getElementById('user-list');
   list.innerHTML = '';
-  
+
   users.forEach(u => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
-    
+
     const span = document.createElement('span');
     span.textContent = `${u.username} (id=${u.id})`;
     span.style.cursor = 'pointer';
     makeAccessible(span, () => {
       renderUserDetails(u);
     });
-    
+
     const btnGroup = document.createElement('div');
 
     const playBtn = document.createElement('button');
@@ -615,7 +615,7 @@ async function loadUsers() {
 
       loadUsers();
     };
-    
+
     btnGroup.appendChild(playBtn);
     if (currentUser && currentUser.is_admin) {
         btnGroup.appendChild(editBtn);
@@ -756,7 +756,7 @@ async function loadProviders(filterUserId = null) {
   providersToRender.forEach(p => {
     const li = document.createElement('li');
     li.className = 'list-group-item';
-    
+
     const epgStatus = p.epg_enabled ? '✅' : '❌';
     const lastUpdate = p.epg_last_updated ? new Date(p.epg_last_updated * 1000).toLocaleString() : t('never');
     const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h) | ${t('lastEpgUpdate')}: ${lastUpdate}</small>` : '';
@@ -778,10 +778,10 @@ async function loadProviders(filterUserId = null) {
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
     row.innerHTML = `<div><strong>${escapeHtml(p.name)}</strong> <small>(${escapeHtml(p.url)})</small>${ownerInfo}${expiryInfo}${epgInfo}</div>`;
-    
+
     const btnGroup = document.createElement('div');
     const isAdmin = currentUser && currentUser.is_admin;
-    
+
     if (isAdmin) {
         const editBtn = document.createElement('button');
         editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
@@ -835,7 +835,7 @@ async function loadProviders(filterUserId = null) {
         logsBtn.onclick = () => showSyncLogs(p.id);
         btnGroup.appendChild(logsBtn);
     }
-    
+
     if (isAdmin) {
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-danger';
@@ -962,12 +962,12 @@ async function loadUserCategories() {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = c.id;
-    
+
     // Adult-Kennzeichnung
     if (c.is_adult) {
       li.style.borderLeft = '4px solid #dc3545';
     }
-    
+
     // Checkbox
     const checkDiv = document.createElement('div');
     checkDiv.className = 'form-check d-flex align-items-center me-2 mb-0';
@@ -985,7 +985,7 @@ async function loadUserCategories() {
     dragHandle.innerHTML = '⋮⋮';
     dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
-    
+
     const span = document.createElement('span');
     span.textContent = c.is_adult ? `🔞 ${c.name}` : c.name; // textContent is safe
     span.style.cursor = 'pointer';
@@ -997,9 +997,9 @@ async function loadUserCategories() {
       loadUserCategoryChannels();
     });
     li.appendChild(span);
-    
+
     const btnGroup = document.createElement('div');
-    
+
     // Adult-Toggle Button
     const adultBtn = document.createElement('button');
     adultBtn.className = c.is_adult ? 'btn btn-sm btn-danger me-1' : 'btn btn-sm btn-outline-secondary me-1';
@@ -1015,7 +1015,7 @@ async function loadUserCategories() {
       loadUserCategories();
     };
     btnGroup.appendChild(adultBtn);
-    
+
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
     editBtn.textContent = t('edit');
@@ -1029,7 +1029,7 @@ async function loadUserCategories() {
       });
       loadUserCategories();
     };
-    
+
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
@@ -1040,14 +1040,14 @@ async function loadUserCategories() {
       await fetchJSON(`/api/user-categories/${c.id}`, {method: 'DELETE'});
       loadUserCategories();
     };
-    
+
     btnGroup.appendChild(editBtn);
     btnGroup.appendChild(delBtn);
     li.appendChild(btnGroup);
-    
+
     list.appendChild(li);
   });
-  
+
   // Sortable initialisieren
   initCategorySortable();
 }
@@ -1056,10 +1056,10 @@ function initCategorySortable() {
   if (categorySortable) {
     categorySortable.destroy();
   }
-  
+
   const list = document.getElementById('category-list');
   if (!list || list.children.length === 0) return;
-  
+
   try {
     categorySortable = Sortable.create(list, {
       animation: 150,
@@ -1097,7 +1097,7 @@ async function loadProviderCategories() {
 
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
-  
+
   if (!providerId) {
     alert(t('pleaseSelectProvider'));
     return;
@@ -1109,7 +1109,7 @@ async function loadProviderCategories() {
   const modalEl = document.getElementById('importCategoryModal');
   const list = document.getElementById('provider-categories-list');
   list.innerHTML = `<li class="list-group-item text-muted">${t('loadingCategories')}</li>`;
-  
+
   if (!modalEl.classList.contains('show')) {
       const modal = new bootstrap.Modal(modalEl);
       modal.show();
@@ -1128,16 +1128,16 @@ function renderProviderCategories() {
   const list = document.getElementById('provider-categories-list');
   const searchInput = document.getElementById('category-import-search');
   const search = searchInput.value.toLowerCase().trim();
-  
+
   list.innerHTML = '';
   updateSelectedCount();
-  
+
   if (!providerCategories || providerCategories.length === 0) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noCategoriesFound')}</li>`;
     return;
   }
 
-  const filtered = search 
+  const filtered = search
     ? providerCategories.filter(cat => cat.category_name.toLowerCase().includes(search))
     : providerCategories;
 
@@ -1149,7 +1149,7 @@ function renderProviderCategories() {
   filtered.forEach(cat => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex align-items-center';
-    
+
     if (cat.is_adult) {
       li.style.borderLeft = '4px solid #dc3545';
     }
@@ -1165,10 +1165,10 @@ function renderProviderCategories() {
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'flex-grow-1';
-    
+
     const row = document.createElement('div');
     row.className = 'd-flex justify-content-between align-items-center';
-    
+
     const info = document.createElement('div');
     const catNameDisplay = cat.is_adult ? `🔞 ${cat.category_name}` : cat.category_name;
     info.innerHTML = `
@@ -1176,27 +1176,27 @@ function renderProviderCategories() {
       <small class="text-muted">${cat.channel_count} ${escapeHtml(t('channels'))}</small>
     `;
     row.appendChild(info);
-    
+
     const btnGroup = document.createElement('div');
-    
+
     const importBtn = document.createElement('button');
     importBtn.className = 'btn btn-sm btn-primary me-1';
     importBtn.textContent = t('importCategoryOnly');
     importBtn.onclick = async () => {
       await importCategory(cat, false);
     };
-    
+
     const importWithChannelsBtn = document.createElement('button');
     importWithChannelsBtn.className = 'btn btn-sm btn-success';
     importWithChannelsBtn.textContent = t('importWithChannels');
     importWithChannelsBtn.onclick = async () => {
       await importCategory(cat, true);
     };
-    
+
     btnGroup.appendChild(importBtn);
     btnGroup.appendChild(importWithChannelsBtn);
     row.appendChild(btnGroup);
-    
+
     contentDiv.appendChild(row);
     li.appendChild(contentDiv);
     list.appendChild(li);
@@ -1296,18 +1296,18 @@ async function importCategory(cat, withChannels) {
       })
     });
 
-    let msg = withChannels 
+    let msg = withChannels
       ? t('categoryImportedWithChannels', {name: cat.category_name, count: result.channels_imported})
       : t('categoryImportedOnly', {name: cat.category_name});
-    
+
     if (result.is_adult) {
       msg += '\n' + t('markedAsAdultContent');
     }
-    
+
     alert(msg);
 
     loadUserCategories();
-    
+
     const modalEl = document.getElementById('importCategoryModal');
     const modalInstance = bootstrap.Modal.getInstance(modalEl);
     if (modalInstance) {
@@ -1325,7 +1325,7 @@ async function loadProviderChannels(reset = true) {
   const providerId = select.value;
   const searchInput = document.getElementById('channel-search');
   const list = document.getElementById('provider-channel-list');
-  
+
   if (!providerId) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
     searchInput.disabled = true;
@@ -1351,12 +1351,12 @@ async function fetchProviderChannels(reset) {
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
   const list = document.getElementById('provider-channel-list');
-  
+
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
 
   isLoadingChannels = true;
-  
+
   try {
     const url = `/api/providers/${providerId}/channels?type=${type}&page=${channelPage}&limit=${channelLimit}&search=${encodeURIComponent(channelSearch)}`;
     const res = await fetchJSON(url);
@@ -1387,7 +1387,7 @@ async function fetchProviderChannels(reset) {
 
 function renderProviderChannels(channels) {
   const list = document.getElementById('provider-channel-list');
-  
+
   // Update Header
   const availHeader = document.getElementById('available-channels-header');
   if (availHeader) availHeader.textContent = t('available', {count: channelTotal});
@@ -1400,11 +1400,11 @@ function renderProviderChannels(channels) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: channelSearch})}</li>`;
     return;
   }
-  
+
   channels.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
-    
+
     const nameSpan = document.createElement('span');
     nameSpan.textContent = ch.name; // textContent is safe
     nameSpan.title = ch.name; // Tooltip for full name
@@ -1412,7 +1412,7 @@ function renderProviderChannels(channels) {
     nameSpan.style.overflow = 'hidden';
     nameSpan.style.textOverflow = 'ellipsis';
     li.appendChild(nameSpan);
-    
+
     if (ch.logo) {
       const img = document.createElement('img');
       img.src = getProxiedUrl(ch.logo); // URL is attribute, relatively safe if protocol checked, but src should be fine
@@ -1423,7 +1423,7 @@ function renderProviderChannels(channels) {
       img.onerror = () => img.style.display = 'none';
       li.appendChild(img);
     }
-    
+
     const btn = document.createElement('button');
     btn.className = 'btn btn-sm btn-success ms-2';
     btn.textContent = t('add');
@@ -1465,11 +1465,11 @@ function renderProviderChannels(channels) {
         btn.textContent = originalText;
       }
     };
-    
+
     li.appendChild(btn);
     list.appendChild(li);
   });
-  
+
   // Check if we need "Load More" button
   const currentCount = list.children.length; // Approximate
   if (currentCount < channelTotal) {
@@ -1506,7 +1506,7 @@ async function loadUserCategoryChannels() {
   // Update Assigned Header
   const assignedHeader = document.getElementById('assigned-channels-header');
   if (assignedHeader) assignedHeader.textContent = t('assigned', {count: chans.length});
-  
+
   if (chans.length === 0) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noChannels')}</li>`;
     if (channelSortable) {
@@ -1515,12 +1515,12 @@ async function loadUserCategoryChannels() {
     }
     return;
   }
-  
+
   chans.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = ch.user_channel_id;
-    
+
     // Checkbox
     const checkDiv = document.createElement('div');
     checkDiv.className = 'form-check d-flex align-items-center me-2 mb-0';
@@ -1550,13 +1550,13 @@ async function loadUserCategoryChannels() {
     dragHandle.innerHTML = '⋮⋮';
     dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
-    
+
     const nameSpan = document.createElement('span');
     nameSpan.textContent = ch.name; // textContent is safe
     nameSpan.title = ch.name; // Tooltip for full name
     nameSpan.style.flex = '1';
     li.appendChild(nameSpan);
-    
+
     if (ch.logo) {
       const img = document.createElement('img');
       img.src = getProxiedUrl(ch.logo);
@@ -1567,7 +1567,7 @@ async function loadUserCategoryChannels() {
       img.onerror = () => img.style.display = 'none';
       li.appendChild(img);
     }
-    
+
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger ms-2';
     delBtn.textContent = t('delete');
@@ -1577,11 +1577,11 @@ async function loadUserCategoryChannels() {
       await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
       loadUserCategoryChannels();
     };
-    
+
     li.appendChild(delBtn);
     list.appendChild(li);
   });
-  
+
   // Sortable initialisieren
   initChannelSortable();
 }
@@ -1590,10 +1590,10 @@ function initChannelSortable() {
   if (channelSortable) {
     channelSortable.destroy();
   }
-  
+
   const list = document.getElementById('user-channel-list');
   if (!list || list.children.length === 0) return;
-  
+
   try {
     channelSortable = Sortable.create(list, {
       animation: 150,
@@ -1758,12 +1758,12 @@ async function showSyncConfigModal(providerId) {
     alert(t('pleaseSelectUserFirst'));
     return;
   }
-  
+
   const config = await loadSyncConfig(providerId, selectedUserId);
-  
+
   const modal = document.getElementById('sync-config-modal');
   const form = document.getElementById('sync-config-form');
-  
+
   // Set form values
   document.getElementById('sync-provider-id').value = providerId;
   document.getElementById('sync-user-id').value = selectedUserId;
@@ -1771,7 +1771,7 @@ async function showSyncConfigModal(providerId) {
   document.getElementById('sync-interval').value = config ? config.sync_interval : 'daily';
   document.getElementById('sync-auto-categories').checked = config ? config.auto_add_categories : true;
   document.getElementById('sync-auto-channels').checked = config ? config.auto_add_channels : true;
-  
+
   // Show last sync info if available
   const lastSyncInfo = document.getElementById('last-sync-info');
   if (config && config.last_sync) {
@@ -1781,7 +1781,7 @@ async function showSyncConfigModal(providerId) {
   } else {
     lastSyncInfo.classList.add('d-none');
   }
-  
+
   const bsModal = new bootstrap.Modal(modal);
   bsModal.show();
 }
@@ -1789,17 +1789,17 @@ async function showSyncConfigModal(providerId) {
 async function saveSyncConfig(e) {
   e.preventDefault();
   const form = e.target;
-  
+
   const providerId = Number(form['sync-provider-id'].value);
   const userId = Number(form['sync-user-id'].value);
   const enabled = form['sync-enabled'].checked;
   const syncInterval = form['sync-interval'].value;
   const autoCategories = form['sync-auto-categories'].checked;
   const autoChannels = form['sync-auto-channels'].checked;
-  
+
   try {
     const config = await loadSyncConfig(providerId, userId);
-    
+
     if (config) {
       // Update existing
       await fetchJSON(`/api/sync-configs/${config.id}`, {
@@ -1827,7 +1827,7 @@ async function saveSyncConfig(e) {
         })
       });
     }
-    
+
     alert(t('syncConfigSaved'));
     bootstrap.Modal.getInstance(document.getElementById('sync-config-modal')).hide();
   } catch (e) {
@@ -1840,13 +1840,13 @@ async function showSyncLogs(providerId) {
     alert(t('pleaseSelectUserFirst'));
     return;
   }
-  
+
   try {
     const logs = await fetchJSON(`/api/sync-logs?provider_id=${providerId}&user_id=${selectedUserId}&limit=20`);
-    
+
     const tbody = document.getElementById('sync-logs-tbody');
     tbody.innerHTML = '';
-    
+
     if (logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="text-center">' + t('noSyncLogs') + '</td></tr>';
     } else {
@@ -1854,7 +1854,7 @@ async function showSyncLogs(providerId) {
         const tr = document.createElement('tr');
         const date = new Date(log.sync_time * 1000);
         const statusClass = log.status === 'success' ? 'success' : 'danger';
-        
+
         tr.innerHTML = `
           <td>${date.toLocaleString()}</td>
           <td><span class="badge bg-${statusClass}">${log.status}</span></td>
@@ -1866,7 +1866,7 @@ async function showSyncLogs(providerId) {
         tbody.appendChild(tr);
       });
     }
-    
+
     const modal = new bootstrap.Modal(document.getElementById('sync-logs-modal'));
     modal.show();
   } catch (e) {
@@ -1885,31 +1885,31 @@ async function loadEpgSources() {
     updateStatsCounters('epg', sources.length);
     const list = document.getElementById('epg-sources-list');
     list.innerHTML = '';
-    
+
     if (sources.length === 0) {
       list.innerHTML = `<li class="list-group-item text-muted">${t('noEpgSourcesConfigured')}</li>`;
       return;
     }
-    
+
     sources.forEach(source => {
       const li = document.createElement('li');
       li.className = 'list-group-item d-flex justify-content-between align-items-center';
-      
+
       const isProvider = typeof source.id === 'string' && source.id.startsWith('provider_');
       const lastUpdate = source.last_update ? new Date(source.last_update * 1000).toLocaleString() : t('never');
       const isUpdating = source.is_updating ? `🔄 ${t('updating')}` : '';
       const enabledStatus = source.enabled ? `✅ ${t('enabled')}` : `❌ ${t('disable')}`;
-      
+
       const info = document.createElement('div');
       info.innerHTML = `
         <strong>${escapeHtml(source.name)}</strong>
         <br><small class="text-muted">${escapeHtml(source.url)}</small>
         <br><small>${enabledStatus} | ${t('updateInterval')}: ${source.update_interval / 3600}h | ${t('lastEpgUpdate')}: ${lastUpdate} ${isUpdating}</small>
       `;
-      
+
       const btnGroup = document.createElement('div');
       btnGroup.className = 'd-flex gap-1';
-      
+
       // Update button
       const updateBtn = document.createElement('button');
       updateBtn.className = 'btn btn-sm btn-outline-info';
@@ -1929,9 +1929,9 @@ async function loadEpgSources() {
           setLoadingState(updateBtn, false);
         }
       };
-      
+
       btnGroup.appendChild(updateBtn);
-      
+
       // Only show edit/toggle/delete for non-provider sources
       if (!isProvider) {
         const editBtn = document.createElement('button');
@@ -1940,7 +1940,7 @@ async function loadEpgSources() {
         editBtn.title = t('edit');
         editBtn.setAttribute('aria-label', t('edit'));
         editBtn.onclick = () => showEditEpgSourceModal(source);
-        
+
         const toggleBtn = document.createElement('button');
         toggleBtn.className = `btn btn-sm ${source.enabled ? 'btn-warning' : 'btn-success'}`;
         toggleBtn.textContent = source.enabled ? t('disable') : t('enable');
@@ -1952,7 +1952,7 @@ async function loadEpgSources() {
           });
           loadEpgSources();
         };
-        
+
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-danger';
         delBtn.textContent = '🗑';
@@ -1963,12 +1963,12 @@ async function loadEpgSources() {
           await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
           loadEpgSources();
         };
-        
+
         btnGroup.appendChild(editBtn);
         btnGroup.appendChild(toggleBtn);
         btnGroup.appendChild(delBtn);
       }
-      
+
       li.appendChild(info);
       li.appendChild(btnGroup);
       list.appendChild(li);
@@ -1992,7 +1992,7 @@ async function editEpgSource(e) {
   e.preventDefault();
   const form = e.target;
   const id = form['edit-epg-source-id'].value;
-  
+
   try {
     await fetchJSON(`/api/epg-sources/${id}`, {
       method: 'PUT',
@@ -2004,7 +2004,7 @@ async function editEpgSource(e) {
         update_interval: Number(form['edit-epg-update-interval'].value)
       })
     });
-    
+
     bootstrap.Modal.getInstance(document.getElementById('edit-epg-source-modal')).hide();
     loadEpgSources();
     alert(t('epgSourceUpdated'));
@@ -2022,7 +2022,7 @@ async function showAddEpgSourceModal() {
 async function addEpgSource(e) {
   e.preventDefault();
   const form = e.target;
-  
+
   try {
     await fetchJSON('/api/epg-sources', {
       method: 'POST',
@@ -2035,7 +2035,7 @@ async function addEpgSource(e) {
         source_type: 'custom'
       })
     });
-    
+
     bootstrap.Modal.getInstance(document.getElementById('add-epg-source-modal')).hide();
     loadEpgSources();
     alert(t('epgSourceAdded'));
@@ -2047,10 +2047,10 @@ async function addEpgSource(e) {
 async function showBrowseEpgSourcesModal() {
   const modal = new bootstrap.Modal(document.getElementById('browse-epg-sources-modal'));
   modal.show();
-  
+
   const list = document.getElementById('available-epg-sources-list');
   list.innerHTML = `<li class="list-group-item text-muted">${t('loading')}</li>`;
-  
+
   try {
     availableEpgSources = await fetchJSON('/api/epg-sources/available');
     renderAvailableEpgSources();
@@ -2062,28 +2062,28 @@ async function showBrowseEpgSourcesModal() {
 function renderAvailableEpgSources() {
   const list = document.getElementById('available-epg-sources-list');
   const search = document.getElementById('epg-browse-search').value.toLowerCase();
-  
-  const filtered = availableEpgSources.filter(s => 
+
+  const filtered = availableEpgSources.filter(s =>
     s.name.toLowerCase().includes(search)
   );
-  
+
   list.innerHTML = '';
-  
+
   if (filtered.length === 0) {
     list.innerHTML = `<li class="list-group-item text-muted">${t('noSourcesFound')}</li>`;
     return;
   }
-  
+
   filtered.forEach(source => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
-    
+
     const info = document.createElement('div');
     info.innerHTML = `
       <strong>${escapeHtml(source.name)}</strong>
       <br><small class="text-muted">${(source.size / 1024 / 1024).toFixed(2)} MB</small>
     `;
-    
+
     const addBtn = document.createElement('button');
     addBtn.className = 'btn btn-sm btn-primary';
     addBtn.textContent = t('add');
@@ -2100,14 +2100,14 @@ function renderAvailableEpgSources() {
             source_type: 'globetv'
           })
         });
-        
+
         alert(t('epgSourceAddedName', {name: source.name}));
         loadEpgSources();
       } catch (e) {
         alert(t('errorPrefix') + ' ' + e.message);
       }
     };
-    
+
     li.appendChild(info);
     li.appendChild(addBtn);
     list.appendChild(li);
@@ -2271,7 +2271,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Seite übersetzen
   translatePage();
-  
+
   document.getElementById('xtream-url').value = window.location.origin;
   document.getElementById('xtream-user').value = '-';
   document.getElementById('xtream-pass').value = t('passwordPlaceholder');
@@ -2282,12 +2282,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const baseUrl = window.location.origin;
       m3uLinkEl.value = `${baseUrl}/get.php?username=DUMMY&password=DUMMY&type=m3u_plus&output=ts`;
   }
-  
+
   const importBtn = document.getElementById('import-categories-btn');
   if (importBtn) {
     importBtn.addEventListener('click', loadProviderCategories);
   }
-  
+
   const catSearch = document.getElementById('category-import-search');
   if (catSearch) {
     catSearch.addEventListener('input', renderProviderCategories);
@@ -2351,22 +2351,22 @@ document.addEventListener('DOMContentLoaded', () => {
   if (resetStatsBtn) {
       resetStatsBtn.addEventListener('click', resetStatistics);
   }
-  
+
   const syncConfigForm = document.getElementById('sync-config-form');
   if (syncConfigForm) {
     syncConfigForm.addEventListener('submit', saveSyncConfig);
   }
-  
+
   const addEpgSourceBtn = document.getElementById('add-epg-source-btn');
   if (addEpgSourceBtn) {
     addEpgSourceBtn.addEventListener('click', showAddEpgSourceModal);
   }
-  
+
   const browseEpgSourcesBtn = document.getElementById('browse-epg-sources-btn');
   if (browseEpgSourcesBtn) {
     browseEpgSourcesBtn.addEventListener('click', showBrowseEpgSourcesModal);
   }
-  
+
   const updateAllEpgBtn = document.getElementById('update-all-epg-btn');
   if (updateAllEpgBtn) {
     updateAllEpgBtn.addEventListener('click', async () => {
@@ -2385,22 +2385,22 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-  
+
   const addEpgSourceForm = document.getElementById('add-epg-source-form');
   if (addEpgSourceForm) {
     addEpgSourceForm.addEventListener('submit', addEpgSource);
   }
-  
+
   const editEpgSourceForm = document.getElementById('edit-epg-source-form');
   if (editEpgSourceForm) {
     editEpgSourceForm.addEventListener('submit', editEpgSource);
   }
-  
+
   const epgBrowseSearch = document.getElementById('epg-browse-search');
   if (epgBrowseSearch) {
     epgBrowseSearch.addEventListener('input', renderAvailableEpgSources);
   }
-  
+
   // EPG Mapping Events
   const epgMappingProviderSelect = document.getElementById('epg-mapping-provider-select');
   if (epgMappingProviderSelect) {
@@ -2615,7 +2615,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (availHeader) availHeader.textContent = t('available', {count: 0});
   const assignedHeader = document.getElementById('assigned-channels-header');
   if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
-  
+
   // Initialize clearable inputs
   ['channel-search', 'epg-mapping-search', 'category-import-search', 'epg-browse-search', 'epg-select-search'].forEach(id => {
       initClearableInput(id);
@@ -3598,16 +3598,16 @@ function hideLoginModal() {
 
 async function checkAuthentication() {
   const token = getToken();
-  
+
   if (!token || isTokenExpired()) {
     showLoginModal();
     return false;
   }
-  
+
   try {
     const res = await fetchJSON('/api/verify-token');
     currentUser = res.user;
-    
+
     // Apply role-based UI
     if (currentUser.force_password_change) {
         showChangePasswordModal();
@@ -3621,7 +3621,7 @@ async function checkAuthentication() {
     // Show the main UI if token is valid
     document.getElementById('main-navbar').classList.remove('d-none');
     document.getElementById('main-content').classList.remove('d-none');
-    
+
     loadUsers();
     loadProviders();
     loadEpgSources();
@@ -3677,23 +3677,23 @@ function applyPermissions() {
 
 async function handleLogin(event) {
   event.preventDefault();
-  
+
   const username = document.getElementById('login-username').value;
   const password = document.getElementById('login-password').value;
   const otpCode = document.getElementById('login-otp').value;
   const loginBtn = document.getElementById('login-btn');
   const errorDiv = document.getElementById('login-error');
   const otpGroup = document.getElementById('login-otp-group');
-  
+
   if (!username || !password) {
     errorDiv.textContent = t('missing_credentials');
     errorDiv.classList.remove('d-none');
     return;
   }
-  
+
   setLoadingState(loginBtn, true, 'logging_in');
   errorDiv.classList.add('d-none');
-  
+
   try {
     const body = { username, password };
     if (otpCode) body.otp_code = otpCode;
@@ -3703,7 +3703,7 @@ async function handleLogin(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    
+
     const data = await response.json();
 
     if (response.status === 401 && data.require_otp) {
@@ -3719,10 +3719,10 @@ async function handleLogin(event) {
     if (!response.ok) {
       throw new Error(data.error || 'login_failed');
     }
-    
+
     setToken(data.token);
     currentUser = data.user;
-    
+
     hideLoginModal();
 
     if (currentUser.force_password_change) {
@@ -3733,15 +3733,15 @@ async function handleLogin(event) {
     }
 
     applyPermissions();
-    
+
     // Show the main UI after successful login
     document.getElementById('main-navbar').classList.remove('d-none');
     document.getElementById('main-content').classList.remove('d-none');
-    
+
     loadUsers();
     loadProviders();
     loadEpgSources();
-    
+
     if (globalStatsInterval) clearInterval(globalStatsInterval);
     globalStatsInterval = setInterval(updateDashboardCounters, 15000);
     updateDashboardCounters();
@@ -3751,7 +3751,7 @@ async function handleLogin(event) {
     document.getElementById('login-password').value = '';
     document.getElementById('login-otp').value = '';
     otpGroup.classList.add('d-none');
-    
+
   } catch (error) {
     if (error.message === 'otp_required') {
        // Just stop, UI is updated
@@ -3834,7 +3834,7 @@ function handleLogout() {
   selectedUser = null;
   selectedUserId = null;
   selectedCategoryId = null;
-  
+
   if (globalStatsInterval) {
       clearInterval(globalStatsInterval);
       globalStatsInterval = null;
@@ -3843,7 +3843,7 @@ function handleLogout() {
   // Hide the main UI when logging out
   document.getElementById('main-navbar').classList.add('d-none');
   document.getElementById('main-content').classList.add('d-none');
-  
+
   showLoginModal();
 }
 
@@ -3857,7 +3857,7 @@ function showChangePasswordModal() {
     document.getElementById('confirm-password').value = '';
     document.getElementById('change-password-error').classList.add('d-none');
     document.getElementById('change-password-success').classList.add('d-none');
-    
+
     const bsModal = new bootstrap.Modal(modal);
     bsModal.show();
   }
@@ -3865,34 +3865,34 @@ function showChangePasswordModal() {
 
 async function handleChangePassword(event) {
   event.preventDefault();
-  
+
   const oldPassword = document.getElementById('old-password').value;
   const newPassword = document.getElementById('new-password').value;
   const confirmPassword = document.getElementById('confirm-password').value;
   const changePasswordBtn = document.getElementById('change-password-btn');
   const errorDiv = document.getElementById('change-password-error');
   const successDiv = document.getElementById('change-password-success');
-  
+
   // Hide previous messages
   errorDiv.classList.add('d-none');
   successDiv.classList.add('d-none');
-  
+
   // Validate passwords match
   if (newPassword !== confirmPassword) {
     errorDiv.textContent = t('passwords_dont_match');
     errorDiv.classList.remove('d-none');
     return;
   }
-  
+
   // Validate password length
   if (newPassword.length < 8) {
     errorDiv.textContent = t('password_too_short');
     errorDiv.classList.remove('d-none');
     return;
   }
-  
+
   setLoadingState(changePasswordBtn, true, 'changing_password');
-  
+
   try {
     const response = await fetch('/api/change-password', {
       method: 'POST',
@@ -3906,22 +3906,22 @@ async function handleChangePassword(event) {
         confirmPassword
       })
     });
-    
+
     const data = await response.json();
-    
+
     if (!response.ok) {
       throw new Error(data.error || 'change_password_failed');
     }
-    
+
     // Success
     successDiv.textContent = t('password_changed_successfully');
     successDiv.classList.remove('d-none');
-    
+
     // Clear form
     document.getElementById('old-password').value = '';
     document.getElementById('new-password').value = '';
     document.getElementById('confirm-password').value = '';
-    
+
     // Close modal after 2 seconds
     setTimeout(() => {
       const modal = bootstrap.Modal.getInstance(document.getElementById('change-password-modal'));
@@ -3938,7 +3938,7 @@ async function handleChangePassword(event) {
           loadEpgSources();
       }
     }, 2000);
-    
+
   } catch (error) {
     errorDiv.textContent = t(error.message) || t('change_password_failed');
     errorDiv.classList.remove('d-none');
