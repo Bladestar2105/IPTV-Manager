@@ -97,26 +97,7 @@ export const getEpgSources = (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT * FROM epg_sources ORDER BY name').all();
 
-    const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval, epg_enabled FROM providers").all();
-
-    // Check main DB for provider status?
-    // Actually epg_sources table tracks custom sources status.
-    // Provider status is not tracked in epg_sources table in DB schema?
-    // Providers table has epg_update_interval.
-    // Status (last_update) is not in providers table?
-    // Wait, the old code used file stats to determine last update for providers.
-    // Since we now store in DB, we should track last update somewhere.
-    // I added updated_at to epg_channels table.
-    // I can query epg_channels table for MAX(updated_at) for a source?
-    // Or I should add last_epg_update column to providers table?
-    // I didn't add that in migration.
-    // For now, I can query MAX(updated_at) from epg_channels if needed, or just return 0.
-    // Or update providers table?
-    // I'll stick to returning 0 or simple check for now to avoid schema changes if not strictly needed.
-    // Or check epg_sources logic.
-    // Custom sources have last_update column.
-    // Providers don't.
-    // I'll leave last_update as 0 for providers for now or try to infer it.
+    const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval, epg_enabled, last_epg_update FROM providers").all();
 
     const allSources = [
       ...providers.map(p => {
@@ -125,7 +106,7 @@ export const getEpgSources = (req, res) => {
           name: `${p.name} (Provider EPG)`,
           url: p.epg_url,
           enabled: p.epg_enabled !== 0,
-          last_update: 0, // Not tracked in DB easily without query
+          last_update: p.last_epg_update || 0,
           update_interval: p.epg_update_interval || 86400,
           source_type: 'provider',
           is_updating: 0
