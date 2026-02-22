@@ -21,3 +21,7 @@
 ## 2025-05-23 - [Accessible Form Help Text]
 **Learning:** Helper text placed adjacent to inputs (like instructions for date formats or password requirements) is often visually associated but programmatically disconnected for screen reader users.
 **Action:** Assign unique IDs to helper text elements (e.g., `id="password-help"`) and explicitly link them to their inputs using `aria-describedby="password-help"`. Ensure labels also have `for` attributes matching input `id`s.
+
+## 2026-02-21 - [Accessible Copy Feedback]
+**Learning:** The existing `copyToClipboard` utility updated the visual button state (icon/text) but failed to update the accessible name (`aria-label`) or tooltip (`title`), leaving screen reader users unaware of the success state.
+**Action:** Updated the shared `copyToClipboard` function to dynamically set `aria-label` and `title` to "Copied!" during the success timeout, and added a toast notification for redundant, assertive feedback.
