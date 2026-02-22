@@ -4,6 +4,7 @@ import app from '../../src/app.js';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
+import { Readable } from 'stream';
 
 // Mock dependencies
 vi.mock('node-fetch');
@@ -71,7 +72,8 @@ describe('Picon Cache', () => {
     fetch.mockResolvedValue({
       ok: true,
       headers: { get: () => 'image/png' },
-      arrayBuffer: async () => mockBuffer
+      arrayBuffer: async () => mockBuffer,
+      body: Readable.from(mockBuffer)
     });
 
     const res = await request(app).get('/api/proxy/image?url=http://example.com/logo.png');

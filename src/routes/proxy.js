@@ -116,9 +116,24 @@ router.get('/image', authenticateToken, async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=86400');
     }
 
-    // Buffer and Save
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    // Limit and Buffer
+    const MAX_SIZE = 5 * 1024 * 1024; // 5MB limit
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && parseInt(contentLength) > MAX_SIZE) {
+        return res.status(413).send('Image too large');
+    }
+
+    const chunks = [];
+    let received = 0;
+
+    for await (const chunk of response.body) {
+        received += chunk.length;
+        if (received > MAX_SIZE) {
+             throw new Error('Image too large');
+        }
+        chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
 
     // Save to Cache
     // We only save if it looks like an image? content-type check passed above.
@@ -147,6 +162,10 @@ router.get('/image', authenticateToken, async (req, res) => {
 
     if (error.code === 'ETIMEDOUT') {
       return res.status(504).send('Gateway Timeout');
+    }
+
+    if (error.message === 'Image too large') {
+        return res.status(413).send('Image too large');
     }
 
     res.status(500).send('Internal Server Error');
