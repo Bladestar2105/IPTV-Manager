@@ -446,8 +446,11 @@ export class ChannelMatcher {
     }
 
     // Optimization: Prune candidates based on length if threshold is set
+    // This defines the valid range of candidate lengths (popcounts) that can mathematically achieve the threshold score
     let minLen = 0;
     let maxLen = Infinity;
+
+    // Initialize bounds based on initial threshold (if provided)
     if (threshold > 0) {
         const lenA = searchLen;
         // B >= A * T / (2 - T)
@@ -458,14 +461,17 @@ export class ChannelMatcher {
 
     let bestScore = -1;
     let bestCand = null;
+    // Track the best score to beat (starts at threshold or 0)
+    let currentMaxScore = threshold > 0 ? threshold : 0;
 
     for (const cand of candidates) {
-        // Length check optimization
-        if (threshold > 0) {
-            // Use signaturePopcount property instead of bigrams.size to save memory
-            const lenB = cand.signaturePopcount !== undefined ? cand.signaturePopcount : (cand.bigrams ? cand.bigrams.size : 0);
-            if (lenB < minLen || lenB > maxLen) continue;
-        }
+        // Use signaturePopcount property instead of bigrams.size to save memory
+        const lenB = cand.signaturePopcount !== undefined ? cand.signaturePopcount : (cand.bigrams ? cand.bigrams.size : 0);
+
+        // Dynamic length check optimization
+        // As we find better matches, we tighten minLen/maxLen (see below)
+        // This implicitly handles the static threshold check as well
+        if (lenB < minLen || lenB > maxLen) continue;
 
         let score = 0;
         if (searchBaseName === cand.baseName) {
@@ -498,6 +504,17 @@ export class ChannelMatcher {
         if (score > bestScore) {
             bestScore = score;
             bestCand = cand;
+
+            // Optimization: Update dynamic bounds if we found a better match
+            // This allows us to skip more candidates in subsequent iterations
+            if (score > currentMaxScore) {
+                currentMaxScore = score;
+                // Update length bounds for pruning based on new best score
+                // B >= A * S / (2 - S)
+                minLen = Math.ceil(searchLen * score / (2 - score));
+                // B <= A * (2 - S) / S
+                maxLen = Math.floor(searchLen * (2 - score) / score);
+            }
         }
     }
 
