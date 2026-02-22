@@ -80,10 +80,8 @@ router.get('/image', authenticateToken, async (req, res) => {
       return;
     }
 
-    // 1. Fetch Image with Standard Fetch (Bypassing strict safeLookup for picons as requested)
-    // We still want to avoid following redirects to unsafe places if possible, but standard fetch follows redirects by default.
-    // The user explicitly said "Proxy is not needed", implying standard fetch is desired.
-    const response = await fetch(url, {
+    // 1. Fetch Image with fetchSafe (Enforcing safeLookup and isSafeUrl for SSRF protection)
+    const response = await fetchSafe(url, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
