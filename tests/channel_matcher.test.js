@@ -74,10 +74,11 @@ describe('ChannelMatcher', () => {
 
         // Check removed properties
         expect(item.parsed).toBeUndefined(); // Flattened
-        expect(item.bigramCount).toBeUndefined(); // Removed
 
         // Check new/renamed properties
         expect(item.signaturePopcount).toBeDefined();
         expect(item.signaturePopcount).toBeGreaterThan(0);
+        expect(item.bigramCount).toBeDefined(); // Re-added as proxy for popcount
+        expect(item.bigramCount).toBe(item.signaturePopcount);
     });
 });

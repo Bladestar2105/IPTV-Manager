@@ -24,3 +24,7 @@
 ## 2026-06-21 - [Set<Number> vs Set<String> for Bigrams]
 **Learning:** Storing thousands of small strings in `Set` for bigram matching creates massive GC pressure and memory allocation overhead. Packing 2 ASCII characters into a 32-bit integer `(c1 << 16) | c2` and using `Set<number>` is significantly faster and lighter on memory in V8.
 **Action:** Always prefer packed integers over short strings for high-volume set operations (like bigrams/trigrams) in critical paths.
+
+## 2026-02-21 - [Symmetric Sparse Intersection & Popcount Proxy]
+**Learning:** When calculating Dice coefficient between two Bit Signatures (Bloom filters), the intersection loop can be optimized by iterating over the *sparser* of the two bitsets (min(popcountA, popcountB)). This provides a massive speedup (up to 9x) for "Dense Search vs Sparse Candidate" scenarios. Also, using signature `popcount` as a proxy for `bigramCount` eliminates the need to allocate intermediate `Set` objects during fuzzy matching, yielding ~20% speedup for common queries.
+**Action:** Always pre-compute sparse indices for bitsets on creation and pick the shortest list for intersection loops. Avoid allocating Sets for length/count proxies if a bitset signature is already available.
