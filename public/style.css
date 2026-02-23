@@ -562,12 +562,21 @@ span {
   opacity: 0.8;
 }
 .drag-handle {
-  cursor: move;
+  cursor: grab;
   padding: 0 8px;
-  color: #999;
+  color: var(--tv-text-muted);
+  transition: all 0.2s ease;
+  font-size: 1.2em;
 }
 .drag-handle:hover {
-  color: #333;
+  color: var(--tv-blue-light);
+  cursor: grab;
+  transform: scale(1.1);
+}
+.drag-handle:active {
+  cursor: grabbing;
+  color: var(--tv-cyan);
+  transform: scale(0.95);
 }
 .lang-switcher {
   position: fixed;
