@@ -30,7 +30,9 @@ vi.mock('../src/utils/crypto.js', () => ({
 }));
 
 vi.mock('../src/utils/helpers.js', () => ({
-    isAdultCategory: () => false
+    isAdultCategory: () => false,
+    safeLookup: vi.fn(),
+    isSafeUrl: vi.fn().mockResolvedValue(true)
 }));
 
 // Also need to mock playlist_parser since it's imported

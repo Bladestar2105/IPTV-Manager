@@ -1,19 +1,15 @@
-import fetch from 'node-fetch';
 import zlib from 'zlib';
 import Database from 'better-sqlite3';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
-import { isSafeUrl } from '../utils/helpers.js';
+import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
-    if (!(await isSafeUrl(url))) {
-        throw new Error(`Unsafe URL blocked: ${url}`);
-    }
-
     console.log(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
-    const response = await fetch(url);
+    // fetchSafe performs isSafeUrl check
+    const response = await fetchSafe(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     // Update status in main DB

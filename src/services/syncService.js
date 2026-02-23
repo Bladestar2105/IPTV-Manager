@@ -1,6 +1,6 @@
-import fetch from 'node-fetch';
 import { Xtream } from '@iptv/xtream-api';
 import db from '../database/db.js';
+import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory } from '../utils/helpers.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
@@ -22,7 +22,7 @@ export async function checkProviderExpiry(providerId) {
     const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(password)}`;
 
     // Use fetch directly to get user_info
-    const resp = await fetch(`${baseUrl}/player_api.php?${authParams}`);
+    const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}`);
     if (!resp.ok) return null;
 
     const data = await resp.json();
@@ -98,7 +98,7 @@ export async function performSync(providerId, userId, isManual = false) {
          liveChans = await xtream.getChannels();
        } catch {
           try {
-             const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`);
+             const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`);
              if (resp.ok) {
                  const contentType = resp.headers.get('content-type');
                  if (contentType && contentType.includes('application/json')) {
@@ -112,7 +112,7 @@ export async function performSync(providerId, userId, isManual = false) {
        if (!Array.isArray(liveChans) || liveChans.length === 0) {
            try {
              // Try fetching as M3U
-             const m3uResp = await fetch(provider.url); // Use original URL
+             const m3uResp = await fetchSafe(provider.url); // Use original URL
              if (m3uResp.ok) {
                  const parsed = await parseM3uStream(m3uResp.body);
                  if (parsed.isM3u) {
@@ -168,7 +168,7 @@ export async function performSync(providerId, userId, isManual = false) {
        }
 
        if (!m3uMode) {
-           const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_live_categories`);
+           const respCat = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_categories`);
            if(respCat.ok) {
               const cats = await respCat.json();
               if (Array.isArray(cats)) {
@@ -181,7 +181,7 @@ export async function performSync(providerId, userId, isManual = false) {
     // 2. Movies (VOD)
     try {
        console.log('Fetching VOD streams...');
-       const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`);
+       const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`);
        if(resp.ok) {
          const vods = await resp.json();
          console.log(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
@@ -196,7 +196,7 @@ export async function performSync(providerId, userId, isManual = false) {
          console.error(`VOD fetch failed: ${resp.status}`);
        }
 
-       const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_vod_categories`);
+       const respCat = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_categories`);
        if(respCat.ok) {
           const cats = await respCat.json();
           if (Array.isArray(cats)) {
@@ -207,7 +207,7 @@ export async function performSync(providerId, userId, isManual = false) {
 
     // 3. Series
     try {
-       const resp = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_series`);
+       const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series`);
        if(resp.ok) {
          const series = await resp.json();
          if (Array.isArray(series)) {
@@ -222,7 +222,7 @@ export async function performSync(providerId, userId, isManual = false) {
          }
        }
 
-       const respCat = await fetch(`${baseUrl}/player_api.php?${authParams}&action=get_series_categories`);
+       const respCat = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_categories`);
        if(respCat.ok) {
           const cats = await respCat.json();
           if (Array.isArray(cats)) {

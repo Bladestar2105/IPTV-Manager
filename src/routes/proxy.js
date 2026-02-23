@@ -1,19 +1,12 @@
 import express from 'express';
-import fetch from 'node-fetch';
-import http from 'http';
-import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { isSafeUrl, safeLookup } from '../utils/helpers.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { CACHE_DIR } from '../config/constants.js';
+import { fetchSafe } from '../utils/network.js';
 
 const router = express.Router();
-
-// Custom Agents with DNS Rebinding Protection
-const httpAgent = new http.Agent({ lookup: safeLookup });
-const httpsAgent = new https.Agent({ lookup: safeLookup });
 
 // Picon Cache Directory
 const PICON_CACHE_DIR = path.join(CACHE_DIR, 'picons');
@@ -27,33 +20,6 @@ function ensureCacheDir() {
 
 // Initial check
 ensureCacheDir();
-
-export async function fetchSafe(url, options = {}, redirectCount = 0) {
-  if (redirectCount > 5) {
-    throw new Error('Too many redirects');
-  }
-
-  // Ensure URL is valid and safe
-  if (!(await isSafeUrl(url))) {
-    throw new Error(`Unsafe URL: ${url}`);
-  }
-
-  const fetchOptions = {
-    ...options,
-    redirect: 'manual',
-    agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent),
-  };
-
-  const response = await fetch(url, fetchOptions);
-
-  if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
-    const location = response.headers.get('location');
-    const nextUrl = new URL(location, url).toString(); // Handle relative URLs
-    return fetchSafe(nextUrl, options, redirectCount + 1);
-  }
-
-  return response;
-}
 
 router.get('/image', authenticateToken, async (req, res) => {
   const { url } = req.query;
