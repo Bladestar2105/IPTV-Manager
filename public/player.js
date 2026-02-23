@@ -252,12 +252,18 @@
         if (matches) {
           matches.forEach(function(m) {
             var eqIdx = m.indexOf('=');
-            var key = m.substring(0, eqIdx);
+            var key = m.substring(0, eqIdx).toLowerCase();
             var val = m.substring(eqIdx + 2, m.length - 1);
             if (key === 'group-title') currentItem.group = val;
             if (key === 'tvg-logo') currentItem.logo = val;
             if (key === 'tvg-id') currentItem.epg_id = val;
             if (key === 'plot') currentItem.plot = val;
+            if (key === 'cast') currentItem.cast = val;
+            if (key === 'director') currentItem.director = val;
+            if (key === 'genre') currentItem.genre = val;
+            if (key === 'releasedate' || key === 'releasedate') currentItem.releaseDate = val;
+            if (key === 'rating') currentItem.rating = val;
+            if (key === 'duration') currentItem.duration = val;
           });
         }
       } else if (line.startsWith('#KODIPROP:')) {
@@ -357,6 +363,28 @@
         plot.textContent = s.plot;
         info.appendChild(plot);
       }
+
+      var meta = document.createElement('div');
+      meta.className = 'small text-secondary mt-1';
+      meta.style.fontSize = '0.75rem';
+      var metaParts = [];
+      if (s.rating) metaParts.push('⭐ ' + s.rating);
+      if (s.duration) metaParts.push('⏱️ ' + s.duration + 'm');
+      if (s.genre) metaParts.push(s.genre);
+      if (s.releaseDate) metaParts.push(s.releaseDate);
+      if (metaParts.length > 0) {
+          meta.textContent = metaParts.join(' • ');
+          info.appendChild(meta);
+      }
+
+      if (s.cast) {
+         var cast = document.createElement('div');
+         cast.className = 'small text-muted text-truncate';
+         cast.style.fontSize = '0.7rem';
+         cast.textContent = 'Cast: ' + s.cast;
+         info.appendChild(cast);
+      }
+
       div.appendChild(info);
       a.appendChild(div);
 

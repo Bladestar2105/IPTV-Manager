@@ -233,6 +233,44 @@ export const playerApi = async (req, res) => {
       }
     }
 
+    if (action === 'get_vod_info') {
+      const vodId = Number(req.query.vod_id);
+      if (!vodId) return res.json({});
+
+      const channel = db.prepare(`
+        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE uc.id = ? AND cat.user_id = ?
+      `).get(vodId, user.id);
+
+      if (!channel) return res.json({});
+
+      const provPass = decrypt(channel.password);
+      const baseUrl = channel.url.replace(/\/+$/, '');
+      const remoteVodId = channel.remote_stream_id;
+
+      try {
+        const resp = await fetch(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_vod_info&vod_id=${remoteVodId}`);
+        if (!resp.ok) return res.json({});
+
+        const data = await resp.json();
+
+        // Ensure stream_id matches our user_channel_id
+        if (data && data.movie_data && data.movie_data.stream_id) {
+           data.movie_data.stream_id = Number(channel.user_channel_id);
+        }
+
+        return res.json(data);
+
+      } catch(e) {
+         console.error('get_vod_info error:', e);
+         return res.json({});
+      }
+    }
+
     if (action === 'get_short_epg') {
       const streamId = Number(req.query.stream_id);
       const limit = Number(req.query.limit) || 1;
@@ -407,6 +445,7 @@ export const playerPlaylist = async (req, res) => {
         pc.stream_type,
         pc.mime_type,
         pc.metadata,
+        pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
       FROM user_channels uc
@@ -466,7 +505,18 @@ export const playerPlaylist = async (req, res) => {
       const safeName = name.replace(/,/g, ' ');
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
-      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${name}\n`;
+      let extra = '';
+      if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
+         if (ch.plot) extra += ` plot="${String(ch.plot).replace(/"/g, "'").replace(/\n/g, ' ')}"`;
+         if (ch.cast) extra += ` cast="${String(ch.cast).replace(/"/g, "'")}"`;
+         if (ch.director) extra += ` director="${String(ch.director).replace(/"/g, "'")}"`;
+         if (ch.genre) extra += ` genre="${String(ch.genre).replace(/"/g, "'")}"`;
+         if (ch.releaseDate) extra += ` releaseDate="${String(ch.releaseDate).replace(/"/g, "'")}"`;
+         if (ch.rating) extra += ` rating="${String(ch.rating).replace(/"/g, "'")}"`;
+         if (ch.episode_run_time) extra += ` duration="${String(ch.episode_run_time).replace(/"/g, "'")}"`;
+      }
+
+      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${name}\n`;
 
       if (ch.metadata) {
           try {
