@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import request from 'supertest';
 import crypto from 'crypto';
+import { Readable } from 'stream';
 
 // Mock node-fetch
 const { fetchMock } = vi.hoisted(() => {
@@ -63,6 +64,7 @@ describe('Proxy SSRF Vulnerability', () => {
             status: 200,
             headers: { get: () => 'image/png' },
             arrayBuffer: async () => Buffer.from('fake-image'),
+            body: Readable.from(Buffer.from('fake-image')),
         });
 
         const res = await request(app)
@@ -84,6 +86,7 @@ describe('Proxy SSRF Vulnerability', () => {
             status: 200,
             headers: { get: () => 'image/png' },
             arrayBuffer: async () => Buffer.from('fake-image'),
+            body: Readable.from(Buffer.from('fake-image')),
         });
 
         const res = await request(app)
