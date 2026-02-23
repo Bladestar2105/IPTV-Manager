@@ -770,6 +770,10 @@ async function loadProviders(filterUserId = null) {
       ? providers.filter(p => p.user_id == targetUserId)
       : [];
 
+  if (providersToRender.length === 0) {
+      list.innerHTML = `<li class="list-group-item text-muted small text-center py-3">${t('noProviders')}</li>`;
+  }
+
   providersToRender.forEach(p => {
     const li = document.createElement('li');
     li.className = 'list-group-item';
