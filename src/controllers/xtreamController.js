@@ -445,6 +445,7 @@ export const playerPlaylist = async (req, res) => {
         pc.stream_type,
         pc.mime_type,
         pc.metadata,
+        pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
       FROM user_channels uc
@@ -504,7 +505,18 @@ export const playerPlaylist = async (req, res) => {
       const safeName = name.replace(/,/g, ' ');
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
-      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${name}\n`;
+      let extra = '';
+      if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
+         if (ch.plot) extra += ` plot="${String(ch.plot).replace(/"/g, "'").replace(/\n/g, ' ')}"`;
+         if (ch.cast) extra += ` cast="${String(ch.cast).replace(/"/g, "'")}"`;
+         if (ch.director) extra += ` director="${String(ch.director).replace(/"/g, "'")}"`;
+         if (ch.genre) extra += ` genre="${String(ch.genre).replace(/"/g, "'")}"`;
+         if (ch.releaseDate) extra += ` releaseDate="${String(ch.releaseDate).replace(/"/g, "'")}"`;
+         if (ch.rating) extra += ` rating="${String(ch.rating).replace(/"/g, "'")}"`;
+         if (ch.episode_run_time) extra += ` duration="${String(ch.episode_run_time).replace(/"/g, "'")}"`;
+      }
+
+      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${name}\n`;
 
       if (ch.metadata) {
           try {
