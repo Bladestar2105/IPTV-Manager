@@ -233,6 +233,44 @@ export const playerApi = async (req, res) => {
       }
     }
 
+    if (action === 'get_vod_info') {
+      const vodId = Number(req.query.vod_id);
+      if (!vodId) return res.json({});
+
+      const channel = db.prepare(`
+        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE uc.id = ? AND cat.user_id = ?
+      `).get(vodId, user.id);
+
+      if (!channel) return res.json({});
+
+      const provPass = decrypt(channel.password);
+      const baseUrl = channel.url.replace(/\/+$/, '');
+      const remoteVodId = channel.remote_stream_id;
+
+      try {
+        const resp = await fetch(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_vod_info&vod_id=${remoteVodId}`);
+        if (!resp.ok) return res.json({});
+
+        const data = await resp.json();
+
+        // Ensure stream_id matches our user_channel_id
+        if (data && data.movie_data && data.movie_data.stream_id) {
+           data.movie_data.stream_id = Number(channel.user_channel_id);
+        }
+
+        return res.json(data);
+
+      } catch(e) {
+         console.error('get_vod_info error:', e);
+         return res.json({});
+      }
+    }
+
     if (action === 'get_short_epg') {
       const streamId = Number(req.query.stream_id);
       const limit = Number(req.query.limit) || 1;
