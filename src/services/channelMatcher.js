@@ -324,8 +324,8 @@ export class ChannelMatcher {
     const fuzzyCandidates = potentialCandidates.slice(startIdx, endIdx);
 
     // If language is known, prefer that language, but allow others if score is very high
-    // Optimization: Pass parsed object and threshold 0.8
-    const bestGlobal = this.findBestSimilarity(parsed, fuzzyCandidates, 0.8);
+    // Optimization: Pass parsed object and threshold 0.8, and indicate candidates are sorted by length
+    const bestGlobal = this.findBestSimilarity(parsed, fuzzyCandidates, 0.8, true);
 
     if (bestGlobal.score > 0.8) {
         const candLang = bestGlobal.channel.language;
@@ -412,8 +412,9 @@ export class ChannelMatcher {
    * @param {Object|string} parsedSearch - The parsed channel object (containing baseName, bigrams) or search string.
    * @param {Array} candidates - List of candidate channels.
    * @param {number} threshold - Optional minimum score threshold. If > 0, prunes candidates that cannot mathematically reach the threshold.
+   * @param {boolean} isSorted - Optimization flag: if true, assumes candidates are sorted by length/popcount (ascending). Allows early break.
    */
-  findBestSimilarity(parsedSearch, candidates, threshold = 0) {
+  findBestSimilarity(parsedSearch, candidates, threshold = 0, isSorted = false) {
     if (!candidates || candidates.length === 0) return { channel: null, score: 0 };
 
     let searchBaseName, searchBigrams, searchSignature, searchPopcount, searchLen, searchNonZeroIndices;
@@ -471,7 +472,11 @@ export class ChannelMatcher {
         // Dynamic length check optimization
         // As we find better matches, we tighten minLen/maxLen (see below)
         // This implicitly handles the static threshold check as well
-        if (lenB < minLen || lenB > maxLen) continue;
+        if (lenB < minLen) continue;
+        if (lenB > maxLen) {
+            if (isSorted) break; // Optimization: If sorted by length/popcount, we can stop early as all subsequent candidates will also be too long
+            continue;
+        }
 
         let score = 0;
         if (searchBaseName === cand.baseName) {
@@ -504,6 +509,9 @@ export class ChannelMatcher {
         if (score > bestScore) {
             bestScore = score;
             bestCand = cand;
+
+            // Optimization: Early exit for perfect match
+            if (score >= 0.9999) break;
 
             // Optimization: Update dynamic bounds if we found a better match
             // This allows us to skip more candidates in subsequent iterations
