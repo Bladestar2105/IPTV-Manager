@@ -487,17 +487,24 @@ export class ChannelMatcher {
                 const candPopcount = cand.signaturePopcount !== undefined ? cand.signaturePopcount : this.countSignatureBits(cand.signature);
 
                 // Optimization: Use sparse calculation if available
-                // 1. If search term is sparse (< 16 blocks), use it. This avoids accessing candidate property (fastest).
-                if (searchNonZeroIndices && searchNonZeroIndices.length < 16) {
-                     score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, searchNonZeroIndices);
-                }
-                // 2. If search is dense, check if candidate is sparse
-                else if (cand.nonZeroIndices && cand.nonZeroIndices.length < 16) {
-                     score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, cand.nonZeroIndices);
-                }
-                // 3. Both dense -> use full unrolled loop
-                else {
-                    score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
+                // Always pick the shorter list of indices for sparse iteration to minimize operations
+                const searchIndicesCount = searchNonZeroIndices ? searchNonZeroIndices.length : 32;
+                const candIndicesCount = cand.nonZeroIndices ? cand.nonZeroIndices.length : 32;
+
+                if (searchIndicesCount < candIndicesCount) {
+                     // Search term is sparser
+                     if (searchIndicesCount < 16) {
+                          score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, searchNonZeroIndices);
+                     } else {
+                          score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
+                     }
+                } else {
+                     // Candidate is sparser (or equal)
+                     if (candIndicesCount < 16) {
+                          score = this.calculateDiceCoefficientSignatureSparse(searchSignature, cand.signature, searchPopcount, candPopcount, cand.nonZeroIndices);
+                     } else {
+                          score = this.calculateDiceCoefficientSignature(searchSignature, cand.signature, searchPopcount, candPopcount);
+                     }
                 }
             } else if (cand.bigrams) {
                 // Fallback only if bigrams are available (legacy or test objects)
