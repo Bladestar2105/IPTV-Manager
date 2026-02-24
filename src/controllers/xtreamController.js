@@ -6,6 +6,21 @@ import { getBaseUrl } from '../utils/helpers.js';
 import fetch from 'node-fetch';
 import { PORT } from '../config/constants.js';
 
+const sanitizeM3uTag = (val) => {
+  if (val === null || val === undefined) return '';
+  return String(val).replace(/[\r\n]+/g, ' ').replace(/"/g, '').trim();
+};
+
+const sanitizeM3uName = (val) => {
+  if (val === null || val === undefined) return '';
+  return String(val).replace(/[\r\n]+/g, ' ').replace(/,/g, ' ').replace(/"/g, '').trim();
+};
+
+const sanitizeMetadata = (val) => {
+  if (val === null || val === undefined) return '';
+  return String(val).replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
+};
+
 export const playerApi = async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
@@ -374,10 +389,15 @@ export const getPlaylist = async (req, res) => {
 
       const streamUrl = `${baseUrl}/${typePath}/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${ext}`;
 
+      const safeName = sanitizeM3uName(name);
+      const safeLogo = sanitizeM3uTag(logo);
+      const safeGroup = sanitizeM3uTag(group);
+      const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
+
       if (type === 'm3u_plus') {
-        m3u += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${name}" tvg-logo="${logo}" group-title="${group}",${name}\n`;
+        m3u += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${finalName}\n`;
       } else {
-        m3u += `#EXTINF:-1,${name}\n`;
+        m3u += `#EXTINF:-1,${finalName}\n`;
       }
       m3u += `${streamUrl}\n`;
     }
@@ -500,23 +520,26 @@ export const playerPlaylist = async (req, res) => {
           streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
       }
 
-      const safeGroup = group.replace(/"/g, '');
-      const safeLogo = logo.replace(/"/g, '');
-      const safeName = name.replace(/,/g, ' ');
+      const safeGroup = sanitizeM3uTag(group);
+      const safeLogo = sanitizeM3uTag(logo);
+      const safeName = sanitizeM3uName(name);
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
       let extra = '';
       if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
-         if (ch.plot) extra += ` plot="${String(ch.plot).replace(/"/g, "'").replace(/\n/g, ' ')}"`;
-         if (ch.cast) extra += ` cast="${String(ch.cast).replace(/"/g, "'")}"`;
-         if (ch.director) extra += ` director="${String(ch.director).replace(/"/g, "'")}"`;
-         if (ch.genre) extra += ` genre="${String(ch.genre).replace(/"/g, "'")}"`;
-         if (ch.releaseDate) extra += ` releaseDate="${String(ch.releaseDate).replace(/"/g, "'")}"`;
-         if (ch.rating) extra += ` rating="${String(ch.rating).replace(/"/g, "'")}"`;
-         if (ch.episode_run_time) extra += ` duration="${String(ch.episode_run_time).replace(/"/g, "'")}"`;
+         if (ch.plot) extra += ` plot="${sanitizeMetadata(ch.plot)}"`;
+         if (ch.cast) extra += ` cast="${sanitizeMetadata(ch.cast)}"`;
+         if (ch.director) extra += ` director="${sanitizeMetadata(ch.director)}"`;
+         if (ch.genre) extra += ` genre="${sanitizeMetadata(ch.genre)}"`;
+         if (ch.releaseDate) extra += ` releaseDate="${sanitizeMetadata(ch.releaseDate)}"`;
+         if (ch.rating) extra += ` rating="${sanitizeMetadata(ch.rating)}"`;
+         if (ch.episode_run_time) extra += ` duration="${sanitizeMetadata(ch.episode_run_time)}"`;
       }
 
-      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${name}\n`;
+      // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
+      const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
+
+      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${finalName}\n`;
 
       if (ch.metadata) {
           try {
