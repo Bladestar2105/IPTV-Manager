@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import fetch from 'node-fetch';
 import db from '../database/db.js';
+import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
@@ -16,7 +16,7 @@ const fetchProviderDetails = async (url, username, password) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-    const resp = await fetch(apiUrl, { signal: controller.signal });
+    const resp = await fetchSafe(apiUrl, { signal: controller.signal });
     clearTimeout(timeout);
 
     if (resp.ok) {
@@ -143,7 +143,7 @@ export const createProvider = async (req, res) => {
         const discoveredUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(username.trim())}&password=${encodeURIComponent(password.trim())}`;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
-        const resp = await fetch(discoveredUrl, { method: 'HEAD', signal: controller.signal });
+        const resp = await fetchSafe(discoveredUrl, { method: 'HEAD', signal: controller.signal });
         clearTimeout(timeout);
 
         if (resp.ok) {
@@ -454,7 +454,7 @@ export const getProviderCategories = async (req, res) => {
 
     try {
       const apiUrl = `${baseUrl}/player_api.php?${authParams}&action=${action}`;
-      const resp = await fetch(apiUrl);
+      const resp = await fetchSafe(apiUrl);
       if (resp.ok) {
         categories = await resp.json();
       }

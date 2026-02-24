@@ -15,6 +15,7 @@ vi.mock('../../src/config/constants.js', async () => {
     return {
         EPG_CACHE_DIR: '/app/tests/temp_epg',
         DATA_DIR: '/app/tests/temp_db',
+        EPG_DB_PATH: '/app/tests/temp_db/epg.db',
         PORT: 3000,
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',
@@ -35,6 +36,7 @@ vi.mock('../../src/utils/crypto.js', () => {
 
 // Import modules AFTER mocking
 import db, { initDb } from '../../src/database/db.js';
+import epgDb, { initEpgDb } from '../../src/database/epgDb.js';
 import * as epgController from '../../src/controllers/epgController.js';
 import * as xtreamController from '../../src/controllers/xtreamController.js';
 
@@ -42,8 +44,12 @@ describe('EPG Mapping Reproduction', () => {
     beforeEach(() => {
         // Clear DB
         initDb(true);
+        initEpgDb();
         const tables = ['epg_channel_mappings', 'provider_channels', 'providers', 'users', 'user_categories', 'user_channels', 'epg_sources'];
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
+
+        const epgTables = ['epg_channels', 'epg_programs'];
+        epgTables.forEach(t => epgDb.prepare(`DELETE FROM ${t}`).run());
 
         // Setup initial data
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (1, 'admin', 'admin', 1)").run();

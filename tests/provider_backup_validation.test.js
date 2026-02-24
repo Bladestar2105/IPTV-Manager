@@ -42,7 +42,8 @@ vi.mock('../src/utils/helpers.js', async () => {
             return true;
         }),
         checkProviderExpiry: vi.fn(),
-        isAdultCategory: vi.fn().mockReturnValue(false)
+        isAdultCategory: vi.fn().mockReturnValue(false),
+        safeLookup: vi.fn()
     };
 });
 
