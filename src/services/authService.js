@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import db from '../database/db.js';
 import { decrypt, JWT_SECRET } from '../utils/crypto.js';
 import { getSetting, getCookie } from '../utils/helpers.js';
-import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE } from '../config/constants.js';
+import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE, AUTH_CACHE_CLEANUP_INTERVAL } from '../config/constants.js';
 
 // Authentication Cache
 export const authCache = new Map();
@@ -42,7 +42,7 @@ setInterval(() => {
       if (now > value.expiry) authCache.delete(key);
     }
   }
-}, 300000).unref();
+}, AUTH_CACHE_CLEANUP_INTERVAL).unref();
 
 export async function authUser(username, password) {
   try {

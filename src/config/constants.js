@@ -18,3 +18,4 @@ export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '30d';
 export const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 10;
 export const AUTH_CACHE_TTL = 60000;
 export const AUTH_CACHE_MAX_SIZE = 10000;
+export const AUTH_CACHE_CLEANUP_INTERVAL = 300000; // 5 minutes
