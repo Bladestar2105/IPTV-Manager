@@ -57,11 +57,13 @@ export async function isSafeUrl(urlStr) {
     if (hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '::1') return false;
     if (hostname === 'metadata.google.internal') return false;
 
-    // Resolve DNS
-    const { address } = await dns.promises.lookup(hostname);
+    // Check if hostname is an IP address
+    if (isIP(hostname)) {
+      return !isUnsafeIP(hostname);
+    }
 
-    // Check resolved IP
-    return !isUnsafeIP(address);
+    // Allow domain names (DNS resolution happens later in fetchSafe via httpAgent)
+    return true;
   } catch (e) {
     return false;
   }

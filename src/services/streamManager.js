@@ -27,7 +27,8 @@ class StreamManager {
           this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
           this.stmtGetAll = this.db.prepare('SELECT * FROM current_streams');
           this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)');
-          this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE provider_id = ?');
+          this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)');
+          this.stmtIsActive = this.db.prepare('SELECT 1 FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? LIMIT 1');
         } catch (e) {
           console.error('Failed to prepare statements:', e);
         }
@@ -212,7 +213,12 @@ class StreamManager {
     if (this.redis) {
       try {
         const all = await this.getAll();
-        return all.filter(s => s.provider_id === providerId).length;
+        const providerStreams = all.filter(s => s.provider_id === providerId);
+        // Smart Counting: Count unique sessions (Channel + IP + User)
+        const uniqueSessions = new Set(providerStreams.map(s =>
+          JSON.stringify({ c: s.channel_name, i: s.ip, u: s.user_id })
+        ));
+        return uniqueSessions.size;
       } catch (e) {
         console.error('Redis Provider Count Error:', e);
         return 0;
@@ -223,7 +229,7 @@ class StreamManager {
           const res = this.stmtCountProvider.get(providerId);
           return res ? res.count : 0;
         } else {
-          const res = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE provider_id = ?').get(providerId);
+          const res = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)').get(providerId);
           return res ? res.count : 0;
         }
       } catch (e) {
@@ -232,6 +238,28 @@ class StreamManager {
       }
     }
     return 0;
+  }
+
+  async isSessionActive(userId, ip, channelName, providerId) {
+    if (this.redis) {
+      try {
+        const all = await this.getAll();
+        return all.some(s => s.user_id === userId && s.ip === ip && s.channel_name === channelName && s.provider_id === providerId);
+      } catch (e) {
+        return false;
+      }
+    } else if (this.db) {
+      try {
+        if (this.stmtIsActive) {
+          return !!this.stmtIsActive.get(userId, ip, channelName, providerId);
+        } else {
+          return !!this.db.prepare('SELECT 1 FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? LIMIT 1').get(userId, ip, channelName, providerId);
+        }
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
   }
 }
 
