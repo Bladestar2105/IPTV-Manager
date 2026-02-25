@@ -81,4 +81,41 @@ describe('ChannelMatcher', () => {
         expect(item.bigramCount).toBeDefined(); // Re-added as proxy for popcount
         expect(item.bigramCount).toBe(item.signaturePopcount);
     });
+
+    it('correctly matches sparse candidate against dense search term', () => {
+        // This exercises the optimization path where search is dense but candidate is sparse
+        const sparseChannels = [
+            { id: 's1', name: 'A B' },
+            { id: 's2', name: 'X Y' },
+            { id: 's3', name: 'Z Q' }
+        ];
+        const sparseMatcher = new ChannelMatcher(sparseChannels);
+
+        // "Super Long Search Term That Is Dense" should not match "A B" unless similar
+        // But if we search for "A B Long Term...", it might match "A B"
+
+        const result = sparseMatcher.match('A B Super Long Search Term That Is Dense');
+        // It should match 'A B' if the similarity logic works correctly (even if low score)
+        // logic: bigrams of "A B" are subset of search term.
+        // Dice = 2*intersection / (lenA + lenB).
+        // A="A B" (len ~3), B="A B Super..." (len ~30).
+        // Intersection ~3.
+        // Dice = 6 / 33 ~ 0.18.
+
+        // Wait, match() filters by threshold 0.8?
+        // findBestSimilarity uses threshold passed.
+        // match() uses 0.8 threshold for global fuzzy.
+
+        // So this won't match.
+
+        // But we want to verify that the scoring *calculation* is correct, not necessarily that it passes the threshold.
+        // We can call findBestSimilarity directly.
+
+        const parsed = sparseMatcher.parseChannelName('A B Super Long Search Term That Is Dense');
+        const best = sparseMatcher.findBestSimilarity(parsed, sparseMatcher.parsedEpgChannels);
+
+        expect(best.channel).toBeDefined();
+        expect(best.channel.channel.name).toBe('A B');
+        expect(best.score).toBeGreaterThan(0);
+    });
 });
