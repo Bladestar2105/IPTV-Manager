@@ -8,6 +8,7 @@ import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE, AUT
 
 // Authentication Cache
 export const authCache = new Map();
+export const tokenCache = new Map();
 
 // Pre-generate a dummy hash for timing attack mitigation
 let DUMMY_HASH = null;
@@ -32,14 +33,23 @@ export async function preventTimingAttack(password) {
 
 // Cleanup interval (every 5 minutes)
 setInterval(() => {
+  const now = Date.now();
+
   if (authCache.size > AUTH_CACHE_MAX_SIZE) {
     authCache.clear();
     console.log('🧹 Auth Cache cleared (limit reached)');
   } else {
-    // Remove expired entries
-    const now = Date.now();
     for (const [key, value] of authCache.entries()) {
       if (now > value.expiry) authCache.delete(key);
+    }
+  }
+
+  if (tokenCache.size > AUTH_CACHE_MAX_SIZE) {
+    tokenCache.clear();
+    console.log('🧹 Token Cache cleared (limit reached)');
+  } else {
+    for (const [key, value] of tokenCache.entries()) {
+      if (now > value.expiry) tokenCache.delete(key);
     }
   }
 }, AUTH_CACHE_CLEANUP_INTERVAL).unref();
@@ -155,43 +165,85 @@ export async function getXtreamUser(req) {
 
   // Check token auth first (avoids logging failed attempts for placeholder credentials)
   if (token) {
-    const now = Math.floor(Date.now() / 1000);
-    // 1. Check temporary tokens
-    const row = db.prepare('SELECT user_id, session_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
+    // 0. Check Token Cache
+    if (tokenCache.has(token)) {
+      const cached = tokenCache.get(token);
+      if (Date.now() < cached.expiry) {
+        if (cached.requiredSessionId) {
+          const cookieSession = getCookie(req, 'player_session');
+          if (cookieSession === cached.requiredSessionId) {
+            user = cached.user;
+          }
+          // If session required but mismatch, user remains null (auth failed)
+        } else {
+          user = cached.user;
+        }
+      } else {
+        tokenCache.delete(token);
+      }
+    }
 
-    if (row) {
+    if (!user) {
+      const now = Math.floor(Date.now() / 1000);
+      let requiredSessionId = null;
+
+      // 1. Check temporary tokens
+      const row = db.prepare('SELECT user_id, session_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
+
+      let userToCache = null;
+
+      if (row) {
+        const dbUser = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
+
         if (row.session_id) {
+            requiredSessionId = row.session_id;
             const cookieSession = getCookie(req, 'player_session');
             if (cookieSession === row.session_id) {
-                 user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
+                 user = dbUser;
             }
         } else {
             // Legacy/Fallback for tokens without session_id (optional backward compat)
-            user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
+            user = dbUser;
         }
-    }
+        userToCache = dbUser;
+      }
 
-    // 2. Check HDHR tokens (if not found yet and token length matches hex string)
-    if (!user && /^[0-9a-f]{32}$/i.test(token)) {
-        user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
-    }
+      // 2. Check HDHR tokens (if not found yet and token length matches hex string)
+      if (!user && /^[0-9a-f]{32}$/i.test(token)) {
+          // Verify we didn't fail a required session check above
+          if (!row) {
+            user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
+            userToCache = user;
+          }
+      }
 
-    // 3. Check Shared Links
-    if (!user) {
-        const share = db.prepare('SELECT * FROM shared_links WHERE token = ?').get(token);
-        if (share) {
-            user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(share.user_id);
-            if (user) {
-                user.is_share_guest = true;
-                user.share_start = share.start_time;
-                user.share_end = share.end_time;
-                try {
-                    user.allowed_channels = JSON.parse(share.channels);
-                } catch (e) {
-                    user.allowed_channels = [];
-                }
-            }
-        }
+      // 3. Check Shared Links
+      if (!user && !row) {
+          const share = db.prepare('SELECT * FROM shared_links WHERE token = ?').get(token);
+          if (share) {
+              user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(share.user_id);
+              if (user) {
+                  user.is_share_guest = true;
+                  user.share_start = share.start_time;
+                  user.share_end = share.end_time;
+                  try {
+                      user.allowed_channels = JSON.parse(share.channels);
+                  } catch (e) {
+                      user.allowed_channels = [];
+                  }
+                  userToCache = user;
+              }
+          }
+      }
+
+      // Cache the result
+      if (userToCache || row) {
+          tokenCache.set(token, {
+              user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
+              requiredSessionId: requiredSessionId,
+              expiry: Date.now() + AUTH_CACHE_TTL
+          });
+      }
     }
   }
 

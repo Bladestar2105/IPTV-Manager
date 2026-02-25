@@ -25,7 +25,7 @@ describe('Export/Import Regression Tests', () => {
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     });
 
-    it('should export and import correctly (standard workflow)', () => {
+    it('should export and import correctly (standard workflow)', async () => {
         // 1. Create User
         const userRes = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run('testuser_std', 'userpass');
         const userId = userRes.lastInsertRowid;
@@ -72,7 +72,7 @@ describe('Export/Import Regression Tests', () => {
             json: vi.fn()
         };
 
-        systemController.importData(reqImport, resImport);
+        await systemController.importData(reqImport, resImport);
         expect(resImport.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
 
         // 5. Verify Provider Password

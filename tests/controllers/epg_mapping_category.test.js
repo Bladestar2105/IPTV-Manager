@@ -20,7 +20,8 @@ vi.mock('../../src/config/constants.js', async () => {
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',
         AUTH_CACHE_TTL: 60000,
-        AUTH_CACHE_MAX_SIZE: 100
+        AUTH_CACHE_MAX_SIZE: 100,
+        AUTH_CACHE_CLEANUP_INTERVAL: 60000
     };
 });
 
@@ -56,8 +57,8 @@ describe('EPG Mapping Category Mode', () => {
         epgTables.forEach(t => epgDb.prepare(`DELETE FROM ${t}`).run());
 
         // Setup initial data
-        db.prepare("INSERT INTO users (id, username, password, is_active, is_admin) VALUES (1, 'admin', 'admin', 1, 1)").run();
-        db.prepare("INSERT INTO users (id, username, password, is_active, is_admin) VALUES (2, 'user', 'user', 1, 0)").run();
+        db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (1, 'admin', 'admin', 1)").run();
+        db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (2, 'user', 'user', 1)").run();
 
         db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url) VALUES (1, 'TestProvider', 'http://test.com', 'user', 'pass', 'http://epg.com')").run();
 

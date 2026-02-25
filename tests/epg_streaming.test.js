@@ -5,8 +5,11 @@ import { Readable } from 'stream';
 // Mock constants BEFORE imports
 vi.mock('../src/config/constants.js', async () => {
   const path = await import('path');
+  const fs = await import('fs');
+  const dir = path.resolve('temp_test_epg_data');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return {
-    DATA_DIR: path.resolve('temp_test_epg_data'),
+    DATA_DIR: dir,
     EPG_DB_PATH: path.resolve('temp_test_epg_data/epg.db')
   };
 });
