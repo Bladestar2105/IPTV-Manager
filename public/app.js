@@ -713,6 +713,9 @@ function showEditUserModal(user) {
 
 document.getElementById('edit-user-form').addEventListener('submit', async e => {
   e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  setLoadingState(btn, true, 'saving');
+
   const id = document.getElementById('edit-user-id').value;
   const username = document.getElementById('edit-user-username').value;
   const password = document.getElementById('edit-user-password').value;
@@ -739,6 +742,8 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
     showToast(t('userUpdated'), 'success');
   } catch (e) {
     alert(t('errorPrefix') + ' ' + (e.message || 'Error'));
+  } finally {
+    setLoadingState(btn, false);
   }
 });
 
@@ -1645,6 +1650,9 @@ function initChannelSortable() {
 document.getElementById('user-form').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
+  const btn = f.querySelector('button[type="submit"]');
+  setLoadingState(btn, true, 'saving');
+
   try {
     const body = {
         username: f.username.value,
@@ -1668,12 +1676,17 @@ document.getElementById('user-form').addEventListener('submit', async e => {
     const errorData = e.response || {};
     const errorMessage = errorData.message || e.message || 'Unknown error';
     showToast(errorMessage, 'danger');
+  } finally {
+    setLoadingState(btn, false);
   }
 });
 
 document.getElementById('provider-form').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
+  const btn = document.getElementById('save-provider-btn');
+  setLoadingState(btn, true, 'saving');
+
   const id = f.provider_id.value;
 
   let backupUrls = [];
@@ -1725,6 +1738,8 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     loadProviders(selectedUserId);
   } catch (e) {
     showToast(e.message, 'danger');
+  } finally {
+    setLoadingState(btn, false);
   }
 });
 
@@ -1735,6 +1750,8 @@ document.getElementById('category-form').addEventListener('submit', async e => {
     return;
   }
   const f = e.target;
+  const btn = f.querySelector('button[type="submit"]');
+  setLoadingState(btn, true, null, false);
 
   const typeRadio = document.querySelector('.category-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
@@ -1750,6 +1767,8 @@ document.getElementById('category-form').addEventListener('submit', async e => {
     showToast(t('categoryCreated'), 'success');
   } catch (e) {
     showToast(e.message, 'danger');
+  } finally {
+    setLoadingState(btn, false);
   }
 });
 

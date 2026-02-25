@@ -25,3 +25,7 @@
 ## 2026-02-21 - [Accessible Copy Feedback]
 **Learning:** The existing `copyToClipboard` utility updated the visual button state (icon/text) but failed to update the accessible name (`aria-label`) or tooltip (`title`), leaving screen reader users unaware of the success state.
 **Action:** Updated the shared `copyToClipboard` function to dynamically set `aria-label` and `title` to "Copied!" during the success timeout, and added a toast notification for redundant, assertive feedback.
+
+## 2026-02-24 - [Async Loading States]
+**Learning:** Users lack feedback during critical create/update operations (User, Provider, Category), leading to uncertainty or double submissions. While `setLoadingState` existed, it was inconsistent across the app's main forms.
+**Action:** Systematically applied `setLoadingState(btn, true/false)` to all form submission handlers (`user-form`, `provider-form`, `category-form`, `edit-user-form`), ensuring the state is reset in a `finally` block to prevent UI deadlocks on error.
