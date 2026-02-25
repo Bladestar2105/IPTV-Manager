@@ -89,10 +89,22 @@ export function isAdultCategory(name) {
   return adultKeywords.some(kw => nameLower.includes(kw));
 }
 
+let settingsCache = new Map();
+
+export function clearSettingsCache() {
+  settingsCache.clear();
+}
+
 export function getSetting(db, key, defaultValue) {
+  if (settingsCache.has(key)) {
+    return settingsCache.get(key);
+  }
+
   try {
     const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-    return row ? row.value : defaultValue;
+    const value = row ? row.value : defaultValue;
+    settingsCache.set(key, value);
+    return value;
   } catch (e) {
     return defaultValue;
   }
