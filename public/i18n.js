@@ -4,6 +4,11 @@
  */
 const translations = {
   en: {
+    // Accessibility
+    skipToContent: 'Skip to content',
+    selectLanguage: 'Select Language',
+    toggleNavigation: 'Toggle Navigation',
+
     // Title & Headers
     title: 'IPTV-Manager',
     userManagement: 'User Management',
@@ -424,6 +429,11 @@ const translations = {
   },
   
   de: {
+    // Accessibility
+    skipToContent: 'Zum Inhalt springen',
+    selectLanguage: 'Sprache wählen',
+    toggleNavigation: 'Navigation umschalten',
+
     // Title & Headers
     title: 'IPTV-Manager',
     userManagement: 'User-Verwaltung',
@@ -844,6 +854,11 @@ const translations = {
   },
 
   fr: {
+    // Accessibility
+    skipToContent: 'Aller au contenu',
+    selectLanguage: 'Choisir la langue',
+    toggleNavigation: 'Basculer la navigation',
+
     // Title & Headers
     title: 'IPTV-Manager',
     userManagement: 'Gestion des Utilisateurs',
@@ -1264,6 +1279,11 @@ const translations = {
   },
 
   el: {
+    // Accessibility
+    skipToContent: 'Μετάβαση στο περιεχόμενο',
+    selectLanguage: 'Επιλογή Γλώσσας',
+    toggleNavigation: 'Εναλλαγή πλοήγησης',
+
     // Title & Headers
     title: 'IPTV-Manager',
     userManagement: 'Διαχείριση Χρηστών',
