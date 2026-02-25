@@ -37,9 +37,34 @@ describe('isSafeUrl Security Checks', () => {
     expect(safe).toBe(false);
   });
 
-  it('should allow CGNAT range (100.64.0.1)', async () => {
+  it('should block CGNAT range (100.64.0.1)', async () => {
     const safe = await isSafeUrl('http://100.64.0.1');
-    expect(safe).toBe(true);
+    expect(safe).toBe(false);
+  });
+
+  it('should block Private 10.x.x.x', async () => {
+    const safe = await isSafeUrl('http://10.0.0.1');
+    expect(safe).toBe(false);
+  });
+
+  it('should block Private 172.16.x.x', async () => {
+    const safe = await isSafeUrl('http://172.16.0.1');
+    expect(safe).toBe(false);
+  });
+
+  it('should block Private 192.168.x.x', async () => {
+    const safe = await isSafeUrl('http://192.168.1.1');
+    expect(safe).toBe(false);
+  });
+
+  it('should block Benchmarking 198.18.x.x', async () => {
+    const safe = await isSafeUrl('http://198.18.0.1');
+    expect(safe).toBe(false);
+  });
+
+  it('should block IPv6 Unique Local', async () => {
+    const safe = await isSafeUrl('http://[fc00::1]');
+    expect(safe).toBe(false);
   });
 
   it('should block TEST-NET-1 (192.0.2.1)', async () => {
