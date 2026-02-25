@@ -18,7 +18,8 @@ describe('StreamManager (SQLite)', () => {
             channel_name TEXT,
             start_time INTEGER,
             ip TEXT,
-            worker_pid INTEGER
+            worker_pid INTEGER,
+            provider_id INTEGER
           );
           CREATE INDEX IF NOT EXISTS idx_cs_user_ip ON current_streams(user_id, ip);
         `);
@@ -35,7 +36,7 @@ describe('StreamManager (SQLite)', () => {
 
     it('should add a stream correctly', async () => {
         const user = { id: 1, username: 'testuser' };
-        await streamManager.add('stream1', user, 'Test Channel', '127.0.0.1');
+        await streamManager.add('stream1', user, 'Test Channel', '127.0.0.1', null, 1);
 
         const streams = await streamManager.getAll();
         expect(streams).toHaveLength(1);
@@ -47,7 +48,7 @@ describe('StreamManager (SQLite)', () => {
         const user = { id: 1, username: 'testuser' };
 
         // Add stream
-        await streamManager.add('stream1', user, 'Test Channel', '127.0.0.1');
+        await streamManager.add('stream1', user, 'Test Channel', '127.0.0.1', null, 1);
 
         // Verify added
         let streams = await streamManager.getAll();
@@ -62,7 +63,7 @@ describe('StreamManager (SQLite)', () => {
 
     it('should remove a stream correctly', async () => {
         const user = { id: 1, username: 'testuser' };
-        await streamManager.add('stream1', user, 'Test Channel', '127.0.0.1');
+        await streamManager.add('stream1', user, 'Test Channel', '127.0.0.1', null, 1);
 
         await streamManager.remove('stream1');
 
@@ -72,8 +73,8 @@ describe('StreamManager (SQLite)', () => {
 
     it('should handle multiple streams', async () => {
          const user = { id: 1, username: 'testuser' };
-         await streamManager.add('s1', user, 'C1', '127.0.0.1');
-         await streamManager.add('s2', user, 'C2', '127.0.0.2');
+         await streamManager.add('s1', user, 'C1', '127.0.0.1', null, 1);
+         await streamManager.add('s2', user, 'C2', '127.0.0.2', null, 1);
 
          const streams = await streamManager.getAll();
          expect(streams).toHaveLength(2);

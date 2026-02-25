@@ -1,14 +1,42 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import fs from 'fs';
+import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from 'vitest';
 import path from 'path';
-import { loadAllEpgChannels } from '../src/services/epgService.js';
+import { Readable } from 'stream';
+
+// Mock constants BEFORE imports
+vi.mock('../src/config/constants.js', async () => {
+  const path = await import('path');
+  return {
+    DATA_DIR: path.resolve('temp_test_epg_data'),
+    EPG_DB_PATH: path.resolve('temp_test_epg_data/epg.db')
+  };
+});
+
+// Mock network
+vi.mock('../src/utils/network.js', () => ({
+  fetchSafe: vi.fn(),
+  httpAgent: {},
+  httpsAgent: {}
+}));
+
+import { initDb } from '../src/database/db.js';
+import { initEpgDb, default as epgDb } from '../src/database/epgDb.js';
+import { loadAllEpgChannels, importEpgFromUrl } from '../src/services/epgService.js';
+import { fetchSafe } from '../src/utils/network.js';
 
 describe('EPG Streaming Optimization', () => {
-  const testFile = path.resolve('temp_test_epg.xml');
-  const testFileMinified = path.resolve('temp_test_epg_minified.xml');
-
   beforeAll(() => {
-    // Create a dummy EPG file with some channels (pretty printed)
+    initDb(true);
+    initEpgDb();
+  });
+
+  beforeEach(() => {
+    // Clear DB
+    epgDb.prepare('DELETE FROM epg_channels').run();
+    epgDb.prepare('DELETE FROM epg_programs').run();
+    vi.clearAllMocks();
+  });
+
+  it('should correctly parse pretty-printed channels from EPG stream', async () => {
     const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
 <tv generator-info-name="TestGenerator">
   <channel id="test.channel.1">
@@ -26,66 +54,72 @@ describe('EPG Streaming Optimization', () => {
     <title>Test Program</title>
   </programme>
 </tv>`;
-    fs.writeFileSync(testFile, xmlContent);
 
-    // Create minified EPG file (single line)
-    const xmlContentMinified = `<?xml version="1.0" encoding="UTF-8"?><tv><channel id="test.channel.m1"><display-name>Minified 1</display-name></channel><channel id="test.channel.m2"><display-name>Minified 2</display-name><icon src="http://example.com/m2.png" /></channel></tv>`;
-    fs.writeFileSync(testFileMinified, xmlContentMinified);
-  });
+    // Mock response stream
+    const stream = Readable.from([xmlContent]);
+    fetchSafe.mockResolvedValue({
+        ok: true,
+        body: stream
+    });
 
-  afterAll(() => {
-    if (fs.existsSync(testFile)) {
-      fs.unlinkSync(testFile);
-    }
-    if (fs.existsSync(testFileMinified)) {
-      fs.unlinkSync(testFileMinified);
-    }
-  });
+    await importEpgFromUrl('http://mock.url/epg.xml', 'custom', 1);
 
-  it('should correctly parse pretty-printed channels from EPG file', async () => {
-    const channels = await loadAllEpgChannels([{ file: testFile, source: 'Test Source' }]);
+    const channels = await loadAllEpgChannels();
 
     expect(channels).toHaveLength(3);
+    // Sort by ID to ensure order for assertion (loadAllEpgChannels sorts by name, which is Test Channel 1, 2, 3)
+    // Actually loadAllEpgChannels sorts by name ASC.
 
-    expect(channels[0]).toEqual({
+    expect(channels[0]).toMatchObject({
       id: 'test.channel.1',
       name: 'Test Channel 1',
       logo: 'http://example.com/logo1.png',
-      source: 'Test Source'
+      source_type: 'custom'
     });
 
-    expect(channels[1]).toEqual({
+    expect(channels[1]).toMatchObject({
       id: 'test.channel.2',
       name: 'Test Channel 2',
-      logo: null, // No icon
-      source: 'Test Source'
+      logo: null,
+      source_type: 'custom'
     });
 
-    expect(channels[2]).toEqual({
+    expect(channels[2]).toMatchObject({
       id: 'test.channel.3',
       name: 'Test Channel 3',
       logo: 'http://example.com/logo3.png',
-      source: 'Test Source'
+      source_type: 'custom'
     });
   });
 
-  it('should correctly parse minified channels from EPG file', async () => {
-    const channels = await loadAllEpgChannels([{ file: testFileMinified, source: 'Test Source' }]);
+  it('should correctly parse minified channels from EPG stream', async () => {
+    const xmlContentMinified = `<?xml version="1.0" encoding="UTF-8"?><tv><channel id="test.channel.m1"><display-name>Minified 1</display-name></channel><channel id="test.channel.m2"><display-name>Minified 2</display-name><icon src="http://example.com/m2.png" /></channel></tv>`;
+
+    // Mock response stream
+    const stream = Readable.from([xmlContentMinified]);
+    fetchSafe.mockResolvedValue({
+        ok: true,
+        body: stream
+    });
+
+    await importEpgFromUrl('http://mock.url/minified.xml', 'custom', 2);
+
+    const channels = await loadAllEpgChannels();
 
     expect(channels).toHaveLength(2);
 
-    expect(channels[0]).toEqual({
+    expect(channels[0]).toMatchObject({
       id: 'test.channel.m1',
       name: 'Minified 1',
       logo: null,
-      source: 'Test Source'
+      source_type: 'custom'
     });
 
-    expect(channels[1]).toEqual({
+    expect(channels[1]).toMatchObject({
       id: 'test.channel.m2',
       name: 'Minified 2',
       logo: 'http://example.com/m2.png',
-      source: 'Test Source'
+      source_type: 'custom'
     });
   });
 });

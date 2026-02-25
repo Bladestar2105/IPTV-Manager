@@ -43,6 +43,9 @@ export function initEpgDb() {
       CREATE INDEX IF NOT EXISTS idx_epg_programs_stop ON epg_programs(stop);
       CREATE INDEX IF NOT EXISTS idx_epg_programs_channel_start ON epg_programs(channel_id, start);
       CREATE INDEX IF NOT EXISTS idx_epg_channels_id ON epg_channels(id);
+
+      CREATE INDEX IF NOT EXISTS idx_epg_programs_source ON epg_programs(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_epg_channels_source ON epg_channels(source_type, source_id);
     `);
 
     console.log("✅ EPG Database initialized");
