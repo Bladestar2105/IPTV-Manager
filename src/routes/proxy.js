@@ -106,10 +106,16 @@ router.get('/image', authenticateToken, async (req, res) => {
     // We use .png as extension for simplicity in serving, but it might be jpg/svg.
     // Maybe use mime-types lookup?
     // For now, saving as hash.png is acceptable for picons.
+    let tempPath;
     try {
-        fs.writeFileSync(filePath, buffer);
+        tempPath = `${filePath}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+        await fs.promises.writeFile(tempPath, buffer);
+        await fs.promises.rename(tempPath, filePath);
     } catch (writeErr) {
         console.error('Failed to write to cache:', writeErr);
+        if (tempPath) {
+            try { await fs.promises.unlink(tempPath); } catch (e) {}
+        }
         // Continue serving even if cache write fails
     }
 
