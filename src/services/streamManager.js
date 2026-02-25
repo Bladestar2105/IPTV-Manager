@@ -26,7 +26,7 @@ class StreamManager {
           this.stmtRemove = this.db.prepare('DELETE FROM current_streams WHERE id = ?');
           this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
           this.stmtGetAll = this.db.prepare('SELECT * FROM current_streams');
-          this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE user_id = ?');
+          this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)');
           this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE provider_id = ?');
         } catch (e) {
           console.error('Failed to prepare statements:', e);
@@ -175,7 +175,16 @@ class StreamManager {
         // Since we don't have a direct index for count, we filter getAll.
         // Optimization: Maintain a separate counter in Redis if performance becomes an issue.
         const all = await this.getAll();
-        return all.filter(s => s.user_id === userId).length;
+        const userStreams = all.filter(s => s.user_id === userId);
+
+        // Smart Counting: Count unique sessions (Content + IP + Provider)
+        // This allows a single user to open multiple connections (sockets) for the same content
+        // on the same IP without consuming multiple "slots".
+        const uniqueSessions = new Set(userStreams.map(s =>
+          JSON.stringify({ c: s.channel_name, i: s.ip, p: s.provider_id })
+        ));
+
+        return uniqueSessions.size;
       } catch (e) {
         console.error('Redis Count Error:', e);
         return 0;
@@ -186,7 +195,7 @@ class StreamManager {
           const res = this.stmtCountUser.get(userId);
           return res ? res.count : 0;
         } else {
-          const res = this.db.prepare('SELECT COUNT(*) as count FROM current_streams WHERE user_id = ?').get(userId);
+          const res = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)').get(userId);
           return res ? res.count : 0;
         }
       } catch (e) {
