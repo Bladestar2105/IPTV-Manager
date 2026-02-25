@@ -3306,9 +3306,7 @@ async function loadEpgMappingChannels() {
 
       renderLoadingTable('epg-mapping-tbody', 5);
 
-      // We keep buttons visible but disabled or context-aware if possible
-      // Since auto-map requires providerId, we disable them in category mode for now to avoid errors
-      // until we implement category-based auto-mapping
+      // Disable buttons while loading
       if(autoMapBtn) autoMapBtn.disabled = true;
       if(resetMapBtn) resetMapBtn.disabled = true;
 
@@ -3337,27 +3335,14 @@ function finishLoadingMapping() {
     const autoMapBtn = document.getElementById('auto-map-btn');
     const resetMapBtn = document.getElementById('reset-map-btn');
 
-    // In Provider Mode, enable buttons
-    // In Category Mode, they are visible but might not work if no provider context
-    // Actually, if we are in Category mode, we should probably hide Auto/Reset OR disable them
-    // The user asked for them to be present. I'll enable them but they will fail without providerId unless I fix handle logic.
-    // handleAutoMap checks for providerId.
-    // Let's assume for now we only enable them in Provider Mode as before, but since they are shared,
-    // we manage their state (disabled vs enabled) instead of display:none.
-
-    if (epgMappingMode === 'provider') {
-        if (autoMapBtn) {
-            autoMapBtn.disabled = false;
-            autoMapBtn.classList.remove('d-none'); // Ensure visible
-        }
-        if (resetMapBtn) {
-            resetMapBtn.disabled = false;
-            resetMapBtn.classList.remove('d-none');
-        }
-    } else {
-        // Category mode - buttons visible but disabled because backend requires provider_id
-        if (autoMapBtn) autoMapBtn.disabled = true;
-        if (resetMapBtn) resetMapBtn.disabled = true;
+    // Enable buttons if we have a valid selection (provider or category)
+    if (autoMapBtn) {
+        autoMapBtn.disabled = false;
+        autoMapBtn.classList.remove('d-none');
+    }
+    if (resetMapBtn) {
+        resetMapBtn.disabled = false;
+        resetMapBtn.classList.remove('d-none');
     }
 }
 
@@ -3470,8 +3455,14 @@ async function loadAvailableEpgChannels() {
 
 // === Auto Mapping ===
 async function handleAutoMap() {
-  const providerId = document.getElementById('epg-mapping-provider-select').value;
-  if (!providerId) return;
+  let providerId, categoryId;
+  if (epgMappingMode === 'provider') {
+      providerId = document.getElementById('epg-mapping-provider-select').value;
+      if (!providerId) return;
+  } else {
+      categoryId = document.getElementById('epg-mapping-category-select').value;
+      if (!categoryId) return;
+  }
 
   if (!confirm(t('autoMapConfirm'))) return;
 
@@ -3484,7 +3475,11 @@ async function handleAutoMap() {
     const res = await fetchJSON('/api/mapping/auto', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({provider_id: providerId, only_used: onlyUsed})
+      body: JSON.stringify({
+          provider_id: providerId,
+          category_id: categoryId,
+          only_used: onlyUsed
+      })
     });
 
     alert(t('autoMapSuccess', {count: res.matched}));
@@ -3511,8 +3506,14 @@ async function handleApplyMapping() {
 }
 
 async function handleResetMapping() {
-  const providerId = document.getElementById('epg-mapping-provider-select').value;
-  if (!providerId) return;
+  let providerId, categoryId;
+  if (epgMappingMode === 'provider') {
+      providerId = document.getElementById('epg-mapping-provider-select').value;
+      if (!providerId) return;
+  } else {
+      categoryId = document.getElementById('epg-mapping-category-select').value;
+      if (!categoryId) return;
+  }
 
   if (!confirm(t('resetMappingConfirm'))) return;
 
@@ -3523,7 +3524,10 @@ async function handleResetMapping() {
     await fetchJSON('/api/mapping/reset', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({provider_id: providerId})
+      body: JSON.stringify({
+          provider_id: providerId,
+          category_id: categoryId
+      })
     });
 
     alert(t('resetMappingSuccess'));
