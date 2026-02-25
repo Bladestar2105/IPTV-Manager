@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -31,6 +32,8 @@
     "string-similarity": "^4.0.4"
   },
   "devDependencies": {
+    "eslint": "^10.0.2",
+    "globals": "^17.3.0",
     "playwright": "^1.58.1",
     "supertest": "^7.2.2",
     "vitest": "^4.0.18"

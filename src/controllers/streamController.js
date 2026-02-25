@@ -346,8 +346,6 @@ export const proxyLive = async (req, res) => {
     const shouldTranscode = (req.query.transcode === 'true') || (reqExt === 'mp4');
 
     if (shouldTranscode) {
-      console.log(`🎬 Starting audio transcoding for stream ${streamId} (${reqExt})`);
-
       try {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
           headers: fetchHeaders,
@@ -383,7 +381,6 @@ export const proxyLive = async (req, res) => {
             streamManager.remove(connectionId);
           })
           .on('end', () => {
-            console.log('FFmpeg stream ended');
             streamManager.remove(connectionId);
           });
 
@@ -667,7 +664,6 @@ export const proxyMovie = async (req, res) => {
     const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && (ext === 'mkv' || ext === 'avi'));
 
     if (shouldTranscode) {
-        console.log(`🎬 Starting VOD transcoding for stream ${streamId} (${ext} -> mp4)`);
         const transcodeHeaders = { ...headers };
         delete transcodeHeaders['Range'];
 

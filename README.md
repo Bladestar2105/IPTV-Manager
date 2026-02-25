@@ -42,6 +42,7 @@
 - **⚡ Optional Redis**: High-performance tracking for active streams (recommended for >500 users).
 - **🧵 Worker Threads**: Offloads CPU-intensive tasks like EPG mapping.
 - **⚡ Optimized Channel Matching**: Fast channel matching algorithms using bitwise signatures.
+- **⚡ Optimized Database Schema**: Optimized indices for faster streaming performance and EPG updates.
 
 ## 📋 Requirements
 - **Node.js**: 20.x+
@@ -76,6 +77,10 @@ For production environments, it is strongly recommended to set `NODE_ENV=product
 2.  Install: `npm install`
 3.  Configure: `cp .env.example .env` (edit as needed)
 4.  Run: `npm start`
+
+### Development
+- **Linting**: `npm run lint`
+- **Testing**: `npm test`
 
 ### First Time Setup
 - **Default Username**: `admin`

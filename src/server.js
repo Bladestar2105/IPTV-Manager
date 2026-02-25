@@ -49,7 +49,7 @@ let redisClient = null;
     await createDefaultAdmin();
 
     const numCPUs = os.cpus().length;
-    console.log(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
+    console.info(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
 
     let schedulerPid = null;
 
@@ -60,7 +60,7 @@ let redisClient = null;
     }
 
     cluster.on('exit', (worker, code, signal) => {
-      console.log(`Worker ${worker.process.pid} died. Restarting...`);
+      console.error(`Worker ${worker.process.pid} died. Restarting...`);
       // Cleanup streams for this worker
       try {
         db.prepare('DELETE FROM current_streams WHERE worker_pid = ?').run(worker.process.pid);
@@ -84,7 +84,7 @@ let redisClient = null;
     }
 
     app.listen(PORT, () => {
-      console.log(`✅ IPTV-Manager: http://localhost:${PORT} (Worker ${process.pid})`);
+      console.info(`✅ IPTV-Manager: http://localhost:${PORT} (Worker ${process.pid})`);
     });
   }
 })();

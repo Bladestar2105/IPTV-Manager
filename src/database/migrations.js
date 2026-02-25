@@ -368,6 +368,11 @@ export function migrateIndexes(db) {
     // Index on user_channels (provider_channel_id) for joins
     db.exec('CREATE INDEX IF NOT EXISTS idx_user_channels_prov ON user_channels(provider_channel_id)');
 
+    // Optimization Indices
+    db.exec('CREATE INDEX IF NOT EXISTS idx_stream_stats_channel ON stream_stats(channel_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sync_logs_prov ON sync_logs(provider_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_current_streams_prov ON current_streams(provider_id)');
+
     // Only log if we suspect something changed or strictly once?
     // Since IF NOT EXISTS is silent, we can just say verified.
     // However, to avoid spamming logs on every restart, we might want to check existence, but it's fast enough.
