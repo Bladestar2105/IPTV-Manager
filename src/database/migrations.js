@@ -1,6 +1,7 @@
 import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
+import { clearSettingsCache } from '../utils/helpers.js';
 
 export function migrateProvidersSchema(db) {
   try {
@@ -337,6 +338,7 @@ export function migrateOptimizeDatabase(db) {
 
        // 4. Mark as done
        db.prepare("INSERT INTO settings (key, value) VALUES ('db_optimized_v1', 'true')").run();
+       clearSettingsCache();
     }
   } catch (e) {
     console.error('Optimization migration error:', e);

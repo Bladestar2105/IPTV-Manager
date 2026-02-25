@@ -5,6 +5,7 @@ import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
 import { calculateNextSync } from '../services/syncService.js';
+import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
 
 export const getSettings = (req, res) => {
@@ -27,6 +28,7 @@ export const updateSettings = (req, res) => {
         insert.run(key, String(value));
       }
     })();
+    clearSettingsCache();
     res.json({success: true});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
