@@ -77,7 +77,9 @@ vi.mock('../../src/services/streamManager.js', () => ({
         add: vi.fn(),
         remove: vi.fn(),
         cleanupUser: vi.fn(),
+        isSessionActive: vi.fn().mockResolvedValue(false),
         getUserConnectionCount: vi.fn(),
+        getProviderConnectionCount: vi.fn().mockResolvedValue(0),
         localStreams: new Map()
     }
 }));
