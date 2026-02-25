@@ -7,6 +7,7 @@ import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../u
 import { calculateNextSync } from '../services/syncService.js';
 import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
+import { isSafeUrl } from '../utils/helpers.js';
 
 export const getSettings = (req, res) => {
   try {
@@ -271,7 +272,7 @@ export const exportData = (req, res) => {
   }
 };
 
-export const importData = (req, res) => {
+export const importData = async (req, res) => {
   if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
   let tempPath = null;
   try {
@@ -295,6 +296,37 @@ export const importData = (req, res) => {
 
     if (!importData.version || !importData.users) {
       return res.status(400).json({error: 'Invalid export file format'});
+    }
+
+    // Security validation for URLs
+    for (const p of importData.providers || []) {
+        if (p.url && !(await isSafeUrl(p.url))) {
+            return res.status(400).json({error: 'invalid_url', message: `Provider URL is unsafe: ${p.url}`});
+        }
+        if (p.epg_url && !(await isSafeUrl(p.epg_url))) {
+            return res.status(400).json({error: 'invalid_url', message: `EPG URL is unsafe: ${p.epg_url}`});
+        }
+        if (p.backup_urls) {
+            let urls = [];
+            try {
+                if (Array.isArray(p.backup_urls)) {
+                    urls = p.backup_urls;
+                } else {
+                    urls = JSON.parse(p.backup_urls);
+                }
+            } catch (e) {
+                if (typeof p.backup_urls === 'string') urls = p.backup_urls.split('\n');
+            }
+
+            if (Array.isArray(urls)) {
+                for (const u of urls) {
+                    const trimmed = u.trim();
+                    if (trimmed && !(await isSafeUrl(trimmed))) {
+                        return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe: ${trimmed}`});
+                    }
+                }
+            }
+        }
     }
 
     const stats = {
