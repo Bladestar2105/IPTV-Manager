@@ -1,17 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { Worker } from 'worker_threads';
-import fetch from 'node-fetch';
 import db from '../database/db.js';
-import { EPG_CACHE_DIR } from '../config/constants.js';
 import {
   loadAllEpgChannels,
   updateEpgSource,
   updateProviderEpg,
   deleteEpgSourceData,
   getProgramsNow,
-  getProgramsSchedule,
-  regenerateFilteredEpg // Kept as dummy for compatibility if needed, but implementation is empty
+  getProgramsSchedule
 } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
 import { isSafeUrl } from '../utils/helpers.js';
@@ -307,8 +304,6 @@ export const manualMapping = async (req, res) => {
       VALUES (?, ?)
       ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
     `).run(Number(provider_channel_id), epg_channel_id);
-
-    // regenerateFilteredEpg not needed anymore as we query DB directly
 
     res.json({success: true});
   } catch (e) {
