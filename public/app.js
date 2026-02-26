@@ -94,10 +94,16 @@ async function fetchJSON(url, options = {}) {
 
 function getProxiedUrl(url) {
   if (!url) return '';
-  // If we are on HTTPS and the URL is HTTP, use proxy
-  if (window.location.protocol === 'https:' && url.startsWith('http://')) {
+
+  // Check if URL is already relative (local)
+  if (url.startsWith('/')) return url;
+
+  // Always proxy external URLs (HTTP/HTTPS) to leverage caching and avoid mixed content
+  if (url.startsWith('http://') || url.startsWith('https://')) {
     const token = getToken();
-    return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
+    if (token) {
+      return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
+    }
   }
   return url;
 }
