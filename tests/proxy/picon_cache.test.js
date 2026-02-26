@@ -13,6 +13,7 @@ vi.mock('fs', () => {
   const existsSync = vi.fn();
   const mkdirSync = vi.fn();
   const createReadStream = vi.fn();
+  const createWriteStream = vi.fn();
   const writeFileSync = vi.fn();
   const readdirSync = vi.fn();
   const unlinkSync = vi.fn();
@@ -22,25 +23,29 @@ vi.mock('fs', () => {
       existsSync,
       mkdirSync,
       createReadStream,
+      createWriteStream,
       writeFileSync,
       readdirSync,
       unlinkSync,
       promises: {
         writeFile: vi.fn(),
         rename: vi.fn(),
-        unlink: vi.fn()
+        unlink: vi.fn(),
+        readdir: vi.fn()
       }
     },
     existsSync,
     mkdirSync,
     createReadStream,
+    createWriteStream,
     writeFileSync,
     readdirSync,
     unlinkSync,
     promises: {
         writeFile: vi.fn(),
         rename: vi.fn(),
-        unlink: vi.fn()
+        unlink: vi.fn(),
+        readdir: vi.fn()
     }
   };
 });
@@ -76,12 +81,27 @@ describe('Picon Cache', () => {
     });
     fs.mkdirSync.mockImplementation(() => {});
     fs.writeFileSync.mockImplementation(() => {});
+    fs.createWriteStream.mockReturnValue({
+        on: vi.fn(),
+        once: vi.fn(),
+        emit: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+        destroy: vi.fn(),
+        writableEnded: true
+    });
 
     // Mock Fetch
     const mockBuffer = Buffer.from('fake-image');
     fetch.mockResolvedValue({
       ok: true,
-      headers: { get: () => 'image/png' },
+      headers: {
+          get: (key) => {
+              if (key === 'content-type') return 'image/png';
+              if (key === 'content-length') return mockBuffer.length.toString();
+              return null;
+          }
+      },
       arrayBuffer: async () => mockBuffer,
       body: Readable.from(mockBuffer)
     });
@@ -92,7 +112,7 @@ describe('Picon Cache', () => {
     expect(res.headers['x-cache']).toBe('MISS');
     // Check if body matches
     expect(res.body.toString()).toBe('fake-image');
-    expect(fs.promises.writeFile).toHaveBeenCalled();
+    expect(fs.promises.rename).toHaveBeenCalled();
   });
 
   it('should serve from cache on HIT', async () => {
@@ -113,13 +133,13 @@ describe('Picon Cache', () => {
 
   it('should prune cache', async () => {
     fs.existsSync.mockReturnValue(true);
-    fs.readdirSync.mockReturnValue(['file1.png', 'file2.png']);
-    fs.unlinkSync.mockImplementation(() => {});
+    fs.promises.readdir.mockResolvedValue(['file1.png', 'file2.png']);
+    fs.promises.unlink.mockResolvedValue();
 
     const res = await request(app).delete('/api/proxy/picons');
 
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(2);
-    expect(fs.unlinkSync).toHaveBeenCalledTimes(2);
+    expect(fs.promises.unlink).toHaveBeenCalledTimes(2);
   });
 });
