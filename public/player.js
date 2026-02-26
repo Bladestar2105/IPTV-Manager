@@ -75,9 +75,15 @@
 
   function getProxiedUrl(url) {
     if (!url) return '';
-    // If we are on HTTPS and the URL is HTTP, use proxy
-    if (window.location.protocol === 'https:' && url.startsWith('http://')) {
-      return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
+
+    // Check if URL is already relative (local)
+    if (url.startsWith('/')) return url;
+
+    // Always proxy external URLs (HTTP/HTTPS) to leverage caching and avoid mixed content
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      if (token) {
+        return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
+      }
     }
     return url;
   }

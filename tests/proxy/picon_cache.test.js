@@ -31,7 +31,11 @@ vi.mock('fs', () => {
         writeFile: vi.fn(),
         rename: vi.fn(),
         unlink: vi.fn(),
-        readdir: vi.fn()
+        readdir: vi.fn(),
+        access: vi.fn()
+      },
+      constants: {
+        F_OK: 0
       }
     },
     existsSync,
@@ -41,11 +45,15 @@ vi.mock('fs', () => {
     writeFileSync,
     readdirSync,
     unlinkSync,
+    constants: {
+        F_OK: 0
+    },
     promises: {
         writeFile: vi.fn(),
         rename: vi.fn(),
         unlink: vi.fn(),
-        readdir: vi.fn()
+        readdir: vi.fn(),
+        access: vi.fn()
     }
   };
 });
@@ -74,6 +82,7 @@ describe('Picon Cache', () => {
 
   it('should fetch from URL and cache it on MISS', async () => {
     // Setup mocks
+    fs.promises.access.mockRejectedValue(new Error('ENOENT'));
     fs.existsSync.mockImplementation((p) => {
         // Ensure directory check passes if logic checks it
         if (p.includes('picons')) return false;
@@ -117,6 +126,7 @@ describe('Picon Cache', () => {
 
   it('should serve from cache on HIT', async () => {
     // Setup mocks
+    fs.promises.access.mockResolvedValue();
     fs.existsSync.mockReturnValue(true);
     const mockReadStream = {
       pipe: (res) => { res.write('cached-image'); res.end(); }
@@ -141,5 +151,12 @@ describe('Picon Cache', () => {
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(2);
     expect(fs.promises.unlink).toHaveBeenCalledTimes(2);
+  });
+
+  it('should return 0 deleted if cache dir does not exist', async () => {
+    fs.promises.readdir.mockRejectedValue({ code: 'ENOENT' });
+    const res = await request(app).delete('/api/proxy/picons');
+    expect(res.status).toBe(200);
+    expect(res.body.deleted).toBe(0);
   });
 });

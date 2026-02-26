@@ -36,7 +36,8 @@ router.get('/image', authenticateToken, async (req, res) => {
     const filePath = path.join(PICON_CACHE_DIR, `${hash}.png`); // Default to png or detect extension?
 
     // Check Cache
-    if (fs.existsSync(filePath)) {
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK);
       // Serve from Cache
       res.setHeader('X-Cache', 'HIT');
       // Try to determine content type from file extension or just default to image/png
@@ -46,6 +47,8 @@ router.get('/image', authenticateToken, async (req, res) => {
       res.setHeader('Content-Type', 'image/png'); // Simplified
       fs.createReadStream(filePath).pipe(res);
       return;
+    } catch (e) {
+      // File does not exist, proceed to fetch
     }
 
     // 1. Fetch Image with fetchSafe (Enforcing safeLookup and isSafeUrl for SSRF protection)
@@ -198,11 +201,16 @@ router.delete('/picons', authenticateToken, async (req, res) => {
     }
 
     try {
-        if (!fs.existsSync(PICON_CACHE_DIR)) {
-            return res.json({ deleted: 0 });
+        let files;
+        try {
+            files = await fs.promises.readdir(PICON_CACHE_DIR);
+        } catch (err) {
+            if (err.code === 'ENOENT') {
+                return res.json({ deleted: 0 });
+            }
+            throw err;
         }
 
-        const files = await fs.promises.readdir(PICON_CACHE_DIR);
         await Promise.all(files.map(file => fs.promises.unlink(path.join(PICON_CACHE_DIR, file))));
 
         res.json({ deleted: files.length });
