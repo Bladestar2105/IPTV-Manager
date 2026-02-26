@@ -375,16 +375,6 @@ export const resetMapping = async (req, res) => {
   }
 };
 
-export const applyMapping = async (req, res) => {
-  try {
-    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    // Nothing to do as mapping is applied directly in DB
-    res.json({success: true});
-  } catch (e) {
-    res.status(500).json({error: e.message});
-  }
-};
-
 export const autoMapping = async (req, res) => {
   try {
     const { provider_id, category_id, only_used } = req.body;
