@@ -2,6 +2,8 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { pipeline } from 'stream/promises';
+import { PassThrough, Transform } from 'stream';
 import { authenticateToken } from '../middleware/auth.js';
 import { CACHE_DIR } from '../config/constants.js';
 import { fetchSafe } from '../utils/network.js';
@@ -89,38 +91,83 @@ router.get('/image', authenticateToken, async (req, res) => {
         return res.status(413).send('Image too large');
     }
 
-    const chunks = [];
+    const tempPath = `${filePath}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+    const fileStream = fs.createWriteStream(tempPath);
+    const multiplexer = new PassThrough();
+    let cacheError = false;
     let received = 0;
 
-    for await (const chunk of response.body) {
-        received += chunk.length;
-        if (received > MAX_SIZE) {
-             throw new Error('Image too large');
-        }
-        chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
+    // 1. Setup error handling and piping for multiplexer destinations
+    fileStream.on('error', (err) => {
+        console.error('Cache write error:', err);
+        cacheError = true;
+        multiplexer.unpipe(fileStream);
+        fileStream.destroy();
+    });
 
-    // Save to Cache
-    // We only save if it looks like an image? content-type check passed above.
-    // We use .png as extension for simplicity in serving, but it might be jpg/svg.
-    // Maybe use mime-types lookup?
-    // For now, saving as hash.png is acceptable for picons.
-    let tempPath;
-    try {
-        tempPath = `${filePath}.${crypto.randomBytes(8).toString('hex')}.tmp`;
-        await fs.promises.writeFile(tempPath, buffer);
-        await fs.promises.rename(tempPath, filePath);
-    } catch (writeErr) {
-        console.error('Failed to write to cache:', writeErr);
-        if (tempPath) {
-            try { await fs.promises.unlink(tempPath); } catch (e) {}
-        }
-        // Continue serving even if cache write fails
-    }
+    res.on('error', (err) => {
+        console.error('Response stream error:', err);
+        multiplexer.unpipe(res);
+    });
 
+    multiplexer.pipe(res);
+    multiplexer.pipe(fileStream);
+
+    // 2. Setup Size Checker
+    const sizeChecker = new Transform({
+        transform(chunk, encoding, callback) {
+            received += chunk.length;
+            if (received > MAX_SIZE) {
+                callback(new Error('Image too large'));
+                return;
+            }
+            callback(null, chunk);
+        }
+    });
+
+    // 3. Prepare Response Headers
+    if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+    }
     res.setHeader('X-Cache', 'MISS');
-    res.send(buffer);
+
+    // 4. Run Pipeline
+    try {
+        await pipeline(
+            response.body,
+            sizeChecker,
+            multiplexer
+        );
+
+        // Success: Rename cache file if no cache error occurred
+        if (!cacheError && !fileStream.destroyed) {
+            // Wait for fileStream to fully flush
+            await new Promise((resolve) => {
+                if (fileStream.writableEnded) resolve();
+                else fileStream.on('finish', resolve);
+            });
+            await fs.promises.rename(tempPath, filePath);
+        }
+    } catch (err) {
+        // Clean up on error
+        if (fileStream) fileStream.destroy();
+
+        if (err.message === 'Image too large') {
+            if (!res.headersSent) {
+                return res.status(413).send('Image too large');
+            } else {
+                return res.destroy(); // Truncate response
+            }
+        }
+        throw err; // Re-throw for general error handler
+    } finally {
+        // Final cleanup of temp file if it still exists and wasn't renamed
+        try {
+            if (fs.existsSync(tempPath)) {
+                await fs.promises.unlink(tempPath);
+            }
+        } catch (e) {}
+    }
 
   } catch (error) {
     console.error('Proxy Error:', error);
