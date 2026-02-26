@@ -21,6 +21,5 @@ router.delete('/mapping/:id', authenticateToken, epgController.deleteMapping);
 router.get('/mapping/:providerId', authenticateToken, epgController.getMappings);
 router.post('/mapping/reset', authenticateToken, epgController.resetMapping);
 router.post('/mapping/auto', authenticateToken, epgController.autoMapping);
-router.post('/mapping/apply', authenticateToken, epgController.applyMapping);
 
 export default router;

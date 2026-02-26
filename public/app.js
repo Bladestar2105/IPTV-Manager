@@ -2465,11 +2465,6 @@ document.addEventListener('DOMContentLoaded', () => {
     autoMapBtn.addEventListener('click', handleAutoMap);
   }
 
-  const applyMapBtn = document.getElementById('apply-map-btn');
-  if (applyMapBtn) {
-    applyMapBtn.addEventListener('click', handleApplyMapping);
-  }
-
   const resetMapBtn = document.getElementById('reset-map-btn');
   if (resetMapBtn) {
     resetMapBtn.addEventListener('click', handleResetMapping);
@@ -3484,20 +3479,6 @@ async function handleAutoMap() {
 
     alert(t('autoMapSuccess', {count: res.matched}));
     loadEpgMappingChannels();
-  } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
-  } finally {
-    setLoadingState(btn, false);
-  }
-}
-
-async function handleApplyMapping() {
-  const btn = document.getElementById('apply-map-btn');
-  setLoadingState(btn, true, 'saving');
-
-  try {
-    await fetchJSON('/api/mapping/apply', { method: 'POST' });
-    showToast(t('epgChangesApplied'), 'success');
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   } finally {
