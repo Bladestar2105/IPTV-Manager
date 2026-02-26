@@ -13,15 +13,16 @@
   <link href="style.css" rel="stylesheet">
 </head>
 <body>
+  <a class="visually-hidden-focusable p-2 bg-white text-dark position-absolute start-0 top-0 z-3" href="#main-content" data-i18n="skipToContent">Skip to content</a>
 
   <!-- Navbar -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 d-none" id="main-navbar">
     <div class="container">
       <a class="navbar-brand d-flex align-items-center gap-2" href="#">
-        <img src="logo.png" alt="Logo" width="30" height="30" class="d-inline-block align-text-top">
+        <img src="logo.png" alt="IPTV-Manager Logo" width="30" height="30" class="d-inline-block align-text-top">
         IPTV-Manager
       </a>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" data-i18n-label="toggleNavigation">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div class="collapse navbar-collapse" id="navbarNav">
@@ -43,7 +44,7 @@
           </li>
         </ul>
         <div class="d-flex align-items-center gap-2">
-          <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary w-auto">
+          <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary w-auto" data-i18n-label="selectLanguage">
             <option value="en">🇬🇧 English</option>
             <option value="de">🇩🇪 Deutsch</option>
             <option value="fr">🇫🇷 Français</option>
