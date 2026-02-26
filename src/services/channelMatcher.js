@@ -92,6 +92,10 @@ export class ChannelMatcher {
     this.baseNameIndex = new Map();
     this.numbersIndex = new Map();
 
+    // Intermediate storage for deduplication: Map<numbersString, Map<baseName, ParsedChannel>>
+    // This dramatically reduces the number of candidates for fuzzy matching by grouping variations (HD, SD, etc.)
+    const uniqueCandidates = new Map();
+
     for (const item of this.parsedEpgChannels) {
         // Index by baseName
         const baseKey = item.baseName;
@@ -100,17 +104,23 @@ export class ChannelMatcher {
         }
         this.baseNameIndex.get(baseKey).push(item);
 
-        // Index by numbersString
+        // Group by numbersString -> baseName
         const numKey = item.numbersString;
-        if (!this.numbersIndex.has(numKey)) {
-            this.numbersIndex.set(numKey, []);
+        if (!uniqueCandidates.has(numKey)) {
+            uniqueCandidates.set(numKey, new Map());
         }
-        this.numbersIndex.get(numKey).push(item);
+        // Only store one representative per baseName
+        if (!uniqueCandidates.get(numKey).has(item.baseName)) {
+            uniqueCandidates.get(numKey).set(item.baseName, item);
+        }
     }
 
-    // Sort numbersIndex lists by signaturePopcount for binary search pruning
-    for (const list of this.numbersIndex.values()) {
+    // Build final numbersIndex from unique candidates
+    for (const [numKey, baseMap] of uniqueCandidates) {
+        const list = Array.from(baseMap.values());
+        // Sort by signaturePopcount for binary search pruning
         list.sort((a, b) => a.signaturePopcount - b.signaturePopcount);
+        this.numbersIndex.set(numKey, list);
     }
   }
 
@@ -328,18 +338,54 @@ export class ChannelMatcher {
     const bestGlobal = this.findBestSimilarity(parsed, fuzzyCandidates, 0.8, true);
 
     if (bestGlobal.score > 0.8) {
-        const candLang = bestGlobal.channel.language;
-        if (parsed.language && candLang && parsed.language !== candLang) {
-             return {
-                 epgChannel: null,
-                 confidence: bestGlobal.score * 0.5,
-                 method: 'global_fuzzy_lang_mismatch_rejected',
-                 parsed: parsed
+        // Expand the representative back to all variants
+        const representative = bestGlobal.channel;
+        let finalCandidate = representative;
+
+        // Find all variants with this base name
+        const variants = this.baseNameIndex.get(representative.baseName);
+
+        if (variants && variants.length > 1) {
+            // Filter variants that match the number group of the representative
+            // (baseNameIndex ignores numbers, so we need to ensure we don't pick a variant with different numbers)
+            const numberGroupVariants = variants.filter(v => v.numbersString === representative.numbersString);
+
+            if (numberGroupVariants.length > 0) {
+                 if (parsed.language) {
+                      // Try to find a variant matching the requested language
+                      const langMatch = numberGroupVariants.find(v => v.language === parsed.language);
+                      if (langMatch) {
+                           finalCandidate = langMatch;
+                      } else {
+                           // If language requested but no variant matches, stick with representative
+                           // but check if we should reject due to mismatch
+                           // (If representative has language and it differs from requested)
+                           if (finalCandidate.language && finalCandidate.language !== parsed.language) {
+                                return {
+                                     epgChannel: null,
+                                     confidence: bestGlobal.score * 0.5,
+                                     method: 'global_fuzzy_lang_mismatch_rejected',
+                                     parsed: parsed
+                                }
+                           }
+                      }
+                 }
+                 // If no language requested, representative is fine (or could prioritize null language if needed)
+            }
+        } else {
+             // Single variant check
+             if (parsed.language && finalCandidate.language && finalCandidate.language !== parsed.language) {
+                  return {
+                       epgChannel: null,
+                       confidence: bestGlobal.score * 0.5,
+                       method: 'global_fuzzy_lang_mismatch_rejected',
+                       parsed: parsed
+                  }
              }
         }
 
         return {
-            epgChannel: bestGlobal.channel.channel,
+            epgChannel: finalCandidate.channel,
             confidence: bestGlobal.score,
             method: 'global_fuzzy',
             parsed: parsed
