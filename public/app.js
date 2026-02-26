@@ -4,7 +4,10 @@
  */
 
 window.onerror = function(msg, url, line, col, error) {
-   const stack = error ? error.stack : '';
+   let stack = error ? error.stack : '';
+   if (!stack) {
+       stack = `URL: ${url}\nLine: ${line}\nCol: ${col}`;
+   }
    logToBackend('error', msg, stack);
 };
 
@@ -20,13 +23,16 @@ async function logToBackend(level, message, stack) {
       const headers = {'Content-Type': 'application/json'};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
+      // Enrich stack with current page URL for context
+      const enhancedStack = `${stack || ''}\nLocation: ${window.location.href}`;
+
       await fetch('/api/client-logs', {
          method: 'POST',
          headers: headers,
          body: JSON.stringify({
             level,
             message,
-            stack,
+            stack: enhancedStack,
             user_agent: navigator.userAgent
          })
       });
