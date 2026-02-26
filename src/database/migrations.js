@@ -364,11 +364,6 @@ export function migrateIndexes(db) {
     // Index on user_categories (user_id, sort_order)
     db.exec('CREATE INDEX IF NOT EXISTS idx_user_categories_user_sort ON user_categories(user_id, sort_order)');
 
-    // Index on user_channels (user_category_id, sort_order)
-    db.exec('CREATE INDEX IF NOT EXISTS idx_user_channels_cat_sort ON user_channels(user_category_id, sort_order)');
-
-    // Index on user_channels (provider_channel_id) for joins
-    db.exec('CREATE INDEX IF NOT EXISTS idx_user_channels_prov ON user_channels(provider_channel_id)');
 
     // Optimization Indices
     db.exec('CREATE INDEX IF NOT EXISTS idx_stream_stats_channel ON stream_stats(channel_id)');

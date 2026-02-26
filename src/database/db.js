@@ -213,6 +213,8 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_pc_prov_type ON provider_channels(provider_id, stream_type);
     CREATE INDEX IF NOT EXISTS idx_pc_name ON provider_channels(name);
     CREATE INDEX IF NOT EXISTS idx_cs_user_ip ON current_streams(user_id, ip);
+    CREATE INDEX IF NOT EXISTS idx_user_channels_cat_sort ON user_channels(user_category_id, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_user_channels_prov ON user_channels(provider_channel_id);
   `);
 
             console.log("✅ Database OK");
