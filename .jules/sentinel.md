@@ -7,3 +7,8 @@
 **Vulnerability:** The `/api/proxy/image` endpoint used `await response.arrayBuffer()` to download images for caching, loading the entire file into memory without size limits. This allowed authenticated users to crash the server (Memory Exhaustion) by requesting a large file.
 **Learning:** `fetch` response methods like `arrayBuffer()`, `text()`, and `json()` buffer the entire response body. When handling user-controlled URLs (like in a proxy), always use streams and enforce a size limit to prevent memory exhaustion.
 **Prevention:** Check `Content-Length` headers first (if available), and process the response body as a stream, counting bytes and aborting if a threshold (e.g., 5MB) is exceeded.
+
+## 2024-05-25 - Incomplete SSRF Protection in Helper
+**Vulnerability:** The `isUnsafeIP` utility function only blocked a subset of private IP ranges, missing critical RFC 1918 ranges like `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16`. This allowed attackers to bypass SSRF protections by using these unblocked private IPs.
+**Learning:** Blacklisting specific IPs manually is error-prone. It's easy to miss ranges or forget edge cases (like IPv6 ULA or mapped addresses).
+**Prevention:** Use a comprehensive, standard library or a well-maintained list of all reserved IP ranges (RFC 1918, RFC 4193, RFC 6598) for SSRF protection. Regularly audit network validation logic against known reserved ranges.
