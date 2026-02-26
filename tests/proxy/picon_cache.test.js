@@ -24,14 +24,24 @@ vi.mock('fs', () => {
       createReadStream,
       writeFileSync,
       readdirSync,
-      unlinkSync
+      unlinkSync,
+      promises: {
+        writeFile: vi.fn(),
+        rename: vi.fn(),
+        unlink: vi.fn()
+      }
     },
     existsSync,
     mkdirSync,
     createReadStream,
     writeFileSync,
     readdirSync,
-    unlinkSync
+    unlinkSync,
+    promises: {
+        writeFile: vi.fn(),
+        rename: vi.fn(),
+        unlink: vi.fn()
+    }
   };
 });
 
@@ -82,7 +92,7 @@ describe('Picon Cache', () => {
     expect(res.headers['x-cache']).toBe('MISS');
     // Check if body matches
     expect(res.body.toString()).toBe('fake-image');
-    expect(fs.writeFileSync).toHaveBeenCalled();
+    expect(fs.promises.writeFile).toHaveBeenCalled();
   });
 
   it('should serve from cache on HIT', async () => {
