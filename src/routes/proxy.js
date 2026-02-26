@@ -202,14 +202,10 @@ router.delete('/picons', authenticateToken, async (req, res) => {
             return res.json({ deleted: 0 });
         }
 
-        const files = fs.readdirSync(PICON_CACHE_DIR);
-        let deleted = 0;
-        for (const file of files) {
-            fs.unlinkSync(path.join(PICON_CACHE_DIR, file));
-            deleted++;
-        }
+        const files = await fs.promises.readdir(PICON_CACHE_DIR);
+        await Promise.all(files.map(file => fs.promises.unlink(path.join(PICON_CACHE_DIR, file))));
 
-        res.json({ deleted });
+        res.json({ deleted: files.length });
     } catch (error) {
         console.error('Failed to prune cache:', error);
         res.status(500).json({ error: 'Failed to prune cache' });
