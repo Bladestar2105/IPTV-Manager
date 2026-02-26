@@ -448,11 +448,6 @@ function formatXmltvDate(ts) {
     return `${date.getUTCFullYear()}${pad(date.getUTCMonth()+1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;
 }
 
-// Legacy exports to prevent crashes until controllers are updated
-export async function generateConsolidatedEpg() {}
-export async function regenerateFilteredEpg() {}
-export async function getEpgFiles() { return []; }
-
 function peekStream(stream) {
     return new Promise((resolve, reject) => {
         const onData = (chunk) => {
