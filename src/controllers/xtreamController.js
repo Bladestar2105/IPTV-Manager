@@ -527,16 +527,17 @@ export const playerPlaylist = async (req, res) => {
       const safeName = sanitizeM3uName(name);
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
-      let extra = '';
+      const extraParts = [];
       if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
-         if (ch.plot) extra += ` plot="${sanitizeMetadata(ch.plot)}"`;
-         if (ch.cast) extra += ` cast="${sanitizeMetadata(ch.cast)}"`;
-         if (ch.director) extra += ` director="${sanitizeMetadata(ch.director)}"`;
-         if (ch.genre) extra += ` genre="${sanitizeMetadata(ch.genre)}"`;
-         if (ch.releaseDate) extra += ` releaseDate="${sanitizeMetadata(ch.releaseDate)}"`;
-         if (ch.rating) extra += ` rating="${sanitizeMetadata(ch.rating)}"`;
-         if (ch.episode_run_time) extra += ` duration="${sanitizeMetadata(ch.episode_run_time)}"`;
+         if (ch.plot) extraParts.push(`plot="${sanitizeMetadata(ch.plot)}"`);
+         if (ch.cast) extraParts.push(`cast="${sanitizeMetadata(ch.cast)}"`);
+         if (ch.director) extraParts.push(`director="${sanitizeMetadata(ch.director)}"`);
+         if (ch.genre) extraParts.push(`genre="${sanitizeMetadata(ch.genre)}"`);
+         if (ch.releaseDate) extraParts.push(`releaseDate="${sanitizeMetadata(ch.releaseDate)}"`);
+         if (ch.rating) extraParts.push(`rating="${sanitizeMetadata(ch.rating)}"`);
+         if (ch.episode_run_time) extraParts.push(`duration="${sanitizeMetadata(ch.episode_run_time)}"`);
       }
+      const extra = extraParts.length > 0 ? ' ' + extraParts.join(' ') : '';
 
       // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
