@@ -193,8 +193,10 @@ describe('System - Provider Data Integrity', () => {
 
         // Mock fs.readFileSync to return encrypted buffer
         vi.spyOn(fs, 'readFileSync').mockReturnValue(encrypted);
+        vi.spyOn(fs.promises, 'readFile').mockResolvedValue(encrypted);
         vi.spyOn(fs, 'existsSync').mockReturnValue(true); // for unlink
         vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+        vi.spyOn(fs.promises, 'unlink').mockResolvedValue();
 
         // Run Import
         await systemController.importData(req, res);
