@@ -1,5 +1,6 @@
 import zlib from 'zlib';
 import Database from 'better-sqlite3';
+import sax from 'sax';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
@@ -73,116 +74,125 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             }
         };
 
-        if (stream.setEncoding) {
-            stream.setEncoding('utf8');
-        }
+        // Use strict: false to be robust against malformed XML
+        const saxStream = sax.createStream(false, { lowercase: true, trim: true });
 
-        let buffer = '';
+        let currentTag = null;
+        let currentChannel = null;
+        let currentProgram = null;
+        let currentText = '';
 
-        for await (const chunk of stream) {
-            buffer += chunk;
+        await new Promise((resolve, reject) => {
+            saxStream.on('error', function (e) {
+                // handle error
+                console.error("XML Parse Error", e);
+                this._parser.error = null;
+                this._parser.resume();
+            });
 
-            while (true) {
-                const channelIdx = buffer.indexOf('<channel');
-                const progIdx = buffer.indexOf('<programme');
+            saxStream.on('opentag', function (node) {
+                currentTag = node.name;
 
-                let startTag = null;
-                let startIndex = -1;
-
-                if (channelIdx !== -1 && (progIdx === -1 || channelIdx < progIdx)) {
-                    startTag = 'channel';
-                    startIndex = channelIdx;
-                } else if (progIdx !== -1) {
-                    startTag = 'programme';
-                    startIndex = progIdx;
+                // Only reset text when entering relevant tags to support mixed content if needed
+                if (currentTag === 'display-name' || currentTag === 'title' || currentTag === 'desc') {
+                    currentText = '';
                 }
 
-                if (startIndex === -1) {
-                    // Keep the last part of buffer in case a tag is split
-                    if (buffer.length > 50) {
-                        buffer = buffer.slice(-50);
-                    }
-                    break;
-                }
+                if (node.name === 'channel') {
+                    currentChannel = {
+                        id: node.attributes.id,
+                        name: node.attributes.id, // Default to ID
+                        logo: null,
+                        sourceType,
+                        sourceId,
+                        updatedAt: now,
+                        hasName: false
+                    };
+                } else if (node.name === 'programme') {
+                    const start = parseXmltvDate(node.attributes.start);
+                    const stop = parseXmltvDate(node.attributes.stop);
 
-                // Check for self-closing or end tag
-                const endTag = `</${startTag}>`;
-                const nextGT = buffer.indexOf('>', startIndex);
-
-                if (nextGT === -1) {
-                    break; // Wait for more data
-                }
-
-                let endIndex = -1;
-                // Check if self-closing: ends with /> (ignoring spaces? standard XMLTV usually strict)
-                // But let's check correctly: buffer[nextGT-1] === '/'
-                if (buffer[nextGT - 1] === '/') {
-                    endIndex = nextGT + 1;
-                } else {
-                    const endTagIdx = buffer.indexOf(endTag, startIndex);
-                    if (endTagIdx === -1) {
-                        break; // Wait for more data
-                    }
-                    endIndex = endTagIdx + endTag.length;
-                }
-
-                const element = buffer.substring(startIndex, endIndex);
-
-                if (startTag === 'channel') {
-                    const idMatch = element.match(/id=(["'])([\s\S]*?)\1/);
-                    const nameMatch = element.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
-                    const iconMatch = element.match(/<icon[^>]+src=(["'])([\s\S]*?)\1/);
-
-                    if (idMatch) {
-                        channelBatch.push({
-                            id: idMatch[2],
-                            name: nameMatch ? decodeXml(nameMatch[1]) : idMatch[2],
-                            logo: iconMatch ? iconMatch[2] : null,
+                    if (stop > now - 86400) {
+                        currentProgram = {
+                            channelId: node.attributes.channel,
                             sourceType,
                             sourceId,
-                            updatedAt: now
-                        });
+                            start,
+                            stop,
+                            title: '',
+                            desc: '',
+                            lang: ''
+                        };
+                    } else {
+                        currentProgram = null; // Skip old programs
                     }
-                } else if (startTag === 'programme') {
-                    const startMatch = element.match(/start="([^"]+)"/);
-                    const stopMatch = element.match(/stop="([^"]+)"/);
-                    const channelMatch = element.match(/channel="([^"]+)"/);
-                    const titleMatch = element.match(/<title[^>]*>([^<]+)<\/title>/);
-                    const descMatch = element.match(/<desc[^>]*>([^<]+)<\/desc>/);
-
-                    if (startMatch && stopMatch && channelMatch && titleMatch) {
-                         const start = parseXmltvDate(startMatch[1]);
-                         const stop = parseXmltvDate(stopMatch[1]);
-
-                         if (stop > now - 86400) {
-                             programBatch.push({
-                                 channelId: channelMatch[1],
-                                 sourceType,
-                                 sourceId,
-                                 start,
-                                 stop,
-                                 title: decodeXml(titleMatch[1]),
-                                 desc: descMatch ? decodeXml(descMatch[1]) : '',
-                                 lang: ''
-                             });
-                         }
+                } else if (node.name === 'icon') {
+                    if (currentChannel && node.attributes.src) {
+                        currentChannel.logo = node.attributes.src;
                     }
                 }
+            });
 
-                // Remove processed part
-                buffer = buffer.slice(endIndex);
+            const appendText = (text) => {
+                 if (currentChannel && currentTag === 'display-name') {
+                    currentText += text;
+                } else if (currentProgram && (currentTag === 'title' || currentTag === 'desc')) {
+                    currentText += text;
+                }
+            };
+
+            saxStream.on('text', appendText);
+
+            // Handle CDATA sections same as text
+            saxStream.on('cdata', appendText);
+
+            saxStream.on('closetag', function (tagName) {
+                if (currentChannel && tagName === 'display-name') {
+                    if (!currentChannel.hasName) {
+                        currentChannel.name = decodeXml(currentText);
+                        currentChannel.hasName = true;
+                    }
+                } else if (currentProgram && tagName === 'title') {
+                    currentProgram.title = decodeXml(currentText);
+                } else if (currentProgram && tagName === 'desc') {
+                    currentProgram.desc = decodeXml(currentText);
+                }
+
+                if (tagName === 'channel' && currentChannel) {
+                    delete currentChannel.hasName; // Clean up temp property
+                    channelBatch.push(currentChannel);
+                    currentChannel = null;
+                } else if (tagName === 'programme' && currentProgram) {
+                    // Only add if we have required fields
+                    if (currentProgram.channelId && currentProgram.start && currentProgram.stop && currentProgram.title) {
+                        programBatch.push(currentProgram);
+                    }
+                    currentProgram = null;
+                }
 
                 if (channelBatch.length >= BATCH_SIZE || programBatch.length >= BATCH_SIZE) {
                     processBatches();
                 }
-            }
-        }
+            });
 
-        // Final batch
-        processBatches();
+            saxStream.on('end', function () {
+                try {
+                    processBatches();
+                    resolve({ success: true });
+                } catch (err) {
+                    reject(err);
+                }
+            });
 
-        // Cleanup orphaned programs (programs without a valid channel in this source)
-        // This is important because we disabled foreign keys during import
+            stream.pipe(saxStream);
+
+            // Handle stream errors
+            stream.on('error', (err) => {
+                reject(err);
+            });
+        });
+
+        // Cleanup orphaned programs after successful parsing
         importDb.prepare(`
             DELETE FROM epg_programs
             WHERE source_type = ? AND source_id = ?
