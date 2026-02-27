@@ -4,6 +4,7 @@ const originalLog = console.log;
 const originalError = console.error;
 const originalWarn = console.warn;
 const originalInfo = console.info;
+const originalDebug = console.debug;
 
 function getTimestamp() {
   return new Date().toISOString();
@@ -27,4 +28,9 @@ console.warn = function(...args) {
 console.info = function(...args) {
   const msg = util.format(...args);
   originalInfo(`[${getTimestamp()}] ${msg}`);
+};
+
+console.debug = function(...args) {
+  const msg = util.format(...args);
+  originalDebug(`[${getTimestamp()}] ${msg}`);
 };

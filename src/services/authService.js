@@ -37,7 +37,7 @@ setInterval(() => {
 
   if (authCache.size > AUTH_CACHE_MAX_SIZE) {
     authCache.clear();
-    console.log('🧹 Auth Cache cleared (limit reached)');
+    console.debug('🧹 Auth Cache cleared (limit reached)');
   } else {
     for (const [key, value] of authCache.entries()) {
       if (now > value.expiry) authCache.delete(key);
@@ -46,7 +46,7 @@ setInterval(() => {
 
   if (tokenCache.size > AUTH_CACHE_MAX_SIZE) {
     tokenCache.clear();
-    console.log('🧹 Token Cache cleared (limit reached)');
+    console.debug('🧹 Token Cache cleared (limit reached)');
   } else {
     for (const [key, value] of tokenCache.entries()) {
       if (now > value.expiry) tokenCache.delete(key);
