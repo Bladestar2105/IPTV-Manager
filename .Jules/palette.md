@@ -29,3 +29,7 @@
 ## 2026-02-24 - [Async Loading States]
 **Learning:** Users lack feedback during critical create/update operations (User, Provider, Category), leading to uncertainty or double submissions. While `setLoadingState` existed, it was inconsistent across the app's main forms.
 **Action:** Systematically applied `setLoadingState(btn, true/false)` to all form submission handlers (`user-form`, `provider-form`, `category-form`, `edit-user-form`), ensuring the state is reset in a `finally` block to prevent UI deadlocks on error.
+
+## 2026-03-01 - [Non-Blocking Notifications]
+**Learning:** Standard browser `alert()` dialogs block the entire UI thread, disrupting user flow for routine success confirmations (e.g., "Settings saved").
+**Action:** Replaced `alert()` calls with `showToast(msg, 'success/danger')` for administrative actions like Sync and EPG updates. This provides visible feedback without interrupting the workflow.
