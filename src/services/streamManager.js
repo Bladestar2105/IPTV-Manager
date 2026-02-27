@@ -61,14 +61,7 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        if (this.stmtAdd) {
-          this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, ip, this.pid, providerId);
-        } else {
-          this.db.prepare(`
-            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid, provider_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(id, user.id, user.username, channelName, data.start_time, ip, this.pid, providerId);
-        }
+        this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, ip, this.pid, providerId);
       } catch (e) {
         console.error('DB Add Error:', e.message);
       }
@@ -108,11 +101,7 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        if (this.stmtRemove) {
-          this.stmtRemove.run(id);
-        } else {
-          this.db.prepare('DELETE FROM current_streams WHERE id = ?').run(id);
-        }
+        this.stmtRemove.run(id);
       } catch (e) { /* ignore */ }
     }
   }
@@ -131,13 +120,7 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        let row;
-        if (this.stmtCleanup) {
-          row = this.stmtCleanup.get(userId, ip);
-        } else {
-          row = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?').get(userId, ip);
-        }
-
+        const row = this.stmtCleanup.get(userId, ip);
         if (row) {
           await this.remove(row.id);
         }
@@ -158,11 +141,7 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        if (this.stmtGetAll) {
-          return this.stmtGetAll.all();
-        } else {
-          return this.db.prepare('SELECT * FROM current_streams').all();
-        }
+        return this.stmtGetAll.all();
       } catch (e) {
         return [];
       }
@@ -192,13 +171,8 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        if (this.stmtCountUser) {
-          const res = this.stmtCountUser.get(userId);
-          return res ? res.count : 0;
-        } else {
-          const res = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)').get(userId);
-          return res ? res.count : 0;
-        }
+        const res = this.stmtCountUser.get(userId);
+        return res ? res.count : 0;
       } catch (e) {
         console.error('DB Count Error:', e);
         return 0;
@@ -225,13 +199,8 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        if (this.stmtCountProvider) {
-          const res = this.stmtCountProvider.get(providerId);
-          return res ? res.count : 0;
-        } else {
-          const res = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)').get(providerId);
-          return res ? res.count : 0;
-        }
+        const res = this.stmtCountProvider.get(providerId);
+        return res ? res.count : 0;
       } catch (e) {
         console.error('DB Provider Count Error:', e);
         return 0;
@@ -250,11 +219,7 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        if (this.stmtIsActive) {
-          return !!this.stmtIsActive.get(userId, ip, channelName, providerId);
-        } else {
-          return !!this.db.prepare('SELECT 1 FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? LIMIT 1').get(userId, ip, channelName, providerId);
-        }
+        return !!this.stmtIsActive.get(userId, ip, channelName, providerId);
       } catch (e) {
         return false;
       }

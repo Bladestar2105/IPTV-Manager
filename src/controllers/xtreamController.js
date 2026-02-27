@@ -361,13 +361,14 @@ export const getPlaylist = async (req, res) => {
     `).all(user.id);
 
     const baseUrl = getBaseUrl(req);
-    let m3u = '#EXTM3U';
+    // Use an array to build the playlist, optimizing performance for large lists
+    let header = '#EXTM3U';
 
     if (type === 'm3u_plus') {
-       m3u += ` url-tvg="${baseUrl}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}"\n`;
-    } else {
-       m3u += '\n';
+       header += ` url-tvg="${baseUrl}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}"`;
     }
+
+    const lines = [header];
 
     for (const ch of rows) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
@@ -395,16 +396,16 @@ export const getPlaylist = async (req, res) => {
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
 
       if (type === 'm3u_plus') {
-        m3u += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${finalName}\n`;
+        lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${finalName}`);
       } else {
-        m3u += `#EXTINF:-1,${finalName}\n`;
+        lines.push(`#EXTINF:-1,${finalName}`);
       }
-      m3u += `${streamUrl}\n`;
+      lines.push(streamUrl);
     }
 
     res.setHeader('Content-Type', 'audio/x-mpegurl');
     res.setHeader('Content-Disposition', `attachment; filename="playlist.m3u"`);
-    res.send(m3u);
+    res.send(lines.join('\n') + '\n');
 
   } catch (e) {
     console.error('get.php error:', e);
@@ -486,7 +487,8 @@ export const playerPlaylist = async (req, res) => {
         }
     }
 
-    let playlist = '#EXTM3U\n';
+    // Use an array to build the playlist, optimizing performance for large lists
+    const lines = ['#EXTM3U'];
     const host = getBaseUrl(req);
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
@@ -539,23 +541,23 @@ export const playerPlaylist = async (req, res) => {
       // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
 
-      playlist += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${finalName}\n`;
+      lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${finalName}`);
 
       if (ch.metadata) {
           try {
               const meta = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
               if (meta.drm) {
-                  if (meta.drm.license_type) playlist += `#KODIPROP:inputstream.adaptive.license_type=${meta.drm.license_type}\n`;
-                  if (meta.drm.license_key) playlist += `#KODIPROP:inputstream.adaptive.license_key=${meta.drm.license_key}\n`;
+                  if (meta.drm.license_type) lines.push(`#KODIPROP:inputstream.adaptive.license_type=${meta.drm.license_type}`);
+                  if (meta.drm.license_key) lines.push(`#KODIPROP:inputstream.adaptive.license_key=${meta.drm.license_key}`);
               }
           } catch(e) {}
       }
 
-      playlist += `${streamUrl}\n`;
+      lines.push(streamUrl);
     }
 
     res.setHeader('Content-Type', 'audio/x-mpegurl');
-    res.send(playlist);
+    res.send(lines.join('\n') + '\n'); // Add final newline
 
   } catch (e) {
     console.error('Playlist generation error:', e);
