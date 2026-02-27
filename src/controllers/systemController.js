@@ -282,7 +282,7 @@ export const importData = async (req, res) => {
     }
 
     tempPath = req.file.path;
-    const encryptedData = fs.readFileSync(tempPath);
+    const encryptedData = await fs.promises.readFile(tempPath);
 
     let compressed;
     try {
@@ -506,8 +506,8 @@ export const importData = async (req, res) => {
     console.error('Import error:', e);
     res.status(500).json({error: e.message});
   } finally {
-    if (tempPath && fs.existsSync(tempPath)) {
-      try { fs.unlinkSync(tempPath); } catch(e) {}
+    if (tempPath) {
+      try { await fs.promises.unlink(tempPath); } catch(e) {}
     }
   }
 };
