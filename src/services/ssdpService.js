@@ -2,6 +2,7 @@ import dgram from 'dgram';
 import os from 'os';
 import db from '../database/db.js';
 import { PORT } from '../config/constants.js';
+import { isUnsafeIP } from '../utils/helpers.js';
 
 const SSDP_ADDRESS = '239.255.255.250';
 const SSDP_PORT = 1900;
@@ -130,6 +131,13 @@ export function startSSDP() {
         });
 
         socket.on('message', (msg, rinfo) => {
+            // 🛡️ Security: Only respond to local/private IPs (SSRF protection reused)
+            // isUnsafeIP returns true for private IPs (10.*, 192.168.*, 127.*, etc.)
+            // We want to allow these and block public IPs.
+            if (!isUnsafeIP(rinfo.address)) {
+                return;
+            }
+
             const message = msg.toString();
             const headers = {};
 
