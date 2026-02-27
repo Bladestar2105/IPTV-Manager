@@ -844,13 +844,13 @@ async function loadProviders(filterUserId = null) {
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({user_id: selectedUserId})
             });
-            alert(t('syncSuccess', {
+            showToast(t('syncSuccess', {
               added: res.channels_added,
               updated: res.channels_updated,
               categories: res.categories_added
-            }));
+            }), 'success');
           } catch (e) {
-            alert(t('errorPrefix') + ' ' + e.message);
+            showToast(e.message, 'danger');
           } finally {
             setLoadingState(syncBtn, false);
           }
@@ -1880,10 +1880,10 @@ async function saveSyncConfig(e) {
       });
     }
     
-    alert(t('syncConfigSaved'));
+    showToast(t('syncConfigSaved'), 'success');
     bootstrap.Modal.getInstance(document.getElementById('sync-config-modal')).hide();
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(e.message, 'danger');
   }
 }
 
@@ -1973,10 +1973,10 @@ async function loadEpgSources() {
         setLoadingState(updateBtn, true, null, false);
         try {
           await fetchJSON(`/api/epg-sources/${source.id}/update`, {method: 'POST'});
-          alert(t('epgUpdateSuccess'));
+          showToast(t('epgUpdateSuccess'), 'success');
           loadEpgSources();
         } catch (e) {
-          alert(t('errorPrefix') + ' ' + e.message);
+          showToast(e.message, 'danger');
         } finally {
           setLoadingState(updateBtn, false);
         }
@@ -2059,9 +2059,9 @@ async function editEpgSource(e) {
     
     bootstrap.Modal.getInstance(document.getElementById('edit-epg-source-modal')).hide();
     loadEpgSources();
-    alert(t('epgSourceUpdated'));
+    showToast(t('epgSourceUpdated'), 'success');
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(e.message, 'danger');
   }
 }
 
@@ -2090,9 +2090,9 @@ async function addEpgSource(e) {
     
     bootstrap.Modal.getInstance(document.getElementById('add-epg-source-modal')).hide();
     loadEpgSources();
-    alert(t('epgSourceAdded'));
+    showToast(t('epgSourceAdded'), 'success');
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(e.message, 'danger');
   }
 }
 
@@ -2153,10 +2153,10 @@ function renderAvailableEpgSources() {
           })
         });
         
-        alert(t('epgSourceAddedName', {name: source.name}));
+        showToast(t('epgSourceAddedName', {name: source.name}), 'success');
         loadEpgSources();
       } catch (e) {
-        alert(t('errorPrefix') + ' ' + e.message);
+        showToast(e.message, 'danger');
       }
     };
     
@@ -2428,10 +2428,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const result = await fetchJSON('/api/epg-sources/update-all', {method: 'POST'});
         const success = result.results.filter(r => r.success).length;
         const failed = result.results.filter(r => !r.success).length;
-        alert(t('epgUpdateAllSuccess', {success: success, failed: failed}));
+        showToast(t('epgUpdateAllSuccess', {success: success, failed: failed}), 'success');
         loadEpgSources();
       } catch (e) {
-        alert(t('errorPrefix') + ' ' + e.message);
+        showToast(e.message, 'danger');
       } finally {
         setLoadingState(updateAllEpgBtn, false);
       }
