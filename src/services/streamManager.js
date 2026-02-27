@@ -160,8 +160,9 @@ class StreamManager {
         // Smart Counting: Count unique sessions (Content + IP + Provider)
         // This allows a single user to open multiple connections (sockets) for the same content
         // on the same IP without consuming multiple "slots".
+        // Optimization: Use template strings instead of JSON.stringify for significantly faster Set operations
         const uniqueSessions = new Set(userStreams.map(s =>
-          JSON.stringify({ c: s.channel_name, i: s.ip, p: s.provider_id })
+          `${s.channel_name}|${s.ip}|${s.provider_id}`
         ));
 
         return uniqueSessions.size;
@@ -189,8 +190,9 @@ class StreamManager {
         const all = await this.getAll();
         const providerStreams = all.filter(s => s.provider_id === providerId);
         // Smart Counting: Count unique sessions (Channel + IP + User)
+        // Optimization: Use template strings instead of JSON.stringify for significantly faster Set operations
         const uniqueSessions = new Set(providerStreams.map(s =>
-          JSON.stringify({ c: s.channel_name, i: s.ip, u: s.user_id })
+          `${s.channel_name}|${s.ip}|${s.user_id}`
         ));
         return uniqueSessions.size;
       } catch (e) {

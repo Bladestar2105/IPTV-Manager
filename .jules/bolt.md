@@ -28,3 +28,6 @@
 ## 2026-02-21 - [Symmetric Sparse Intersection & Popcount Proxy]
 **Learning:** When calculating Dice coefficient between two Bit Signatures (Bloom filters), the intersection loop can be optimized by iterating over the *sparser* of the two bitsets (min(popcountA, popcountB)). This provides a massive speedup (up to 9x) for "Dense Search vs Sparse Candidate" scenarios. Also, using signature `popcount` as a proxy for `bigramCount` eliminates the need to allocate intermediate `Set` objects during fuzzy matching, yielding ~20% speedup for common queries.
 **Action:** Always pre-compute sparse indices for bitsets on creation and pick the shortest list for intersection loops. Avoid allocating Sets for length/count proxies if a bitset signature is already available.
+## 2026-02-27 - Optimize JSON.stringify and toString stringifications
+**Learning:** Using `JSON.stringify` in hot loops like mapping stream instances or using `now.toString()` across large sets is slower and increases memory footprint compared to template strings and variable extraction.
+**Action:** Replaced `JSON.stringify` with template strings in `streamManager.js` and precomputed `now.toString()` in `xtreamController.js`.

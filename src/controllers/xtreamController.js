@@ -108,6 +108,7 @@ export const playerApi = async (req, res) => {
         ORDER BY uc.sort_order
       `).all(user.id);
 
+      const nowStr = now.toString();
       const result = rows.map((ch, i) => {
         let iconUrl = ch.logo || '';
         return {
@@ -117,7 +118,7 @@ export const playerApi = async (req, res) => {
           stream_id: Number(ch.user_channel_id),
           stream_icon: iconUrl,
           epg_channel_id: ch.manual_epg_id || ch.epg_channel_id || '',
-          added: now.toString(),
+          added: nowStr,
           is_adult: ch.category_is_adult || 0,
           category_id: String(ch.user_category_id),
           category_ids: [Number(ch.user_category_id)],
@@ -140,6 +141,7 @@ export const playerApi = async (req, res) => {
         ORDER BY uc.sort_order
       `).all(user.id);
 
+      const nowStr = now.toString();
       const result = rows.map((ch, i) => {
         return {
           num: i + 1,
@@ -149,7 +151,7 @@ export const playerApi = async (req, res) => {
           stream_icon: ch.logo || '',
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
-          added: ch.added || now.toString(),
+          added: ch.added || nowStr,
           category_id: String(ch.user_category_id),
           container_extension: ch.mime_type || 'mp4',
           custom_sid: null,
@@ -169,6 +171,7 @@ export const playerApi = async (req, res) => {
         ORDER BY uc.sort_order
       `).all(user.id);
 
+      const nowStr = now.toString();
       const result = rows.map((ch, i) => {
         let backdrop_path = [];
         if (ch.metadata) {
@@ -188,7 +191,7 @@ export const playerApi = async (req, res) => {
           director: ch.director || '',
           genre: ch.genre || '',
           releaseDate: ch.releaseDate || '',
-          last_modified: ch.added || now.toString(),
+          last_modified: ch.added || nowStr,
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
           backdrop_path: backdrop_path,
