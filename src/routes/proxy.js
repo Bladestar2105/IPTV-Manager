@@ -80,6 +80,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
       // Actually, saving with extension helps OS/browsers.
       // Let's check if we can store metadata or just trust it's an image.
       res.setHeader('Content-Type', 'image/png'); // Simplified
+      res.setHeader('Cache-Control', 'public, max-age=86400');
       fs.createReadStream(filePath).pipe(res);
       return;
     } catch (e) {
