@@ -62,7 +62,13 @@ describe('Proxy SSRF Vulnerability', () => {
         fetchMock.mockResolvedValue({
             ok: true,
             status: 200,
-            headers: { get: () => 'image/png' },
+            headers: {
+                get: (key) => {
+                    if (key.toLowerCase() === 'content-type') return 'image/png';
+                    if (key.toLowerCase() === 'content-length') return Buffer.from('fake-image').length.toString();
+                    return null;
+                }
+            },
             arrayBuffer: async () => Buffer.from('fake-image'),
             body: Readable.from(Buffer.from('fake-image')),
         });
@@ -84,7 +90,13 @@ describe('Proxy SSRF Vulnerability', () => {
         fetchMock.mockResolvedValue({
             ok: true,
             status: 200,
-            headers: { get: () => 'image/png' },
+            headers: {
+                get: (key) => {
+                    if (key.toLowerCase() === 'content-type') return 'image/png';
+                    if (key.toLowerCase() === 'content-length') return '10';
+                    return null;
+                }
+            },
             arrayBuffer: async () => Buffer.from('fake-image'),
             body: Readable.from(Buffer.from('fake-image')),
         });

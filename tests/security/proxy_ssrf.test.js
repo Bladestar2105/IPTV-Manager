@@ -30,11 +30,11 @@ describe('SSRF Protection', () => {
       expect(isUnsafeIP('::ffff:127.0.0.1')).toBe(true);
     });
 
-    it('should allow private LAN IPs (RFC1918)', () => {
-      expect(isUnsafeIP('10.0.0.5')).toBe(false);
-      expect(isUnsafeIP('172.16.0.1')).toBe(false);
-      expect(isUnsafeIP('192.168.1.1')).toBe(false);
-      expect(isUnsafeIP('100.64.0.1')).toBe(false); // CGNAT
+    it('should block private LAN IPs (RFC1918)', () => {
+      expect(isUnsafeIP('10.0.0.5')).toBe(true);
+      expect(isUnsafeIP('172.16.0.1')).toBe(true);
+      expect(isUnsafeIP('192.168.1.1')).toBe(true);
+      expect(isUnsafeIP('100.64.0.1')).toBe(true); // CGNAT
     });
 
     it('should allow public IPs', () => {
@@ -57,14 +57,14 @@ describe('SSRF Protection', () => {
       });
     }));
 
-    it('should return address for private LAN IP', () => new Promise(done => {
+    it('should error for private LAN IP', () => new Promise(done => {
       dns.lookup.mockImplementation((hostname, options, callback) => {
         callback(null, '192.168.1.50', 4);
       });
 
       safeLookup('nas.local', {}, (err, address, family) => {
-        expect(err).toBeNull();
-        expect(address).toBe('192.168.1.50');
+        expect(err).toBeDefined();
+        expect(err.message).toContain('unsafe IP');
         done();
       });
     }));

@@ -4,6 +4,7 @@
  */
 
 window.onerror = function(msg, url, line, col, error) {
+   if (msg === 'Script error.' || msg === 'Script error') return true;
    let stack = error ? error.stack : '';
    if (!stack) {
        stack = `URL: ${url}\nLine: ${line}\nCol: ${col}`;

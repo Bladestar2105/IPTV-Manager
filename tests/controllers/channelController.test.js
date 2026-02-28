@@ -2,16 +2,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-// Hardcoded paths to avoid hoisting issues, but made more portable
-const TEST_DB_DIR = path.join(process.cwd(), 'tests/temp_db_channel');
-
 // Ensure directory exists BEFORE imports
-if (!fs.existsSync(TEST_DB_DIR)) fs.mkdirSync(TEST_DB_DIR, { recursive: true });
+if (!fs.existsSync(path.join(process.cwd(), 'tests/temp_db_channel'))) fs.mkdirSync(path.join(process.cwd(), 'tests/temp_db_channel'), { recursive: true });
+
+const TEST_DB_DIR = path.join(process.cwd(), 'tests/temp_db_channel');
 
 // Mock Constants
 vi.mock('../../src/config/constants.js', async () => {
     return {
-        DATA_DIR: TEST_DB_DIR,
+        DATA_DIR: require('path').join(process.cwd(), 'tests/temp_db_channel'),
         PORT: 3000,
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',
@@ -38,12 +37,13 @@ describe('Channel Controller - createUserCategory', () => {
     beforeEach(() => {
         // Clear DB
         initDb(true);
-        const tables = ['users', 'user_categories', 'user_channels'];
+        const tables = ['users', 'user_categories', 'user_channels', 'admin_users'];
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
 
         // Setup initial users
-        db.prepare("INSERT INTO users (id, username, password, is_active, is_admin) VALUES (1, 'admin', 'admin', 1, 1)").run();
-        db.prepare("INSERT INTO users (id, username, password, is_active, is_admin) VALUES (2, 'user', 'user', 1, 0)").run();
+        // Note: is_admin is not in users table, it's separate admin_users or managed by webui_access
+        db.prepare("INSERT INTO admin_users (id, username, password, is_active) VALUES (1, 'admin', 'admin', 1)").run();
+        db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (2, 'user', 'user', 1)").run();
     });
 
     afterEach(() => {
