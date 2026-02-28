@@ -661,10 +661,19 @@ export const getStatistics = async (req, res) => {
     `).all();
 
     const allStreams = await streamManager.getAll();
-    const streams = allStreams.map(s => ({
-      ...s,
-      duration: Math.floor((Date.now() - s.start_time) / 1000)
-    }));
+    const streams = allStreams.map(s => {
+      // Find logo if possible (for Active Streams)
+      let logo = null;
+      if (s.channel_name && s.provider_id) {
+          const ch = db.prepare('SELECT logo FROM provider_channels WHERE name = ? AND provider_id = ? LIMIT 1').get(s.channel_name, s.provider_id);
+          if (ch) logo = ch.logo;
+      }
+      return {
+        ...s,
+        logo: logo,
+        duration: Math.floor((Date.now() - s.start_time) / 1000)
+      };
+    });
 
     res.json({
       active_streams: streams,

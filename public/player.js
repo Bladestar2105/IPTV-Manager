@@ -73,6 +73,12 @@
   }
   translatePage();
 
+  // ─── Auth Helper ───
+  function getAuthParams() {
+    if (token) return 'token=' + encodeURIComponent(token);
+    return 'username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password);
+  }
+
   function getProxiedUrl(url) {
     if (!url) return '';
 
@@ -81,9 +87,8 @@
 
     // Always proxy external URLs (HTTP/HTTPS) to leverage caching and avoid mixed content
     if (url.startsWith('http://') || url.startsWith('https://')) {
-      if (token) {
-        return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
-      }
+      var authParams = getAuthParams();
+      return '/api/proxy/image?url=' + encodeURIComponent(url) + '&' + authParams;
     }
     return url;
   }
@@ -162,12 +167,6 @@
       updateNowPlayingInfo();
     }
   }, 30000);
-
-  // ─── Auth Helper ───
-  function getAuthParams() {
-    if (token) return 'token=' + encodeURIComponent(token);
-    return 'username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password);
-  }
 
   // ─── Toast Notification ───
   function showToast(message, type, duration) {
@@ -580,9 +579,24 @@
     sidebarEl.appendChild(fragSidebar);
     epgRowsEl.appendChild(fragRows);
 
-    // Sync sidebar scroll with EPG grid
+    // Sync sidebar scroll with EPG grid (two-way)
+    let isSyncingLeft = false;
+    let isSyncingRight = false;
+
     epgGridEl.onscroll = function() {
-      sidebarEl.scrollTop = epgGridEl.scrollTop;
+      if (!isSyncingLeft) {
+        isSyncingRight = true;
+        sidebarEl.scrollTop = epgGridEl.scrollTop;
+      }
+      isSyncingLeft = false;
+    };
+
+    sidebarEl.onscroll = function() {
+      if (!isSyncingRight) {
+        isSyncingLeft = true;
+        epgGridEl.scrollTop = sidebarEl.scrollTop;
+      }
+      isSyncingRight = false;
     };
 
     updateCurrentTimeLine();

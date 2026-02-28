@@ -3078,9 +3078,13 @@ async function loadStatistics() {
     } else {
         data.active_streams.forEach(s => {
             const tr = document.createElement('tr');
+            let logoHtml = '';
+            if (s.logo) {
+                logoHtml = `<img src="${getProxiedUrl(s.logo)}" alt="Logo" width="20" class="me-1" data-on-error="hide">`;
+            }
             tr.innerHTML = `
                 <td>${escapeHtml(s.username)}</td>
-                <td>${escapeHtml(s.channel_name)}</td>
+                <td>${logoHtml}${escapeHtml(s.channel_name)}</td>
                 <td>${formatDuration(s.duration)}</td>
                 <td>${escapeHtml(s.ip || '-')}</td>
             `;
