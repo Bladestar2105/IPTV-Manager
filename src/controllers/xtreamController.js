@@ -353,7 +353,7 @@ export const getPlaylist = async (req, res) => {
     if (user.is_share_guest) return res.sendStatus(403);
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
+      SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -396,10 +396,11 @@ export const getPlaylist = async (req, res) => {
       const safeName = sanitizeM3uName(name);
       const safeLogo = sanitizeM3uTag(logo);
       const safeGroup = sanitizeM3uTag(group);
+      const groupId = ch.user_category_id || '';
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
 
       if (type === 'm3u_plus') {
-        lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}",${finalName}`);
+        lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}",${finalName}`);
       } else {
         lines.push(`#EXTINF:-1,${finalName}`);
       }
@@ -462,6 +463,7 @@ export const playerPlaylist = async (req, res) => {
     let channels = db.prepare(`
       SELECT
         uc.id as user_channel_id,
+        uc.user_category_id,
         pc.name,
         pc.logo,
         pc.epg_channel_id,
@@ -541,11 +543,12 @@ export const playerPlaylist = async (req, res) => {
          if (ch.episode_run_time) extraParts.push(`duration="${sanitizeMetadata(ch.episode_run_time)}"`);
       }
       const extra = extraParts.length > 0 ? ' ' + extraParts.join(' ') : '';
+      const groupId = ch.user_category_id || '';
 
       // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
 
-      lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-title="${safeGroup}"${extra},${finalName}`);
+      lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}"${extra},${finalName}`);
 
       if (ch.metadata) {
           try {
