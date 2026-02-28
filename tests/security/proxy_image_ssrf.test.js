@@ -34,6 +34,11 @@ vi.mock('../../src/middleware/auth.js', () => ({
     }
 }));
 
+// Mock authService getXtreamUser to let authenticateAnyToken pass
+vi.mock('../../src/services/authService.js', () => ({
+  getXtreamUser: vi.fn().mockResolvedValue({ id: 1, is_admin: true })
+}));
+
 // Mock security middleware
 vi.mock('../../src/middleware/security.js', async (importOriginal) => {
     const actual = await importOriginal();
@@ -75,7 +80,7 @@ describe('Proxy SSRF Vulnerability', () => {
 
         const res = await request(app)
             .get('/api/proxy/image')
-            .query({ url: targetUrl });
+            .query({ token: 'fake-token', url: targetUrl });
 
         expect(fetchMock).not.toHaveBeenCalled();
         expect(res.status).not.toBe(200);
@@ -103,7 +108,7 @@ describe('Proxy SSRF Vulnerability', () => {
 
         const res = await request(app)
             .get('/api/proxy/image')
-            .query({ url: targetUrl });
+            .query({ token: 'fake-token', url: targetUrl });
 
         expect(res.status).toBe(200);
         expect(fetchMock).toHaveBeenCalled();

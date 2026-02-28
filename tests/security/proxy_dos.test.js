@@ -12,6 +12,11 @@ vi.mock('../../src/middleware/auth.js', () => ({
     }
 }));
 
+// Mock authService getXtreamUser to let authenticateAnyToken pass
+vi.mock('../../src/services/authService.js', () => ({
+  getXtreamUser: vi.fn().mockResolvedValue({ id: 1, is_admin: true })
+}));
+
 // Mock security middleware to avoid DB errors
 vi.mock('../../src/middleware/security.js', async (importOriginal) => {
     const actual = await importOriginal();
@@ -81,7 +86,7 @@ describe('Proxy DoS Protection', () => {
 
         const res = await request(app)
             .get('/api/proxy/image')
-            .query({ url: 'http://example.com/large-header.png' });
+            .query({ token: 'fake-token', url: 'http://example.com/large-header.png' });
 
         expect(res.status).toBe(413);
     });
@@ -105,7 +110,7 @@ describe('Proxy DoS Protection', () => {
 
         const res = await request(app)
             .get('/api/proxy/image')
-            .query({ url: 'http://example.com/large-stream.png' });
+            .query({ token: 'fake-token', url: 'http://example.com/large-stream.png' });
 
         expect(res.status).toBe(413);
     });
@@ -130,7 +135,7 @@ describe('Proxy DoS Protection', () => {
 
         const res = await request(app)
             .get('/api/proxy/image')
-            .query({ url: 'http://example.com/valid.png' });
+            .query({ token: 'fake-token', url: 'http://example.com/valid.png' });
 
         expect(res.status).toBe(200);
         expect(res.header['content-type']).toBe('image/png');
