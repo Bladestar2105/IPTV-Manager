@@ -7,8 +7,43 @@ import { PassThrough, Transform } from 'stream';
 import { authenticateToken } from '../middleware/auth.js';
 import { CACHE_DIR } from '../config/constants.js';
 import { fetchSafe } from '../utils/network.js';
+import { getXtreamUser } from '../services/authService.js';
 
 const router = express.Router();
+
+// Middleware to support both WebUI JWT token and Player temporary token
+async function authenticateAnyToken(req, res, next) {
+    try {
+        // First try the standard WebUI token via the existing middleware
+        // But we don't want it to send an error response if it fails, so we wrap it
+        const authHeader = req.headers['authorization'];
+        let token = authHeader && authHeader.split(' ')[1];
+        if (!token && req.query.token) {
+            token = req.query.token;
+        }
+
+        if (!token) {
+            return res.status(401).json({ error: 'No token provided' });
+        }
+
+        // Try using getXtreamUser which resolves player tokens, shared links, etc.
+        const user = await getXtreamUser(req);
+        if (user) {
+            // Check WebUI Access for normal users (only if not a share guest)
+            if (!user.is_admin && !user.is_share_guest && user.webui_access === 0) {
+                 return res.status(403).json({ error: 'WebUI access revoked' });
+            }
+            req.user = user;
+            return next();
+        }
+
+        // If not found via getXtreamUser, fallback to standard authenticateToken
+        authenticateToken(req, res, next);
+    } catch (e) {
+        console.error('authenticateAnyToken Error:', e);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+}
 
 // Picon Cache Directory
 const PICON_CACHE_DIR = path.join(CACHE_DIR, 'picons');
@@ -23,7 +58,7 @@ function ensureCacheDir() {
 // Initial check
 ensureCacheDir();
 
-router.get('/image', authenticateToken, async (req, res) => {
+router.get('/image', authenticateAnyToken, async (req, res) => {
   const { url } = req.query;
 
   if (!url) {
@@ -110,6 +145,10 @@ router.get('/image', authenticateToken, async (req, res) => {
 
     res.on('error', (err) => {
         console.error('Response stream error:', err);
+        multiplexer.unpipe(res);
+    });
+
+    res.on('close', () => {
         multiplexer.unpipe(res);
     });
 

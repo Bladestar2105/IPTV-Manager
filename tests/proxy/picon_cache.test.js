@@ -59,12 +59,19 @@ vi.mock('fs', () => {
 });
 
 // Mock Auth Middleware
+// Mock authService getXtreamUser to let authenticateAnyToken pass
+vi.mock('../../src/services/authService.js', () => ({
+  getXtreamUser: vi.fn().mockResolvedValue({ id: 1, username: 'admin', is_admin: true })
+}));
+
 vi.mock('../../src/middleware/auth.js', () => ({
   authenticateToken: (req, res, next) => {
     req.user = { id: 1, username: 'admin', is_admin: true };
     next();
   }
 }));
+
+
 
 // Mock Security Middleware
 vi.mock('../../src/middleware/security.js', () => ({
@@ -115,7 +122,7 @@ describe('Picon Cache', () => {
       body: Readable.from(mockBuffer)
     });
 
-    const res = await request(app).get('/api/proxy/image?url=http://example.com/logo.png');
+    const res = await request(app).get('/api/proxy/image?url=http://example.com/logo.png&token=fake-token');
 
     expect(res.status).toBe(200);
     expect(res.headers['x-cache']).toBe('MISS');
@@ -133,7 +140,7 @@ describe('Picon Cache', () => {
     };
     fs.createReadStream.mockReturnValue(mockReadStream);
 
-    const res = await request(app).get('/api/proxy/image?url=http://example.com/logo.png');
+    const res = await request(app).get('/api/proxy/image?url=http://example.com/logo.png&token=fake-token');
 
     expect(res.status).toBe(200);
     expect(res.headers['x-cache']).toBe('HIT');
@@ -146,7 +153,7 @@ describe('Picon Cache', () => {
     fs.promises.readdir.mockResolvedValue(['file1.png', 'file2.png']);
     fs.promises.unlink.mockResolvedValue();
 
-    const res = await request(app).delete('/api/proxy/picons');
+    const res = await request(app).delete('/api/proxy/picons').set('Authorization', 'Bearer fake-token');
 
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(2);
@@ -155,7 +162,7 @@ describe('Picon Cache', () => {
 
   it('should return 0 deleted if cache dir does not exist', async () => {
     fs.promises.readdir.mockRejectedValue({ code: 'ENOENT' });
-    const res = await request(app).delete('/api/proxy/picons');
+    const res = await request(app).delete('/api/proxy/picons').set('Authorization', 'Bearer fake-token');
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(0);
   });
