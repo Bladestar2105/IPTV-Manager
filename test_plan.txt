@@ -1,0 +1,107 @@
+Ah, I see! "The cached picons should also be used if available on epg mapping function, active streams and creating categorie channel list function. If not available fetch from internet."
+Wait! Before my changes, `public/app.js` was doing:
+```
+function getProxiedUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('/')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    const token = getToken();
+    if (token) {
+      return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}`;
+    }
+  }
+  return url;
+}
+```
+This implies it IS fetching from `/api/proxy/image` in `public/app.js`.
+Wait! The user says "The cached picons should also be used if available on epg mapping function, active streams and creating categorie channel list function. If not available fetch from internet."
+But the proxy endpoint `/api/proxy/image` *already* fetches from the internet if it's not cached! And it caches it for future use.
+
+Why would the user say "If not available fetch from internet" instead of proxying it?
+Maybe proxying all uncached picons is too slow on the dashboard/epg mapping pages because there are hundreds of images, and downloading them all via Node.js blocks things or wastes server bandwidth, so they prefer the browser to load uncached ones directly from the provider?
+Wait, if the browser loads them directly, it will never be cached by the proxy!
+Is there a way for the frontend to know if an image is cached without proxying it?
+We can provide an endpoint `/api/proxy/picon-exists?url=...`?
+But checking hundreds of URLs individually is slow.
+Alternatively, the proxy endpoint `/api/proxy/image` could take a query param `?redirect_if_uncached=true`.
+If the image is in cache, it serves it (fast).
+If not in cache, it returns HTTP 302 to the original `url`. Then the browser fetches it from the internet.
+Wait, if it returns HTTP 302, the browser fetches it from the internet, but the server never caches it!
+Is that what the user wants?
+"if picons are chached these must be served first. if not available load from the proxiedurl" <- this was for webplayer.
+"The cached picons should also be used if available on epg mapping function, active streams and creating categorie channel list function. If not available fetch from internet." <- this is for the Web UI.
+
+So in WebUI (`public/app.js`), if we load the channels list, we want it to use the cache if available, else fetch from internet.
+Wait, if it's fetched from internet, they don't get cached. So they only get cached when the webplayer plays them?
+Yes! The webplayer uses the `proxiedurl` (which downloads and caches). The WebUI just views them. It shouldn't cache them just because the admin is browsing the EPG mapping! There could be 50,000 channels, caching all their logos just by scrolling the EPG mapping page would kill the server disk and network!
+
+Let me verify this theory.
+If the admin opens "EPG Mapping", 100 channels are shown. If it uses `/api/proxy/image`, the server downloads 100 images and saves them to disk.
+If the admin opens "Channel List", another 100 images.
+This is exactly why the user says: "The cached picons should also be used if available... If not available fetch from internet."
+Because they don't want the WebUI to trigger the caching process and download everything!
+
+So, how do we implement "use cached if available, else fetch from internet"?
+Option A: Modify `getProxiedUrl` in `public/app.js` to point to a new endpoint `/api/proxy/image/check` which redirects to the cached URL if it exists, or the original URL if not?
+Wait. If we redirect to the cached URL, what is the cached URL?
+It's `/api/proxy/image?url=...`. But wait, if it hits `/api/proxy/image`, that endpoint will cache it if it's not cached!
+So we need an endpoint that ONLY serves from cache, and if not cached, redirects to original URL.
+
+Let's look at `src/routes/proxy.js`.
+We can modify `/api/proxy/image` to take a query parameter `?check_only=true` or `?no_cache_download=true`.
+If `no_cache_download=true`, and the file is in cache, it serves the file. If it's NOT in cache, it returns a 302 redirect to the original URL!
+Then the browser fetches the original URL!
+Let's see:
+```javascript
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK);
+      // Serve from Cache
+      res.setHeader('X-Cache', 'HIT');
+      res.setHeader('Content-Type', 'image/png');
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    } catch (e) {
+      // File does not exist, proceed to fetch
+    }
+
+    if (req.query.fallback === 'redirect') {
+      return res.redirect(302, url);
+    }
+```
+Yes! This is perfect!
+
+And we update `public/app.js`'s `getProxiedUrl` to append `&fallback=redirect`.
+```javascript
+// public/app.js
+function getProxiedUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('/')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    const token = getToken();
+    if (token) {
+      return `/api/proxy/image?url=${encodeURIComponent(url)}&token=${token}&fallback=redirect`;
+    }
+  }
+  return url;
+}
+```
+
+And in `public/player.js`:
+"if picons are chached these must be served first. if not available load from the proxiedurl."
+Wait! The user said: "if picons are chached these must be served first. if not available load from the proxiedurl."
+This means for the player, if it is NOT cached, it should still load from the proxiedurl (which downloads and caches it).
+So `public/player.js` should NOT append `&fallback=redirect`.
+Let me re-read user's exact words:
+User: "1. yes check and fix this
+2. if picons are chached these must be served first. if not available load from the proxiedurl.
+The cached picons should also be used if available on epg mapping function, active streams and creating categorie channel list function. If not available fetch from internet."
+
+Wait, what if they meant the player ALSO shouldn't proxy?
+"if picons are chached these must be served first. if not available load from the proxiedurl." - This was referring to the web player. So the web player SHOULD proxy.
+"The cached picons should also be used if available on epg mapping function, active streams and creating categorie channel list function. If not available fetch from internet." - This is referring to the Web UI (app.js). So the Web UI SHOULD NOT proxy, but redirect to internet.
+
+Let's verify this makes sense.
+Web Player -> uses `player.js`. `getProxiedUrl` does NOT have `fallback=redirect`.
+Web UI -> uses `app.js`. `getProxiedUrl` has `fallback=redirect`.
+
+Let's modify `src/routes/proxy.js` to support `req.query.fallback === 'redirect'`.
