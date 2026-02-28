@@ -47,7 +47,13 @@ export const login = async (req, res) => {
       } else {
           // Legacy/Xtream password (encrypted or plaintext)
           const decrypted = decrypt(user.password);
-          isValid = (decrypted === password);
+
+          // Prevent timing attacks by comparing hashes of equal length
+          const safeDecrypted = typeof decrypted === 'string' ? decrypted : crypto.randomBytes(32).toString('hex');
+          const safePassword = typeof password === 'string' ? password : '';
+          const a = crypto.createHash('sha256').update(safeDecrypted).digest();
+          const b = crypto.createHash('sha256').update(safePassword).digest();
+          isValid = crypto.timingSafeEqual(a, b) && typeof decrypted === 'string';
       }
 
       if (isValid) {
@@ -212,7 +218,13 @@ export const changePassword = async (req, res) => {
         isValidOldPassword = await bcrypt.compare(oldPassword, user.password);
     } else {
         const decrypted = decrypt(user.password);
-        isValidOldPassword = (decrypted === oldPassword);
+
+        // Prevent timing attacks by comparing hashes of equal length
+        const safeDecrypted = typeof decrypted === 'string' ? decrypted : crypto.randomBytes(32).toString('hex');
+        const safePassword = typeof oldPassword === 'string' ? oldPassword : '';
+        const a = crypto.createHash('sha256').update(safeDecrypted).digest();
+        const b = crypto.createHash('sha256').update(safePassword).digest();
+        isValidOldPassword = crypto.timingSafeEqual(a, b) && typeof decrypted === 'string';
     }
 
     if (!isValidOldPassword) {

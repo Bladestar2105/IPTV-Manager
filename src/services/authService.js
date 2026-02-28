@@ -81,7 +81,13 @@ export async function authUser(username, password) {
         isValid = await bcrypt.compare(p, user.password);
     } else {
         const decrypted = decrypt(user.password);
-        isValid = (decrypted === p);
+
+        // Prevent timing attacks by comparing hashes of equal length
+        const safeDecrypted = typeof decrypted === 'string' ? decrypted : crypto.randomBytes(32).toString('hex');
+        const safePassword = typeof p === 'string' ? p : '';
+        const a = crypto.createHash('sha256').update(safeDecrypted).digest();
+        const b = crypto.createHash('sha256').update(safePassword).digest();
+        isValid = crypto.timingSafeEqual(a, b) && typeof decrypted === 'string';
     }
 
     if (isValid) {
