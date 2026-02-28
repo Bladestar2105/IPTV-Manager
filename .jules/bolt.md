@@ -31,3 +31,7 @@
 ## 2026-02-27 - Optimize JSON.stringify and toString stringifications
 **Learning:** Using `JSON.stringify` in hot loops like mapping stream instances or using `now.toString()` across large sets is slower and increases memory footprint compared to template strings and variable extraction.
 **Action:** Replaced `JSON.stringify` with template strings in `streamManager.js` and precomputed `now.toString()` in `xtreamController.js`.
+
+## 2026-03-01 - Fast XML serialization
+**Learning:** XML serialization of thousands of objects in Node.js benefits heavily from caching `Date` objects and doing fast character iteration instead of `String.replace(/[<>&'"]/g, cb)`. In `epgService.js`, the performance gain was roughly 2x by avoiding object creation and function invocations in loops.
+**Action:** When serializing massive datasets natively, optimize Date manipulation and entity escaping.

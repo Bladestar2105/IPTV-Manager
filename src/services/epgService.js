@@ -412,17 +412,54 @@ export async function* getEpgXmlForChannels(channelIds) {
 }
 
 // Helper: Escape XML
+const matchHtmlRegExp = /["'&<>]/;
+
 function escapeXml(unsafe) {
-    if (!unsafe) return '';
-    return unsafe.replace(/[<>&'"]/g, c => {
-        switch (c) {
-            case '<': return '&lt;';
-            case '>': return '&gt;';
-            case '&': return '&amp;';
-            case '\'': return '&apos;';
-            case '"': return '&quot;';
-        }
-    });
+  if (!unsafe) return '';
+  const str = String(unsafe);
+  const match = matchHtmlRegExp.exec(str);
+
+  if (!match) {
+    return str;
+  }
+
+  let escape;
+  let html = '';
+  let index = 0;
+  let lastIndex = 0;
+
+  for (index = match.index; index < str.length; index++) {
+    switch (str.charCodeAt(index)) {
+      case 34: // "
+        escape = '&quot;';
+        break;
+      case 38: // &
+        escape = '&amp;';
+        break;
+      case 39: // '
+        escape = '&apos;';
+        break;
+      case 60: // <
+        escape = '&lt;';
+        break;
+      case 62: // >
+        escape = '&gt;';
+        break;
+      default:
+        continue;
+    }
+
+    if (lastIndex !== index) {
+      html += str.substring(lastIndex, index);
+    }
+
+    lastIndex = index + 1;
+    html += escape;
+  }
+
+  return lastIndex !== index
+    ? html + str.substring(lastIndex, index)
+    : html;
 }
 
 // Helper: Parse XMLTV Date
@@ -451,11 +488,17 @@ function parseXmltvDate(dateStr) {
 }
 
 // Helper: Format XMLTV Date (UTC)
+const _cachedDate = new Date();
 function formatXmltvDate(ts) {
-    const date = new Date(ts * 1000);
-    const pad = (n) => n.toString().padStart(2, '0');
+    _cachedDate.setTime(ts * 1000);
+    const m = _cachedDate.getUTCMonth() + 1;
+    const d = _cachedDate.getUTCDate();
+    const h = _cachedDate.getUTCHours();
+    const min = _cachedDate.getUTCMinutes();
+    const s = _cachedDate.getUTCSeconds();
+
     // Use UTC for simplicity: YYYYMMDDHHMMSS +0000
-    return `${date.getUTCFullYear()}${pad(date.getUTCMonth()+1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())} +0000`;
+    return `${_cachedDate.getUTCFullYear()}${m < 10 ? '0' + m : m}${d < 10 ? '0' + d : d}${h < 10 ? '0' + h : h}${min < 10 ? '0' + min : min}${s < 10 ? '0' + s : s} +0000`;
 }
 
 function peekStream(stream) {
