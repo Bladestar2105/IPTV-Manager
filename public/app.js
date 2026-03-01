@@ -4335,13 +4335,13 @@ async function loadUserBackups() {
                 const dateStr = new Date(backup.timestamp).toLocaleString();
 
                 tr.innerHTML = `
-                    <td>${escapeHTML(backup.name)}</td>
+                    <td>${escapeHtml(backup.name)}</td>
                     <td>${dateStr}</td>
                     <td>${backup.category_count}</td>
                     <td>${backup.channel_count}</td>
                     <td class="text-end">
-                        <button class="btn btn-sm btn-outline-success ms-1 btn-restore-backup" data-id="${backup.id}" data-name="${escapeHTML(backup.name)}" data-i18n-title="restore"><i class="bi bi-arrow-counterclockwise"></i> ${t('restore')}</button>
-                        <button class="btn btn-sm btn-outline-danger ms-1 btn-delete-backup" data-id="${backup.id}" data-name="${escapeHTML(backup.name)}" data-i18n-title="delete"><i class="bi bi-trash"></i> ${t('delete')}</button>
+                        <button class="btn btn-sm btn-outline-success ms-1 btn-restore-backup" data-id="${backup.id}" data-name="${escapeHtml(backup.name)}" data-i18n-title="restore"><i class="bi bi-arrow-counterclockwise"></i> ${t('restore')}</button>
+                        <button class="btn btn-sm btn-outline-danger ms-1 btn-delete-backup" data-id="${backup.id}" data-name="${escapeHtml(backup.name)}" data-i18n-title="delete"><i class="bi bi-trash"></i> ${t('delete')}</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
@@ -4360,7 +4360,7 @@ async function loadUserBackups() {
             }
         }
 
-        updateI18n();
+        translatePage();
 
         document.querySelectorAll('.btn-restore-backup').forEach(btn => {
             btn.onclick = () => restoreUserBackup(btn.dataset.id, btn.dataset.name);
@@ -4382,8 +4382,9 @@ async function createUserBackup() {
     const name = prompt(t('enterBackupName') || "Enter a name for the backup:");
     if (!name || !name.trim()) return;
 
+    const btn = document.getElementById('btn-create-backup');
     try {
-        setLoadingState('btn-create-backup', true, t('loading'));
+        setLoadingState(btn, true, t('loading'));
         await fetchJSON(`/api/users/${selectedUserId}/backups`, {
             method: 'POST',
             body: JSON.stringify({ name: name.trim() })
@@ -4393,7 +4394,7 @@ async function createUserBackup() {
     } catch (e) {
         showToast(t('errorPrefix') + ' ' + e.message, 'danger');
     } finally {
-        setLoadingState('btn-create-backup', false, t('createBackup'));
+        setLoadingState(btn, false, t('createBackup'));
     }
 }
 
