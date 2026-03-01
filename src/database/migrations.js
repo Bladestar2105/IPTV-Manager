@@ -625,3 +625,17 @@ export function migrateProviderLastEpgUpdate(db) {
     console.error('Provider Last EPG Update migration error:', e);
   }
 }
+
+export function migrateUserPlainPassword(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('plain_password')) {
+      db.exec('ALTER TABLE users ADD COLUMN plain_password TEXT');
+      console.log('✅ DB Migration: plain_password column added to users');
+    }
+  } catch (e) {
+    console.error('User plain password migration error:', e);
+  }
+}
