@@ -98,16 +98,24 @@ export const playerApi = async (req, res) => {
     }
 
     if (action === 'get_live_streams') {
-      const rows = db.prepare(`
+      const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
+      let query = `
         SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
                map.epg_channel_id as manual_epg_id
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-        WHERE cat.user_id = ? AND pc.stream_type = 'live'
-        ORDER BY uc.sort_order
-      `).all(user.id);
+        WHERE cat.user_id = ? AND pc.stream_type = 'live'`;
+      const params = [user.id];
+
+      if (categoryId && categoryId !== '*' && categoryId !== '0') {
+          query += ' AND cat.id = ?';
+          params.push(Number(categoryId));
+      }
+      query += ' ORDER BY uc.sort_order';
+
+      const rows = db.prepare(query).all(...params);
 
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
@@ -133,14 +141,22 @@ export const playerApi = async (req, res) => {
     }
 
     if (action === 'get_vod_streams') {
-      const rows = db.prepare(`
+      const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
+      let query = `
         SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.mime_type, pc.rating, pc.rating_5based, pc.added, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE cat.user_id = ? AND pc.stream_type = 'movie'
-        ORDER BY uc.sort_order
-      `).all(user.id);
+        WHERE cat.user_id = ? AND pc.stream_type = 'movie'`;
+      const params = [user.id];
+
+      if (categoryId && categoryId !== '*' && categoryId !== '0') {
+          query += ' AND cat.id = ?';
+          params.push(Number(categoryId));
+      }
+      query += ' ORDER BY uc.sort_order';
+
+      const rows = db.prepare(query).all(...params);
 
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
@@ -163,14 +179,22 @@ export const playerApi = async (req, res) => {
     }
 
     if (action === 'get_series') {
-      const rows = db.prepare(`
+      const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
+      let query = `
         SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time, pc.metadata, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE cat.user_id = ? AND pc.stream_type = 'series'
-        ORDER BY uc.sort_order
-      `).all(user.id);
+        WHERE cat.user_id = ? AND pc.stream_type = 'series'`;
+      const params = [user.id];
+
+      if (categoryId && categoryId !== '*' && categoryId !== '0') {
+          query += ' AND cat.id = ?';
+          params.push(Number(categoryId));
+      }
+      query += ' ORDER BY uc.sort_order';
+
+      const rows = db.prepare(query).all(...params);
 
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
