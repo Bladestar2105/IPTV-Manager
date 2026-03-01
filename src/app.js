@@ -18,6 +18,7 @@ import systemRoutes from './routes/system.js';
 import hdhrRoutes from './routes/hdhr.js';
 import proxyRoutes from './routes/proxy.js';
 import shareRoutes from './routes/shares.js';
+import backupRoutes from './routes/backups.js';
 import * as shareController from './controllers/shareController.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -85,6 +86,7 @@ app.use('/api', userRoutes);
 app.use('/api', providerRoutes);
 app.use('/api', channelRoutes);
 app.use('/api', epgRoutes);
+app.use('/api', backupRoutes);
 app.use('/api', systemRoutes);
 app.use('/api/shares', shareRoutes);
 app.use('/api/proxy', proxyRoutes);

@@ -531,6 +531,7 @@ function renderUserDetails(u) {
 
     loadUserCategories();
     loadProviders(u.id); // Refresh providers
+    loadUserBackups();
 
     // Update provider form user select if not editing
     const provForm = document.getElementById('provider-form');
@@ -2375,6 +2376,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
       });
   });
+
+  const btnCreateBackup = document.getElementById('btn-create-backup');
+  if (btnCreateBackup) btnCreateBackup.addEventListener('click', createUserBackup);
 
   // Bulk Import Events
   const btnSelectAll = document.getElementById('cat-select-all');
@@ -4313,3 +4317,112 @@ window.deleteShare = async function(token) {
         alert(e.message);
     }
 };
+
+async function loadUserBackups() {
+    if (!selectedUserId) return;
+    const tbody = document.getElementById('backups-tbody');
+    if (!tbody) return;
+
+    try {
+        const backups = await fetchJSON(`/api/users/${selectedUserId}/backups`);
+        tbody.innerHTML = '';
+
+        if (backups.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted" data-i18n="noBackupsFound">${t('noBackupsFound')}</td></tr>`;
+        } else {
+            backups.forEach(backup => {
+                const tr = document.createElement('tr');
+                const dateStr = new Date(backup.timestamp).toLocaleString();
+
+                tr.innerHTML = `
+                    <td>${escapeHTML(backup.name)}</td>
+                    <td>${dateStr}</td>
+                    <td>${backup.category_count}</td>
+                    <td>${backup.channel_count}</td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-outline-success ms-1 btn-restore-backup" data-id="${backup.id}" data-name="${escapeHTML(backup.name)}" data-i18n-title="restore"><i class="bi bi-arrow-counterclockwise"></i> ${t('restore')}</button>
+                        <button class="btn btn-sm btn-outline-danger ms-1 btn-delete-backup" data-id="${backup.id}" data-name="${escapeHTML(backup.name)}" data-i18n-title="delete"><i class="bi bi-trash"></i> ${t('delete')}</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        const btnCreate = document.getElementById('btn-create-backup');
+        const alertLimit = document.getElementById('backup-limit-info');
+        if (btnCreate) {
+            if (backups.length >= 5) {
+                btnCreate.disabled = true;
+                if (alertLimit) alertLimit.classList.remove('d-none');
+            } else {
+                btnCreate.disabled = false;
+                if (alertLimit) alertLimit.classList.add('d-none');
+            }
+        }
+
+        updateI18n();
+
+        document.querySelectorAll('.btn-restore-backup').forEach(btn => {
+            btn.onclick = () => restoreUserBackup(btn.dataset.id, btn.dataset.name);
+        });
+
+        document.querySelectorAll('.btn-delete-backup').forEach(btn => {
+            btn.onclick = () => deleteUserBackup(btn.dataset.id, btn.dataset.name);
+        });
+
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+        showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    }
+}
+
+async function createUserBackup() {
+    if (!selectedUserId) return;
+
+    const name = prompt(t('enterBackupName') || "Enter a name for the backup:");
+    if (!name || !name.trim()) return;
+
+    try {
+        setLoadingState('btn-create-backup', true, t('loading'));
+        await fetchJSON(`/api/users/${selectedUserId}/backups`, {
+            method: 'POST',
+            body: JSON.stringify({ name: name.trim() })
+        });
+        showToast(t('backupCreated') || "Backup created successfully.", 'success');
+        loadUserBackups();
+    } catch (e) {
+        showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    } finally {
+        setLoadingState('btn-create-backup', false, t('createBackup'));
+    }
+}
+
+async function restoreUserBackup(backupId, backupName) {
+    if (!selectedUserId) return;
+
+    if (!confirm((t('confirmRestoreBackup') || "Are you sure you want to restore backup '{name}'? This will overwrite your current categories and channels.").replace('{name}', backupName))) return;
+
+    try {
+        await fetchJSON(`/api/users/${selectedUserId}/backups/${backupId}/restore`, { method: 'POST' });
+        showToast(t('backupRestored') || "Backup restored successfully.", 'success');
+        loadUserCategories();
+        globalSelectedChannels.clear();
+        updateSelectedCount();
+    } catch (e) {
+        showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    }
+}
+
+async function deleteUserBackup(backupId, backupName) {
+    if (!selectedUserId) return;
+
+    if (!confirm((t('confirmDeleteBackup') || "Are you sure you want to delete backup '{name}'?").replace('{name}', backupName))) return;
+
+    try {
+        await fetchJSON(`/api/users/${selectedUserId}/backups/${backupId}`, { method: 'DELETE' });
+        showToast(t('backupDeleted') || "Backup deleted successfully.", 'success');
+        loadUserBackups();
+    } catch (e) {
+        showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    }
+}
