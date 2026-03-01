@@ -639,3 +639,22 @@ export function migrateUserPlainPassword(db) {
     console.error('User plain password migration error:', e);
   }
 }
+
+export function migrateUserBackupsTable(db) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_backups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        category_count INTEGER DEFAULT 0,
+        channel_count INTEGER DEFAULT 0,
+        data TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `);
+  } catch (err) {
+    console.error('Migration error (user_backups):', err.message);
+  }
+}

@@ -108,6 +108,17 @@ export function initDb(isPrimary) {
       sort_order INTEGER DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS user_backups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      category_count INTEGER DEFAULT 0,
+      channel_count INTEGER DEFAULT 0,
+      data TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
     CREATE TABLE IF NOT EXISTS sync_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_id INTEGER NOT NULL UNIQUE,
@@ -249,6 +260,7 @@ export function initDb(isPrimary) {
             migrations.migrateCurrentStreamsProviderId(db);
             migrations.migrateProviderLastEpgUpdate(db);
             migrations.migrateUserPlainPassword(db);
+            migrations.migrateUserBackupsTable(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
