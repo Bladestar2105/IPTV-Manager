@@ -8,11 +8,21 @@ import { BCRYPT_ROUNDS } from '../config/constants.js';
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections FROM users ORDER BY id').all();
     const result = users.map(u => {
+        let plainPassword = null;
+        if (req.user.is_admin && u.plain_password) {
+            try {
+                plainPassword = decrypt(u.plain_password);
+            } catch (err) {
+                // ignore
+            }
+        }
+
         return {
             id: u.id,
             username: u.username,
+            plain_password: plainPassword || '********',
             is_active: u.is_active,
             webui_access: u.webui_access,
             hdhr_enabled: u.hdhr_enabled,
@@ -90,6 +100,7 @@ export const createUser = async (req, res) => {
 
     // Hash password
     const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
+    const encryptedPlainPassword = encrypt(p);
 
     let hdhrToken = null;
     const isHdhrEnabled = hdhr_enabled ? 1 : 0;
@@ -100,9 +111,10 @@ export const createUser = async (req, res) => {
     // Use transaction for atomic creation + copying
     db.transaction(() => {
         // Insert user
-        const info = db.prepare('INSERT INTO users (username, password, webui_access, hdhr_enabled, hdhr_token, max_connections) VALUES (?, ?, ?, ?, ?, ?)').run(
+        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
             u,
             hashedPassword,
+            encryptedPlainPassword,
             webui_access !== undefined ? (webui_access ? 1 : 0) : 1,
             isHdhrEnabled,
             hdhrToken,
@@ -334,8 +346,13 @@ export const updateUser = async (req, res) => {
             return res.status(400).json({ error: 'password_too_short' });
         }
         const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
+        const encryptedPlainPassword = encrypt(p);
+
         updates.push('password = ?');
         params.push(hashedPassword);
+
+        updates.push('plain_password = ?');
+        params.push(encryptedPlainPassword);
     }
 
     if (webui_access !== undefined) {

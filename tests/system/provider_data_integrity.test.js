@@ -34,6 +34,7 @@ function initSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
+      plain_password TEXT,
       is_active INTEGER DEFAULT 1,
       webui_access INTEGER DEFAULT 1,
       hdhr_enabled INTEGER DEFAULT 0,

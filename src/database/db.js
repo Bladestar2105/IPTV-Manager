@@ -87,6 +87,7 @@ export function initDb(isPrimary) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
+      plain_password TEXT,
       is_active INTEGER DEFAULT 1,
       max_connections INTEGER DEFAULT 0
     );
@@ -247,6 +248,7 @@ export function initDb(isPrimary) {
             migrations.migrateProviderMaxConnections(db);
             migrations.migrateCurrentStreamsProviderId(db);
             migrations.migrateProviderLastEpgUpdate(db);
+            migrations.migrateUserPlainPassword(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
