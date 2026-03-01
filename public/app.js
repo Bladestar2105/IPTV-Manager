@@ -4387,6 +4387,7 @@ async function createUserBackup() {
         setLoadingState(btn, true, t('loading'));
         await fetchJSON(`/api/users/${selectedUserId}/backups`, {
             method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ name: name.trim() })
         });
         showToast(t('backupCreated') || "Backup created successfully.", 'success');
