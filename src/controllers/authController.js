@@ -22,6 +22,14 @@ export const login = async (req, res) => {
       return res.status(400).json({error: 'missing_credentials'});
     }
 
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({error: 'invalid_input_type'});
+    }
+
+    if (otp_code !== undefined && typeof otp_code !== 'string' && typeof otp_code !== 'number') {
+        return res.status(400).json({error: 'invalid_input_type'});
+    }
+
     // 1. Check admin_users
     let user = db.prepare('SELECT *, 1 as is_admin FROM admin_users WHERE username = ? AND is_active = 1').get(username);
     let table = 'admin_users';
@@ -193,6 +201,10 @@ export const changePassword = async (req, res) => {
     // Validation
     if (!oldPassword || !newPassword || !confirmPassword) {
       return res.status(400).json({error: 'missing_fields'});
+    }
+
+    if (typeof oldPassword !== 'string' || typeof newPassword !== 'string' || typeof confirmPassword !== 'string') {
+        return res.status(400).json({error: 'invalid_input_type'});
     }
 
     if (newPassword !== confirmPassword) {

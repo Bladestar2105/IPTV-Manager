@@ -36,6 +36,13 @@ export const createUser = async (req, res) => {
       });
     }
 
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({
+            error: 'invalid_input_type',
+            message: 'Username and password must be strings'
+        });
+    }
+
     const u = username.trim();
     const p = password.trim();
 
@@ -297,6 +304,9 @@ export const updateUser = async (req, res) => {
     const params = [];
 
     if (username) {
+        if (typeof username !== 'string') {
+             return res.status(400).json({ error: 'invalid_input_type' });
+        }
         const u = username.trim();
         if (u.length < 3 || u.length > 50) {
             return res.status(400).json({ error: 'invalid_username_length' });
@@ -314,6 +324,9 @@ export const updateUser = async (req, res) => {
     }
 
     if (password) {
+        if (typeof password !== 'string') {
+             return res.status(400).json({ error: 'invalid_input_type' });
+        }
         const p = password.trim();
         if (p.length < 8) {
             return res.status(400).json({ error: 'password_too_short' });
