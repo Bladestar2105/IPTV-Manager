@@ -1,3 +1,4 @@
+import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { isAdultCategory } from '../utils/helpers.js';
 
@@ -23,6 +24,7 @@ export const createUserCategory = (req, res) => {
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
     const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
+    clearChannelsCache(userId);
     res.json({id: info.lastInsertRowid, is_adult: isAdult, type: catType});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -40,6 +42,7 @@ export const updateUserCategory = (req, res) => {
 
     const isAdult = isAdultCategory(name) ? 1 : 0;
     db.prepare('UPDATE user_categories SET name = ?, is_adult = ? WHERE id = ?').run(name.trim(), isAdult, id);
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -58,6 +61,7 @@ export const deleteUserCategory = (req, res) => {
     db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
     db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
 
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     console.error('Delete category error:', e);
@@ -89,6 +93,7 @@ export const bulkDeleteUserCategories = (req, res) => {
       db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...ids);
     })();
 
+    clearChannelsCache(userId);
     res.json({success: true, deleted: ids.length});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -109,6 +114,7 @@ export const reorderUserCategories = (req, res) => {
       });
     })();
 
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -125,6 +131,7 @@ export const updateUserCategoryAdult = (req, res) => {
 
     const { is_adult } = req.body;
     db.prepare('UPDATE user_categories SET is_adult = ? WHERE id = ?').run(is_adult ? 1 : 0, id);
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -166,6 +173,7 @@ export const addUserChannel = (req, res) => {
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
     const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
+    clearChannelsCache(userId);
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -189,6 +197,7 @@ export const reorderUserChannels = (req, res) => {
       });
     })();
 
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -210,6 +219,7 @@ export const deleteUserChannel = (req, res) => {
     }
 
     db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -238,6 +248,7 @@ export const bulkDeleteUserChannels = (req, res) => {
     const placeholders = ids.map(() => '?').join(',');
     db.prepare(`DELETE FROM user_channels WHERE id IN (${placeholders})`).run(...ids);
 
+    clearChannelsCache(userId);
     res.json({success: true, deleted: ids.length});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -265,6 +276,7 @@ export const updateCategoryMapping = (req, res) => {
     db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
       .run(user_category_id ? Number(user_category_id) : null, id);
 
+    clearChannelsCache(userId);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});

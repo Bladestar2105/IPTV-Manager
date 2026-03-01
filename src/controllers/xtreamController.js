@@ -1,6 +1,7 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgXmlForChannels } from '../services/epgService.js';
+import { channelsJsonCache } from '../services/cacheService.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
 import fetch from 'node-fetch';
@@ -460,6 +461,16 @@ export const playerChannelsJson = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
+    const host = getBaseUrl(req);
+    // Cache key incorporates whether it's a guest, the user ID, the host string, and token
+    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${host}_${tokenParam}`;
+
+    if (channelsJsonCache.has(cacheKey)) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(channelsJsonCache.get(cacheKey));
+    }
+
     let channels = db.prepare(`
       SELECT
         uc.id as user_channel_id,
@@ -491,8 +502,6 @@ export const playerChannelsJson = async (req, res) => {
         }
     }
 
-    const host = getBaseUrl(req);
-    const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
     const result = [];
 
     for (const ch of channels) {
@@ -563,7 +572,11 @@ export const playerChannelsJson = async (req, res) => {
       result.push(item);
     }
 
-    res.json(result);
+    const jsonOutput = JSON.stringify(result);
+    channelsJsonCache.set(cacheKey, jsonOutput);
+
+    res.setHeader('Content-Type', 'application/json');
+    res.send(jsonOutput);
 
   } catch (e) {
     console.error('Channels JSON generation error:', e);

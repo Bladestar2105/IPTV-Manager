@@ -1,3 +1,4 @@
+import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
@@ -279,6 +280,7 @@ export const createUser = async (req, res) => {
             }
         }
 
+        clearChannelsCache(newUserId);
         res.json({
           id: newUserId,
           message: 'User created successfully'
@@ -363,6 +365,7 @@ export const updateUser = async (req, res) => {
     params.push(id);
     db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
+    clearChannelsCache(id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -406,6 +409,7 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
 
+    clearChannelsCache(id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});

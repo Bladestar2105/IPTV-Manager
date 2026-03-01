@@ -1,3 +1,4 @@
+import { clearChannelsCache } from '../services/cacheService.js';
 import { Xtream } from '@iptv/xtream-api';
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
@@ -580,6 +581,9 @@ export async function performSync(providerId, userId, isManual = false) {
       const nextSync = calculateNextSync(config.sync_interval);
       db.prepare('UPDATE sync_configs SET last_sync = ?, next_sync = ? WHERE id = ?').run(startTime, nextSync, config.id);
     }
+
+    // Invalidate cache since channels might have been added/updated
+    clearChannelsCache(userId);
 
     // Log success
     db.prepare(`

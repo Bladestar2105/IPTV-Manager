@@ -1,3 +1,4 @@
+import { clearChannelsCache } from '../services/cacheService.js';
 import fs from 'fs';
 import path from 'path';
 import { Worker } from 'worker_threads';
@@ -181,6 +182,7 @@ export const updateEpgSourceEndpoint = async (req, res) => {
     params.push(id);
     db.prepare(`UPDATE epg_sources SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
+    clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -196,6 +198,7 @@ export const deleteEpgSource = (req, res) => {
     deleteEpgSourceData(id, 'custom');
 
     db.prepare('DELETE FROM epg_sources WHERE id = ?').run(id);
+    clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -210,10 +213,12 @@ export const triggerUpdateEpgSource = async (req, res) => {
     if (id.startsWith('provider_')) {
       const providerId = Number(id.replace('provider_', ''));
       await updateProviderEpg(providerId);
-      return res.json({success: true});
+      return clearChannelsCache(req.user.id);
+    res.json({success: true});
     }
 
     await updateEpgSource(Number(id));
+    clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -305,6 +310,7 @@ export const manualMapping = async (req, res) => {
       ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
     `).run(Number(provider_channel_id), epg_channel_id);
 
+    clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -325,6 +331,7 @@ export const deleteMapping = async (req, res) => {
     }
     db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(id);
 
+    clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -368,6 +375,7 @@ export const resetMapping = async (req, res) => {
 
     db.prepare(query).run(...params);
 
+    clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
     console.error('Reset mapping error:', e);
