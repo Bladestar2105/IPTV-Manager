@@ -190,15 +190,18 @@
   // ─── Init ───
   async function init() {
     loadingEl.style.display = 'flex';
+    loadingEl.classList.remove('d-none');
+    var loadingTextSpan = loadingEl.querySelector('span');
+    if (loadingTextSpan) loadingTextSpan.textContent = t('loading') || 'Loading Channels...';
     try {
-      // 1. Fetch Playlist
-      var res = await fetch('/api/player/playlist?' + getAuthParams());
-      if (!res.ok) throw new Error('Playlist Fetch Error: ' + res.status);
-      var text = await res.text();
-      allChannels = parseM3U(text);
+      // 1. Fetch Channels
+      var res = await fetch('/api/player/channels.json?' + getAuthParams());
+      if (!res.ok) throw new Error('Channels Fetch Error: ' + res.status);
+      allChannels = await res.json();
       console.log('Loaded ' + allChannels.length + ' channels');
 
       // 2. Fetch EPG Schedule
+      if (loadingTextSpan) loadingTextSpan.textContent = t('loading') || 'Loading EPG...';
       var start = Math.floor(Date.now() / 1000) - 7200;
       var end = start + (TIMELINE_HOURS * 3600) + 7200;
       try {
@@ -228,71 +231,8 @@
       showToast(t('errorLoadingData') + ': ' + e.message, 'danger', 10000);
     } finally {
       loadingEl.style.display = 'none';
+      loadingEl.classList.add('d-none');
     }
-  }
-
-  // ─── M3U Parser ───
-  function parseM3U(content) {
-    var lines = content.split('\n');
-    var result = [];
-    var currentItem = {};
-
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (!line) continue;
-
-      if (line.startsWith('#EXTINF:')) {
-        var info = line.substring(8);
-        var commaIndex = info.lastIndexOf(',');
-        var attrs = '', title = '';
-        if (commaIndex !== -1) {
-          attrs = info.substring(0, commaIndex);
-          title = info.substring(commaIndex + 1).trim();
-        } else {
-          attrs = info;
-        }
-
-        currentItem = { name: title, group: 'Uncategorized', logo: '' };
-        var matches = attrs.match(/([a-zA-Z0-9-]+)="([^"]*)"/g);
-        if (matches) {
-          matches.forEach(function(m) {
-            var eqIdx = m.indexOf('=');
-            var key = m.substring(0, eqIdx).toLowerCase();
-            var val = m.substring(eqIdx + 2, m.length - 1);
-            if (key === 'group-title') currentItem.group = val;
-            if (key === 'tvg-logo') currentItem.logo = val;
-            if (key === 'tvg-id') currentItem.epg_id = val;
-            if (key === 'plot') currentItem.plot = val;
-            if (key === 'cast') currentItem.cast = val;
-            if (key === 'director') currentItem.director = val;
-            if (key === 'genre') currentItem.genre = val;
-            if (key === 'releasedate' || key === 'releasedate') currentItem.releaseDate = val;
-            if (key === 'rating') currentItem.rating = val;
-            if (key === 'duration') currentItem.duration = val;
-          });
-        }
-      } else if (line.startsWith('#KODIPROP:')) {
-        var prop = line.substring(10).trim();
-        var eqIdx = prop.indexOf('=');
-        if (eqIdx !== -1) {
-          var key = prop.substring(0, eqIdx);
-          var val = prop.substring(eqIdx + 1);
-          if (!currentItem.drm) currentItem.drm = {};
-          if (key === 'inputstream.adaptive.license_type') currentItem.drm.license_type = val;
-          if (key === 'inputstream.adaptive.license_key') currentItem.drm.license_key = val;
-        }
-      } else if (!line.startsWith('#')) {
-        if (currentItem.name) {
-          currentItem.url = line;
-          if (line.includes('/movie/')) currentItem.type = 'movie';
-          else if (line.includes('/series/')) currentItem.type = 'series';
-          else currentItem.type = 'live';
-          result.push(currentItem);
-          currentItem = {};
-        }
-      }
-    }
-    return result;
   }
 
   // ─── Categories ───

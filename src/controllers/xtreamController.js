@@ -455,6 +455,122 @@ export const xmltv = async (req, res) => {
   }
 };
 
+export const playerChannelsJson = async (req, res) => {
+  try {
+    const user = await getXtreamUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    let channels = db.prepare(`
+      SELECT
+        uc.id as user_channel_id,
+        uc.user_category_id,
+        pc.name,
+        pc.logo,
+        pc.epg_channel_id,
+        pc.remote_stream_id,
+        pc.stream_type,
+        pc.mime_type,
+        pc.metadata,
+        pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
+        cat.name as category_name,
+        map.epg_channel_id as manual_epg_id
+      FROM user_channels uc
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      WHERE cat.user_id = ? AND pc.stream_type != 'series'
+      ORDER BY uc.sort_order
+    `).all(user.id);
+
+    if (user.is_share_guest) {
+        channels = channels.filter(ch => user.allowed_channels.includes(ch.user_channel_id));
+
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+             channels = [];
+        }
+    }
+
+    const host = getBaseUrl(req);
+    const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
+    const result = [];
+
+    for (const ch of channels) {
+      const group = ch.category_name || 'Uncategorized';
+      const logo = ch.logo || '';
+      const name = ch.name ? String(ch.name).replace(/[\r\n]+/g, ' ').trim() : 'Unknown';
+      const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
+
+      let ext = 'ts';
+      let typePath = 'live';
+
+      if (ch.stream_type === 'movie') {
+         typePath = 'movie';
+         ext = ch.mime_type || 'mp4';
+      } else if (ch.stream_type === 'series') {
+         typePath = 'series';
+         ext = ch.mime_type || 'mp4';
+      } else {
+         if (ch.mime_type === 'mpd') {
+             ext = 'mpd';
+             typePath = 'live/mpd';
+         } else {
+             ext = 'ts';
+         }
+      }
+
+      let streamUrl;
+      if (ext === 'mpd') {
+          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}/manifest.mpd${tokenParam}`;
+      } else {
+          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
+      }
+
+      let type = 'live';
+      if (streamUrl.includes('/movie/')) type = 'movie';
+      else if (streamUrl.includes('/series/')) type = 'series';
+
+      const item = {
+        name,
+        group,
+        logo,
+        epg_id: epgId,
+        url: streamUrl,
+        type
+      };
+
+      if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
+        if (ch.plot) item.plot = ch.plot;
+        if (ch.cast) item.cast = ch.cast;
+        if (ch.director) item.director = ch.director;
+        if (ch.genre) item.genre = ch.genre;
+        if (ch.releaseDate) item.releaseDate = ch.releaseDate;
+        if (ch.rating) item.rating = ch.rating;
+        if (ch.episode_run_time) item.duration = ch.episode_run_time;
+      }
+
+      if (ch.metadata) {
+          try {
+              const meta = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
+              if (meta.drm) {
+                  item.drm = {};
+                  if (meta.drm.license_type) item.drm.license_type = meta.drm.license_type;
+                  if (meta.drm.license_key) item.drm.license_key = meta.drm.license_key;
+              }
+          } catch(e) {}
+      }
+
+      result.push(item);
+    }
+
+    res.json(result);
+
+  } catch (e) {
+    console.error('Channels JSON generation error:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 export const playerPlaylist = async (req, res) => {
   try {
     const user = await getXtreamUser(req);
