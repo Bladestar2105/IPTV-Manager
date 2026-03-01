@@ -32,9 +32,10 @@ export const createUserCategory = (req, res) => {
 export const updateUserCategory = (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!req.user.is_admin) {
-        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+    if (!cat) return res.status(404).json({error: 'Category not found'});
+    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
     }
 
     const { name } = req.body;
@@ -42,7 +43,7 @@ export const updateUserCategory = (req, res) => {
 
     const isAdult = isAdultCategory(name) ? 1 : 0;
     db.prepare('UPDATE user_categories SET name = ?, is_adult = ? WHERE id = ?').run(name.trim(), isAdult, id);
-    clearChannelsCache(userId);
+    clearChannelsCache(cat.user_id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -52,16 +53,17 @@ export const updateUserCategory = (req, res) => {
 export const deleteUserCategory = (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!req.user.is_admin) {
-        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+    if (!cat) return res.status(404).json({error: 'Category not found'});
+    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
     }
 
     db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
     db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
     db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
 
-    clearChannelsCache(userId);
+    clearChannelsCache(cat.user_id);
     res.json({success: true});
   } catch (e) {
     console.error('Delete category error:', e);
@@ -76,10 +78,13 @@ export const bulkDeleteUserCategories = (req, res) => {
 
     const placeholders = ids.map(() => '?').join(',');
 
+    const cats = db.prepare(`SELECT DISTINCT user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
+    const userIdsToClear = cats.map(c => c.user_id);
+
     db.transaction(() => {
       if (!req.user.is_admin) {
-        const cats = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
-        const catMap = new Map(cats.map(c => [c.id, c.user_id]));
+        const checkCats = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
+        const catMap = new Map(checkCats.map(c => [c.id, c.user_id]));
         for (const id of ids) {
           const catUserId = catMap.get(Number(id));
           if (catUserId === undefined || catUserId !== req.user.id) {
@@ -93,7 +98,7 @@ export const bulkDeleteUserCategories = (req, res) => {
       db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...ids);
     })();
 
-    clearChannelsCache(userId);
+    userIdsToClear.forEach(uId => clearChannelsCache(uId));
     res.json({success: true, deleted: ids.length});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -124,14 +129,15 @@ export const reorderUserCategories = (req, res) => {
 export const updateUserCategoryAdult = (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!req.user.is_admin) {
-        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
+    if (!cat) return res.status(404).json({error: 'Category not found'});
+    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
     }
 
     const { is_adult } = req.body;
     db.prepare('UPDATE user_categories SET is_adult = ? WHERE id = ?').run(is_adult ? 1 : 0, id);
-    clearChannelsCache(userId);
+    clearChannelsCache(cat.user_id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -161,9 +167,10 @@ export const getCategoryChannels = (req, res) => {
 export const addUserChannel = (req, res) => {
   try {
     const catId = Number(req.params.catId);
-    if (!req.user.is_admin) {
-        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
-        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+    if (!cat) return res.status(404).json({error: 'Category not found'});
+    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
     }
 
     const { provider_channel_id } = req.body;
@@ -173,7 +180,7 @@ export const addUserChannel = (req, res) => {
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
     const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
-    clearChannelsCache(userId);
+    clearChannelsCache(cat.user_id);
     res.json({id: info.lastInsertRowid});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -181,9 +188,10 @@ export const addUserChannel = (req, res) => {
 export const reorderUserChannels = (req, res) => {
   try {
     const catId = Number(req.params.catId);
-    if (!req.user.is_admin) {
-        const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
-        if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
+    if (!cat) return res.status(404).json({error: 'Category not found'});
+    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
     }
 
     const { channel_ids } = req.body;
@@ -197,7 +205,7 @@ export const reorderUserChannels = (req, res) => {
       });
     })();
 
-    clearChannelsCache(userId);
+    clearChannelsCache(cat.user_id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -208,18 +216,21 @@ export const deleteUserChannel = (req, res) => {
   try {
     const id = Number(req.params.id);
 
-    if (!req.user.is_admin) {
-        const channel = db.prepare(`
-            SELECT cat.user_id
-            FROM user_channels uc
-            JOIN user_categories cat ON cat.id = uc.user_category_id
-            WHERE uc.id = ?
-        `).get(id);
-        if (!channel || channel.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const channel = db.prepare(`
+        SELECT cat.user_id
+        FROM user_channels uc
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE uc.id = ?
+    `).get(id);
+
+    if (!channel) return res.status(404).json({error: 'Channel not found'});
+
+    if (!req.user.is_admin && channel.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
     }
 
     db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
-    clearChannelsCache(userId);
+    clearChannelsCache(channel.user_id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -231,24 +242,32 @@ export const bulkDeleteUserChannels = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
+    const placeholders = ids.map(() => '?').join(',');
+
+    const channels = db.prepare(`
+        SELECT DISTINCT cat.user_id
+        FROM user_channels uc
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE uc.id IN (${placeholders})
+    `).all(...ids);
+    const userIdsToClear = channels.map(c => c.user_id);
+
     if (!req.user.is_admin) {
-        const placeholders = ids.map(() => '?').join(',');
-        const channels = db.prepare(`
+        const checkChannels = db.prepare(`
             SELECT cat.user_id
             FROM user_channels uc
             JOIN user_categories cat ON cat.id = uc.user_category_id
             WHERE uc.id IN (${placeholders})
         `).all(...ids);
 
-        for (const ch of channels) {
+        for (const ch of checkChannels) {
             if (ch.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
         }
     }
 
-    const placeholders = ids.map(() => '?').join(',');
     db.prepare(`DELETE FROM user_channels WHERE id IN (${placeholders})`).run(...ids);
 
-    clearChannelsCache(userId);
+    userIdsToClear.forEach(uId => clearChannelsCache(uId));
     res.json({success: true, deleted: ids.length});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
@@ -273,10 +292,13 @@ export const updateCategoryMapping = (req, res) => {
     const id = Number(req.params.id);
     const { user_category_id } = req.body;
 
+    const mapping = db.prepare('SELECT user_id FROM category_mappings WHERE id = ?').get(id);
+    if (!mapping) return res.status(404).json({error: 'Mapping not found'});
+
     db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
       .run(user_category_id ? Number(user_category_id) : null, id);
 
-    clearChannelsCache(userId);
+    clearChannelsCache(mapping.user_id);
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
