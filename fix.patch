@@ -1,0 +1,13 @@
+--- src/controllers/streamController.js
++++ src/controllers/streamController.js
+@@ -512,6 +512,11 @@
+ // --- Segment Proxy ---
+ export const proxySegment = async (req, res) => {
+   try {
++    // For segment proxy, we need to allow token auth explicitly in case it's in query
++    if (req.query.token && !req.headers.authorization) {
++        // Auth handled inside getXtreamUser but we need to ensure the request is treated as authenticated
++    }
++
+     const user = await getXtreamUser(req);
+     if (!user) return res.sendStatus(401);

@@ -1,0 +1,10 @@
+--- tests/security/segment_ssrf.test.js
++++ tests/security/segment_ssrf.test.js
+@@ -60,7 +60,7 @@
+         // Get real user id
+         const existing = db.prepare('SELECT id FROM users WHERE username = ?').get('ssrf_user');
+         if (existing) {
+-            db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(existing.id);
++            db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(existing.id);
+             db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
+         }
