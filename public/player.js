@@ -38,6 +38,7 @@
   // ─── DOM Elements ───
   const catSelect = document.getElementById('category-select');
   const searchInput = document.getElementById('search-input');
+  const searchInputClear = document.getElementById('search-input-clear');
   const sidebarEl = document.getElementById('channel-sidebar');
   const sidebarOverlay = document.getElementById('sidebar-overlay');
   const epgGridEl = document.getElementById('epg-grid');
@@ -953,6 +954,7 @@
       currentType = e.target.dataset.type;
       catSelect.value = '';
       searchInput.value = '';
+      updateClearBtnVisibility();
       updateCategories();
       renderView();
     });
@@ -965,7 +967,27 @@
   });
 
   // Search
+  function updateClearBtnVisibility() {
+    if (searchInputClear) {
+      if (searchInput.value) {
+        searchInputClear.classList.remove('d-none');
+      } else {
+        searchInputClear.classList.add('d-none');
+      }
+    }
+  }
+
+  if (searchInputClear) {
+    searchInputClear.addEventListener('click', function() {
+      searchInput.value = '';
+      updateClearBtnVisibility();
+      searchInput.focus();
+      searchInput.dispatchEvent(new Event('input'));
+    });
+  }
+
   searchInput.addEventListener('input', debounce(function() {
+    updateClearBtnVisibility();
     if (currentType === 'live') renderTimeline();
     else renderList();
   }, 400));
