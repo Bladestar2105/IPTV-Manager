@@ -56,6 +56,7 @@ describe('xtreamController - playerChannelsJson', () => {
     };
     res = {
       json: vi.fn(),
+      send: vi.fn(),
       status: vi.fn().mockReturnThis(),
       setHeader: vi.fn(),
     };
@@ -88,8 +89,9 @@ describe('xtreamController - playerChannelsJson', () => {
 
     await playerChannelsJson(req, res);
 
-    expect(res.json).toHaveBeenCalled();
-    const output = res.json.mock.calls[0][0];
+    expect(res.send).toHaveBeenCalled();
+    const outputStr = res.send.mock.calls[0][0];
+    const output = JSON.parse(outputStr);
 
     expect(output.length).toBe(1);
     expect(output[0].plot).toBe('Line 1\nLine 2'); // No newline replacement for JSON

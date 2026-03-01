@@ -1,3 +1,4 @@
+import { clearChannelsCache } from '../services/cacheService.js';
 import crypto from 'crypto';
 import db from '../database/db.js';
 import { getBaseUrl } from '../utils/helpers.js';
@@ -52,6 +53,7 @@ export const createShare = (req, res) => {
     const link = `${baseUrl}/player.html?token=${encodeURIComponent(token)}`;
     const shortLink = slug ? `${baseUrl}/share/${slug}` : null;
 
+    clearChannelsCache(req.user.id);
     res.json({ success: true, token, link, short_link: shortLink, slug });
   } catch (e) {
     console.error('Create share error:', e);
@@ -85,6 +87,7 @@ export const updateShare = (req, res) => {
 
     if (info.changes === 0) return res.status(404).json({ error: 'Share not found' });
 
+    clearChannelsCache(req.user.id);
     res.json({ success: true, token });
   } catch (e) {
     console.error('Update share error:', e);
@@ -105,6 +108,7 @@ export const deleteShare = (req, res) => {
 
     if (info.changes === 0) return res.status(404).json({ error: 'Share not found' });
 
+    clearChannelsCache(req.user.id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
