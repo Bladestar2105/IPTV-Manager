@@ -34,16 +34,13 @@ export const getEpgNow = async (req, res) => {
     const programs = getProgramsNow();
     const currentPrograms = {};
 
+    // ⚡ Bolt: No massive JS loop needed, objects are pre-formatted by SQLite
     for (const prog of programs) {
-        // If multiple sources provide program for same channel, last one wins or handle collision?
-        // Since we use channel_id which is XMLTV ID, collisions are possible.
-        // We just take one.
-        currentPrograms[prog.channel_id] = {
-            title: prog.title,
-            desc: prog.desc || '',
-            start: prog.start,
-            stop: prog.stop
-        };
+        try {
+            currentPrograms[prog.channel_id] = JSON.parse(prog.program);
+        } catch (e) {
+            // ignore JSON parse errors
+        }
     }
 
     res.json(currentPrograms);
@@ -73,14 +70,13 @@ export const getEpgSchedule = async (req, res) => {
     const programs = getProgramsSchedule(start, end);
     const schedule = {};
 
+    // ⚡ Bolt: No nested JS loops needed, JSON grouping is offloaded to SQLite
     for (const prog of programs) {
-        if (!schedule[prog.channel_id]) schedule[prog.channel_id] = [];
-        schedule[prog.channel_id].push({
-          start: prog.start,
-          stop: prog.stop,
-          title: prog.title,
-          desc: prog.desc || ''
-        });
+        try {
+            schedule[prog.channel_id] = JSON.parse(prog.programs);
+        } catch (e) {
+            schedule[prog.channel_id] = [];
+        }
     }
 
     res.json(schedule);
