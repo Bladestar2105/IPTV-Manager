@@ -40,7 +40,10 @@
     <option value="" data-i18n="allCategories">All Categories</option>
   </select>
 
-  <input type="text" id="search-input" class="form-control form-control-sm bg-dark text-light border-secondary w-140px" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
+  <div class="input-group input-group-sm w-140px">
+    <input type="text" id="search-input" class="form-control bg-dark text-light border-secondary" placeholder="Search..." data-i18n-placeholder="searchPlaceholder">
+    <button class="btn btn-outline-secondary d-none border-secondary text-light" type="button" id="search-input-clear" aria-label="Clear search">✕</button>
+  </div>
 
   <div class="ms-auto d-flex align-items-center">
     <google-cast-launcher id="cast-button" class="cast-button-style"></google-cast-launcher>
