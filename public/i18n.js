@@ -253,6 +253,11 @@ const translations = {
     mappingRemoved: 'Mapping removed',
     configuration: 'Configuration',
     mappingStats: 'Total: {total} | Mapped: {mapped} ({percent}%) | Manual: {manual}',
+    suggestions: 'Suggestions',
+    loadingSuggestions: 'Loading suggestions...',
+    noSuggestionsFound: 'No suggestions found',
+    confidence: 'Confidence',
+    searchAllChannels: 'Search All Channels',
 
     // Statistics
     statistics: 'Statistics',
@@ -689,6 +694,11 @@ const translations = {
     mappingRemoved: 'Zuordnung entfernt',
     configuration: 'Konfiguration',
     mappingStats: 'Gesamt: {total} | Zugeordnet: {mapped} ({percent}%) | Manuell: {manual}',
+    suggestions: 'Vorschläge',
+    loadingSuggestions: 'Lade Vorschläge...',
+    noSuggestionsFound: 'Keine Vorschläge gefunden',
+    confidence: 'Übereinstimmung',
+    searchAllChannels: 'Alle Kanäle durchsuchen',
 
     // Statistics
     statistics: 'Statistiken',
@@ -1125,6 +1135,11 @@ const translations = {
     mappingRemoved: 'Association supprimée',
     configuration: 'Configuration',
     mappingStats: 'Total : {total} | Associé : {mapped} ({percent}%) | Manuel : {manual}',
+    suggestions: 'Suggestions',
+    loadingSuggestions: 'Chargement des suggestions...',
+    noSuggestionsFound: 'Aucune suggestion trouvée',
+    confidence: 'Confiance',
+    searchAllChannels: 'Rechercher dans toutes les chaînes',
 
     // Statistics
     statistics: 'Statistiques',
@@ -1561,6 +1576,11 @@ const translations = {
     mappingRemoved: 'Η αντιστοίχιση αφαιρέθηκε',
     configuration: 'Διαμόρφωση',
     mappingStats: 'Σύνολο: {total} | Αντιστοιχίστηκαν: {mapped} ({percent}%) | Χειροκίνητα: {manual}',
+    suggestions: 'Προτάσεις',
+    loadingSuggestions: 'Φόρτωση προτάσεων...',
+    noSuggestionsFound: 'Δεν βρέθηκαν προτάσεις',
+    confidence: 'Εμπιστοσύνη',
+    searchAllChannels: 'Αναζήτηση σε όλα τα κανάλια',
 
     // Statistics
     statistics: 'Στατιστικά',
