@@ -2451,17 +2451,10 @@ document.addEventListener('DOMContentLoaded', () => {
       clearEpgBtn.textContent = '...';
       clearEpgBtn.disabled = true;
       try {
-        const res = await fetch('/api/epg-sources/clear', {
-          method: 'POST',
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          showToast(i18n[currentLang].success || 'EPG cleared', 'success');
-        } else {
-          showToast('Clear failed', 'danger');
-        }
+        await fetchJSON('/api/epg-sources/clear', { method: 'POST' });
+        showToast(i18n[currentLang].success || 'EPG cleared', 'success');
       } catch (e) {
-        showToast('Error', 'danger');
+        showToast(e.message || 'Error', 'danger');
       } finally {
         clearEpgBtn.textContent = originalText;
         clearEpgBtn.disabled = false;
