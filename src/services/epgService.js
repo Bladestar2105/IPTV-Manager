@@ -547,3 +547,19 @@ function peekStream(stream) {
         stream.on('end', onEnd);
     });
 }
+
+
+export function clearEpgData() {
+    console.log("🧹 Clearing EPG programs and channels from database...");
+
+    // Explicitly begin transaction to ensure consistency
+    const transaction = db.transaction(() => {
+        db.prepare('DELETE FROM epg_programs').run();
+        db.prepare('DELETE FROM epg_channels').run();
+
+        // Note: epg_channel_mappings table is intentionally left alone to preserve mapping.
+    });
+
+    transaction();
+    console.log("✅ EPG data cleared successfully.");
+}

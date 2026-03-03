@@ -2425,6 +2425,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   const updateAllEpgBtn = document.getElementById('update-all-epg-btn');
+  const clearEpgBtn = document.getElementById('clear-epg-btn');
   if (updateAllEpgBtn) {
     updateAllEpgBtn.addEventListener('click', async () => {
       if (!confirm(t('epgUpdateAllConfirm'))) return;
@@ -2439,6 +2440,31 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast(e.message, 'danger');
       } finally {
         setLoadingState(updateAllEpgBtn, false);
+      }
+    });
+  }
+
+  if (clearEpgBtn) {
+    clearEpgBtn.addEventListener('click', async () => {
+      if (!confirm(i18n[currentLang].confirmClearEpg || 'Are you sure you want to clear all EPG data? This will not remove mappings.')) return;
+      const originalText = clearEpgBtn.textContent;
+      clearEpgBtn.textContent = '...';
+      clearEpgBtn.disabled = true;
+      try {
+        const res = await fetch('/api/epg-sources/clear', {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        if (res.ok) {
+          showToast(i18n[currentLang].success || 'EPG cleared', 'success');
+        } else {
+          showToast('Clear failed', 'danger');
+        }
+      } catch (e) {
+        showToast('Error', 'danger');
+      } finally {
+        clearEpgBtn.textContent = originalText;
+        clearEpgBtn.disabled = false;
       }
     });
   }

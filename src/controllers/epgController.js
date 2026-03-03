@@ -481,3 +481,18 @@ export const autoMapping = async (req, res) => {
     res.status(500).json({error: e.message});
   }
 };
+
+
+export const clearEpg = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+
+    clearEpgData();
+    clearChannelsCache(req.user.id);
+
+    res.json({success: true, message: 'EPG data cleared successfully.'});
+  } catch (e) {
+    console.error('Clear EPG error:', e);
+    res.status(500).json({error: e.message});
+  }
+};
