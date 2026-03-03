@@ -2446,13 +2446,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (clearEpgBtn) {
     clearEpgBtn.addEventListener('click', async () => {
-      if (!confirm(i18n[currentLang].confirmClearEpg || 'Are you sure you want to clear all EPG data? This will not remove mappings.')) return;
+      if (!confirm(t('confirmClearEpg') || 'Are you sure you want to clear all EPG data? This will not remove mappings.')) return;
       const originalText = clearEpgBtn.textContent;
       clearEpgBtn.textContent = '...';
       clearEpgBtn.disabled = true;
       try {
         await fetchJSON('/api/epg-sources/clear', { method: 'POST' });
-        showToast(i18n[currentLang].success || 'EPG cleared', 'success');
+        showToast(t('success') || 'EPG cleared', 'success');
       } catch (e) {
         showToast(e.message || 'Error', 'danger');
       } finally {
