@@ -9,7 +9,8 @@ import {
   updateProviderEpg,
   deleteEpgSourceData,
   getProgramsNow,
-  getProgramsSchedule
+  getProgramsSchedule,
+  clearEpgData
 } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
 import { isSafeUrl } from '../utils/helpers.js';
