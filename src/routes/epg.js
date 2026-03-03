@@ -14,6 +14,7 @@ router.put('/epg-sources/:id', authenticateToken, epgController.updateEpgSourceE
 router.delete('/epg-sources/:id', authenticateToken, epgController.deleteEpgSource);
 router.post('/epg-sources/:id/update', authenticateToken, epgController.triggerUpdateEpgSource);
 router.post('/epg-sources/update-all', authenticateToken, epgController.updateAllEpgSources);
+router.post('/epg-sources/clear', authenticateToken, epgController.clearEpg);
 router.get('/epg-sources/available', authenticateToken, epgController.getAvailableEpgSources);
 
 router.post('/mapping/manual', authenticateToken, epgController.manualMapping);
