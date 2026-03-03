@@ -80,6 +80,17 @@
     return 'username=' + encodeURIComponent(username) + '&password=' + encodeURIComponent(password);
   }
 
+// ─── Utility: XSS Protection ───
+function escapeHtml(unsafe) {
+  if (typeof unsafe !== "string") return "";
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
   function getProxiedUrl(url) {
     if (!url) return '';
 
@@ -276,7 +287,7 @@
 
     listView.innerHTML = '';
     if (filtered.length === 0) {
-      listView.innerHTML = '<div class="text-muted p-3">' + t('noResults', { search: search }) + '</div>';
+      listView.innerHTML = '<div class="text-muted p-3">' + t('noResults', { search: escapeHtml(search) }) + '</div>';
       return;
     }
 
