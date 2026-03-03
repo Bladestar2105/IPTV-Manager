@@ -3571,7 +3571,68 @@ function showEpgSelectionModal(channelId) {
   document.getElementById('epg-select-search').value = '';
   filterEpgSelectionList();
 
+  // Load suggestions
+  loadEpgSuggestions(channelId);
+
   modal.show();
+}
+
+async function loadEpgSuggestions(channelId) {
+  const container = document.getElementById('epg-suggest-container');
+  const list = document.getElementById('epg-suggest-list');
+
+  const channel = epgMappingChannels.find(ch => ch.id === channelId);
+  if (!channel) return;
+
+  container.classList.remove('d-none');
+  list.innerHTML = `<li class="list-group-item text-center text-muted py-3">
+    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+    ${t('loadingSuggestions') || 'Loading suggestions...'}
+  </li>`;
+
+  try {
+    const res = await fetchJSON('/api/mapping/suggest', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ channel_name: channel.name })
+    });
+
+    list.innerHTML = '';
+
+    if (!res.suggestions || res.suggestions.length === 0) {
+        list.innerHTML = `<li class="list-group-item text-center text-muted">${t('noSuggestionsFound') || 'No suggestions found'}</li>`;
+        return;
+    }
+
+    res.suggestions.forEach(sug => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item list-group-item-action list-group-item-info';
+      li.style.cursor = 'pointer';
+
+      const safeName = escapeHtml(sug.epgChannel.name);
+      const safeId = escapeHtml(sug.epgChannel.id);
+      const safeSource = sug.epgChannel.source_type ? `<span class="badge bg-secondary ms-2">${escapeHtml(sug.epgChannel.source_type)}</span>` : '';
+      const confidence = Math.round(sug.confidence * 100);
+
+      li.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <strong>${safeName}</strong> ${safeSource}
+            <span class="badge ${confidence > 80 ? 'bg-success' : 'bg-warning'} ms-2">${t('confidence') || 'Confidence'}: ${confidence}%</span>
+            <br>
+            <small class="text-muted">${safeId}</small>
+          </div>
+          ${sug.epgChannel.logo ? `<img src="${getProxiedUrl(sug.epgChannel.logo)}" alt="${safeName}" height="30" data-on-error="hide">` : ''}
+        </div>
+      `;
+
+      li.onclick = () => selectEpgMapping(sug.epgChannel.id);
+      list.appendChild(li);
+    });
+
+  } catch (e) {
+    list.innerHTML = `<li class="list-group-item text-center text-danger">${t('errorPrefix')} ${e.message}</li>`;
+  }
 }
 
 function filterEpgSelectionList() {

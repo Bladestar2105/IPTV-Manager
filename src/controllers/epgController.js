@@ -13,6 +13,7 @@ import {
   clearEpgData
 } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
+import { ChannelMatcher } from '../services/channelMatcher.js';
 import { isSafeUrl } from '../utils/helpers.js';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../utils/crypto.js';
@@ -494,6 +495,24 @@ export const clearEpg = async (req, res) => {
     res.json({success: true, message: 'EPG data cleared successfully.'});
   } catch (e) {
     console.error('Clear EPG error:', e);
+    res.status(500).json({error: e.message});
+  }
+};
+
+
+export const suggestMapping = async (req, res) => {
+  try {
+    const { channel_name, limit } = req.body;
+    if (!channel_name) return res.status(400).json({error: 'channel_name required'});
+
+    const allEpgChannels = await loadAllEpgChannels();
+    const matcher = new ChannelMatcher(allEpgChannels);
+
+    const suggestions = matcher.suggest(channel_name, limit || 10);
+
+    res.json({ success: true, suggestions });
+  } catch (e) {
+    console.error('EPG Suggest Error:', e);
     res.status(500).json({error: e.message});
   }
 };

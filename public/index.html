@@ -939,6 +939,7 @@
           <h5 class="modal-title" data-i18n="browseEpgSourcesTitle">Browse Available EPG Sources</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
+
         <div class="modal-body">
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
@@ -1280,7 +1281,7 @@
     </div>
   </div>
 
-  <!-- EPG Channel Select Modal -->
+      <!-- EPG Channel Select Modal -->
   <div class="modal fade" id="epg-select-modal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
@@ -1289,6 +1290,11 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
+          <div id="epg-suggest-container" class="mb-4 d-none">
+             <h6 class="border-bottom pb-2 mb-2" data-i18n="suggestions">Suggestions</h6>
+             <ul id="epg-suggest-list" class="list-group max-h-300-scroll mb-3"></ul>
+          </div>
+          <h6 class="border-bottom pb-2 mb-2" data-i18n="allChannels">All Channels</h6>
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="epg-select-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search EPG channels...">
              <button class="btn btn-outline-secondary d-none" type="button" id="epg-select-search-clear" aria-label="Clear search">✕</button>
