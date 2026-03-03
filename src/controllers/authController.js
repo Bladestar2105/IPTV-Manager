@@ -293,7 +293,7 @@ export const createPlayerToken = (req, res) => {
         sameSite: 'strict',
         path: '/',
         maxAge: 21600000, // 6 hours
-        secure: process.env.NODE_ENV === 'production' || req.secure
+        secure: req.secure
     });
 
     // Cleanup old tokens
