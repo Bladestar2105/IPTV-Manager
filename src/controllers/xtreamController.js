@@ -181,7 +181,9 @@ export const playerApi = async (req, res) => {
     if (action === 'get_series') {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time, pc.metadata, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
+               json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
+               cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -199,10 +201,10 @@ export const playerApi = async (req, res) => {
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
         let backdrop_path = [];
-        if (ch.metadata) {
+        if (ch.backdrop_path) {
              try {
-                 const meta = JSON.parse(ch.metadata);
-                 if (meta.backdrop_path) backdrop_path = meta.backdrop_path;
+                 const parsed = JSON.parse(ch.backdrop_path);
+                 if (Array.isArray(parsed)) backdrop_path = parsed;
              } catch(e){}
         }
 
@@ -505,7 +507,8 @@ export const playerChannelsJson = async (req, res) => {
         pc.remote_stream_id,
         pc.stream_type,
         pc.mime_type,
-        pc.metadata,
+        json_extract(pc.metadata, '$.drm.license_type') as drm_license_type,
+        json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
@@ -582,15 +585,10 @@ export const playerChannelsJson = async (req, res) => {
         if (ch.episode_run_time) item.duration = ch.episode_run_time;
       }
 
-      if (ch.metadata) {
-          try {
-              const meta = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
-              if (meta.drm) {
-                  item.drm = {};
-                  if (meta.drm.license_type) item.drm.license_type = meta.drm.license_type;
-                  if (meta.drm.license_key) item.drm.license_key = meta.drm.license_key;
-              }
-          } catch(e) {}
+      if (ch.drm_license_type || ch.drm_license_key) {
+          item.drm = {};
+          if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
+          if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
       }
 
       result.push(item);
@@ -623,7 +621,8 @@ export const playerPlaylist = async (req, res) => {
         pc.remote_stream_id,
         pc.stream_type,
         pc.mime_type,
-        pc.metadata,
+        json_extract(pc.metadata, '$.drm.license_type') as drm_license_type,
+        json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
@@ -703,14 +702,9 @@ export const playerPlaylist = async (req, res) => {
 
       lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}"${extra},${finalName}`);
 
-      if (ch.metadata) {
-          try {
-              const meta = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
-              if (meta.drm) {
-                  if (meta.drm.license_type) lines.push(`#KODIPROP:inputstream.adaptive.license_type=${meta.drm.license_type}`);
-                  if (meta.drm.license_key) lines.push(`#KODIPROP:inputstream.adaptive.license_key=${meta.drm.license_key}`);
-              }
-          } catch(e) {}
+      if (ch.drm_license_type || ch.drm_license_key) {
+          if (ch.drm_license_type) lines.push(`#KODIPROP:inputstream.adaptive.license_type=${ch.drm_license_type}`);
+          if (ch.drm_license_key) lines.push(`#KODIPROP:inputstream.adaptive.license_key=${ch.drm_license_key}`);
       }
 
       lines.push(streamUrl);
