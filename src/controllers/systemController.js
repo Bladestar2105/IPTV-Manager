@@ -343,11 +343,15 @@ export const importData = async (req, res) => {
       const categoryIdMap = new Map();
       const providerChannelIdMap = new Map();
 
+      // Pre-fetch existing users to avoid N+1 query
+      const existingUsers = db.prepare('SELECT id, username FROM users').all();
+      const existingUserMap = new Map(existingUsers.map(u => [u.username, u.id]));
+
       for (const user of importData.users) {
-        const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(user.username);
-        if (existing) {
+        const existingId = existingUserMap.get(user.username);
+        if (existingId) {
           console.log(`Skipping existing user: ${user.username}`);
-          userIdMap.set(user.id, existing.id);
+          userIdMap.set(user.id, existingId);
           stats.users_skipped++;
           continue;
         }
@@ -378,7 +382,9 @@ export const importData = async (req, res) => {
           otpSecret
         );
 
-        userIdMap.set(user.id, info.lastInsertRowid);
+        const newUserId = info.lastInsertRowid;
+        userIdMap.set(user.id, newUserId);
+        existingUserMap.set(user.username, newUserId);
         stats.users_imported++;
       }
 
