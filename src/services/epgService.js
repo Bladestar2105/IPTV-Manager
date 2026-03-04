@@ -1,6 +1,6 @@
 import zlib from 'zlib';
 import Database from 'better-sqlite3';
-import sax from 'sax';
+import XmlStream from 'node-xml-stream';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
@@ -74,8 +74,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             }
         };
 
-        // Use strict: false to be robust against malformed XML
-        const saxStream = sax.createStream(false, { lowercase: true, trim: true });
+        // Implement node-xml-stream for robust streaming XML parsing
+        const parser = new XmlStream();
 
         let currentTag = null;
         let currentChannel = null;
@@ -83,38 +83,35 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let currentText = '';
 
         await new Promise((resolve, reject) => {
-            saxStream.on('error', function (e) {
-                // handle error
+            parser.on('error', function (e) {
                 console.error("XML Parse Error", e);
-                this._parser.error = null;
-                this._parser.resume();
+                reject(e);
             });
 
-            saxStream.on('opentag', function (node) {
-                currentTag = node.name;
+            parser.on('opentag', function (name, attrs) {
+                currentTag = name;
 
-                // Only reset text when entering relevant tags to support mixed content if needed
                 if (currentTag === 'display-name' || currentTag === 'title' || currentTag === 'desc') {
                     currentText = '';
                 }
 
-                if (node.name === 'channel') {
+                if (name === 'channel') {
                     currentChannel = {
-                        id: node.attributes.id,
-                        name: node.attributes.id, // Default to ID
+                        id: attrs.id,
+                        name: attrs.id,
                         logo: null,
                         sourceType,
                         sourceId,
                         updatedAt: now,
                         hasName: false
                     };
-                } else if (node.name === 'programme') {
-                    const start = parseXmltvDate(node.attributes.start);
-                    const stop = parseXmltvDate(node.attributes.stop);
+                } else if (name === 'programme') {
+                    const start = parseXmltvDate(attrs.start);
+                    const stop = parseXmltvDate(attrs.stop);
 
                     if (stop > now - 86400) {
                         currentProgram = {
-                            channelId: node.attributes.channel,
+                            channelId: attrs.channel,
                             sourceType,
                             sourceId,
                             start,
@@ -124,11 +121,16 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                             lang: ''
                         };
                     } else {
-                        currentProgram = null; // Skip old programs
+                        currentProgram = null;
                     }
-                } else if (node.name === 'icon') {
-                    if (currentChannel && node.attributes.src) {
-                        currentChannel.logo = node.attributes.src;
+                } else if (name === 'icon') {
+                    if (currentChannel && attrs.src) {
+                        // XML self-closing tags might include trailing slash in attrs.src if malformed by the parser, strip it just in case
+                        let src = attrs.src.trim();
+                        if (src.endsWith('/')) {
+                             src = src.slice(0, -1).trim();
+                        }
+                        currentChannel.logo = src;
                     }
                 }
             });
@@ -141,29 +143,26 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 }
             };
 
-            saxStream.on('text', appendText);
+            parser.on('text', appendText);
+            parser.on('cdata', appendText);
 
-            // Handle CDATA sections same as text
-            saxStream.on('cdata', appendText);
-
-            saxStream.on('closetag', function (tagName) {
-                if (currentChannel && tagName === 'display-name') {
+            parser.on('closetag', function (name) {
+                if (currentChannel && name === 'display-name') {
                     if (!currentChannel.hasName) {
                         currentChannel.name = decodeXml(currentText);
                         currentChannel.hasName = true;
                     }
-                } else if (currentProgram && tagName === 'title') {
+                } else if (currentProgram && name === 'title') {
                     currentProgram.title = decodeXml(currentText);
-                } else if (currentProgram && tagName === 'desc') {
+                } else if (currentProgram && name === 'desc') {
                     currentProgram.desc = decodeXml(currentText);
                 }
 
-                if (tagName === 'channel' && currentChannel) {
-                    delete currentChannel.hasName; // Clean up temp property
+                if (name === 'channel' && currentChannel) {
+                    delete currentChannel.hasName;
                     channelBatch.push(currentChannel);
                     currentChannel = null;
-                } else if (tagName === 'programme' && currentProgram) {
-                    // Only add if we have required fields
+                } else if (name === 'programme' && currentProgram) {
                     if (currentProgram.channelId && currentProgram.start && currentProgram.stop && currentProgram.title) {
                         programBatch.push(currentProgram);
                     }
@@ -175,7 +174,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 }
             });
 
-            saxStream.on('end', function () {
+            parser.on('finish', function () {
                 try {
                     processBatches();
                     resolve({ success: true });
@@ -184,9 +183,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 }
             });
 
-            stream.pipe(saxStream);
+            stream.pipe(parser);
 
-            // Handle stream errors
             stream.on('error', (err) => {
                 reject(err);
             });
@@ -480,27 +478,35 @@ function escapeXml(unsafe) {
 
 // Helper: Parse XMLTV Date
 function parseXmltvDate(dateStr) {
-  if (!dateStr) return 0;
-  const match = dateStr.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\s*([+\-]\d{4})?$/);
-  if (!match) return 0;
+    if (!dateStr || dateStr.length < 14) return 0;
 
-  const year = parseInt(match[1], 10);
-  const month = parseInt(match[2], 10) - 1;
-  const day = parseInt(match[3], 10);
-  const hour = parseInt(match[4], 10);
-  const minute = parseInt(match[5], 10);
-  const second = parseInt(match[6], 10);
+    const year = (dateStr.charCodeAt(0) - 48) * 1000 + (dateStr.charCodeAt(1) - 48) * 100 + (dateStr.charCodeAt(2) - 48) * 10 + (dateStr.charCodeAt(3) - 48);
+    const month = (dateStr.charCodeAt(4) - 48) * 10 + (dateStr.charCodeAt(5) - 48) - 1;
+    const day = (dateStr.charCodeAt(6) - 48) * 10 + (dateStr.charCodeAt(7) - 48);
+    const hour = (dateStr.charCodeAt(8) - 48) * 10 + (dateStr.charCodeAt(9) - 48);
+    const minute = (dateStr.charCodeAt(10) - 48) * 10 + (dateStr.charCodeAt(11) - 48);
+    const second = (dateStr.charCodeAt(12) - 48) * 10 + (dateStr.charCodeAt(13) - 48);
 
-  let date = new Date(Date.UTC(year, month, day, hour, minute, second));
-  if (match[7]) {
-      const tz = match[7];
-      const sign = tz.charAt(0) === '+' ? 1 : -1;
-      const tzHour = parseInt(tz.substring(1, 3), 10);
-      const tzMin = parseInt(tz.substring(3, 5), 10);
-      const offsetMs = (tzHour * 60 + tzMin) * 60 * 1000 * sign;
-      date = new Date(date.getTime() - offsetMs);
-  }
-  return Math.floor(date.getTime() / 1000);
+    let ts = Date.UTC(year, month, day, hour, minute, second);
+
+    if (dateStr.length > 14) {
+        // Find timezone
+        let tzIdx = 14;
+        while (tzIdx < dateStr.length && dateStr.charCodeAt(tzIdx) === 32) { // space
+            tzIdx++;
+        }
+        if (tzIdx + 4 < dateStr.length) {
+            const signChar = dateStr.charCodeAt(tzIdx);
+            if (signChar === 43 || signChar === 45) { // + or -
+                const sign = signChar === 43 ? 1 : -1;
+                const tzHour = (dateStr.charCodeAt(tzIdx + 1) - 48) * 10 + (dateStr.charCodeAt(tzIdx + 2) - 48);
+                const tzMin = (dateStr.charCodeAt(tzIdx + 3) - 48) * 10 + (dateStr.charCodeAt(tzIdx + 4) - 48);
+                const offsetMs = (tzHour * 60 + tzMin) * 60 * 1000 * sign;
+                ts -= offsetMs;
+            }
+        }
+    }
+    return Math.floor(ts / 1000);
 }
 
 // Helper: Format XMLTV Date (UTC)
