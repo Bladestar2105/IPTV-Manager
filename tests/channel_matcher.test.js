@@ -127,3 +127,28 @@ describe('ChannelMatcher', () => {
         expect(best.score).toBeGreaterThan(0);
     });
 });
+
+describe('myteamtv raw sports channels mapping', () => {
+  it('correctly maps "MAGENTA SPORT 1 FHD" to "Sport 1 - myTeamTV" ignoring "RAW"', () => {
+    const epgChannels = [
+      { id: '1', name: 'DE - Sport 1 - myTeamTV' },
+      { id: '2', name: 'MG | SPORT 1 - MYTEAMTV RAW' },
+      { id: '3', name: 'DE - Sport 10 - myTeamTV' },
+      { id: '4', name: 'MG | SPORT 10 - MYTEAMTV RAW' }
+    ];
+
+    const matcher = new ChannelMatcher(epgChannels);
+
+    const match1 = matcher.match('DE | MAGENTA SPORT 1 FHD');
+    expect(match1.epgChannel).not.toBeNull();
+    expect(match1.epgChannel.id).toBe('1');
+
+    const match2 = matcher.match('MG | MAGENTA SPORT 1 FHD');
+    expect(match2.epgChannel).not.toBeNull();
+    expect(match2.epgChannel.id).toBe('2');
+
+    const match3 = matcher.match('DE | MAGENTA SPORT 10 FHD');
+    expect(match3.epgChannel).not.toBeNull();
+    expect(match3.epgChannel.id).toBe('3');
+  });
+});
