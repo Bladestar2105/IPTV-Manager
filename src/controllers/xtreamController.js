@@ -4,7 +4,7 @@ import { getEpgPrograms, getEpgXmlForChannels } from '../services/epgService.js'
 import { channelsJsonCache } from '../services/cacheService.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
-import fetch from 'node-fetch';
+import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 
 const sanitizeM3uTag = (val) => {
@@ -250,7 +250,7 @@ export const playerApi = async (req, res) => {
       const remoteSeriesId = channel.remote_stream_id;
 
       try {
-        const resp = await fetch(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_series_info&series_id=${remoteSeriesId}`);
+        const resp = await fetchSafe(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_series_info&series_id=${remoteSeriesId}`);
         if (!resp.ok) return res.json({});
 
         const data = await resp.json();
@@ -298,7 +298,7 @@ export const playerApi = async (req, res) => {
       const remoteVodId = channel.remote_stream_id;
 
       try {
-        const resp = await fetch(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_vod_info&vod_id=${remoteVodId}`);
+        const resp = await fetchSafe(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_vod_info&vod_id=${remoteVodId}`);
         if (!resp.ok) return res.json({});
 
         const data = await resp.json();
