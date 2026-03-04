@@ -58,6 +58,14 @@ describe('ChannelMatcher', () => {
         }
     });
 
+    it('maps magenta sport to myteamtv', () => {
+        const parsed1 = matcher.parseChannelName('Magenta Sport 1');
+        expect(parsed1.baseName).toContain('myteamtv');
+
+        const parsed2 = matcher.parseChannelName('Magentasport 2 HD');
+        expect(parsed2.baseName).toContain('myteamtv');
+    });
+
     it('prioritizes language match', () => {
         const parsed = matcher.parseChannelName('US: CNN');
         expect(parsed.language).toBe('en');
