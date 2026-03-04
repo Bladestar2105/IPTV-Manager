@@ -223,7 +223,7 @@ export class ChannelMatcher {
     return name
       .toLowerCase()
       .replace(/\s+hd|uhd|4k|fhd|hevc|h\.?264|h\.?265/gi, '') // Qualität
-      .replace(/\bmagenta\s*sport\b/gi, 'myteamtv') // Magenta Sport -> MyTeamTV mapping
+      .replace(/\b(?:magenta|myteam|myteamtv)\s*sport\b/gi, 'myteamtv') // Magenta Sport / MyTeam Sport -> MyTeamTV mapping
       .replace(/\s+plus|\s*\+/gi, ' plus') // "+" normalisieren
       .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
       .replace(/\s+/g, ' ') // Multiple Spaces
