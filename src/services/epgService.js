@@ -334,11 +334,14 @@ export function getProgramsNow() {
     const now = Math.floor(Date.now() / 1000);
     // ⚡ Bolt: Offload grouping to SQLite for faster execution and lower memory usage
     return db.prepare(`
-        SELECT channel_id, json_object('title', title, 'desc', IFNULL(desc, ''), 'start', start, 'stop', stop) as program
-        FROM epg_programs
-        WHERE start <= ? AND stop >= ?
-        GROUP BY channel_id
-    `).all(now, now);
+        SELECT json_group_object(channel_id, json(program)) as json_data
+        FROM (
+            SELECT channel_id, json_object('title', title, 'desc', IFNULL(desc, ''), 'start', start, 'stop', stop) as program
+            FROM epg_programs
+            WHERE start <= ? AND stop >= ?
+            GROUP BY channel_id
+        )
+    `).get(now, now);
 }
 
 export function getProgramsSchedule(start, end) {
@@ -346,16 +349,19 @@ export function getProgramsSchedule(start, end) {
     // This avoids creating thousands of intermediate objects in V8 memory.
     // Ensure chronological order via subquery before grouping.
     return db.prepare(`
-        SELECT channel_id, json_group_array(
-            json_object('title', title, 'desc', IFNULL(desc, ''), 'start', start, 'stop', stop)
-        ) as programs
+        SELECT json_group_object(channel_id, json(programs)) as json_data
         FROM (
-            SELECT * FROM epg_programs
-            WHERE stop >= ? AND start <= ?
-            ORDER BY start ASC
+            SELECT channel_id, json_group_array(
+                json_object('title', title, 'desc', IFNULL(desc, ''), 'start', start, 'stop', stop)
+            ) as programs
+            FROM (
+                SELECT * FROM epg_programs
+                WHERE stop >= ? AND start <= ?
+                ORDER BY start ASC
+            )
+            GROUP BY channel_id
         )
-        GROUP BY channel_id
-    `).all(start, end);
+    `).get(start, end);
 }
 
 export function getLastEpgUpdate(sourceType, sourceId) {
