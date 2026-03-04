@@ -145,7 +145,9 @@ export const proxyMpd = async (req, res) => {
     let meta = {};
     try {
         meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse metadata (MPD):', e.message);
+    }
 
     const headers = {
       'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
@@ -184,7 +186,9 @@ export const proxyMpd = async (req, res) => {
                     return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
                 });
             }
-        } catch (e) {}
+        } catch (e) {
+            console.warn('Failed to parse backup_urls (MPD):', e.message);
+        }
     }
 
     if (user.is_share_guest) {
@@ -208,12 +212,16 @@ export const proxyMpd = async (req, res) => {
         }
 
         await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res, channel.provider_id);
-        const now = Math.floor(Date.now() / 1000);
-        const existingStat = getStat(channel.provider_channel_id);
-        if (existingStat) {
-          updateStat(now, existingStat.id);
-        } else {
-          insertStat(channel.provider_channel_id, now);
+        try {
+            const now = Math.floor(Date.now() / 1000);
+            const existingStat = getStat(channel.provider_channel_id);
+            if (existingStat) {
+                updateStat(now, existingStat.id);
+            } else {
+                insertStat(channel.provider_channel_id, now);
+            }
+        } catch (e) {
+            console.error('Error updating stream stats (MPD):', e.message);
         }
     }
 
@@ -306,12 +314,16 @@ export const proxyLive = async (req, res) => {
         await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id);
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const existingStat = getStat(channel.provider_channel_id);
-    if (existingStat) {
-      updateStat(now, existingStat.id);
-    } else {
-      insertStat(channel.provider_channel_id, now);
+    try {
+        const now = Math.floor(Date.now() / 1000);
+        const existingStat = getStat(channel.provider_channel_id);
+        if (existingStat) {
+            updateStat(now, existingStat.id);
+        } else {
+            insertStat(channel.provider_channel_id, now);
+        }
+    } catch (e) {
+        console.error('Error updating stream stats (Live):', e.message);
     }
 
     channel.provider_pass = decrypt(channel.provider_pass);
@@ -330,12 +342,16 @@ export const proxyLive = async (req, res) => {
                 return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
             });
         }
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse backup_urls (Live):', e.message);
+    }
 
     let meta = {};
     try {
         meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse metadata (Live):', e.message);
+    }
 
     const fetchHeaders = {
         'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
@@ -629,12 +645,16 @@ export const proxyMovie = async (req, res) => {
 
     await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res, channel.provider_id);
 
-    const now = Math.floor(Date.now() / 1000);
-    const existingStat = getStat(channel.provider_channel_id);
-    if (existingStat) {
-      updateStat(now, existingStat.id);
-    } else {
-      insertStat(channel.provider_channel_id, now);
+    try {
+        const now = Math.floor(Date.now() / 1000);
+        const existingStat = getStat(channel.provider_channel_id);
+        if (existingStat) {
+            updateStat(now, existingStat.id);
+        } else {
+            insertStat(channel.provider_channel_id, now);
+        }
+    } catch (e) {
+        console.error('Error updating stream stats (Movie):', e.message);
     }
 
     channel.provider_pass = decrypt(channel.provider_pass);
@@ -651,12 +671,16 @@ export const proxyMovie = async (req, res) => {
                 return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
             });
         }
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse backup_urls (Movie):', e.message);
+    }
 
     let meta = {};
     try {
         meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse metadata (Movie):', e.message);
+    }
 
     const headers = {
         'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
@@ -924,12 +948,16 @@ export const proxyTimeshift = async (req, res) => {
                 return `${bBase}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
             });
         }
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse backup_urls (Timeshift):', e.message);
+    }
 
     let meta = {};
     try {
         meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to parse metadata (Timeshift):', e.message);
+    }
 
     const headers = {
         'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
