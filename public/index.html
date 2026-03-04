@@ -289,7 +289,7 @@
                     <!-- Xtream Codes Tab -->
                     <div class="tab-pane fade" id="tab-xtream">
                        <div class="mb-2">
-                          <label class="form-label small fw-bold" data-i18n="url">URL</label>
+                          <label class="form-label small fw-bold" data-i18n="url" for="xtream-url">URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="xtream-url" readonly>
                              <button class="btn btn-outline-secondary" data-copy-target="xtream-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
@@ -298,14 +298,14 @@
 
                        <div class="row g-2 mb-2">
                           <div class="col-md-6">
-                             <label class="form-label small fw-bold" data-i18n="username">Username</label>
+                             <label class="form-label small fw-bold" data-i18n="username" for="xtream-user">Username</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-user" readonly>
                                 <button class="btn btn-outline-secondary" data-copy-target="xtream-user" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                              </div>
                           </div>
                           <div class="col-md-6">
-                             <label class="form-label small fw-bold" data-i18n="password">Password</label>
+                             <label class="form-label small fw-bold" data-i18n="password" for="xtream-pass">Password</label>
                              <div class="input-group input-group-sm">
                                 <input type="password" class="form-control" id="xtream-pass" readonly>
                                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="xtream-pass" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
@@ -315,7 +315,7 @@
                        </div>
 
                        <div class="mb-2">
-                          <label class="form-label small fw-bold" data-i18n="epgUrlLabel">EPG URL</label>
+                          <label class="form-label small fw-bold" data-i18n="epgUrlLabel" for="epg-url">EPG URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="epg-url" readonly>
                              <button class="btn btn-outline-secondary" data-copy-target="epg-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
@@ -323,7 +323,7 @@
                        </div>
 
                        <div class="mb-3">
-                          <label class="form-label small fw-bold" data-i18n="m3uLink">M3U Link</label>
+                          <label class="form-label small fw-bold" data-i18n="m3uLink" for="m3u-link">M3U Link</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="m3u-link" readonly>
                              <button class="btn btn-outline-secondary" data-copy-target="m3u-link" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
@@ -341,7 +341,7 @@
                              <br><strong>Note:</strong> This feature emulates an HDHomeRun tuner.
                           </div>
                           <div class="mb-3">
-                             <label class="form-label small fw-bold">Device URL</label>
+                             <label class="form-label small fw-bold" for="hdhr-url">Device URL</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="hdhr-url" readonly>
                                 <button class="btn btn-outline-secondary" data-copy-target="hdhr-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
@@ -387,21 +387,21 @@
             <form id="security-settings-form">
                <div class="row mb-3">
                   <div class="col-md-6">
-                     <label class="form-label" data-i18n="adminBlockThreshold">Admin Block Threshold (attempts)</label>
+                     <label class="form-label" data-i18n="adminBlockThreshold" for="setting-admin-threshold">Admin Block Threshold (attempts)</label>
                      <input type="number" class="form-control" name="admin_block_threshold" id="setting-admin-threshold" placeholder="5">
                   </div>
                   <div class="col-md-6">
-                     <label class="form-label" data-i18n="iptvBlockThreshold">IPTV Block Threshold (attempts)</label>
+                     <label class="form-label" data-i18n="iptvBlockThreshold" for="setting-iptv-threshold">IPTV Block Threshold (attempts)</label>
                      <input type="number" class="form-control" name="iptv_block_threshold" id="setting-iptv-threshold" placeholder="10">
                   </div>
                </div>
                <div class="row mb-3">
                   <div class="col-md-6">
-                     <label class="form-label" data-i18n="adminBlockDuration">Admin Block Duration (seconds)</label>
+                     <label class="form-label" data-i18n="adminBlockDuration" for="setting-admin-duration">Admin Block Duration (seconds)</label>
                      <input type="number" class="form-control" name="admin_block_duration" id="setting-admin-duration" placeholder="3600">
                   </div>
                   <div class="col-md-6">
-                     <label class="form-label" data-i18n="iptvBlockDuration">IPTV Block Duration (seconds)</label>
+                     <label class="form-label" data-i18n="iptvBlockDuration" for="setting-iptv-duration">IPTV Block Duration (seconds)</label>
                      <input type="number" class="form-control" name="iptv_block_duration" id="setting-iptv-duration" placeholder="3600">
                   </div>
                </div>
@@ -624,7 +624,7 @@
       <div id="epg-mapping-provider-container">
           <div class="row align-items-end mb-4">
             <div class="col-md-5">
-              <label class="form-label" data-i18n="selectProvider">Select Provider</label>
+              <label class="form-label" data-i18n="selectProvider" for="epg-mapping-provider-select">Select Provider</label>
               <select id="epg-mapping-provider-select" class="form-select">
                 <option value="" data-i18n="selectProviderPlaceholder">-- Select Provider --</option>
               </select>
@@ -648,13 +648,13 @@
       <div id="epg-mapping-category-container" class="d-none">
           <div class="row align-items-end mb-4">
             <div class="col-md-4" id="epg-category-user-select-container">
-               <label class="form-label" data-i18n="selectUser">Select User</label>
+               <label class="form-label" data-i18n="selectUser" for="epg-mapping-user-select">Select User</label>
                <select id="epg-mapping-user-select" class="form-select">
                   <!-- Populated by JS -->
                </select>
             </div>
             <div class="col-md-4">
-              <label class="form-label" data-i18n="selectCategory">Select Category</label>
+              <label class="form-label" data-i18n="selectCategory" for="epg-mapping-category-select">Select Category</label>
               <select id="epg-mapping-category-select" class="form-select">
                 <option value="" data-i18n="selectCategoryPlaceholder">-- Select Category --</option>
               </select>
@@ -1033,11 +1033,11 @@
           <div class="modal-body">
             <input type="hidden" id="edit-user-id">
             <div class="mb-3">
-              <label class="form-label" data-i18n="username">Username</label>
+              <label class="form-label" data-i18n="username" for="edit-user-username">Username</label>
               <input type="text" class="form-control" id="edit-user-username" required>
             </div>
             <div class="mb-3">
-              <label class="form-label" data-i18n="new_password">New Password</label>
+              <label class="form-label" data-i18n="new_password" for="edit-user-password">New Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="edit-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
@@ -1045,7 +1045,7 @@
               </div>
             </div>
             <div class="mb-3">
-              <label class="form-label" data-i18n="maxConnections">Max Connections</label>
+              <label class="form-label" data-i18n="maxConnections" for="edit-user-max-connections">Max Connections</label>
               <input type="number" class="form-control" id="edit-user-max-connections" placeholder="0 = Unlimited" min="0">
             </div>
             <div class="mb-3 form-check">
@@ -1123,21 +1123,21 @@
 
              <div class="row mb-3">
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="name">Name</label>
-                   <input class="form-control" name="name" required>
+                   <label class="form-label" data-i18n="name" for="provider-name">Name</label>
+                   <input class="form-control" name="name" id="provider-name" required>
                 </div>
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="url">URL</label>
-                   <input class="form-control" name="url" placeholder="http://..." required>
+                   <label class="form-label" data-i18n="url" for="provider-url">URL</label>
+                   <input class="form-control" name="url" id="provider-url" placeholder="http://..." required>
                 </div>
              </div>
              <div class="row mb-3">
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="username">Username</label>
-                   <input class="form-control" name="username" required>
+                   <label class="form-label" data-i18n="username" for="provider-username">Username</label>
+                   <input class="form-control" name="username" id="provider-username" required>
                 </div>
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="password">Password</label>
+                   <label class="form-label" data-i18n="password" for="provider-password">Password</label>
                    <div class="input-group">
                      <input class="form-control" name="password" id="provider-password" type="password" required>
                      <button class="btn btn-outline-secondary" type="button" data-toggle-password="provider-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
@@ -1145,24 +1145,24 @@
                 </div>
              </div>
              <div class="mb-3">
-                <label class="form-label" data-i18n="epgUrl">EPG URL</label>
-                <input class="form-control" name="epg_url" data-i18n-placeholder="optional" placeholder="(Optional)">
+                <label class="form-label" data-i18n="epgUrl" for="provider-epg-url">EPG URL</label>
+                <input class="form-control" name="epg_url" id="provider-epg-url" data-i18n-placeholder="optional" placeholder="(Optional)">
              </div>
              <div class="mb-3">
-                <label class="form-label" data-i18n="userAgent">User Agent</label>
-                <input class="form-control" name="user_agent" data-i18n-placeholder="optional" placeholder="(Optional)">
+                <label class="form-label" data-i18n="userAgent" for="provider-user-agent">User Agent</label>
+                <input class="form-control" name="user_agent" id="provider-user-agent" data-i18n-placeholder="optional" placeholder="(Optional)">
              </div>
              <div class="mb-3">
-                <label class="form-label" data-i18n="backupUrls">Backup URLs</label>
+                <label class="form-label" data-i18n="backupUrls" for="provider-backup-urls">Backup URLs</label>
                 <textarea class="form-control" name="backup_urls" id="provider-backup-urls" rows="3" data-i18n-placeholder="backupUrlsPlaceholder" placeholder="One URL per line (Optional)"></textarea>
              </div>
              <div class="row mb-3">
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="maxConnections">Max Connections</label>
+                   <label class="form-label" data-i18n="maxConnections" for="provider-max-connections">Max Connections</label>
                    <input type="number" class="form-control" name="max_connections" id="provider-max-connections" placeholder="0 = Unlimited" min="0">
                 </div>
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="expiryDate">Expiry Date</label>
+                   <label class="form-label" data-i18n="expiryDate" for="provider-expiry-date">Expiry Date</label>
                    <input class="form-control" id="provider-expiry-date" readonly disabled>
                 </div>
              </div>
@@ -1174,8 +1174,8 @@
                    </div>
                 </div>
                 <div class="col-md-6">
-                   <label class="form-label" data-i18n="updateInterval">Update Interval</label>
-                   <select class="form-select" name="epg_update_interval">
+                   <label class="form-label" data-i18n="updateInterval" for="provider-epg-update-interval">Update Interval</label>
+                   <select class="form-select" name="epg_update_interval" id="provider-epg-update-interval">
                         <option value="3600">1h</option>
                         <option value="21600">6h</option>
                         <option value="43200">12h</option>
@@ -1204,7 +1204,7 @@
         <div class="modal-body">
           <form id="share-form">
              <div class="mb-3">
-               <label class="form-label" data-i18n="shareName">Name (Optional)</label>
+               <label class="form-label" data-i18n="shareName" for="share-name">Name (Optional)</label>
                <input class="form-control" id="share-name" data-i18n-placeholder="shareNamePlaceholder" placeholder="e.g. Guest Access">
              </div>
              <div class="mb-3">
@@ -1226,12 +1226,12 @@
                </div>
              </div>
              <div class="mb-3">
-               <label class="form-label" data-i18n="selectedChannels">Selected Channels</label>
+               <label class="form-label" data-i18n="selectedChannels" for="share-channel-count">Selected Channels</label>
                <div class="form-control" id="share-channel-count" readonly>0 channels</div>
              </div>
 
              <div id="share-result" class="d-none">
-                <label class="form-label fw-bold text-success" data-i18n="shareLinkCreated">Share Link Created:</label>
+                <label class="form-label fw-bold text-success" data-i18n="shareLinkCreated" for="share-link-output">Share Link Created:</label>
                 <div class="input-group">
                    <input class="form-control" id="share-link-output" readonly>
                    <button class="btn btn-outline-secondary" type="button" data-copy-target="share-link-output" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
