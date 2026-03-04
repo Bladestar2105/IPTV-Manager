@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAdultCategory, getSetting, clearSettingsCache } from '../src/utils/helpers.js';
+import { isAdultCategory, getSetting, clearSettingsCache, getCookie } from '../src/utils/helpers.js';
 
 describe('isAdultCategory', () => {
   const adultKeywords = [
@@ -137,5 +137,58 @@ describe('getSetting', () => {
     expect(getSetting(mockDb, 'clear_key', 'def')).toBe(value2);
     // Should be called twice in total (once for first call, once for second call)
     expect(mockDb.prepare).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('getCookie', () => {
+  it('should return null if req is null or undefined', () => {
+    expect(getCookie(null, 'test')).toBe(null);
+    expect(getCookie(undefined, 'test')).toBe(null);
+  });
+
+  it('should return null if req.headers is missing', () => {
+    expect(getCookie({}, 'test')).toBe(null);
+  });
+
+  it('should return null if cookie header is missing', () => {
+    const req = { headers: {} };
+    expect(getCookie(req, 'test')).toBe(null);
+  });
+
+  it('should return cookie value when it exists', () => {
+    const req = { headers: { cookie: 'test=value' } };
+    expect(getCookie(req, 'test')).toBe('value');
+  });
+
+  it('should return correct cookie value when multiple cookies exist', () => {
+    const req = { headers: { cookie: 'foo=bar; test=value; baz=qux' } };
+    expect(getCookie(req, 'test')).toBe('value');
+    expect(getCookie(req, 'foo')).toBe('bar');
+    expect(getCookie(req, 'baz')).toBe('qux');
+  });
+
+  it('should handle cookies without spaces after semicolon', () => {
+    const req = { headers: { cookie: 'foo=bar;test=value;baz=qux' } };
+    expect(getCookie(req, 'test')).toBe('value');
+  });
+
+  it('should return null if cookie does not exist', () => {
+    const req = { headers: { cookie: 'foo=bar; baz=qux' } };
+    expect(getCookie(req, 'test')).toBe(null);
+  });
+
+  it('should not match cookie name as substring of another cookie name', () => {
+    const req = { headers: { cookie: 'mytest=value; other=123' } };
+    expect(getCookie(req, 'test')).toBe(null);
+  });
+
+  it('should handle cookie at the end of the string', () => {
+    const req = { headers: { cookie: 'foo=bar; test=value' } };
+    expect(getCookie(req, 'test')).toBe('value');
+  });
+
+  it('should handle cookie at the beginning of the string', () => {
+    const req = { headers: { cookie: 'test=value; foo=bar' } };
+    expect(getCookie(req, 'test')).toBe('value');
   });
 });

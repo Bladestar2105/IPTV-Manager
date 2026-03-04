@@ -137,9 +137,13 @@ export function getSetting(db, key, defaultValue) {
 }
 
 export function getCookie(req, name) {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return null;
-  const match = cookieHeader.match(new RegExp('(^| )' + name + '=([^;]+)'));
-  if (match) return match[2];
+  if (!req || !req.headers || !req.headers.cookie) return null;
+  const cookies = req.headers.cookie.split(';');
+  for (let i = 0; i < cookies.length; i++) {
+    const cookie = cookies[i].trim();
+    if (cookie.startsWith(name + '=')) {
+      return cookie.substring(name.length + 1);
+    }
+  }
   return null;
 }
