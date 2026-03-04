@@ -59,6 +59,9 @@ importers:
       node-fetch:
         specifier: ^3.3.2
         version: 3.3.2
+      node-xml-stream:
+        specifier: ^1.0.2
+        version: 1.0.2
       otplib:
         specifier: ^12.0.1
         version: 12.0.1
@@ -1275,6 +1278,9 @@ packages:
   node-gyp-build@4.8.4:
     resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
     hasBin: true
+
+  node-xml-stream@1.0.2:
+    resolution: {integrity: sha512-W4LzsKQ1x3TldQQmXZfM/JO+3SPp+zzvA2Nf82chE7vXnZy7LqHjIqQe9yDUw58g2fTOaJo+DlPnIDfmozgsuw==}
 
   object-assign@4.1.1:
     resolution: {integrity: sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==}
@@ -2817,6 +2823,8 @@ snapshots:
       formdata-polyfill: 4.0.10
 
   node-gyp-build@4.8.4: {}
+
+  node-xml-stream@1.0.2: {}
 
   object-assign@4.1.1: {}
 

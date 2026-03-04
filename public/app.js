@@ -2857,28 +2857,36 @@ function switchView(viewName) {
   }
 
   // Update nav active state
-  document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(el => {
+    el.classList.remove('active');
+    el.removeAttribute('aria-current');
+  });
 
   // Show selected view
   if (viewName === 'dashboard') {
     document.getElementById('view-dashboard').classList.remove('d-none');
     document.getElementById('nav-dashboard').classList.add('active');
+    document.getElementById('nav-dashboard').setAttribute('aria-current', 'page');
   } else if (viewName === 'epg-mapping') {
     document.getElementById('view-epg-mapping').classList.remove('d-none');
     document.getElementById('nav-epg-mapping').classList.add('active');
+    document.getElementById('nav-epg-mapping').setAttribute('aria-current', 'page');
     renderEpgMappingControls();
   } else if (viewName === 'statistics') {
     document.getElementById('view-statistics').classList.remove('d-none');
     document.getElementById('nav-statistics').classList.add('active');
+    document.getElementById('nav-statistics').setAttribute('aria-current', 'page');
     loadStatistics();
     statsInterval = setInterval(loadStatistics, 5000);
   } else if (viewName === 'security') {
     document.getElementById('view-security').classList.remove('d-none');
     document.getElementById('nav-security').classList.add('active');
+    document.getElementById('nav-security').setAttribute('aria-current', 'page');
     loadSecurity();
   } else if (viewName === 'import-export') {
     document.getElementById('view-import-export').classList.remove('d-none');
     document.getElementById('nav-import-export').classList.add('active');
+    document.getElementById('nav-import-export').setAttribute('aria-current', 'page');
     loadUsers(); // Ensure dropdown is populated
   }
 }
