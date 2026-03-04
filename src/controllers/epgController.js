@@ -33,17 +33,8 @@ export const getEpgNow = async (req, res) => {
     }
     if (!user) return res.status(401).json({error: 'Unauthorized'});
 
-    const programs = getProgramsNow();
-    const currentPrograms = {};
-
-    // ⚡ Bolt: No massive JS loop needed, objects are pre-formatted by SQLite
-    for (const prog of programs) {
-        try {
-            currentPrograms[prog.channel_id] = JSON.parse(prog.program);
-        } catch (e) {
-            // ignore JSON parse errors
-        }
-    }
+    const row = getProgramsNow();
+    const currentPrograms = row && row.json_data ? JSON.parse(row.json_data) : {};
 
     res.json(currentPrograms);
   } catch (e) {
@@ -69,17 +60,8 @@ export const getEpgSchedule = async (req, res) => {
     const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200);
     const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);
 
-    const programs = getProgramsSchedule(start, end);
-    const schedule = {};
-
-    // ⚡ Bolt: No nested JS loops needed, JSON grouping is offloaded to SQLite
-    for (const prog of programs) {
-        try {
-            schedule[prog.channel_id] = JSON.parse(prog.programs);
-        } catch (e) {
-            schedule[prog.channel_id] = [];
-        }
-    }
+    const row = getProgramsSchedule(start, end);
+    const schedule = row && row.json_data ? JSON.parse(row.json_data) : {};
 
     res.json(schedule);
   } catch (e) {
