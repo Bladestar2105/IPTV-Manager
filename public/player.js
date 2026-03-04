@@ -169,7 +169,7 @@ function escapeHtml(unsafe) {
 
   // ─── Clock ───
   function updateClock() {
-    document.getElementById('clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('clock').textContent = new Date().toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
   updateClock();
   setInterval(function() {
@@ -374,7 +374,7 @@ function escapeHtml(unsafe) {
     var headerWidth = TIMELINE_HOURS * 60 * PIXELS_PER_MINUTE;
     timeHeaderEl.style.width = headerWidth + 'px';
 
-    // Time markers (every 30 min)
+// Time markers (every 30 min)
     for (var i = 0; i < TIMELINE_HOURS * 2; i++) {
       var tSec = timelineStart + (i * 1800);
       var date = new Date(tSec * 1000);
@@ -382,7 +382,13 @@ function escapeHtml(unsafe) {
       marker.className = 'time-marker';
       marker.style.left = (i * 30 * PIXELS_PER_MINUTE) + 'px';
       if (i % 2 === 0) {
-        marker.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        var timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (i === 0 || (date.getHours() === 0 && date.getMinutes() === 0)) {
+           var dateStr = date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+           marker.textContent = dateStr + ', ' + timeStr;
+        } else {
+           marker.textContent = timeStr;
+        }
       }
       timeHeaderEl.appendChild(marker);
     }
@@ -487,7 +493,10 @@ function escapeHtml(unsafe) {
             var ttTime = tooltip.querySelector('.tt-time');
             var ttDesc = tooltip.querySelector('.tt-desc');
             ttTitle.textContent = program.title;
-            ttTime.textContent = new Date(program.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' \u2013 ' + new Date(program.stop * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            var startDate = new Date(program.start * 1000);
+            var stopDate = new Date(program.stop * 1000);
+            var dateStr = startDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+            ttTime.textContent = dateStr + ', ' + startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' \u2013 ' + stopDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             ttDesc.textContent = program.desc || '';
             tooltip.style.display = 'block';
             positionTooltip(e);
@@ -591,9 +600,12 @@ function escapeHtml(unsafe) {
       }
     }
     if (currentProg) {
-      var startTime = new Date(currentProg.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      var endTime = new Date(currentProg.stop * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      nowPlayingProgram.textContent = startTime + ' \u2013 ' + endTime + '  ' + currentProg.title;
+      var startDate = new Date(currentProg.start * 1000);
+      var stopDate = new Date(currentProg.stop * 1000);
+      var dateStr = startDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+      var startTime = startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      var endTime = stopDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      nowPlayingProgram.textContent = dateStr + ', ' + startTime + ' \u2013 ' + endTime + '  ' + currentProg.title;
     } else {
       nowPlayingProgram.textContent = '';
     }
