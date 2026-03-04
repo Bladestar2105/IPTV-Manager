@@ -1,10 +1,37 @@
 export function decodeXml(str) {
   if (!str) return '';
-  return str.replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&');
+  let index = str.indexOf('&');
+  if (index === -1) return str;
+
+  let result = '';
+  let lastIndex = 0;
+
+  while (index !== -1) {
+    result += str.substring(lastIndex, index);
+
+    if (str.startsWith('&amp;', index)) {
+      result += '&';
+      lastIndex = index + 5;
+    } else if (str.startsWith('&lt;', index)) {
+      result += '<';
+      lastIndex = index + 4;
+    } else if (str.startsWith('&gt;', index)) {
+      result += '>';
+      lastIndex = index + 4;
+    } else if (str.startsWith('&quot;', index)) {
+      result += '"';
+      lastIndex = index + 6;
+    } else if (str.startsWith('&apos;', index)) {
+      result += "'";
+      lastIndex = index + 6;
+    } else {
+      result += '&';
+      lastIndex = index + 1;
+    }
+    index = str.indexOf('&', lastIndex);
+  }
+
+  return result + str.substring(lastIndex);
 }
 
 export function cleanName(name) {
