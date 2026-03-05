@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { updateShare } from '../src/controllers/shareController.js';
+
 const mockRun = vi.fn();
 const mockGet = vi.fn();
 const mockAll = vi.fn();
@@ -14,8 +16,6 @@ vi.mock('../src/database/db.js', () => ({
         prepare: (...args) => mockPrepare(...args)
     }
 }));
-
-import { updateShare } from '../src/controllers/shareController.js';
 
 describe('Share Controller - updateShare', () => {
     beforeEach(() => {

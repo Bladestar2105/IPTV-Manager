@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as authController from '../src/controllers/authController.js';
+
 // Mock dependencies
 vi.mock('../src/database/db.js', () => ({
   default: {
@@ -8,6 +8,8 @@ vi.mock('../src/database/db.js', () => ({
     pragma: vi.fn()
   }
 }));
+
+import * as authController from '../src/controllers/authController.js';
 
 vi.mock('bcrypt', () => ({
   default: {
