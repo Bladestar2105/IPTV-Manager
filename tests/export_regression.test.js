@@ -2,8 +2,18 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
-import db, { initDb } from '../src/database/db.js';
+
+import { initDb } from '../src/database/db.js';
+import db from '../src/database/db.js';
 import * as systemController from '../src/controllers/systemController.js';
+
+vi.mock('../src/database/db.js', async (importOriginal) => {
+    const mod = await importOriginal();
+    return {
+        ...mod,
+        initDb: vi.fn(),
+    }
+});
 import { encrypt, decrypt, decryptWithPassword } from '../src/utils/crypto.js';
 
 describe('Export/Import Regression Tests', () => {

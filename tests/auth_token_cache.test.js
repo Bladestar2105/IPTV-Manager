@@ -1,7 +1,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import db from '../src/database/db.js';
+
+vi.mock('../src/database/db.js', () => ({
+    default: {
+        prepare: vi.fn(),
+    }
+}));
+
 import { getXtreamUser, tokenCache } from '../src/services/authService.js';
+import db from '../src/database/db.js';
 
 describe('Auth Service Token Caching', () => {
     beforeEach(() => {
