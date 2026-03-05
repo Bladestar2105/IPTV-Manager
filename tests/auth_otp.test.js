@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as authController from '../src/controllers/authController.js';
-import db from '../src/database/db.js';
-import bcrypt from 'bcrypt';
-import { authenticator } from 'otplib';
-
 // Mock dependencies
 vi.mock('../src/database/db.js', () => ({
   default: {
@@ -19,6 +15,10 @@ vi.mock('bcrypt', () => ({
     hash: vi.fn()
   }
 }));
+
+import db from '../src/database/db.js';
+import bcrypt from 'bcrypt';
+import { authenticator } from 'otplib';
 
 vi.mock('../src/utils/crypto.js', () => ({
   decrypt: vi.fn((val) => val), // Simple pass-through for test

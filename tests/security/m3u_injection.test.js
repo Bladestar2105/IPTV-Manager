@@ -33,6 +33,7 @@ vi.mock('../../src/utils/crypto.js', () => ({
 
 vi.mock('../../src/utils/helpers.js', () => ({
   getBaseUrl: vi.fn().mockReturnValue('http://localhost'),
+  safeLookup: vi.fn((hostname, options, callback) => callback(null, '127.0.0.1', 4)),
 }));
 
 vi.mock('../../src/config/constants.js', () => ({
