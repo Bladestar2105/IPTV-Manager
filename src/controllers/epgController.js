@@ -34,9 +34,12 @@ export const getEpgNow = async (req, res) => {
     if (!user) return res.status(401).json({error: 'Unauthorized'});
 
     const row = getProgramsNow();
-    const currentPrograms = row && row.json_data ? JSON.parse(row.json_data) : {};
+    if (row && row.json_data) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(row.json_data);
+    }
 
-    res.json(currentPrograms);
+    res.json({});
   } catch (e) {
     res.status(500).json({error: e.message});
   }
@@ -61,9 +64,12 @@ export const getEpgSchedule = async (req, res) => {
     const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);
 
     const row = getProgramsSchedule(start, end);
-    const schedule = row && row.json_data ? JSON.parse(row.json_data) : {};
+    if (row && row.json_data) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(row.json_data);
+    }
 
-    res.json(schedule);
+    res.json({});
   } catch (e) {
     console.error('EPG Schedule error:', e);
     res.status(500).json({error: e.message});
