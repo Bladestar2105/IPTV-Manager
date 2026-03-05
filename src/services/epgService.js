@@ -409,15 +409,19 @@ export async function* getEpgXmlForChannels(channelIds) {
 
         // We need to stream programs to avoid memory issues.
         // better-sqlite3 iterate() is good for this.
+        // ⚡ Bolt: Offload XMLTV date formatting to SQLite strftime to eliminate V8 Date operations and string concatenations
         const stmt = db.prepare(`
-            SELECT start, stop, title, desc, channel_id
+            SELECT
+                strftime('%Y%m%d%H%M%S +0000', start, 'unixepoch') as xmltv_start,
+                strftime('%Y%m%d%H%M%S +0000', stop, 'unixepoch') as xmltv_stop,
+                title, desc, channel_id
             FROM epg_programs
             WHERE channel_id IN (${placeholders})
             ORDER BY start ASC
         `);
 
         for (const prog of stmt.iterate(batch)) {
-            yield `<programme start="${formatXmltvDate(prog.start)}" stop="${formatXmltvDate(prog.stop)}" channel="${escapeXml(prog.channel_id)}">
+            yield `<programme start="${prog.xmltv_start}" stop="${prog.xmltv_stop}" channel="${escapeXml(prog.channel_id)}">
     <title>${escapeXml(prog.title)}</title>
     <desc>${escapeXml(prog.desc || '')}</desc>
   </programme>\n`;
@@ -507,20 +511,6 @@ function parseXmltvDate(dateStr) {
         }
     }
     return Math.floor(ts / 1000);
-}
-
-// Helper: Format XMLTV Date (UTC)
-const _cachedDate = new Date();
-function formatXmltvDate(ts) {
-    _cachedDate.setTime(ts * 1000);
-    const m = _cachedDate.getUTCMonth() + 1;
-    const d = _cachedDate.getUTCDate();
-    const h = _cachedDate.getUTCHours();
-    const min = _cachedDate.getUTCMinutes();
-    const s = _cachedDate.getUTCSeconds();
-
-    // Use UTC for simplicity: YYYYMMDDHHMMSS +0000
-    return `${_cachedDate.getUTCFullYear()}${m < 10 ? '0' + m : m}${d < 10 ? '0' + d : d}${h < 10 ? '0' + h : h}${min < 10 ? '0' + min : min}${s < 10 ? '0' + s : s} +0000`;
 }
 
 function peekStream(stream) {
