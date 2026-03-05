@@ -1,7 +1,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getXtreamUser, tokenCache } from '../src/services/authService.js';
 import db from '../src/database/db.js';
+import { getXtreamUser, tokenCache } from '../src/services/authService.js';
 
 describe('Auth Service Token Caching', () => {
     beforeEach(() => {
