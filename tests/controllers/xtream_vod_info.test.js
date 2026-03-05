@@ -114,7 +114,7 @@ describe('xtreamController - get_vod_info', () => {
 
     // Verify Fetch call
     const expectedFetchUrl = `${providerUrl}/player_api.php?username=${channelData.username}&password=${channelData.password}&action=get_vod_info&vod_id=${remoteVodId}`;
-    expect(mockFetch).toHaveBeenCalledWith(expectedFetchUrl);
+    expect(mockFetch).toHaveBeenCalledWith(expectedFetchUrl, expect.any(Object));
 
     // Verify response
     expect(res.json).toHaveBeenCalledWith({

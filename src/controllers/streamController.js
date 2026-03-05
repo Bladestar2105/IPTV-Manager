@@ -7,6 +7,7 @@ import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup } from '../utils/helpers.js';
+import { fetchSafe } from '../utils/network.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
@@ -93,17 +94,16 @@ async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const urls = [primaryUrl, ...(backupUrls || [])];
     let lastError = null;
 
-    const fetchOptions = {
-        ...options,
-        agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
-    };
+    const fetchOptions = { ...options };
+    delete fetchOptions.agent;
+    delete fetchOptions.redirect;
 
     for (const u of urls) {
         if (!u) continue;
         try {
-            const res = await fetch(u, fetchOptions);
+            const res = await fetchSafe(u, fetchOptions);
             if (res.ok) {
-                return { response: res, successfulUrl: u };
+                return { response: res, successfulUrl: res.url || u };
             }
             // If 404/403/407/etc, we might want to try backup? Yes.
             console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
@@ -583,11 +583,24 @@ export const proxySegment = async (req, res) => {
         }
     }
 
-    const upstream = await fetch(targetUrl, {
-      headers,
-      redirect: 'follow',
-      agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
-    });
+    let upstream;
+    if (isOriginSafe) {
+        upstream = await fetchSafe(targetUrl, { headers });
+    } else {
+        // If the original URL was unsafe (e.g. manually added loopback by an admin and we didn't check it)
+        // Then we should probably not use fetchSafe because fetchSafe strictly forbids unsafe IPs.
+        // However, falling back to unprotected fetch with follow-redirects opens up SSRF.
+        // Given that fetchSafe is the secure way, we should use it consistently.
+        // BUT to avoid breaking existing setups where isOriginSafe=false intentionally,
+        // we'll keep the custom agent which blocks loopback via DNS, but we must handle redirects safely.
+        // Since we don't have a manual redirect handler here for raw fetch, it's safer to just use fetchSafe anyway
+        // or disable redirects for unsafe origins.
+        upstream = await fetch(targetUrl, {
+          headers,
+          redirect: 'manual', // Don't follow redirects to arbitrary unsafe places
+          agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
+        });
+    }
 
     if (!upstream.ok) {
        console.error(`⚠️ Segment upstream error: ${upstream.status} for ${targetUrl}`);
