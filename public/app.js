@@ -569,10 +569,17 @@ async function loadUsers() {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     
+    if (selectedUserId === u.id) {
+        li.classList.add('active');
+    }
+
     const span = document.createElement('span');
     span.textContent = `${u.username} (id=${u.id})`;
+    span.className = 'flex-grow-1 py-1 text-break';
     span.style.cursor = 'pointer';
     makeAccessible(span, () => {
+      document.querySelectorAll('#user-list .list-group-item').forEach(el => el.classList.remove('active'));
+      li.classList.add('active');
       renderUserDetails(u);
     });
     

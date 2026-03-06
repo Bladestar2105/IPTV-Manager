@@ -33,3 +33,7 @@
 ## 2026-03-01 - [Non-Blocking Notifications]
 **Learning:** Standard browser `alert()` dialogs block the entire UI thread, disrupting user flow for routine success confirmations (e.g., "Settings saved").
 **Action:** Replaced `alert()` calls with `showToast(msg, 'success/danger')` for administrative actions like Sync and EPG updates. This provides visible feedback without interrupting the workflow.
+
+## 2026-03-02 - [Contextual List Selection State]
+**Learning:** Master-detail views (like a user list updating a details panel) can leave users disoriented if the currently selected item in the master list isn't visually highlighted, especially when returning to the tab after interacting with the details. In addition, only making the text clickable reduces the target area.
+**Action:** Always apply an `.active` state to the selected `list-group-item` in the master list, and ensure the clickable area (using `flex-grow-1` and padding like `py-1`) covers the entire row for better Fitts's Law compliance.
