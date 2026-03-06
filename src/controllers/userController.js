@@ -311,7 +311,7 @@ export const updateUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password, webui_access, hdhr_enabled, max_connections } = req.body;
+    const { username, password, webui_access, hdhr_enabled, max_connections, expiry_date } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -382,6 +382,11 @@ export const updateUser = async (req, res) => {
     if (max_connections !== undefined) {
         updates.push('max_connections = ?');
         params.push(Number(max_connections));
+    }
+
+    if (expiry_date !== undefined) {
+        updates.push('expiry_date = ?');
+        params.push(expiry_date || null);
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update
