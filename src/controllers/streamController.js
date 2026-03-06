@@ -595,11 +595,18 @@ export const proxySegment = async (req, res) => {
         // we'll keep the custom agent which blocks loopback via DNS, but we must handle redirects safely.
         // Since we don't have a manual redirect handler here for raw fetch, it's safer to just use fetchSafe anyway
         // or disable redirects for unsafe origins.
-        upstream = await fetch(targetUrl, {
-          headers,
-          redirect: 'manual', // Don't follow redirects to arbitrary unsafe places
-          agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        try {
+            upstream = await fetch(targetUrl, {
+              headers,
+              signal: controller.signal,
+              redirect: 'manual', // Don't follow redirects to arbitrary unsafe places
+              agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
     }
 
     if (!upstream.ok) {

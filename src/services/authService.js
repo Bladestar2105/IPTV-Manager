@@ -118,10 +118,11 @@ export function generateToken(user) {
       username: user.username,
       is_active: user.is_active,
       is_admin: user.is_admin,
-      role: user.is_admin ? 'admin' : 'user'
+      role: user.is_admin ? 'admin' : 'user',
+      token_version: user.token_version || 0
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { expiresIn: JWT_EXPIRES_IN, algorithm: 'HS256' }
   );
 }
 

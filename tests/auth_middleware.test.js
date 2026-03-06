@@ -51,7 +51,7 @@ describe('Auth Middleware - authenticateToken', () => {
         req.headers['authorization'] = 'Bearer valid-token';
 
         // Mock verify to succeed immediately
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
              cb(null, { id: 1, is_admin: false });
         });
 
@@ -60,14 +60,14 @@ describe('Auth Middleware - authenticateToken', () => {
 
         authenticateToken(req, res, next);
 
-        expect(jwt.verify).toHaveBeenCalledWith('valid-token', 'test-secret', expect.any(Function));
+        expect(jwt.verify).toHaveBeenCalledWith('valid-token', 'test-secret', { algorithms: ['HS256'] }, expect.any(Function));
     });
 
     it('should extract token from query parameter', () => {
         req.query.token = 'valid-query-token';
 
         // Mock verify to succeed immediately
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
              cb(null, { id: 1, is_admin: false });
         });
 
@@ -76,13 +76,13 @@ describe('Auth Middleware - authenticateToken', () => {
 
         authenticateToken(req, res, next);
 
-        expect(jwt.verify).toHaveBeenCalledWith('valid-query-token', 'test-secret', expect.any(Function));
+        expect(jwt.verify).toHaveBeenCalledWith('valid-query-token', 'test-secret', { algorithms: ['HS256'] }, expect.any(Function));
     });
 
     it('should return 403 if token is invalid or expired', () => {
         req.headers['authorization'] = 'Bearer invalid-token';
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(new Error('Invalid token'), null);
         });
 
@@ -99,7 +99,7 @@ describe('Auth Middleware - authenticateToken', () => {
         const userPayload = { id: 1, is_admin: true };
         const dbUser = { id: 1, username: 'admin', is_active: 1, otp_enabled: 1 };
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(null, userPayload);
         });
 
@@ -130,7 +130,7 @@ describe('Auth Middleware - authenticateToken', () => {
         const userPayload = { id: 2, is_admin: false };
         const dbUser = { id: 2, username: 'user', is_active: 1, webui_access: 1, otp_enabled: 0 };
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(null, userPayload);
         });
 
@@ -158,7 +158,7 @@ describe('Auth Middleware - authenticateToken', () => {
     it('should return 401 if user is not found in database', () => {
         req.headers['authorization'] = 'Bearer valid-token';
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(null, { id: 99, is_admin: false });
         });
 
@@ -174,7 +174,7 @@ describe('Auth Middleware - authenticateToken', () => {
     it('should return 401 if user is inactive', () => {
         req.headers['authorization'] = 'Bearer valid-token';
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(null, { id: 2, is_admin: false });
         });
 
@@ -190,7 +190,7 @@ describe('Auth Middleware - authenticateToken', () => {
     it('should return 403 if regular user has no webui access', () => {
         req.headers['authorization'] = 'Bearer valid-token';
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(null, { id: 2, is_admin: false });
         });
 
@@ -207,7 +207,7 @@ describe('Auth Middleware - authenticateToken', () => {
     it('should return 500 if database query fails', () => {
         req.headers['authorization'] = 'Bearer valid-token';
 
-        jwt.verify.mockImplementation((token, secret, cb) => {
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
             cb(null, { id: 1, is_admin: true });
         });
 

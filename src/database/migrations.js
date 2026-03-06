@@ -440,6 +440,28 @@ export function migrateUserPasswords(db) {
   }
 }
 
+export function migrateUserTokenVersion(db) {
+  try {
+    // Add token_version to users
+    let tableInfo = db.pragma('table_info(users)');
+    let hasTokenVersion = tableInfo.some(c => c.name === 'token_version');
+    if (!hasTokenVersion) {
+      db.prepare('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0').run();
+      console.log('✅ Added token_version column to users table');
+    }
+
+    // Add token_version to admin_users
+    tableInfo = db.pragma('table_info(admin_users)');
+    hasTokenVersion = tableInfo.some(c => c.name === 'token_version');
+    if (!hasTokenVersion) {
+      db.prepare('ALTER TABLE admin_users ADD COLUMN token_version INTEGER DEFAULT 0').run();
+      console.log('✅ Added token_version column to admin_users table');
+    }
+  } catch (e) {
+    console.error('Error migrating user token version schema:', e);
+  }
+}
+
 export function migrateProviderExpiry(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(providers)").all();

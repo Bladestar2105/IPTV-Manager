@@ -14,7 +14,7 @@ export function authenticateToken(req, res, next) {
     return res.status(401).json({ error: 'No token provided' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
@@ -26,6 +26,11 @@ export function authenticateToken(req, res, next) {
 
       if (!dbUser || !dbUser.is_active) {
         return res.status(401).json({ error: 'User is inactive or deleted' });
+      }
+
+      // Token version check
+      if (user.token_version !== dbUser.token_version) {
+        return res.status(401).json({ error: 'Token revoked (password changed)' });
       }
 
       // Check WebUI Access for normal users

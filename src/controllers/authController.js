@@ -247,10 +247,11 @@ export const changePassword = async (req, res) => {
 
     // Update password
     // Also clear force_password_change flag if it was set
+    // Increment token_version to invalidate old JWTs
     if (isAdmin) {
-       db.prepare(`UPDATE ${table} SET password = ?, force_password_change = 0 WHERE id = ?`).run(newPasswordStored, userId);
+       db.prepare(`UPDATE ${table} SET password = ?, force_password_change = 0, token_version = token_version + 1 WHERE id = ?`).run(newPasswordStored, userId);
     } else {
-       db.prepare(`UPDATE ${table} SET password = ? WHERE id = ?`).run(newPasswordStored, userId);
+       db.prepare(`UPDATE ${table} SET password = ?, token_version = token_version + 1 WHERE id = ?`).run(newPasswordStored, userId);
     }
 
     // Security enhancement: Invalidate sessions and cached tokens
