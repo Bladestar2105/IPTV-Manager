@@ -1966,7 +1966,12 @@ async function loadEpgSources() {
     list.innerHTML = '';
     
     if (sources.length === 0) {
-      list.innerHTML = `<li class="list-group-item text-muted">${t('noEpgSourcesConfigured')}</li>`;
+      list.innerHTML = `<li class="list-group-item text-center py-4 text-muted">
+        <div class="mb-2">${t('noEpgSourcesConfigured')}</div>
+        <button class="btn btn-sm btn-primary mt-2" onclick="showAddEpgSourceModal()">
+          ${t('addEpgSource')}
+        </button>
+      </li>`;
       return;
     }
     
