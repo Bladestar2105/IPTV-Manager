@@ -3120,7 +3120,9 @@ async function loadStatistics() {
 
         // CPU
         const cpuEl = document.getElementById('sys-cpu');
+        const cpuCoresEl = document.getElementById('sys-cpu-cores');
         if (cpuEl) cpuEl.textContent = `${sys.cpu.utilization}%`;
+        if (cpuCoresEl) cpuCoresEl.textContent = sys.cpu.cores;
 
         // Memory
         const memEl = document.getElementById('sys-mem');
@@ -3145,8 +3147,12 @@ async function loadStatistics() {
         // Network
         const netRxEl = document.getElementById('sys-net-rx');
         const netTxEl = document.getElementById('sys-net-tx');
+        const netRxTotalEl = document.getElementById('sys-net-rx-total');
+        const netTxTotalEl = document.getElementById('sys-net-tx-total');
         if (netRxEl) netRxEl.textContent = `${formatBytes(sys.bandwidth.rx_sec)}/s`;
         if (netTxEl) netTxEl.textContent = `${formatBytes(sys.bandwidth.tx_sec)}/s`;
+        if (netRxTotalEl) netRxTotalEl.textContent = formatBytes(sys.bandwidth.rx_total);
+        if (netTxTotalEl) netTxTotalEl.textContent = formatBytes(sys.bandwidth.tx_total);
     }
 
     // Active Streams

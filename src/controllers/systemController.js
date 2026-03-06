@@ -10,6 +10,17 @@ import { isIP } from 'net';
 import { isSafeUrl } from '../utils/helpers.js';
 import si from 'systeminformation';
 
+let initialNetStats = null;
+si.networkStats().then(stats => {
+  const primaryNet = stats.find(net => net.operstate === 'up') || stats[0] || {};
+  initialNetStats = {
+    rx_bytes: primaryNet.rx_bytes || 0,
+    tx_bytes: primaryNet.tx_bytes || 0
+  };
+}).catch(() => {
+  initialNetStats = { rx_bytes: 0, tx_bytes: 0 };
+});
+
 export const getSettings = (req, res) => {
   try {
     if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
@@ -682,8 +693,9 @@ export const getStatistics = async (req, res) => {
       };
     });
 
-    const [cpuLoad, memInfo, fsSize, netStats] = await Promise.all([
+    const [cpuLoad, cpuInfo, memInfo, fsSize, netStats] = await Promise.all([
       si.currentLoad(),
+      si.cpu(),
       si.mem(),
       si.fsSize(),
       si.networkStats()
@@ -692,9 +704,18 @@ export const getStatistics = async (req, res) => {
     const primaryFs = fsSize.find(fs => fs.mount === '/') || fsSize[0] || {};
     const primaryNet = netStats.find(net => net.operstate === 'up') || netStats[0] || {};
 
+    // Calculate total bandwidth since app start
+    let rxTotal = primaryNet.rx_bytes || 0;
+    let txTotal = primaryNet.tx_bytes || 0;
+    if (initialNetStats) {
+       rxTotal = Math.max(0, rxTotal - initialNetStats.rx_bytes);
+       txTotal = Math.max(0, txTotal - initialNetStats.tx_bytes);
+    }
+
     const systemInfo = {
       cpu: {
-        utilization: cpuLoad.currentLoad.toFixed(2)
+        utilization: cpuLoad.currentLoad.toFixed(2),
+        cores: cpuInfo.cores || cpuLoad.cpus.length
       },
       memory: {
         total: memInfo.total,
@@ -710,7 +731,9 @@ export const getStatistics = async (req, res) => {
       },
       bandwidth: {
         rx_sec: primaryNet.rx_sec || 0,
-        tx_sec: primaryNet.tx_sec || 0
+        tx_sec: primaryNet.tx_sec || 0,
+        rx_total: rxTotal,
+        tx_total: txTotal
       }
     };
 

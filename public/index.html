@@ -568,6 +568,7 @@
                 <div class="col-md-3 mb-3 mb-md-0">
                   <h6 class="text-muted" data-i18n="cpuUtilization">CPU</h6>
                   <p class="display-6 fw-bold text-primary mb-1" id="sys-cpu">0%</p>
+                  <small class="text-muted"><span id="sys-cpu-cores">0</span> <span data-i18n="cores">Cores</span></small>
                 </div>
                 <div class="col-md-3 mb-3 mb-md-0">
                   <h6 class="text-muted" data-i18n="memoryUtilization">Memory</h6>
@@ -582,8 +583,14 @@
                 <div class="col-md-3">
                   <h6 class="text-muted" data-i18n="bandwidthUtilization">Network</h6>
                   <div class="d-flex flex-column align-items-center justify-content-center h-100">
-                      <div class="mb-1"><span class="badge bg-success" data-i18n="rx">Rx</span> <span id="sys-net-rx" class="fw-bold">0 KB/s</span></div>
-                      <div><span class="badge bg-primary" data-i18n="tx">Tx</span> <span id="sys-net-tx" class="fw-bold">0 KB/s</span></div>
+                      <div class="mb-1">
+                          <span class="badge bg-success" data-i18n="rx">Rx</span> <span id="sys-net-rx" class="fw-bold">0 KB/s</span>
+                          <div class="small text-muted mt-1"><span data-i18n="totalRx">Total:</span> <span id="sys-net-rx-total">0 MB</span></div>
+                      </div>
+                      <div>
+                          <span class="badge bg-primary" data-i18n="tx">Tx</span> <span id="sys-net-tx" class="fw-bold">0 KB/s</span>
+                          <div class="small text-muted mt-1"><span data-i18n="totalTx">Total:</span> <span id="sys-net-tx-total">0 MB</span></div>
+                      </div>
                   </div>
                 </div>
               </div>
