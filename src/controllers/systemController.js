@@ -679,11 +679,16 @@ export const getStatistics = async (req, res) => {
     `).all();
 
     const allStreams = await streamManager.getAll();
+
+    // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
+    // This provides a massive speedup without the memory overhead of fetching tens of thousands of channels.
+    const getLogoStmt = db.prepare('SELECT logo FROM provider_channels WHERE name = ? AND provider_id = ? LIMIT 1');
+
     const streams = allStreams.map(s => {
       // Find logo if possible (for Active Streams)
       let logo = null;
       if (s.channel_name && s.provider_id) {
-          const ch = db.prepare('SELECT logo FROM provider_channels WHERE name = ? AND provider_id = ? LIMIT 1').get(s.channel_name, s.provider_id);
+          const ch = getLogoStmt.get(s.channel_name, s.provider_id);
           if (ch) logo = ch.logo;
       }
       return {
