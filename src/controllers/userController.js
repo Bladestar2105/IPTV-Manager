@@ -357,6 +357,8 @@ export const updateUser = async (req, res) => {
         updates.push('plain_password = ?');
         params.push(encryptedPlainPassword);
 
+        updates.push('token_version = token_version + 1');
+
         // Security enhancement: Invalidate sessions and cached tokens
         db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
         invalidateUserTokens(id);

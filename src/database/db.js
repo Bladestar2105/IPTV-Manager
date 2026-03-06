@@ -263,6 +263,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserPlainPassword(db);
             migrations.migrateUserBackupsTable(db);
             migrations.migrateUserExpiryDate(db);
+            migrations.migrateUserTokenVersion(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');
