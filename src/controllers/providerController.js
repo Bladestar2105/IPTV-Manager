@@ -155,9 +155,14 @@ export const createProvider = async (req, res) => {
       }
     }
 
-    // Auto-fetch max_connections if not provided or 0
-    let finalMaxConnections = max_connections ? Number(max_connections) : 0;
-    if (finalMaxConnections === 0) {
+    // Auto-fetch max_connections if not provided explicitly (it could be an empty string)
+    // If the user explicitly sets it to "0", we treat it as 0 (unlimited)
+    let finalMaxConnections;
+    if (max_connections !== undefined && max_connections !== '') {
+        finalMaxConnections = Number(max_connections);
+    } else {
+        // Only auto-fetch if the field was left empty
+        finalMaxConnections = 0;
         const fetchedLimit = await fetchProviderDetails(url, username, password);
         if (fetchedLimit !== null) {
             finalMaxConnections = fetchedLimit;
