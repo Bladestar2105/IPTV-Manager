@@ -574,7 +574,15 @@ async function loadUsers() {
     }
 
     const span = document.createElement('span');
-    span.textContent = `${u.username} (id=${u.id})`;
+    let displayExpiry = '';
+    if (u.expiry_date) {
+        const d = new Date(u.expiry_date);
+        displayExpiry = ` - ${t('expires')}: ${d.toLocaleDateString()}`;
+        if (d < new Date()) {
+            displayExpiry = ` - <span class="text-danger">${t('expired')}</span>`;
+        }
+    }
+    span.innerHTML = `${escapeHtml(u.username)} (id=${u.id})${displayExpiry}`;
     span.className = 'flex-grow-1 py-1 text-break';
     span.style.cursor = 'pointer';
     makeAccessible(span, () => {
@@ -725,6 +733,14 @@ function showEditUserModal(user) {
   document.getElementById('edit-user-username').value = user.username;
   document.getElementById('edit-user-password').value = '';
   document.getElementById('edit-user-max-connections').value = user.max_connections || 0;
+
+  if (user.expiry_date) {
+    // Attempt to format assuming ISO date (e.g. 2024-12-31T00:00:00.000Z) or YYYY-MM-DD
+    const isoDate = new Date(user.expiry_date).toISOString().split('T')[0];
+    document.getElementById('edit-user-expiry-date').value = isoDate;
+  } else {
+    document.getElementById('edit-user-expiry-date').value = '';
+  }
   // Checkbox handling: default to true if undefined/null (legacy users), else use value
   const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
   document.getElementById('edit-user-webui-access').checked = webuiAccess;
@@ -741,6 +757,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const username = document.getElementById('edit-user-username').value;
   const password = document.getElementById('edit-user-password').value;
   const maxConnections = document.getElementById('edit-user-max-connections').value;
+  const expiryDate = document.getElementById('edit-user-expiry-date').value;
   const webuiAccess = document.getElementById('edit-user-webui-access').checked;
   const hdhrEnabled = document.getElementById('edit-user-hdhr-enabled').checked;
 
@@ -748,7 +765,8 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
       username,
       webui_access: webuiAccess,
       hdhr_enabled: hdhrEnabled,
-      max_connections: maxConnections
+      max_connections: maxConnections,
+      expiry_date: expiryDate ? expiryDate : null
   };
   if (password) body.password = password;
 

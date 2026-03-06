@@ -47,11 +47,11 @@ export const playerApi = async (req, res) => {
           message: '',
           auth: 1,
           status: 'Active',
-          exp_date: '1773864593',
+          exp_date: user.expiry_date ? Math.floor(new Date(user.expiry_date).getTime() / 1000).toString() : '1773864593',
           is_trial: '0',
           active_cons: '0',
           created_at: now.toString(),
-          max_connections: '1',
+          max_connections: user.max_connections === 0 ? '999999' : (user.max_connections || '1').toString(),
           allowed_output_formats: ['m3u8', 'ts']
         },
         server_info: {

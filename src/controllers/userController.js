@@ -9,7 +9,7 @@ import { BCRYPT_ROUNDS } from '../config/constants.js';
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date FROM users ORDER BY id').all();
     const result = users.map(u => {
         let plainPassword = null;
         if (req.user.is_admin && u.plain_password) {
@@ -28,7 +28,8 @@ export const getUsers = (req, res) => {
             webui_access: u.webui_access,
             hdhr_enabled: u.hdhr_enabled,
             hdhr_token: u.hdhr_token,
-            max_connections: u.max_connections || 0
+            max_connections: u.max_connections || 0,
+            expiry_date: u.expiry_date
         };
     });
     res.json(result);
@@ -112,14 +113,15 @@ export const createUser = async (req, res) => {
     // Use transaction for atomic creation + copying
     db.transaction(() => {
         // Insert user
-        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
             u,
             hashedPassword,
             encryptedPlainPassword,
             webui_access !== undefined ? (webui_access ? 1 : 0) : 1,
             isHdhrEnabled,
             hdhrToken,
-            max_connections ? Number(max_connections) : 0
+            (max_connections !== undefined && max_connections !== '') ? Number(max_connections) : 0,
+            expiry_date || null
         );
         const newUserId = info.lastInsertRowid;
 
