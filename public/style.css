@@ -30,7 +30,7 @@ body {
   min-height: 100vh;
 }
 
-.container {
+.container, .container-fluid {
   background: rgba(10, 14, 39, 0.8);
   backdrop-filter: blur(10px);
   border-radius: 12px;
@@ -339,7 +339,7 @@ hr {
 }
 
 @media (max-width: 768px) {
-  .container {
+  .container, .container-fluid {
     padding: 1rem;
   }
   
