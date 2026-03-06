@@ -3100,10 +3100,60 @@ async function prunePiconCache() {
     }
 }
 
+function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
 async function loadStatistics() {
   try {
     const data = await fetchJSON('/api/statistics');
     updateStatsCounters('streams', data.active_streams.length);
+
+    // System Information
+    if (data.system_info) {
+        const sys = data.system_info;
+
+        // CPU
+        const cpuEl = document.getElementById('sys-cpu');
+        const cpuCoresEl = document.getElementById('sys-cpu-cores');
+        if (cpuEl) cpuEl.textContent = `${sys.cpu.utilization}%`;
+        if (cpuCoresEl) cpuCoresEl.textContent = sys.cpu.cores;
+
+        // Memory
+        const memEl = document.getElementById('sys-mem');
+        const memDetailEl = document.getElementById('sys-mem-detail');
+        if (memEl) memEl.textContent = `${sys.memory.utilization}%`;
+        if (memDetailEl) {
+            const usedStr = formatBytes(sys.memory.used);
+            const totalStr = formatBytes(sys.memory.total);
+            memDetailEl.textContent = `${usedStr} / ${totalStr}`;
+        }
+
+        // HDD
+        const hddEl = document.getElementById('sys-hdd');
+        const hddDetailEl = document.getElementById('sys-hdd-detail');
+        if (hddEl) hddEl.textContent = `${sys.hdd.utilization}%`;
+        if (hddDetailEl) {
+            const usedHddStr = formatBytes(sys.hdd.used);
+            const totalHddStr = formatBytes(sys.hdd.total);
+            hddDetailEl.textContent = `${usedHddStr} / ${totalHddStr}`;
+        }
+
+        // Network
+        const netRxEl = document.getElementById('sys-net-rx');
+        const netTxEl = document.getElementById('sys-net-tx');
+        const netRxTotalEl = document.getElementById('sys-net-rx-total');
+        const netTxTotalEl = document.getElementById('sys-net-tx-total');
+        if (netRxEl) netRxEl.textContent = `${formatBytes(sys.bandwidth.rx_sec)}/s`;
+        if (netTxEl) netTxEl.textContent = `${formatBytes(sys.bandwidth.tx_sec)}/s`;
+        if (netRxTotalEl) netRxTotalEl.textContent = formatBytes(sys.bandwidth.rx_total);
+        if (netTxTotalEl) netTxTotalEl.textContent = formatBytes(sys.bandwidth.tx_total);
+    }
 
     // Active Streams
     const activeTbody = document.getElementById('active-streams-tbody');
