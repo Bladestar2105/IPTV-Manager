@@ -89,7 +89,8 @@ export function initDb(isPrimary) {
       password TEXT NOT NULL,
       plain_password TEXT,
       is_active INTEGER DEFAULT 1,
-      max_connections INTEGER DEFAULT 0
+      max_connections INTEGER DEFAULT 0,
+      expiry_date INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS user_categories (
@@ -261,6 +262,7 @@ export function initDb(isPrimary) {
             migrations.migrateProviderLastEpgUpdate(db);
             migrations.migrateUserPlainPassword(db);
             migrations.migrateUserBackupsTable(db);
+            migrations.migrateUserExpiryDate(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

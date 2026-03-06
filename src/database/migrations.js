@@ -658,3 +658,17 @@ export function migrateUserBackupsTable(db) {
     console.error('Migration error (user_backups):', err.message);
   }
 }
+
+export function migrateUserExpiryDate(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('expiry_date')) {
+      db.exec('ALTER TABLE users ADD COLUMN expiry_date INTEGER');
+      console.log('✅ DB Migration: expiry_date column added to users');
+    }
+  } catch (e) {
+    console.error('User Expiry Date migration error:', e);
+  }
+}
