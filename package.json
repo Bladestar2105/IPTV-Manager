@@ -31,7 +31,8 @@
     "redis": "^5.10.0",
     "sax": "^1.4.4",
     "sortablejs": "^1.15.0",
-    "string-similarity": "^4.0.4"
+    "string-similarity": "^4.0.4",
+    "systeminformation": "^5.31.3"
   },
   "devDependencies": {
     "eslint": "^10.0.2",

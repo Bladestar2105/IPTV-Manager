@@ -261,6 +261,13 @@ const translations = {
 
     // Statistics
     statistics: 'Statistics',
+    systemInformation: 'System Information',
+    cpuUtilization: 'CPU',
+    memoryUtilization: 'Memory',
+    hddUtilization: 'HDD',
+    bandwidthUtilization: 'Network',
+    rx: 'Rx',
+    tx: 'Tx',
     activeStreams: 'Active Streams',
     topChannels: 'Top Channels',
     streamCount: 'Viewers',
@@ -269,7 +276,7 @@ const translations = {
     duration: 'Duration',
     ip: 'IP Address',
     client: 'Client',
-    resetStats: 'Reset',
+    resetStats: 'Reset Stats',
     confirmResetStats: 'Reset all statistics?',
     statsResetSuccess: 'Statistics reset successfully',
 
@@ -702,6 +709,13 @@ const translations = {
 
     // Statistics
     statistics: 'Statistiken',
+    systemInformation: 'Systeminformationen',
+    cpuUtilization: 'CPU',
+    memoryUtilization: 'Arbeitsspeicher',
+    hddUtilization: 'Festplatte',
+    bandwidthUtilization: 'Netzwerk',
+    rx: 'Rx',
+    tx: 'Tx',
     activeStreams: 'Aktive Streams',
     topChannels: 'Top Kanäle',
     streamCount: 'Zuschauer',
@@ -1143,6 +1157,13 @@ const translations = {
 
     // Statistics
     statistics: 'Statistiques',
+    systemInformation: 'Informations Système',
+    cpuUtilization: 'CPU',
+    memoryUtilization: 'Mémoire',
+    hddUtilization: 'Disque dur',
+    bandwidthUtilization: 'Réseau',
+    rx: 'Rx',
+    tx: 'Tx',
     activeStreams: 'Flux Actifs',
     topChannels: 'Top Chaînes',
     streamCount: 'Spectateurs',
@@ -1584,6 +1605,13 @@ const translations = {
 
     // Statistics
     statistics: 'Στατιστικά',
+    systemInformation: 'Πληροφορίες Συστήματος',
+    cpuUtilization: 'Επεξεργαστής',
+    memoryUtilization: 'Μνήμη',
+    hddUtilization: 'Σκληρός Δίσκος',
+    bandwidthUtilization: 'Δίκτυο',
+    rx: 'Rx',
+    tx: 'Tx',
     activeStreams: 'Ενεργές Ροές',
     topChannels: 'Κορυφαία Κανάλια',
     streamCount: 'Θεατές',

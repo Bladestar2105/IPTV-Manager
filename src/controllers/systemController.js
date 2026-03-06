@@ -8,6 +8,7 @@ import { calculateNextSync } from '../services/syncService.js';
 import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
 import { isSafeUrl } from '../utils/helpers.js';
+import si from 'systeminformation';
 
 export const getSettings = (req, res) => {
   try {
@@ -681,9 +682,42 @@ export const getStatistics = async (req, res) => {
       };
     });
 
+    const [cpuLoad, memInfo, fsSize, netStats] = await Promise.all([
+      si.currentLoad(),
+      si.mem(),
+      si.fsSize(),
+      si.networkStats()
+    ]);
+
+    const primaryFs = fsSize.find(fs => fs.mount === '/') || fsSize[0] || {};
+    const primaryNet = netStats.find(net => net.operstate === 'up') || netStats[0] || {};
+
+    const systemInfo = {
+      cpu: {
+        utilization: cpuLoad.currentLoad.toFixed(2)
+      },
+      memory: {
+        total: memInfo.total,
+        used: memInfo.active,
+        free: memInfo.available,
+        utilization: ((memInfo.active / memInfo.total) * 100).toFixed(2)
+      },
+      hdd: {
+        total: primaryFs.size || 0,
+        used: primaryFs.used || 0,
+        free: (primaryFs.size || 0) - (primaryFs.used || 0),
+        utilization: primaryFs.use ? primaryFs.use.toFixed(2) : '0.00'
+      },
+      bandwidth: {
+        rx_sec: primaryNet.rx_sec || 0,
+        tx_sec: primaryNet.tx_sec || 0
+      }
+    };
+
     res.json({
       active_streams: streams,
-      top_channels: topChannels
+      top_channels: topChannels,
+      system_info: systemInfo
     });
   } catch (e) {
     res.status(500).json({error: e.message});
