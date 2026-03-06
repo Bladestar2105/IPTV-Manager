@@ -130,6 +130,9 @@
                   <div class="col-1">
                      <input type="number" class="form-control form-control-sm" name="max_connections" data-i18n-placeholder="maxConnectionsShort" data-i18n-label="maxConnections" placeholder="Max" min="0">
                   </div>
+                  <div class="col-2">
+                     <input type="date" class="form-control form-control-sm" name="expiry_date" data-i18n-label="expiryDate">
+                  </div>
                   <div class="col-2"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
                   <div class="col-1"><button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
                </form>
@@ -1090,6 +1093,10 @@
             <div class="mb-3">
               <label class="form-label" data-i18n="maxConnections" for="edit-user-max-connections">Max Connections</label>
               <input type="number" class="form-control" id="edit-user-max-connections" placeholder="0 = Unlimited" min="0">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" data-i18n="expiryDate" for="edit-user-expiry-date">Expiry Date</label>
+              <input type="date" class="form-control" id="edit-user-expiry-date">
             </div>
             <div class="mb-3 form-check">
               <input type="checkbox" class="form-check-input" id="edit-user-webui-access">
