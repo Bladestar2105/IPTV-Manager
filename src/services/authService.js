@@ -291,3 +291,11 @@ export async function getXtreamUser(req) {
 
   return user;
 }
+
+export function invalidateUserTokens(userId) {
+  for (const [token, data] of tokenCache.entries()) {
+    if (data.user && Number(data.user.id) === Number(userId)) {
+      tokenCache.delete(token);
+    }
+  }
+}

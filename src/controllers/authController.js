@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import db from '../database/db.js';
-import { generateToken, preventTimingAttack } from '../services/authService.js';
+import { generateToken, preventTimingAttack, invalidateUserTokens } from '../services/authService.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS } from '../config/constants.js';
@@ -252,6 +252,10 @@ export const changePassword = async (req, res) => {
     } else {
        db.prepare(`UPDATE ${table} SET password = ? WHERE id = ?`).run(newPasswordStored, userId);
     }
+
+    // Security enhancement: Invalidate sessions and cached tokens
+    db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
+    invalidateUserTokens(userId);
 
     console.log(`✅ Password changed for ${isAdmin ? 'admin' : 'user'}: ${user.username}`);
 

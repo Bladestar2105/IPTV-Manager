@@ -1,4 +1,5 @@
 import { clearChannelsCache } from '../services/cacheService.js';
+import { invalidateUserTokens } from '../services/authService.js';
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
@@ -353,6 +354,10 @@ export const updateUser = async (req, res) => {
 
         updates.push('plain_password = ?');
         params.push(encryptedPlainPassword);
+
+        // Security enhancement: Invalidate sessions and cached tokens
+        db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
+        invalidateUserTokens(id);
     }
 
     if (webui_access !== undefined) {
