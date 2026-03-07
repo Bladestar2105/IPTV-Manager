@@ -84,7 +84,7 @@ export class ChannelMatcher {
 
     // Pre-parse EPG channels to avoid re-parsing on every match
     this.parsedEpgChannels = this.epgChannels.map(c => {
-        const parsed = this.parseChannelName(c.name);
+        const parsed = this.parseChannelName(c.name, c.id);
         return {
             channel: c,
             ...parsed
@@ -130,7 +130,7 @@ export class ChannelMatcher {
   /**
    * Extrahiert Channel-Name und Sprache aus verschiedenen Formaten
    */
-  parseChannelName(channelName) {
+  parseChannelName(channelName, epgId = null) {
     if (!channelName) return {
         baseName: '',
         language: null,
@@ -139,6 +139,18 @@ export class ChannelMatcher {
         numbersString: ''
     };
     const original = channelName.trim();
+
+    // Versuche, die Sprache aus der EPG ID zu extrahieren (z.B. Boomerang.gr -> gr)
+    let idLang = null;
+    if (epgId) {
+       const parts = epgId.split('.');
+       if (parts.length > 1) {
+           const suffix = parts[parts.length - 1];
+           if (this.isLanguageCode(suffix)) {
+               idLang = suffix;
+           }
+       }
+    }
 
     for (const pattern of CHANNEL_NAME_PATTERNS) {
       const match = original.match(pattern);
@@ -165,7 +177,7 @@ export class ChannelMatcher {
 
           return {
             baseName: baseName,
-            language: this.normalizeLanguage(lang),
+            language: this.normalizeLanguage(lang) || this.normalizeLanguage(idLang),
             signature: sig,
             signaturePopcount: popcount,
             // Use popcount as proxy for bigramCount to avoid Set allocation in findBestSimilarity
@@ -189,7 +201,7 @@ export class ChannelMatcher {
 
     return {
       baseName: baseName,
-      language: null,
+      language: this.normalizeLanguage(idLang),
       signature: sig,
       signaturePopcount: popcount,
       bigramCount: popcount,
@@ -212,6 +224,7 @@ export class ChannelMatcher {
    * Normalisiert Sprachcode zu ISO 639-1 (2-Buchstaben)
    */
   normalizeLanguage(lang) {
+    if (!lang) return null;
     const cleaned = lang.toLowerCase().trim();
     return LANGUAGE_MAP[cleaned] || null;
   }
@@ -303,8 +316,18 @@ export class ChannelMatcher {
       // 5. Fallback: String-Similarity auf allen Kandidaten
       // Optimization: Pass parsed object
       const best = this.findBestSimilarity(parsed, candidates);
+
+      // Penalty logic for fallback if we requested a specific language
+      if (parsed.language && best.channel && best.channel.language && best.channel.language !== parsed.language) {
+          // Explicitly different language -> heavily penalize
+          best.score *= 0.1;
+      } else if (parsed.language && best.channel && !best.channel.language) {
+          // No explicit language, slight penalty
+          best.score *= 0.9;
+      }
+
       return {
-        epgChannel: best.channel.channel,
+        epgChannel: best.channel ? best.channel.channel : null,
         confidence: best.score * 0.7,
         method: 'similarity_fallback',
         parsed: parsed
@@ -364,38 +387,29 @@ export class ChannelMatcher {
                            finalCandidate = langMatch;
                       } else {
                            // If language requested but no variant matches, stick with representative
-                           // but check if we should reject due to mismatch
-                           // (If representative has language and it differs from requested)
-                           if (finalCandidate.language && finalCandidate.language !== parsed.language) {
-                                return {
-                                     epgChannel: null,
-                                     confidence: bestGlobal.score * 0.5,
-                                     method: 'global_fuzzy_lang_mismatch_rejected',
-                                     parsed: parsed
-                                }
-                           }
+                           // We check later if we should reject due to mismatch
+                           finalCandidate = numberGroupVariants.find(v => !v.language) || finalCandidate;
                       }
                  }
-                 // If no language requested, representative is fine (or could prioritize null language if needed)
+                 // If no language requested, representative is fine
             }
-        } else {
-             // Single variant check
-             if (parsed.language && finalCandidate.language && finalCandidate.language !== parsed.language) {
-                  return {
-                       epgChannel: null,
-                       confidence: bestGlobal.score * 0.5,
-                       method: 'global_fuzzy_lang_mismatch_rejected',
-                       parsed: parsed
-                  }
-             }
         }
 
-        return {
-            epgChannel: finalCandidate.channel,
-            confidence: bestGlobal.score,
-            method: 'global_fuzzy',
-            parsed: parsed
-        };
+        let finalConfidence = bestGlobal.score;
+        if (parsed.language && finalCandidate.language && finalCandidate.language !== parsed.language) {
+             finalConfidence *= 0.1; // heavily penalize mismatched language
+        } else if (parsed.language && !finalCandidate.language) {
+             finalConfidence *= 0.9; // slight penalty for no explicit language
+        }
+
+        if (finalConfidence > 0.4) {
+            return {
+                epgChannel: finalCandidate.channel,
+                confidence: finalConfidence,
+                method: 'global_fuzzy',
+                parsed: parsed
+            };
+        }
     }
 
     return {
@@ -457,12 +471,20 @@ export class ChannelMatcher {
             allCandidates = allCandidates.concat(scoredCandidates);
         }
       } else {
-        const scoredCandidates = this.scoreAllCandidates(parsed, candidates).map(c => ({
-          epgChannel: c.channel.channel,
-          confidence: c.score * 0.9,
-          method: 'similarity_fallback',
-          parsed: parsed
-        }));
+        const scoredCandidates = this.scoreAllCandidates(parsed, candidates).map(c => {
+           let conf = c.score * 0.9;
+           if (parsed.language && c.channel.language && c.channel.language !== parsed.language) {
+               conf *= 0.1;
+           } else if (parsed.language && !c.channel.language) {
+               conf *= 0.9;
+           }
+           return {
+             epgChannel: c.channel.channel,
+             confidence: conf,
+             method: 'similarity_fallback',
+             parsed: parsed
+           };
+        });
         allCandidates = allCandidates.concat(scoredCandidates);
       }
     }
@@ -494,7 +516,9 @@ export class ChannelMatcher {
           for (const variant of validVariants) {
              let confidence = bestGlobal.score * 0.8;
              if (parsed.language && variant.language && variant.language !== parsed.language) {
-                 confidence *= 0.5;
+                 confidence *= 0.1; // heavily penalize mismatched language
+             } else if (parsed.language && !variant.language) {
+                 confidence *= 0.9; // slight penalty for no explicit language
              } else if (parsed.language && variant.language === parsed.language) {
                  confidence *= 1.1; // Boost matching language
              }
