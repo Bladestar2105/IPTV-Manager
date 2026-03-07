@@ -29,6 +29,7 @@
 - **Internationalization**: Localized UI (English, German, French, Greek).
 - **M3U Playlist Generation**: Generate custom M3U playlists for external players.
 - **Import/Export**: Secure, password-protected data migration.
+- **User Backups**: Automatically create and manage backups of assigned categories and channels per user.
 
 ### Security
 - **🛡️ SSRF Protection**: Robust validation of upstream URLs (preventing access to private IPs, localhost, cloud metadata).
@@ -126,7 +127,11 @@ The application blocks Cross-Origin Resource Sharing (CORS) by default for secur
 
 | Login | Dashboard |
 |:---:|:---:|
-| ![Login Page](docs/images/login.png) | ![Dashboard](docs/images/providers.png) |
+| ![Login Page](docs/images/login.png) | ![Dashboard](docs/images/dashboard.png) |
+
+| User Backups | Import/Export |
+|:---:|:---:|
+| ![User Backups](docs/images/backups.png) | ![Import/Export](docs/images/import_export.png) |
 
 | Categories | Channels |
 |:---:|:---:|
