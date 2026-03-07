@@ -128,6 +128,48 @@ describe('ChannelMatcher', () => {
     });
 });
 
+describe('Language explicit penalty and ID fallback', () => {
+    const epgChannels = [
+        { id: 'Boomerang.gr', name: 'Boomerang.gr' },
+        { id: 'Boomerang.de', name: 'Boomerang.de' },
+        { id: 'DisneyChannel.bg', name: 'DisneyChannel.bg' },
+        { id: 'DisneyChannel', name: 'Disney Channel' }
+    ];
+
+    const matcher = new ChannelMatcher(epgChannels);
+
+    it('extracts language from epg ID', () => {
+        const parsed = matcher.parseChannelName('Boomerang', 'Boomerang.gr');
+        expect(parsed.language).toBe('el'); // gr maps to el
+    });
+
+    it('maps to exact matching language when multiple are available', () => {
+        const result = matcher.match('DE| BOOMERANG FHD');
+        expect(result.epgChannel).not.toBeNull();
+        expect(result.epgChannel.id).toBe('Boomerang.de');
+    });
+
+    it('maps to candidate with no language over one with explicitly wrong language', () => {
+        const result = matcher.match('DE| DISNEY CHANNEL FHD');
+        expect(result.epgChannel).not.toBeNull();
+        // Since DisneyChannel.de doesn't exist, it should pick the one without explicit language, NOT the .bg one
+        expect(result.epgChannel.id).toBe('DisneyChannel');
+    });
+
+    it('avoids completely mapping to wrong explicit language when only wrong explicitly language candidates exist', () => {
+        // Only .bg exists, no neutral, no .de
+        const singleCandMatcher = new ChannelMatcher([{ id: 'DisneyChannel.bg', name: 'DisneyChannel.bg' }]);
+        const result = singleCandMatcher.match('DE| DISNEY CHANNEL FHD');
+
+        // Since .bg is heavily penalized (score *= 0.1), confidence should be very low or null
+        if (result.epgChannel) {
+             expect(result.confidence).toBeLessThan(0.4);
+        } else {
+             expect(result.epgChannel).toBeNull();
+        }
+    });
+});
+
 describe('myteamtv raw sports channels mapping', () => {
   it('correctly maps "MAGENTA SPORT 1 FHD" to "Sport 1 - myTeamTV" ignoring "RAW"', () => {
     const epgChannels = [
