@@ -276,15 +276,24 @@ export class ChannelMatcher {
     let candidates = this.findCandidatesByBaseName(parsed.baseName, checkNumbers);
 
     if (candidates.length === 1) {
-      return {
-        epgChannel: candidates[0].channel,
-        confidence: 0.9,
-        method: 'single_candidate',
-        parsed: parsed
-      };
+      const singleCand = candidates[0];
+
+      // If we requested a language, but the single candidate has a different explicit language, don't blindly accept it.
+      // E.g. search "DE| DISNEY" (de) matches only "DISNEY.gr" (el).
+      const hasLanguageMismatch = parsed.language && singleCand.language && singleCand.language !== parsed.language;
+
+      if (!hasLanguageMismatch) {
+        return {
+          epgChannel: singleCand.channel,
+          confidence: 0.9,
+          method: 'single_candidate',
+          parsed: parsed
+        };
+      }
+      // If there's a mismatch, we let it fall through to the fallback logic where it will be heavily penalized.
     }
 
-    if (candidates.length > 1) {
+    if (candidates.length >= 1) { // Changed to >= 1 to handle the single mismatched candidate falling through
       // 3. Filtere nach Sprache falls vorhanden
       if (parsed.language) {
         const langFiltered = candidates.filter(c => {
@@ -326,15 +335,28 @@ export class ChannelMatcher {
           best.score *= 0.9;
       }
 
-      return {
+      const similarityConfidence = best.score * 0.7;
+
+      // Store the best similarity fallback to return if global fuzzy search doesn't find anything better
+      const bestSimilarityFallback = {
         epgChannel: best.channel ? best.channel.channel : null,
-        confidence: best.score * 0.7,
+        confidence: similarityConfidence,
         method: 'similarity_fallback',
         parsed: parsed
       };
+
+      // If the best candidate from the base name fallback has very low confidence (e.g. because of language penalty)
+      // We should fall through to the global fuzzy search instead of immediately returning a bad match.
+      if (similarityConfidence > 0.4) {
+          return bestSimilarityFallback;
+      }
+
+      // If confidence is low, we store it and let it fall through to global fuzzy,
+      // but if global fuzzy fails, we should still return the best match we found (or no match if it's really bad)
+      // We'll handle this by letting it fall through.
     }
 
-    // 6. Global Fuzzy Fallback (if base name didn't match exactly)
+    // 6. Global Fuzzy Fallback (if base name didn't match exactly, or if the match was heavily penalized)
     // Filter all EPG channels by Number Logic First
     // Optimization: Use index instead of filtering all channels O(N) -> O(1)
     const potentialCandidates = this.numbersIndex.get(iptvNumsString) || [];
@@ -402,6 +424,8 @@ export class ChannelMatcher {
              finalConfidence *= 0.9; // slight penalty for no explicit language
         }
 
+        // Even in global fuzzy search, if the match is decent, allow it to return
+        // but if we penalized it heavily, it won't pass this check
         if (finalConfidence > 0.4) {
             return {
                 epgChannel: finalCandidate.channel,
@@ -412,6 +436,10 @@ export class ChannelMatcher {
         }
     }
 
+    // If we made it here, global fuzzy didn't find a good match either.
+    // If we have a fallback match from earlier, we should use it if it's better than nothing.
+    // However, if we're here, bestSimilarityFallback (if it exists) had confidence <= 0.4.
+    // It's usually better to just return no_match.
     return {
       epgChannel: null,
       confidence: 0,
@@ -462,12 +490,20 @@ export class ChannelMatcher {
             }));
             allCandidates = allCandidates.concat(scoredLangFiltered);
         } else {
-            const scoredCandidates = this.scoreAllCandidates(parsed, candidates).map(c => ({
-              epgChannel: c.channel.channel,
-              confidence: c.score * 0.8,
-              method: 'similarity_after_language',
-              parsed: parsed
-            }));
+            const scoredCandidates = this.scoreAllCandidates(parsed, candidates).map(c => {
+               let conf = c.score * 0.8;
+               if (c.channel.language && c.channel.language !== parsed.language) {
+                   conf *= 0.1; // penalize explicit language mismatch
+               } else if (!c.channel.language) {
+                   conf *= 0.9; // slight penalty for no language
+               }
+               return {
+                 epgChannel: c.channel.channel,
+                 confidence: conf,
+                 method: 'similarity_after_language',
+                 parsed: parsed
+               };
+            });
             allCandidates = allCandidates.concat(scoredCandidates);
         }
       } else {
