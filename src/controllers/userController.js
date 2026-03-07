@@ -1,5 +1,6 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import { invalidateUserTokens } from '../services/authService.js';
+import streamManager from '../services/streamManager.js';
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
@@ -395,6 +396,18 @@ export const updateUser = async (req, res) => {
 
     params.push(id);
     db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+    // Security Enhancement: Terminate active streams if security credentials/access changed
+    if (password || expiry_date !== undefined || webui_access !== undefined || hdhr_enabled !== undefined || max_connections !== undefined) {
+        try {
+            const activeStreams = db.prepare('SELECT id FROM current_streams WHERE user_id = ?').all(id);
+            for (const stream of activeStreams) {
+                streamManager.remove(stream.id);
+            }
+        } catch (streamErr) {
+            console.error(`Error terminating streams for user ${id}:`, streamErr);
+        }
+    }
 
     clearChannelsCache(id);
     res.json({success: true});
