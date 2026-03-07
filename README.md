@@ -72,11 +72,39 @@ For production environments, it is strongly recommended to set `NODE_ENV=product
 2.  Run `docker-compose up -d`.
 3.  Access at `http://localhost:3000`.
 
-## 🔧 Manual Installation
+## 🔧 Bare Metal / Manual Installation (Debian/Ubuntu)
+
+We provide automated scripts for easy local deployment on Debian and Ubuntu systems. This is ideal for users who do not want to use Docker.
+
+### Automated Installation
+To install IPTV-Manager as a background systemd service, run the following command as `root`:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main/scripts/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh
+```
+
+### Automated Updates
+To update an existing automated installation, simply navigate to the installation directory and run the update script:
+```bash
+cd /opt/iptv-manager
+sudo ./scripts/update.sh
+```
+
+### Manual Installation (Development)
 1.  Clone repo: `git clone https://github.com/Bladestar2105/IPTV-Manager.git`
 2.  Install: `npm install`
 3.  Configure: `cp .env.example .env` (edit as needed)
 4.  Run: `npm start`
+
+### Proxmox LXC Installation
+For Proxmox VE users, you can easily deploy an LXC container running IPTV-Manager.
+Run the following command directly on your **Proxmox Host Shell**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main/scripts/proxmox.sh -o proxmox.sh
+chmod +x proxmox.sh
+./proxmox.sh
+```
 
 ### Development
 - **Linting**: `npm run lint`
