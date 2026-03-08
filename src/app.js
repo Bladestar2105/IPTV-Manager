@@ -26,6 +26,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+app.use('/vendor/flag-icons', express.static(path.join(__dirname, '../node_modules/flag-icons')));
+
 // Trust Proxy Configuration
 if (process.env.TRUST_PROXY) {
   const trustProxy = process.env.TRUST_PROXY;

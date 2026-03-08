@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../utils/crypto.js';
 import db from '../database/db.js';
+import { isIpAllowedForUser } from '../services/geoIpService.js';
 
 export function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -36,6 +37,15 @@ export function authenticateToken(req, res, next) {
       // Check WebUI Access for normal users
       if (!user.is_admin && dbUser.webui_access === 0) {
         return res.status(403).json({ error: 'WebUI access revoked' });
+      }
+
+      // Region IP Lock
+      if (!isIpAllowedForUser(req.ip, dbUser)) {
+          const now = Math.floor(Date.now() / 1000);
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+              req.ip, 'Blocked WebUI Login (Region Lock)', `User: ${dbUser.username}`, now
+          );
+          return res.status(403).json({ error: 'Access denied from your region' });
       }
 
       // Update req.user with fresh data

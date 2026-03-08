@@ -35,4 +35,6 @@ router.get('/sync-logs', authenticateToken, systemController.getSyncLogs);
 router.get('/statistics', authenticateToken, systemController.getStatistics);
 router.post('/statistics/reset', authenticateToken, systemController.resetStatistics);
 
+router.post('/geoip/update', authenticateToken, systemController.updateGeoIpDatabase);
+
 export default router;

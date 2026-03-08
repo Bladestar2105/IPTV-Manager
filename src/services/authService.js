@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import db from '../database/db.js';
 import { decrypt, JWT_SECRET } from '../utils/crypto.js';
 import { getSetting, getCookie } from '../utils/helpers.js';
+import { isIpAllowedForUser } from './geoIpService.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE, AUTH_CACHE_CLEANUP_INTERVAL } from '../config/constants.js';
 
 // Authentication Cache
@@ -255,6 +256,16 @@ export async function getXtreamUser(req) {
   // Only try username/password if token auth didn't succeed
   if (!user && username && password) {
     user = await authUser(username, password);
+  }
+
+  // Apply IP Region Lock
+  if (user && !isIpAllowedForUser(req.ip, user)) {
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+        req.ip, 'Blocked Xtream/Stream Access (Region Lock)', `User: ${user.username || username}`, now
+    );
+    // Setting user to null causes the proxy/streaming to fail auth
+    user = null;
   }
 
   // Only log failed attempts when there was no token (prevents HLS segment

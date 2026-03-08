@@ -9,6 +9,8 @@ import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
 import { isSafeUrl } from '../utils/helpers.js';
 import si from 'systeminformation';
+import { spawn } from 'child_process';
+import path from 'path';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -281,6 +283,40 @@ export const exportData = (req, res) => {
   } catch (e) {
     console.error('Export error:', e);
     res.status(500).json({error: e.message});
+  }
+};
+
+export const updateGeoIpDatabase = (req, res) => {
+  try {
+    if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
+
+    const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const child = spawn(npmCmd, ['run', 'updatedb'], {
+        cwd: path.resolve('node_modules/geoip-lite'),
+        stdio: 'ignore'
+    });
+
+    child.on('error', (err) => {
+        console.error('Failed to start GeoIP update process:', err);
+    });
+
+    child.on('close', (code) => {
+        if (code === 0) {
+            console.log('GeoIP database updated successfully.');
+            db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+                req.ip, 'GeoIP Update', 'Database updated successfully', Math.floor(Date.now() / 1000)
+            );
+        } else {
+            console.error(`GeoIP update process exited with code ${code}`);
+            db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+                req.ip, 'GeoIP Update Failed', `Process exited with code ${code}`, Math.floor(Date.now() / 1000)
+            );
+        }
+    });
+
+    res.json({ success: true, message: 'GeoIP database update started in the background.' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 };
 
