@@ -359,6 +359,12 @@ export const importData = async (req, res) => {
       const existingUsers = db.prepare('SELECT id, username FROM users').all();
       const existingUserMap = new Map(existingUsers.map(u => [u.username, u.id]));
 
+      // ⚡ Bolt: Hoist prepared statements to prevent query recompilation inside loops
+      const insertUserStmt = db.prepare(`
+        INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
       for (const user of importData.users) {
         const existingId = existingUserMap.get(user.username);
         if (existingId) {
@@ -380,10 +386,7 @@ export const importData = async (req, res) => {
         const otpSecret = user.otp_secret || null;
         const isActive = user.is_active !== undefined ? (user.is_active ? 1 : 0) : 1;
 
-        const info = db.prepare(`
-          INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+        const info = insertUserStmt.run(
           user.username,
           user.password,
           isActive,
@@ -400,16 +403,18 @@ export const importData = async (req, res) => {
         stats.users_imported++;
       }
 
+      const insertProviderStmt = db.prepare(`
+        INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
       for (const p of importData.providers) {
         const newUserId = userIdMap.get(p.user_id);
         if (!newUserId) continue;
 
         const newPassword = encrypt(p.password);
 
-        const info = db.prepare(`
-          INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+        const info = insertProviderStmt.run(
           p.name,
           p.url,
           p.username,
@@ -468,15 +473,22 @@ export const importData = async (req, res) => {
         providerChannelIdMap.set(ch.id, info.lastInsertRowid);
       }
 
+      const insertCategoryStmt = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
+
       for (const cat of importData.categories) {
         const newUserId = userIdMap.get(cat.user_id);
         if (!newUserId) continue;
 
         const catType = cat.type || 'live';
-        const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(newUserId, cat.name, cat.is_adult, cat.sort_order, catType);
+        const info = insertCategoryStmt.run(newUserId, cat.name, cat.is_adult, cat.sort_order, catType);
         categoryIdMap.set(cat.id, info.lastInsertRowid);
         stats.categories++;
       }
+
+      const insertMappingStmt = db.prepare(`
+        INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
 
       for (const m of importData.mappings) {
         const newProvId = providerIdMap.get(m.provider_id);
@@ -484,22 +496,21 @@ export const importData = async (req, res) => {
         const newUserCatId = m.user_category_id ? categoryIdMap.get(m.user_category_id) : null;
 
         if (newProvId && newUserId) {
-           db.prepare(`
-             INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-           `).run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created, m.category_type || 'live');
+           insertMappingStmt.run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created, m.category_type || 'live');
         }
       }
+
+      const insertSyncConfigStmt = db.prepare(`
+        INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, last_sync, next_sync, auto_add_categories, auto_add_channels)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
       for (const s of importData.sync_configs) {
         const newProvId = providerIdMap.get(s.provider_id);
         const newUserId = userIdMap.get(s.user_id);
 
         if (newProvId && newUserId) {
-          db.prepare(`
-            INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, last_sync, next_sync, auto_add_categories, auto_add_channels)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(newProvId, newUserId, s.enabled, s.sync_interval, 0, 0, s.auto_add_categories, s.auto_add_channels);
+          insertSyncConfigStmt.run(newProvId, newUserId, s.enabled, s.sync_interval, 0, 0, s.auto_add_categories, s.auto_add_channels);
         }
       }
 

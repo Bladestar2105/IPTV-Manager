@@ -620,6 +620,14 @@ export const importCategories = async (req, res) => {
     db.transaction(() => {
       let maxSort = getMaxSort.get(user_id).max_sort;
 
+      // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
+      const insertCategoryMapping = db.prepare(`
+        INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
+        ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
+        DO UPDATE SET user_category_id = excluded.user_category_id
+      `);
+
       for (const cat of categories) {
         if (!cat.id || !cat.name) continue;
 
@@ -631,12 +639,7 @@ export const importCategories = async (req, res) => {
         const newCategoryId = catInfo.lastInsertRowid;
         totalCategories++;
 
-        db.prepare(`
-          INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-          VALUES (?, ?, ?, ?, ?, 0, ?)
-          ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
-          DO UPDATE SET user_category_id = excluded.user_category_id
-        `).run(providerId, user_id, Number(cat.id), cat.name, newCategoryId, catType);
+        insertCategoryMapping.run(providerId, user_id, Number(cat.id), cat.name, newCategoryId, catType);
 
         let channelsImported = 0;
         if (cat.import_channels) {
