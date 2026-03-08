@@ -235,7 +235,7 @@ export class ChannelMatcher {
   normalizeBaseName(name) {
     return name
       .toLowerCase()
-      .replace(/\s+hd|uhd|4k|fhd|hevc|h\.?264|h\.?265/gi, '') // Qualität
+      .replace(/\b(?:hd|fhd|uhd|qhd|sd|2k|4k|8k|hevc|hq|lq|h\.?264|h\.?265|m3u8)\b/gi, '') // Qualität
       .replace(/\b(?:magenta|myteam|myteamtv)\s*sport\b/gi, 'myteamtv') // Magenta Sport / MyTeam Sport -> MyTeamTV mapping
       .replace(/\bsport\s*(\d*)\s*(?:-|\|)?\s*myteamtv\b/gi, 'myteamtv $1') // "Sport 1 - myTeamTV" -> "myteamtv 1"
       .replace(/\braw\b/gi, '') // "RAW" entfernen
