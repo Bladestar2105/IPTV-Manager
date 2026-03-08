@@ -6,7 +6,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getBaseUrl, isSafeUrl, safeLookup } from '../utils/helpers.js';
+import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
 import { fetchSafe } from '../utils/network.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
@@ -71,17 +71,6 @@ function getProvider(id) {
     return stmts.getProvider.get(id);
 }
 
-// Redact credentials from upstream URLs before logging.
-function redactUrl(url) {
-  try {
-    return url.replace(
-      /\/(live|movie|series|timeshift)\/([^/]+)\/([^/]+)\//,
-      '/$1/$2/********/'
-    );
-  } catch (e) {
-    return '[redacted]';
-  }
-}
 
 function isBrowser(req) {
   const ua = (req.headers['user-agent'] || '');
