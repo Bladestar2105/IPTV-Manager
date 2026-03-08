@@ -531,7 +531,10 @@
 
                 <div class="mb-3">
                   <label class="form-label" data-i18n="encryptionPassword" for="export-password">Encryption Password</label>
-                  <input type="password" class="form-control" name="password" id="export-password" required minlength="8" data-i18n-placeholder="passwordPlaceholder" aria-describedby="export-password-help">
+                  <div class="input-group">
+                    <input type="password" class="form-control" name="password" id="export-password" required minlength="8" data-i18n-placeholder="passwordPlaceholder" aria-describedby="export-password-help">
+                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="export-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                  </div>
                   <div class="form-text" data-i18n="encryptionPasswordHint" id="export-password-help">This password will be required to decrypt and import the data.</div>
                 </div>
 
@@ -556,7 +559,10 @@
 
                 <div class="mb-3">
                   <label class="form-label" data-i18n="decryptionPassword" for="import-password">Decryption Password</label>
-                  <input type="password" class="form-control" name="password" id="import-password" required data-i18n-placeholder="passwordPlaceholder">
+                  <div class="input-group">
+                    <input type="password" class="form-control" name="password" id="import-password" required data-i18n-placeholder="passwordPlaceholder">
+                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="import-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                  </div>
                 </div>
 
                 <button type="submit" class="btn btn-warning w-100" id="import-btn" data-i18n="importBtn">Import Data</button>
