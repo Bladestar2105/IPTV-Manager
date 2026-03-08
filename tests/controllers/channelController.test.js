@@ -54,7 +54,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '1' },
             body: { name: 'Admin Category', type: 'live' },
-            user: { id: 1, is_admin: true }
+            user: { id: 1, is_admin: true, username: 'admin' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -78,7 +79,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '2' },
             body: { name: 'User Category', type: 'vod' },
-            user: { id: 1, is_admin: true }
+            user: { id: 1, is_admin: true, username: 'admin' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -99,7 +101,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '2' },
             body: { name: 'My Category' },
-            user: { id: 2, is_admin: false }
+            user: { id: 2, is_admin: false, username: 'user' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -121,7 +124,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '1' },
             body: { type: 'live' },
-            user: { id: 1, is_admin: true }
+            user: { id: 1, is_admin: true, username: 'admin' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -138,7 +142,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '1' },
             body: { name: 'Steal Category' },
-            user: { id: 2, is_admin: false }
+            user: { id: 2, is_admin: false, username: 'user' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -155,7 +160,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '1' },
             body: { name: 'My XXX Category' },
-            user: { id: 1, is_admin: true }
+            user: { id: 1, is_admin: true, username: 'admin' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -179,7 +185,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '1' },
             body: { name: 'Cat 2' },
-            user: { id: 1, is_admin: true }
+            user: { id: 1, is_admin: true, username: 'admin' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
@@ -201,7 +208,8 @@ describe('Channel Controller - createUserCategory', () => {
         const req = {
             params: { userId: '1' },
             body: { name: 'Faulty Category' },
-            user: { id: 1, is_admin: true }
+            user: { id: 1, is_admin: true, username: 'admin' },
+            ip: '127.0.0.1'
         };
         const res = {
             json: vi.fn(),
