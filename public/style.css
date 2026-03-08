@@ -4,6 +4,12 @@
 */
 /* IPTV-Manager - TV-Inspired Design */
 
+select option[data-icon] {
+  background-repeat: no-repeat;
+  background-position: left center;
+  padding-left: 25px; /* Adjust based on icon size */
+}
+
 :root {
   --tv-dark: #0a0e27;
   --tv-darker: #050812;

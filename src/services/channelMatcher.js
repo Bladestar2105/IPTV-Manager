@@ -233,7 +233,7 @@ export class ChannelMatcher {
    * Normalisiert Channel-Basisnamen (ohne Sprache)
    */
   normalizeBaseName(name) {
-    return name
+    let base = name
       .toLowerCase()
       .replace(/\b(?:hd|fhd|uhd|qhd|sd|fd|2k|4k|8k|1080p|720p|hevc|hq|lq|h\.?264|h\.?265|m3u8|50fps|60fps|unknown|unk|slow|dead|backup|rec)\b/gi, '') // Qualität / Status / Rec
       .replace(/\b(?:magenta|myteam|myteamtv)\s*sport\b/gi, 'myteamtv') // Magenta Sport / MyTeam Sport -> MyTeamTV mapping
@@ -246,6 +246,10 @@ export class ChannelMatcher {
       .replace(/\s+(?:network|channel|tv)\s*$/gi, '') // Typische Suffixe entfernen
       .replace(/\s+/g, ' ') // Multiple Spaces
       .trim();
+
+    // Strip leading zeros from numbers
+    base = base.replace(/\b0+(\d+)\b/g, '$1');
+    return base;
   }
 
   /**
@@ -706,8 +710,9 @@ export class ChannelMatcher {
   }
 
   extractNumbers(str) {
+      if (!str) return [];
+      // Look for digits, but ignore standard resolutions like 1080, 720, 2k, 4k that might have leaked through
       const matches = str.match(/\d+/g);
-      // Map extracted numbers, removing leading zeros, e.g. "03" -> "3"
       return matches ? matches.map(num => parseInt(num, 10).toString()) : [];
   }
 

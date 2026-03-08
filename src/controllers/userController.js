@@ -10,7 +10,7 @@ import { BCRYPT_ROUNDS } from '../config/constants.js';
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries FROM users ORDER BY id').all();
     const result = users.map(u => {
         let plainPassword = null;
         if (req.user.is_admin && u.plain_password) {
@@ -30,7 +30,8 @@ export const getUsers = (req, res) => {
             hdhr_enabled: u.hdhr_enabled,
             hdhr_token: u.hdhr_token,
             max_connections: u.max_connections || 0,
-            expiry_date: u.expiry_date
+            expiry_date: u.expiry_date,
+            allowed_countries: u.allowed_countries
         };
     });
     res.json(result);
@@ -40,7 +41,7 @@ export const getUsers = (req, res) => {
 export const createUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date } = req.body;
+    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date, allowed_countries } = req.body;
 
     // Validation
     if (!username || !password) {
@@ -114,7 +115,7 @@ export const createUser = async (req, res) => {
     // Use transaction for atomic creation + copying
     db.transaction(() => {
         // Insert user
-        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             u,
             hashedPassword,
             encryptedPlainPassword,
@@ -122,7 +123,8 @@ export const createUser = async (req, res) => {
             isHdhrEnabled,
             hdhrToken,
             (max_connections !== undefined && max_connections !== '') ? Number(max_connections) : 0,
-            expiry_date || null
+            expiry_date || null,
+            allowed_countries || null
         );
         const newUserId = info.lastInsertRowid;
 
@@ -312,7 +314,7 @@ export const updateUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password, webui_access, hdhr_enabled, max_connections, expiry_date } = req.body;
+    const { username, password, webui_access, hdhr_enabled, max_connections, expiry_date, allowed_countries } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -392,13 +394,18 @@ export const updateUser = async (req, res) => {
         params.push(expiry_date || null);
     }
 
+    if (allowed_countries !== undefined) {
+        updates.push('allowed_countries = ?');
+        params.push(allowed_countries || null);
+    }
+
     if (updates.length === 0) return res.json({success: true}); // Nothing to update
 
     params.push(id);
     db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
     // Security Enhancement: Terminate active streams if security credentials/access changed
-    if (password || expiry_date !== undefined || webui_access !== undefined || hdhr_enabled !== undefined || max_connections !== undefined) {
+    if (password || expiry_date !== undefined || webui_access !== undefined || hdhr_enabled !== undefined || max_connections !== undefined || allowed_countries !== undefined) {
         try {
             const activeStreams = db.prepare('SELECT id FROM current_streams WHERE user_id = ?').all(id);
             for (const stream of activeStreams) {

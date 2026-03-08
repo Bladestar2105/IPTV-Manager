@@ -10,6 +10,7 @@
   <title>IPTV-Manager</title>
   <link rel="icon" type="image/png" href="logo.png">
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
+  <link href="vendor/flag-icons/css/flag-icons.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
 </head>
 <body>
@@ -132,6 +133,9 @@
                   </div>
                   <div class="col-12 col-md-4 col-lg-2">
                      <input type="date" class="form-control form-control-sm" name="expiry_date" data-i18n-label="expiryDate">
+                  </div>
+                  <div class="col-12 col-md-4 col-lg-2">
+                     <input type="text" class="form-control form-control-sm" name="allowed_countries" data-i18n-placeholder="allowedCountriesPlaceholder" data-i18n-label="allowedCountries" placeholder="Countries (e.g. US,GB)">
                   </div>
                   <div class="col-9 col-md-4 col-lg-1"><button class="btn btn-sm btn-primary w-100" type="submit" data-i18n="addUser">Add</button></div>
                   <div class="col-3 col-md-2 col-lg-1"><button class="btn btn-sm btn-outline-secondary w-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
@@ -413,6 +417,12 @@
 
                <button class="btn btn-primary" type="submit" data-i18n="save">Save</button>
             </form>
+            <hr>
+            <div class="mt-3">
+               <h6 data-i18n="geoIpSettings">GeoIP Database</h6>
+               <p class="small text-muted mb-2" data-i18n="geoIpSettingsHelp">Update the local GeoIP database used for Region Locking. This downloads the latest MaxMind GeoLite2 data.</p>
+               <button class="btn btn-secondary" type="button" id="btn-update-geoip" data-i18n="updateGeoIp">Update GeoIP Database</button>
+            </div>
          </div>
       </div>
 
@@ -1097,6 +1107,13 @@
             <div class="mb-3">
               <label class="form-label" data-i18n="expiryDate" for="edit-user-expiry-date">Expiry Date</label>
               <input type="date" class="form-control" id="edit-user-expiry-date">
+            </div>
+            <div class="mb-3">
+              <label class="form-label" data-i18n="allowedCountries" for="edit-user-allowed-countries">Allowed Countries (Region Lock)</label>
+              <div class="small text-muted mb-2" data-i18n="allowedCountriesHelp">Leave empty to allow all countries. Select countries to block access from everywhere else.</div>
+              <select class="form-select" id="edit-user-allowed-countries" multiple size="4">
+                  <!-- Options populated dynamically -->
+              </select>
             </div>
             <div class="mb-3 form-check">
               <input type="checkbox" class="form-check-input" id="edit-user-webui-access">

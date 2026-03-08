@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import db from '../database/db.js';
 import { generateToken, preventTimingAttack, invalidateUserTokens } from '../services/authService.js';
+import { isIpAllowedForUser } from '../services/geoIpService.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS } from '../config/constants.js';
@@ -46,6 +47,14 @@ export const login = async (req, res) => {
           // Log Attempt
           db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(ip, 'login_denied', `User: ${username} (WebUI Access Disabled)`, now);
           return res.status(403).json({ error: 'access_denied_webui' });
+      }
+
+      // Region IP Lock
+      if (!isIpAllowedForUser(ip, user)) {
+          db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+              ip, 'Blocked WebUI Login (Region Lock)', `User: ${username}`, now
+          );
+          return res.status(403).json({ error: 'access_denied_region' });
       }
 
       // Check Password

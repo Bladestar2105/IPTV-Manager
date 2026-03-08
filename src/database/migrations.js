@@ -694,3 +694,17 @@ export function migrateUserExpiryDate(db) {
     console.error('User Expiry Date migration error:', e);
   }
 }
+
+export function migrateUserAllowedCountries(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('allowed_countries')) {
+      db.exec('ALTER TABLE users ADD COLUMN allowed_countries TEXT');
+      console.log('✅ DB Migration: allowed_countries column added to users');
+    }
+  } catch (e) {
+    console.error('User Allowed Countries migration error:', e);
+  }
+}
