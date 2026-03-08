@@ -296,6 +296,8 @@ export const manualMapping = async (req, res) => {
       ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
     `).run(Number(provider_channel_id), epg_channel_id);
 
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'epg_mapped', `User ${req.user.username} manually mapped EPG channel ${epg_channel_id} to provider channel ${provider_channel_id}`, Math.floor(Date.now() / 1000));
+
     clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
@@ -360,6 +362,8 @@ export const resetMapping = async (req, res) => {
     query += `)`;
 
     db.prepare(query).run(...params);
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'epg_mapping_reset', `User ${req.user.username} reset EPG mappings`, Math.floor(Date.now() / 1000));
 
     clearChannelsCache(req.user.id);
     res.json({success: true});
@@ -463,6 +467,11 @@ export const autoMapping = async (req, res) => {
           insert.run(u.pid, u.eid);
         }
       })();
+    }
+
+    if (matched > 0) {
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'epg_auto_mapped', `User ${req.user.username} auto-mapped ${matched} EPG channels`, Math.floor(Date.now() / 1000));
+        clearChannelsCache(req.user.id);
     }
 
     res.json({success: true, matched});

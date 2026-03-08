@@ -176,6 +176,8 @@ export const verifyOtp = (req, res) => {
         const encryptedSecret = encrypt(secret);
         db.prepare(`UPDATE ${table} SET otp_secret = ?, otp_enabled = 1 WHERE id = ?`).run(encryptedSecret, req.user.id);
 
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, '2fa_enabled', `User ${req.user.username} enabled 2FA`, Math.floor(Date.now() / 1000));
+
         res.json({success: true});
     } catch(e) {
         res.status(500).json({error: e.message});
@@ -186,6 +188,9 @@ export const disableOtp = (req, res) => {
     try {
         const table = req.user.is_admin ? 'admin_users' : 'users';
         db.prepare(`UPDATE ${table} SET otp_secret = NULL, otp_enabled = 0 WHERE id = ?`).run(req.user.id);
+
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, '2fa_disabled', `User ${req.user.username} disabled 2FA`, Math.floor(Date.now() / 1000));
+
         res.json({success: true});
     } catch(e) {
         res.status(500).json({error: e.message});
@@ -258,6 +263,8 @@ export const changePassword = async (req, res) => {
     db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
     invalidateUserTokens(userId);
 
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'password_changed', `User ${user.username} changed their password`, Math.floor(Date.now() / 1000));
+
     console.log(`✅ Password changed for ${isAdmin ? 'admin' : 'user'}: ${user.username}`);
 
     res.json({
@@ -303,6 +310,8 @@ export const createPlayerToken = (req, res) => {
 
     // Cleanup old tokens
     db.prepare('DELETE FROM temporary_tokens WHERE expires_at < ?').run(now);
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'web_player_opened', `User ${req.user.username} generated token to open web player`, Math.floor(Date.now() / 1000));
 
     res.json({token});
   } catch (e) {

@@ -24,6 +24,9 @@ export const createUserCategory = (req, res) => {
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
     const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_created', `User ${req.user.username} created category '${name.trim()}'`, Math.floor(Date.now() / 1000));
+
     clearChannelsCache(userId);
     res.json({id: info.lastInsertRowid, is_adult: isAdult, type: catType});
   } catch (e) { res.status(500).json({error: e.message}); }
@@ -43,6 +46,9 @@ export const updateUserCategory = (req, res) => {
 
     const isAdult = isAdultCategory(name) ? 1 : 0;
     db.prepare('UPDATE user_categories SET name = ?, is_adult = ? WHERE id = ?').run(name.trim(), isAdult, id);
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_updated', `User ${req.user.username} updated category '${name.trim()}'`, Math.floor(Date.now() / 1000));
+
     clearChannelsCache(cat.user_id);
     res.json({success: true});
   } catch (e) {
@@ -62,6 +68,8 @@ export const deleteUserCategory = (req, res) => {
     db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
     db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
     db.prepare('DELETE FROM user_categories WHERE id = ?').run(id);
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_deleted', `User ${req.user.username} deleted category ${id}`, Math.floor(Date.now() / 1000));
 
     clearChannelsCache(cat.user_id);
     res.json({success: true});
@@ -97,6 +105,8 @@ export const bulkDeleteUserCategories = (req, res) => {
       db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...ids);
       db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...ids);
     })();
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_bulk_deleted', `User ${req.user.username} bulk deleted ${ids.length} categories`, Math.floor(Date.now() / 1000));
 
     userIdsToClear.forEach(uId => clearChannelsCache(uId));
     res.json({success: true, deleted: ids.length});
