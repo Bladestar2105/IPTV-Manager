@@ -17,7 +17,9 @@ describe('ChannelMatcher', () => {
         { id: '12', name: 'DAZN 1' },
         { id: '13', name: 'US: CNN International' },
         { id: '14', name: 'UK: BBC One' },
-        { id: '15', name: 'DE: Sky Cinema Fun' } // German
+        { id: '15', name: 'DE: Sky Cinema Fun' }, // German
+        { id: '16', name: 'NL: DUCK TV' },
+        { id: '03', name: 'BEIN SPORTS 3' }
     ];
 
     const matcher = new ChannelMatcher(epgChannels);
@@ -44,9 +46,24 @@ describe('ChannelMatcher', () => {
         expect(result.epgChannel.id).toBe('12');
     });
 
+    it('handles zero-padded numbers correctly', () => {
+        const result = matcher.match('DAZN 01');
+        expect(result.epgChannel.id).toBe('12');
+    });
+
+    it('handles zero-padded numbers in EPG correctly', () => {
+        const result = matcher.match('BEIN SPORTS 3 HD [AR]');
+        expect(result.epgChannel.id).toBe('03');
+    });
+
     it('matches fuzzy names', () => {
         const result = matcher.match('Sky Cin. Action');
         expect(result.epgChannel.id).toBe('10');
+    });
+
+    it('strips "rec" tag from channel name', () => {
+        const result = matcher.match('NL: DUCK TV rec');
+        expect(result.epgChannel.id).toBe('16');
     });
 
     it('does not match completely different names', () => {

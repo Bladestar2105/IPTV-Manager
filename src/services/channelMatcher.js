@@ -235,12 +235,15 @@ export class ChannelMatcher {
   normalizeBaseName(name) {
     return name
       .toLowerCase()
-      .replace(/\s+hd|uhd|4k|fhd|hevc|h\.?264|h\.?265/gi, '') // Qualität
+      .replace(/\b(?:hd|fhd|uhd|qhd|sd|fd|2k|4k|8k|1080p|720p|hevc|hq|lq|h\.?264|h\.?265|m3u8|50fps|60fps|unknown|unk|slow|dead|backup|rec)\b/gi, '') // Qualität / Status / Rec
       .replace(/\b(?:magenta|myteam|myteamtv)\s*sport\b/gi, 'myteamtv') // Magenta Sport / MyTeam Sport -> MyTeamTV mapping
       .replace(/\bsport\s*(\d*)\s*(?:-|\|)?\s*myteamtv\b/gi, 'myteamtv $1') // "Sport 1 - myTeamTV" -> "myteamtv 1"
       .replace(/\braw\b/gi, '') // "RAW" entfernen
       .replace(/\s+plus|\s*\+/gi, ' plus') // "+" normalisieren
+      .replace(/\b(?:ucl|uel|uecl|cl|el|pl|f1|spfl|spl)\b/gi, '') // Sport Events/Ligen
       .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
+      .replace(/^the\s+/gi, '') // Startwort "The" entfernen ("The History Channel" -> "history channel")
+      .replace(/\s+(?:network|channel|tv)\s*$/gi, '') // Typische Suffixe entfernen
       .replace(/\s+/g, ' ') // Multiple Spaces
       .trim();
   }
@@ -704,7 +707,8 @@ export class ChannelMatcher {
 
   extractNumbers(str) {
       const matches = str.match(/\d+/g);
-      return matches ? matches : [];
+      // Map extracted numbers, removing leading zeros, e.g. "03" -> "3"
+      return matches ? matches.map(num => parseInt(num, 10).toString()) : [];
   }
 
   findExactMatch(parsed, checkNumbers) {
