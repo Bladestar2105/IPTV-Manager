@@ -1,5 +1,4 @@
 import { parentPort, workerData } from 'worker_threads';
-import { cleanName } from '../utils/epgUtils.js';
 import { ChannelMatcher } from '../services/channelMatcher.js';
 
 export function matchChannels(channels, allEpgChannels, globalMappings) {
@@ -10,7 +9,8 @@ export function matchChannels(channels, allEpgChannels, globalMappings) {
     const globalMap = new Map();
     if (globalMappings) {
         for (const m of globalMappings) {
-            const clean = cleanName(m.name);
+            // We use a stricter normalization for global mappings to avoid cross-language false positives
+            const clean = m.name ? m.name.toLowerCase().replace(/\s+/g, ' ').trim() : '';
             if (clean) globalMap.set(clean, m.epg_channel_id);
         }
     }
@@ -18,9 +18,8 @@ export function matchChannels(channels, allEpgChannels, globalMappings) {
     const matcher = new ChannelMatcher(allEpgChannels);
 
     for (const ch of channels) {
-       const cleaned = cleanName(ch.name);
-
        // A. Prioritize Global Mappings
+       const cleaned = ch.name ? ch.name.toLowerCase().replace(/\s+/g, ' ').trim() : '';
        if (cleaned && globalMap.has(cleaned)) {
            const epgId = globalMap.get(cleaned);
            updates.push({pid: ch.id, eid: epgId});
