@@ -343,25 +343,36 @@ export const resetMapping = async (req, res) => {
     const { provider_id, category_id } = req.body;
     if (!provider_id && !category_id) return res.status(400).json({error: 'provider_id or category_id required'});
 
-    let query = `DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (`;
-    const params = [];
-
     if (category_id) {
-        let subQuery = `SELECT provider_channel_id FROM user_channels uc JOIN user_categories cat ON cat.id = uc.user_category_id WHERE uc.user_category_id = ?`;
-        params.push(Number(category_id));
-        if (!req.user.is_admin) {
-            subQuery += ` AND cat.user_id = ?`;
-            params.push(req.user.id);
+        if (req.user.is_admin) {
+            db.prepare(`
+                DELETE FROM epg_channel_mappings
+                WHERE provider_channel_id IN (
+                    SELECT provider_channel_id
+                    FROM user_channels
+                    WHERE user_category_id = ?
+                )
+            `).run(Number(category_id));
+        } else {
+            db.prepare(`
+                DELETE FROM epg_channel_mappings
+                WHERE provider_channel_id IN (
+                    SELECT uc.provider_channel_id
+                    FROM user_channels uc
+                    JOIN user_categories cat ON cat.id = uc.user_category_id
+                    WHERE uc.user_category_id = ? AND cat.user_id = ?
+                )
+            `).run(Number(category_id), req.user.id);
         }
-        query += subQuery;
     } else {
         if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-        query += `SELECT id FROM provider_channels WHERE provider_id = ?`;
-        params.push(Number(provider_id));
+        db.prepare(`
+            DELETE FROM epg_channel_mappings
+            WHERE provider_channel_id IN (
+                SELECT id FROM provider_channels WHERE provider_id = ?
+            )
+        `).run(Number(provider_id));
     }
-    query += `)`;
-
-    db.prepare(query).run(...params);
 
     db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'epg_mapping_reset', `User ${req.user.username} reset EPG mappings`, Math.floor(Date.now() / 1000));
 
@@ -378,45 +389,63 @@ export const autoMapping = async (req, res) => {
     const { provider_id, category_id, only_used } = req.body;
     if (!provider_id && !category_id) return res.status(400).json({error: 'provider_id or category_id required'});
 
-    let query = `
-      SELECT pc.id, pc.name, pc.epg_channel_id
-      FROM provider_channels pc
-      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE map.id IS NULL
-    `;
-    const params = [];
-
+    let channels = [];
     if (category_id) {
-        query += ` AND pc.id IN (
-            SELECT uc.provider_channel_id
-            FROM user_channels uc
-            JOIN user_categories cat ON cat.id = uc.user_category_id
-            WHERE uc.user_category_id = ?
-        `;
-        params.push(Number(category_id));
-        if (!req.user.is_admin) {
-            query += ` AND cat.user_id = ?`;
-            params.push(req.user.id);
+        if (req.user.is_admin) {
+            channels = db.prepare(`
+                SELECT pc.id, pc.name, pc.epg_channel_id
+                FROM provider_channels pc
+                LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+                WHERE map.id IS NULL AND pc.id IN (
+                    SELECT provider_channel_id
+                    FROM user_channels
+                    WHERE user_category_id = ?
+                )
+            `).all(Number(category_id));
+        } else {
+            channels = db.prepare(`
+                SELECT pc.id, pc.name, pc.epg_channel_id
+                FROM provider_channels pc
+                LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+                WHERE map.id IS NULL AND pc.id IN (
+                    SELECT uc.provider_channel_id
+                    FROM user_channels uc
+                    JOIN user_categories cat ON cat.id = uc.user_category_id
+                    WHERE uc.user_category_id = ? AND cat.user_id = ?
+                )
+            `).all(Number(category_id), req.user.id);
         }
-        query += `)`;
     } else {
-        query += ` AND pc.provider_id = ?`;
-        params.push(Number(provider_id));
-
-        if (!req.user.is_admin) {
-            query += ` AND pc.id IN (
-                SELECT uc.provider_channel_id
-                FROM user_channels uc
-                JOIN user_categories cat ON cat.id = uc.user_category_id
-                WHERE cat.user_id = ?
-            )`;
-            params.push(req.user.id);
-        } else if (only_used) {
-            query += ` AND pc.id IN (SELECT provider_channel_id FROM user_channels)`;
+        if (req.user.is_admin) {
+            if (only_used) {
+                channels = db.prepare(`
+                    SELECT pc.id, pc.name, pc.epg_channel_id
+                    FROM provider_channels pc
+                    LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+                    WHERE map.id IS NULL AND pc.provider_id = ? AND pc.id IN (SELECT provider_channel_id FROM user_channels)
+                `).all(Number(provider_id));
+            } else {
+                channels = db.prepare(`
+                    SELECT pc.id, pc.name, pc.epg_channel_id
+                    FROM provider_channels pc
+                    LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+                    WHERE map.id IS NULL AND pc.provider_id = ?
+                `).all(Number(provider_id));
+            }
+        } else {
+            channels = db.prepare(`
+                SELECT pc.id, pc.name, pc.epg_channel_id
+                FROM provider_channels pc
+                LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+                WHERE map.id IS NULL AND pc.provider_id = ? AND pc.id IN (
+                    SELECT uc.provider_channel_id
+                    FROM user_channels uc
+                    JOIN user_categories cat ON cat.id = uc.user_category_id
+                    WHERE cat.user_id = ?
+                )
+            `).all(Number(provider_id), req.user.id);
         }
     }
-
-    const channels = db.prepare(query).all(...params);
 
     if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
 
