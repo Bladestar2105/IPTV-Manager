@@ -521,7 +521,8 @@ export const playerChannelsJson = async (req, res) => {
     `).all(user.id);
 
     if (user.is_share_guest) {
-        channels = channels.filter(ch => user.allowed_channels.includes(ch.user_channel_id));
+        const allowedSet = new Set(user.allowed_channels || []);
+        channels = channels.filter(ch => allowedSet.has(ch.user_channel_id));
 
         const nowSec = Date.now() / 1000;
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
@@ -635,7 +636,8 @@ export const playerPlaylist = async (req, res) => {
     `).all(user.id);
 
     if (user.is_share_guest) {
-        channels = channels.filter(ch => user.allowed_channels.includes(ch.user_channel_id));
+        const allowedSet = new Set(user.allowed_channels || []);
+        channels = channels.filter(ch => allowedSet.has(ch.user_channel_id));
 
         // Also check start/end time validity for the playlist itself (though stream controller enforces it too)
         const nowSec = Date.now() / 1000;
