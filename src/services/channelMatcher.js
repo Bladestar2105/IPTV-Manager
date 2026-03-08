@@ -240,6 +240,7 @@ export class ChannelMatcher {
       .replace(/\bsport\s*(\d*)\s*(?:-|\|)?\s*myteamtv\b/gi, 'myteamtv $1') // "Sport 1 - myTeamTV" -> "myteamtv 1"
       .replace(/\braw\b/gi, '') // "RAW" entfernen
       .replace(/\s+plus|\s*\+/gi, ' plus') // "+" normalisieren
+      .replace(/\b(?:ucl|uel|uecl|cl|el|pl|f1|nfl|nba|nhl|mlb|spfl|spl)\b/gi, '') // Sport Events/Ligen
       .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
       .replace(/\s+/g, ' ') // Multiple Spaces
       .trim();
