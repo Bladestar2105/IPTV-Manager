@@ -40,7 +40,7 @@ export const getUsers = (req, res) => {
 export const createUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections } = req.body;
+    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date } = req.body;
 
     // Validation
     if (!username || !password) {
