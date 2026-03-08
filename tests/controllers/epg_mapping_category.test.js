@@ -80,7 +80,7 @@ describe('EPG Mapping Category Mode', () => {
         it('should allow admin to reset by provider', async () => {
             db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'EPG1'), (2, 'EPG2')").run();
 
-            const req = { body: { provider_id: 1 }, user: { id: 1, is_admin: true } };
+            const req = { body: { provider_id: 1 }, user: { id: 1, is_admin: true, username: 'admin' }, ip: '127.0.0.1' };
             const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
 
             await epgController.resetMapping(req, res);
@@ -93,7 +93,7 @@ describe('EPG Mapping Category Mode', () => {
             db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'EPG1'), (2, 'EPG2')").run();
 
             // User 2 only owns channel 1 via category 1
-            const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false } };
+            const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
             const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
 
             await epgController.resetMapping(req, res);
@@ -109,7 +109,7 @@ describe('EPG Mapping Category Mode', () => {
             db.prepare("INSERT INTO user_channels (user_category_id, provider_channel_id) VALUES (2, 2)").run();
             db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'EPG1'), (2, 'EPG2')").run();
 
-            const req = { body: { category_id: 2 }, user: { id: 2, is_admin: false } };
+            const req = { body: { category_id: 2 }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
             const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
 
             await epgController.resetMapping(req, res);
@@ -122,7 +122,7 @@ describe('EPG Mapping Category Mode', () => {
     describe('autoMapping', () => {
         it('should allow non-admin to auto-map by category', async () => {
             // Channel 1 matches EPG Channel 1 by name
-            const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false } };
+            const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
             const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
 
             // We need to mock loadAllEpgChannels or the worker
@@ -140,7 +140,7 @@ describe('EPG Mapping Category Mode', () => {
             epgDb.prepare("INSERT INTO epg_channels (id, name, source_id, source_type) VALUES ('TEST_EPG_ID_2', 'Test Channel 2', 1, 'provider')").run();
 
             // Auto-map for Category 1 (only contains Channel 1)
-            const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false } };
+            const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
             const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
 
             await epgController.autoMapping(req, res);
