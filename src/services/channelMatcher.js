@@ -235,13 +235,15 @@ export class ChannelMatcher {
   normalizeBaseName(name) {
     return name
       .toLowerCase()
-      .replace(/\b(?:hd|fhd|uhd|qhd|sd|2k|4k|8k|hevc|hq|lq|h\.?264|h\.?265|m3u8)\b/gi, '') // Qualität
+      .replace(/\b(?:hd|fhd|uhd|qhd|sd|fd|2k|4k|8k|1080p|720p|hevc|hq|lq|h\.?264|h\.?265|m3u8|50fps|60fps|unknown|unk|slow|dead|backup)\b/gi, '') // Qualität / Status
       .replace(/\b(?:magenta|myteam|myteamtv)\s*sport\b/gi, 'myteamtv') // Magenta Sport / MyTeam Sport -> MyTeamTV mapping
       .replace(/\bsport\s*(\d*)\s*(?:-|\|)?\s*myteamtv\b/gi, 'myteamtv $1') // "Sport 1 - myTeamTV" -> "myteamtv 1"
       .replace(/\braw\b/gi, '') // "RAW" entfernen
       .replace(/\s+plus|\s*\+/gi, ' plus') // "+" normalisieren
-      .replace(/\b(?:ucl|uel|uecl|cl|el|pl|f1|nfl|nba|nhl|mlb|spfl|spl)\b/gi, '') // Sport Events/Ligen
+      .replace(/\b(?:ucl|uel|uecl|cl|el|pl|f1|spfl|spl)\b/gi, '') // Sport Events/Ligen
       .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
+      .replace(/^the\s+/gi, '') // Startwort "The" entfernen ("The History Channel" -> "history channel")
+      .replace(/\s+(?:network|channel|tv)\s*$/gi, '') // Typische Suffixe entfernen
       .replace(/\s+/g, ' ') // Multiple Spaces
       .trim();
   }
