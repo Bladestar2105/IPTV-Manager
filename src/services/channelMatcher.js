@@ -235,7 +235,7 @@ export class ChannelMatcher {
   normalizeBaseName(name) {
     return name
       .toLowerCase()
-      .replace(/\b(?:hd|fhd|uhd|qhd|sd|fd|2k|4k|8k|1080p|720p|hevc|hq|lq|h\.?264|h\.?265|m3u8|50fps|60fps|unknown|unk|slow|dead|backup)\b/gi, '') // Qualität / Status
+      .replace(/\b(?:hd|fhd|uhd|qhd|sd|fd|2k|4k|8k|1080p|720p|hevc|hq|lq|h\.?264|h\.?265|m3u8|50fps|60fps|unknown|unk|slow|dead|backup|rec)\b/gi, '') // Qualität / Status / Rec
       .replace(/\b(?:magenta|myteam|myteamtv)\s*sport\b/gi, 'myteamtv') // Magenta Sport / MyTeam Sport -> MyTeamTV mapping
       .replace(/\bsport\s*(\d*)\s*(?:-|\|)?\s*myteamtv\b/gi, 'myteamtv $1') // "Sport 1 - myTeamTV" -> "myteamtv 1"
       .replace(/\braw\b/gi, '') // "RAW" entfernen
@@ -707,7 +707,8 @@ export class ChannelMatcher {
 
   extractNumbers(str) {
       const matches = str.match(/\d+/g);
-      return matches ? matches : [];
+      // Map extracted numbers, removing leading zeros, e.g. "03" -> "3"
+      return matches ? matches.map(num => parseInt(num, 10).toString()) : [];
   }
 
   findExactMatch(parsed, checkNumbers) {
