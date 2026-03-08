@@ -4224,7 +4224,7 @@ function showToast(message, type = 'primary') {
                 ${icon ? `<span class="fs-5">${icon}</span>` : ''}
                 <div>${message}</div>
             </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" data-i18n-label="close"></button>
         </div>
     `;
 

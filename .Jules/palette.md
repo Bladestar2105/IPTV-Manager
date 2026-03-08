@@ -37,3 +37,7 @@
 ## 2026-03-02 - [Contextual List Selection State]
 **Learning:** Master-detail views (like a user list updating a details panel) can leave users disoriented if the currently selected item in the master list isn't visually highlighted, especially when returning to the tab after interacting with the details. In addition, only making the text clickable reduces the target area.
 **Action:** Always apply an `.active` state to the selected `list-group-item` in the master list, and ensure the clickable area (using `flex-grow-1` and padding like `py-1`) covers the entire row for better Fitts's Law compliance.
+
+## 2026-03-05 - [Localized Screen Reader Labels]
+**Learning:** Hardcoded `aria-label` attributes (e.g., `aria-label="Clear search"`, `aria-label="Close"`) on icon-only buttons remain in English regardless of the user's selected language, reducing accessibility for non-English screen reader users.
+**Action:** Always use the declarative `data-i18n-label="key"` attribute (e.g., `data-i18n-label="clearSearch"`) instead of `aria-label` directly in the HTML. The `translatePage` utility will automatically translate it and set the `aria-label` accordingly.
