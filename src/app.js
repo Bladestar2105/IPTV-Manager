@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { securityHeaders, ipBlocker, apiLimiter } from './middleware/security.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { redactUrl } from './utils/helpers.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -53,18 +54,7 @@ app.use(cors({
 }));
 
 // Logging
-morgan.token('url', (req, res) => {
-  let url = req.originalUrl || req.url;
-  // Redact password in path segments: /live/user/PASS/..., /movie/user/PASS/...,
-  // /series/user/PASS/..., /timeshift/user/PASS/..., /live/mpd/user/PASS/...,
-  // /live/segment/user/PASS/...
-  url = url.replace(/\/(live|movie|series|timeshift)\/((?:mpd|segment)\/)?([^/]+)\/([^/]+)\//, '/$1/$2$3/********/');
-  // Redact HDHomeRun token: /hdhr/TOKEN/...
-  url = url.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
-  // Redact password in query strings: ?password=xxx or &password=xxx
-  url = url.replace(/([?&])password=[^&]*/gi, '$1password=********');
-  return url;
-});
+morgan.token('url', (req) => redactUrl(req.originalUrl || req.url));
 app.use(morgan('[:date[iso]] :method :url :status :response-time ms - :res[content-length]'));
 
 // IP Blocking
