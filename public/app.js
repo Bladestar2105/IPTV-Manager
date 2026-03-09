@@ -2462,7 +2462,7 @@ document.addEventListener('DOMContentLoaded', () => {
       btnUpdateGeoip.addEventListener('click', async () => {
           setLoadingState(btnUpdateGeoip, true, 'updating');
           try {
-              const res = await fetchJSON('/api/system/geoip/update', { method: 'POST' });
+              const res = await fetchJSON('/api/geoip/update', { method: 'POST' });
               showToast(res.message || t('success'), 'success');
           } catch (e) {
               showToast(t('errorPrefix') + ' ' + e.message, 'danger');
