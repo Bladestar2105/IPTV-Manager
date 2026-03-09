@@ -9,3 +9,7 @@
 **Vulnerability:** The `resetMapping` and `autoMapping` functions in `src/controllers/epgController.js` were using dynamic SQL query construction by concatenating string fragments based on request parameters (`category_id`, `provider_id`). While values were passed via prepared statement parameters, the query structure itself was built dynamically, which is a security risk and can lead to SQL injection if not handled with extreme care.
 **Learning:** Even when using prepared statements for values, building the SQL query string dynamically from fragments is a fragile pattern that can be flagged by security audits. Static SQL strings are safer and more robust.
 **Prevention:** Always use static SQL string literals for each logic branch in database operations. If multiple query variations are needed, use separate, fully-formed `db.prepare()` calls instead of building a single query string through concatenation.
+## 2024-03-08 - [Missing XSS Sanitization in innerHTML error and search strings]
+**Vulnerability:** User inputs (`search`) and error responses (`e.message`) were directly passed into DOM template literals without encoding and rendered via `innerHTML`.
+**Learning:** `innerHTML` allows XSS evaluation of unsanitized HTML tags (like `<img src=x onerror=...>`) when injecting text from potentially untrusted origins.
+**Prevention:** Always wrap variables that could include untrusted strings with `escapeHtml` (or standard framework escaping) when doing raw `innerHTML` string interpolation.

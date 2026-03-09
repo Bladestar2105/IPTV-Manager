@@ -1219,7 +1219,7 @@ function renderProviderCategories() {
     : providerCategories;
 
   if (filtered.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: search})}</li>`;
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: escapeHtml(search)})}</li>`;
     return;
   }
 
@@ -1474,7 +1474,7 @@ function renderProviderChannels(channels) {
   if (oldLoadMore) oldLoadMore.parentElement.remove();
 
   if (channels.length === 0 && list.children.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: channelSearch})}</li>`;
+    list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: escapeHtml(channelSearch)})}</li>`;
     return;
   }
   
@@ -3464,7 +3464,7 @@ async function loadEpgMappingChannels() {
 
         finishLoadingMapping();
       } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</td></tr>`;
       }
   } else {
       // Category Mode
@@ -3490,7 +3490,7 @@ async function loadEpgMappingChannels() {
 
           finishLoadingMapping();
       } catch(e) {
-          tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</td></tr>`;
       }
   }
 }
@@ -3527,7 +3527,7 @@ function renderEpgMappingChannels() {
   tbody.innerHTML = '';
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('noResults', {search: search})}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('noResults', {search: escapeHtml(search)})}</td></tr>`;
     return;
   }
 
@@ -3764,7 +3764,7 @@ async function loadEpgSuggestions(channelId) {
     });
 
   } catch (e) {
-    list.innerHTML = `<li class="list-group-item text-center text-danger">${t('errorPrefix')} ${e.message}</li>`;
+    list.innerHTML = `<li class="list-group-item text-center text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</li>`;
   }
 }
 
@@ -3791,7 +3791,7 @@ function filterEpgSelectionList() {
   const toRender = filtered.slice(0, 100);
 
   if (toRender.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-center text-muted">${t('noResults', {search: search})}</li>`;
+    list.innerHTML = `<li class="list-group-item text-center text-muted">${t('noResults', {search: escapeHtml(search)})}</li>`;
     return;
   }
 
@@ -4443,7 +4443,7 @@ async function loadSharesList() {
         });
 
     } catch(e) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -4584,7 +4584,7 @@ async function loadUserBackups() {
         });
 
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${t('errorPrefix')} ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</td></tr>`;
         showToast(t('errorPrefix') + ' ' + e.message, 'danger');
     }
 }

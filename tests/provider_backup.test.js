@@ -35,6 +35,7 @@ vi.mock('../src/services/authService.js', () => ({
 }));
 
 vi.mock('../src/utils/helpers.js', () => ({
+    redactUrl: vi.fn(url => url),
     getBaseUrl: vi.fn(() => 'http://localhost:3000'),
     isSafeUrl: vi.fn(async () => true),
     safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4))
