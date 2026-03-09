@@ -176,6 +176,7 @@ export const deviceXml = async (req, res) => {
     <major>1</major>
     <minor>0</minor>
   </specVersion>
+  <URLBase>${baseURL}</URLBase>
   <device>
     <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
     <friendlyName>${escapeXml(friendlyName)}</friendlyName>
@@ -185,7 +186,6 @@ export const deviceXml = async (req, res) => {
     <serialNumber>${deviceID}</serialNumber>
     <UDN>uuid:${deviceID}</UDN>
     <presentationURL>${baseURL}</presentationURL>
-    <URLBase>${baseURL}/</URLBase>
   </device>
 </root>`;
 
