@@ -1715,8 +1715,11 @@ document.getElementById('user-form').addEventListener('submit', async e => {
         body.expiry_date = f.expiry_date.value;
     }
 
-    if (f.allowed_countries && f.allowed_countries.value) {
-        body.allowed_countries = f.allowed_countries.value;
+    if (f.allowed_countries && f.allowed_countries.selectedOptions) {
+        const selected = Array.from(f.allowed_countries.selectedOptions).map(opt => opt.value);
+        if (selected.length > 0) {
+            body.allowed_countries = selected.join(',');
+        }
     }
 
     if (f.copy_from_user_id && f.copy_from_user_id.value) {
@@ -2336,7 +2339,6 @@ function populateCountryDropdown(selectId) {
         const option = document.createElement('option');
         option.value = code;
         option.textContent = `[${code}] ${name}`;
-        option.className = `fi fi-${code.toLowerCase()}`;
         select.appendChild(option);
     });
 }
@@ -2454,6 +2456,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const btnCreateBackup = document.getElementById('btn-create-backup');
   if (btnCreateBackup) btnCreateBackup.addEventListener('click', createUserBackup);
+
+  const btnUpdateGeoip = document.getElementById('btn-update-geoip');
+  if (btnUpdateGeoip) {
+      btnUpdateGeoip.addEventListener('click', async () => {
+          setLoadingState(btnUpdateGeoip, true, 'updating');
+          try {
+              const res = await fetchJSON('/api/system/geoip/update', { method: 'POST' });
+              showToast(res.message || t('success'), 'success');
+          } catch (e) {
+              showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+          } finally {
+              setLoadingState(btnUpdateGeoip, false);
+          }
+      });
+  }
 
   // Bulk Import Events
   const btnSelectAll = document.getElementById('cat-select-all');
