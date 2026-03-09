@@ -222,10 +222,12 @@ export const createUser = async (req, res) => {
 
                 // 3b. Copy EPG Channel Mappings
                 const insertEpgMap = db.prepare('INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (?, ?)');
+                // Optimization: Hoist db.prepare outside the loop to prevent O(N) database query compilations
+                const selectEpgMap = db.prepare('SELECT epg_channel_id FROM epg_channel_mappings WHERE provider_channel_id = ?');
                 // Get all mappings where provider_channel_id is in our key set
                 // Efficient way: loop channelMap keys
                 for (const oldChId of Object.keys(channelMap)) {
-                    const mapping = db.prepare('SELECT epg_channel_id FROM epg_channel_mappings WHERE provider_channel_id = ?').get(oldChId);
+                    const mapping = selectEpgMap.get(oldChId);
                     if (mapping) {
                         insertEpgMap.run(channelMap[oldChId], mapping.epg_channel_id);
                     }
