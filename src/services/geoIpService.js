@@ -12,9 +12,9 @@ export function isIpAllowedForUser(ip, user) {
   if (!user || user.is_admin) return true;
 
   // If no countries are allowed (null or empty string), then no restrictions apply
-  if (!user.allowed_countries) return true;
+  if (!user.allowed_countries || user.allowed_countries === 'null' || user.allowed_countries === 'undefined') return true;
 
-  const allowedList = user.allowed_countries.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+  const allowedList = String(user.allowed_countries).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
 
   // Empty array after splitting means no restriction
   if (allowedList.length === 0) return true;
