@@ -184,16 +184,28 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
 
         // Success: Rename cache file if no cache error occurred
         if (!cacheError && !fileStream.destroyed) {
-            // Wait for fileStream to fully flush
+            // Wait for fileStream to fully flush and close
             await new Promise((resolve) => {
-                if (fileStream.writableEnded) resolve();
-                else fileStream.on('finish', resolve);
+                if (fileStream.closed || fileStream.destroyed) {
+                    resolve();
+                } else {
+                    fileStream.on('finish', resolve);
+                    fileStream.on('close', resolve);
+                    fileStream.on('error', resolve);
+                }
             });
-            await fs.promises.rename(tempPath, filePath);
+
+            if (!cacheError && !fileStream.destroyed) {
+                try {
+                    await fs.promises.rename(tempPath, filePath);
+                } catch (renameErr) {
+                    console.error('Cache rename error:', renameErr);
+                }
+            }
         }
     } catch (err) {
         // Clean up on error
-        if (fileStream) fileStream.destroy();
+        if (fileStream && !fileStream.destroyed) fileStream.destroy();
 
         if (err.message === 'Image too large') {
             if (!res.headersSent) {
@@ -227,10 +239,18 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
     }
 
     if (error.message === 'Image too large') {
-        return res.status(413).send('Image too large');
+        if (!res.headersSent) {
+            return res.status(413).send('Image too large');
+        } else {
+            return res.destroy();
+        }
     }
 
-    res.status(500).send('Internal Server Error');
+    if (!res.headersSent) {
+        res.status(500).send('Internal Server Error');
+    } else {
+        res.destroy(); // Truncate response if headers were already sent
+    }
   }
 });
 
