@@ -5,7 +5,7 @@ import * as streamController from '../controllers/streamController.js';
 const router = express.Router();
 
 router.get(['/:token/discover.json', '/:token//discover.json'], hdhrController.discover);
-router.get(['/:token/device.xml', '/:token//device.xml'], hdhrController.deviceXml);
+router.get(['/:token', '/:token/', '/:token/device.xml', '/:token//device.xml'], hdhrController.deviceXml);
 router.get(['/:token/lineup_status.json', '/:token//lineup_status.json'], hdhrController.lineupStatus);
 router.get(['/:token/lineup.json', '/:token//lineup.json'], hdhrController.lineup);
 router.get('/:token/auto/v:channelId', hdhrController.auto);
