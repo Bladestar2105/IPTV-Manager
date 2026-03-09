@@ -521,7 +521,7 @@ function renderUserDetails(u) {
             const protocol = window.location.protocol;
             const host = window.location.host;
             // u.hdhr_token is returned by GET /api/users
-            if (hdhrUrlInput) hdhrUrlInput.value = `${protocol}//${host}/hdhr/${u.hdhr_token}/discover.json`;
+            if (hdhrUrlInput) hdhrUrlInput.value = `${protocol}//${host}/hdhr/${u.hdhr_token}`;
         } else {
             hdhrEnabledSection.classList.add('d-none');
             hdhrDisabledSection.classList.remove('d-none');
