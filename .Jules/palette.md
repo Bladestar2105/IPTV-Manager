@@ -41,3 +41,7 @@
 ## 2026-03-05 - [Localized Screen Reader Labels]
 **Learning:** Hardcoded `aria-label` attributes (e.g., `aria-label="Clear search"`, `aria-label="Close"`) on icon-only buttons remain in English regardless of the user's selected language, reducing accessibility for non-English screen reader users.
 **Action:** Always use the declarative `data-i18n-label="key"` attribute (e.g., `data-i18n-label="clearSearch"`) instead of `aria-label` directly in the HTML. The `translatePage` utility will automatically translate it and set the `aria-label` accordingly.
+
+## 2024-03-08 - Added show/hide password buttons to export/import
+**Learning:** Missed toggles on password inputs like "Encryption Password" / "Decryption Password" degrade the user experience significantly because typos can easily occur, leading to data loss/failure. Centralized Javascript logic handles the toggling for `data-toggle-password` attributes, making it very easy to keep the UX consistent.
+**Action:** When adding new input fields that obscure data, always verify if existing components have toggles, and use the global `data-toggle-password` handler to easily give the users visibility into their inputs.
