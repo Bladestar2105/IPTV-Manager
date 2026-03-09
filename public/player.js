@@ -240,7 +240,7 @@ function escapeHtml(unsafe) {
       }
     } catch (e) {
       console.error('Init error:', e);
-      showToast(t('errorLoadingData') + ': ' + e.message, 'danger', 10000);
+      showToast(t('errorLoadingData') + ': ' + escapeHtml(e.message), 'danger', 10000);
     } finally {
       loadingEl.style.display = 'none';
       loadingEl.classList.add('d-none');
