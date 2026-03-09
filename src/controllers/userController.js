@@ -124,7 +124,7 @@ export const createUser = async (req, res) => {
             hdhrToken,
             (max_connections !== undefined && max_connections !== '') ? Number(max_connections) : 0,
             expiry_date || null,
-            allowed_countries || null
+            (allowed_countries && allowed_countries !== 'null' && allowed_countries !== 'undefined') ? allowed_countries : null
         );
         const newUserId = info.lastInsertRowid;
 
@@ -398,7 +398,7 @@ export const updateUser = async (req, res) => {
 
     if (allowed_countries !== undefined) {
         updates.push('allowed_countries = ?');
-        params.push(allowed_countries || null);
+        params.push((allowed_countries && allowed_countries !== 'null' && allowed_countries !== 'undefined') ? allowed_countries : null);
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update

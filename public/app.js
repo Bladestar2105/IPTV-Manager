@@ -748,7 +748,7 @@ function showEditUserModal(user) {
 
   // Set selected countries
   const allowedCountriesSelect = document.getElementById('edit-user-allowed-countries');
-  const userCountries = user.allowed_countries ? user.allowed_countries.split(',').map(c => c.trim().toUpperCase()) : [];
+  const userCountries = (user.allowed_countries && user.allowed_countries !== 'null' && user.allowed_countries !== 'undefined') ? user.allowed_countries.split(',').map(c => c.trim().toUpperCase()) : [];
   Array.from(allowedCountriesSelect.options).forEach(opt => {
       opt.selected = userCountries.includes(opt.value);
   });
