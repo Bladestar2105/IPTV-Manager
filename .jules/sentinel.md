@@ -13,3 +13,7 @@
 **Vulnerability:** User inputs (`search`) and error responses (`e.message`) were directly passed into DOM template literals without encoding and rendered via `innerHTML`.
 **Learning:** `innerHTML` allows XSS evaluation of unsanitized HTML tags (like `<img src=x onerror=...>`) when injecting text from potentially untrusted origins.
 **Prevention:** Always wrap variables that could include untrusted strings with `escapeHtml` (or standard framework escaping) when doing raw `innerHTML` string interpolation.
+## 2025-03-09 - [Missing Provider Authorization]
+**Vulnerability:** IDOR in Provider Categories and Channels retrieval endpoints.
+**Learning:** `getProviderChannels` and `getProviderCategories` lacked ownership checks, allowing any user to query details of any provider by ID.
+**Prevention:** Always verify `!req.user.is_admin && provider.user_id !== req.user.id` when returning provider-specific data.
