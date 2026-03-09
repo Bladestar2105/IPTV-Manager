@@ -52,6 +52,18 @@ describe('HDHR Routing', () => {
         expect(res.status).toBe(200);
     });
 
+    it('should handle presentationURL root request', async () => {
+        const res = await request(app).get('/hdhr/TOKEN');
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toContain('application/xml');
+    });
+
+    it('should handle presentationURL root request with trailing slash', async () => {
+        const res = await request(app).get('/hdhr/TOKEN/');
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toContain('application/xml');
+    });
+
     it('should handle double slash in lineup.json request', async () => {
         const res = await request(app).get('/hdhr/TOKEN//lineup.json');
         expect(res.status).toBe(200);

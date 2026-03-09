@@ -185,7 +185,6 @@ export const deviceXml = async (req, res) => {
     <modelNumber>HDHR4-2US</modelNumber>
     <serialNumber>${deviceID}</serialNumber>
     <UDN>uuid:${deviceID}</UDN>
-    <presentationURL>${baseURL}</presentationURL>
   </device>
 </root>`;
 
