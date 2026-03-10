@@ -21,6 +21,7 @@ const stmts = {
     getChannel: null,
     getStat: null,
     updateStat: null,
+    updateStatTimeOnly: null,
     insertStat: null,
     getProvider: null
 };
@@ -52,13 +53,18 @@ function getChannel(streamId, userId) {
 }
 
 function getStat(channelId) {
-    if (!stmts.getStat) stmts.getStat = db.prepare('SELECT id FROM stream_stats WHERE channel_id = ?');
+    if (!stmts.getStat) stmts.getStat = db.prepare('SELECT id, last_viewed FROM stream_stats WHERE channel_id = ?');
     return stmts.getStat.get(channelId);
 }
 
 function updateStat(lastViewed, id) {
     if (!stmts.updateStat) stmts.updateStat = db.prepare('UPDATE stream_stats SET views = views + 1, last_viewed = ? WHERE id = ?');
     return stmts.updateStat.run(lastViewed, id);
+}
+
+function updateStatTimeOnly(lastViewed, id) {
+    if (!stmts.updateStatTimeOnly) stmts.updateStatTimeOnly = db.prepare('UPDATE stream_stats SET last_viewed = ? WHERE id = ?');
+    return stmts.updateStatTimeOnly.run(lastViewed, id);
 }
 
 function insertStat(channelId, lastViewed) {
@@ -186,32 +192,34 @@ export const proxyMpd = async (req, res) => {
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
-    if (relativePath.endsWith('.mpd')) {
-        const isSessionActive = await streamManager.isSessionActive(user.id, req.ip, `${channel.name} (DASH)`, channel.provider_id);
-        if (!isSessionActive) {
-            if (user.max_connections > 0) {
-                const active = await streamManager.getUserConnectionCount(user.id);
-                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-            }
-
-            if (channel.provider_max_connections > 0) {
-                const active = await streamManager.getProviderConnectionCount(channel.provider_id);
-                if (active >= channel.provider_max_connections) return res.status(403).send('Provider max connections reached');
-            }
+    const isSessionActive = await streamManager.isSessionActive(user.id, req.ip, `${channel.name} (DASH)`, channel.provider_id);
+    if (!isSessionActive) {
+        if (user.max_connections > 0) {
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
 
-        await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res, channel.provider_id);
-        try {
-            const now = Math.floor(Date.now() / 1000);
-            const existingStat = getStat(channel.provider_channel_id);
-            if (existingStat) {
+        if (channel.provider_max_connections > 0) {
+            const active = await streamManager.getProviderConnectionCount(channel.provider_id);
+            if (active >= channel.provider_max_connections) return res.status(403).send('Provider max connections reached');
+        }
+    }
+
+    await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res, channel.provider_id);
+    try {
+        const now = Math.floor(Date.now() / 1000);
+        const existingStat = getStat(channel.provider_channel_id);
+        if (existingStat) {
+            if (now - existingStat.last_viewed > 60) {
                 updateStat(now, existingStat.id);
             } else {
-                insertStat(channel.provider_channel_id, now);
+                updateStatTimeOnly(now, existingStat.id);
             }
-        } catch (e) {
-            console.error('Error updating stream stats (MPD):', e.message);
+        } else {
+            insertStat(channel.provider_channel_id, now);
         }
+    } catch (e) {
+        console.error('Error updating stream stats (MPD):', e.message);
     }
 
     let upstream, successfulUrl;
@@ -307,7 +315,11 @@ export const proxyLive = async (req, res) => {
         const now = Math.floor(Date.now() / 1000);
         const existingStat = getStat(channel.provider_channel_id);
         if (existingStat) {
-            updateStat(now, existingStat.id);
+            if (now - existingStat.last_viewed > 60) {
+                updateStat(now, existingStat.id);
+            } else {
+                updateStatTimeOnly(now, existingStat.id);
+            }
         } else {
             insertStat(channel.provider_channel_id, now);
         }
@@ -449,7 +461,7 @@ export const proxyLive = async (req, res) => {
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
@@ -459,7 +471,7 @@ export const proxyLive = async (req, res) => {
         try {
           const absoluteUrl = new URL(p1, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
           const encrypted = encrypt(JSON.stringify(payload));
           return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
         } catch (e) {
@@ -516,6 +528,10 @@ export const proxyLive = async (req, res) => {
 
 // --- Segment Proxy ---
 export const proxySegment = async (req, res) => {
+  const connectionId = crypto.randomUUID();
+  let channelName = null;
+  let providerId = 0;
+
   try {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
@@ -554,6 +570,8 @@ export const proxySegment = async (req, res) => {
 
             const payload = JSON.parse(decrypted);
             if (payload.u) targetUrl = payload.u;
+            if (payload.c) channelName = payload.c;
+            if (payload.p) providerId = payload.p;
             // Merge per-segment overrides (if any, legacy support)
             if (payload.h) Object.assign(headers, payload.h);
             if (payload.s !== undefined) {
@@ -603,6 +621,10 @@ export const proxySegment = async (req, res) => {
        return res.sendStatus(upstream.status);
     }
 
+    if (channelName && providerId) {
+        await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId);
+    }
+
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
 
@@ -610,8 +632,22 @@ export const proxySegment = async (req, res) => {
     if (contentLength) res.setHeader('Content-Length', contentLength);
 
     upstream.body.pipe(res);
+
+    upstream.body.on('error', (err) => {
+      if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
+        console.error('Segment stream error:', err.message);
+      }
+      if (channelName) streamManager.remove(connectionId);
+    });
+
+    req.on('close', () => {
+       if (channelName) streamManager.remove(connectionId);
+       if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
+    });
+
   } catch (e) {
     console.error('Segment proxy error:', e.message);
+    if (channelName) streamManager.remove(connectionId);
     if (!res.headersSent) res.sendStatus(500);
   }
 };
@@ -658,7 +694,11 @@ export const proxyMovie = async (req, res) => {
         const now = Math.floor(Date.now() / 1000);
         const existingStat = getStat(channel.provider_channel_id);
         if (existingStat) {
-            updateStat(now, existingStat.id);
+            if (now - existingStat.last_viewed > 60) {
+                updateStat(now, existingStat.id);
+            } else {
+                updateStatTimeOnly(now, existingStat.id);
+            }
         } else {
             insertStat(channel.provider_channel_id, now);
         }
@@ -1013,7 +1053,7 @@ export const proxyTimeshift = async (req, res) => {
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
