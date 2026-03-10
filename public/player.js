@@ -70,6 +70,12 @@
     document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
       el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
     });
+    document.querySelectorAll('[data-i18n-label]').forEach(function(el) {
+      el.setAttribute('aria-label', t(el.getAttribute('data-i18n-label')));
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(function(el) {
+      el.title = t(el.getAttribute('data-i18n-title'));
+    });
     document.title = t('playerTitle');
   }
   translatePage();
