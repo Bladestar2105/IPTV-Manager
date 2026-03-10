@@ -290,9 +290,17 @@ export const updateGeoIpDatabase = (req, res) => {
   try {
     if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
 
+    const licenseKeyRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('geoip_license_key');
+    const licenseKey = licenseKeyRow ? licenseKeyRow.value : '';
+
+    if (!licenseKey) {
+       return res.status(400).json({error: 'A MaxMind License Key is required to update the GeoIP database. Please add it in Settings.'});
+    }
+
     const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     const child = spawn(npmCmd, ['run', 'updatedb'], {
         cwd: path.resolve('node_modules/geoip-lite'),
+        env: { ...process.env, LICENSE_KEY: licenseKey },
         stdio: 'ignore'
     });
 

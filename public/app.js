@@ -2718,7 +2718,8 @@ document.addEventListener('DOMContentLoaded', () => {
                   admin_block_threshold: document.getElementById('setting-admin-threshold').value,
                   iptv_block_threshold: document.getElementById('setting-iptv-threshold').value,
                   admin_block_duration: document.getElementById('setting-admin-duration').value,
-                  iptv_block_duration: document.getElementById('setting-iptv-duration').value
+                  iptv_block_duration: document.getElementById('setting-iptv-duration').value,
+                  geoip_license_key: document.getElementById('setting-geoip-license-key').value
               };
 
               await fetchJSON('/api/settings', {
@@ -3005,6 +3006,9 @@ async function loadSecurity() {
     }
     if (document.getElementById('setting-iptv-duration')) {
         document.getElementById('setting-iptv-duration').value = settings.iptv_block_duration || '3600';
+    }
+    if (document.getElementById('setting-geoip-license-key')) {
+        document.getElementById('setting-geoip-license-key').value = settings.geoip_license_key || '';
     }
 
     // Render Logs

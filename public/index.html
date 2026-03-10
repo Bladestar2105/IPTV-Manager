@@ -415,17 +415,30 @@
                      <input type="number" class="form-control" name="iptv_block_duration" id="setting-iptv-duration" placeholder="3600">
                   </div>
                </div>
+
+               <hr>
+               <div class="row mb-3 mt-3">
+                  <div class="col-12">
+                     <h6 data-i18n="geoIpSettings">GeoIP Database</h6>
+                     <p class="small text-muted mb-2"><span data-i18n="geoIpSettingsHelp">Update the local GeoIP database used for Region Locking. This downloads the latest MaxMind GeoLite2 data.</span> <a href="https://support.maxmind.com/hc/en-us/articles/4407111582235-Generate-a-License-Key" target="_blank" data-i18n="getFreeKeyHelp">Get a free License Key.</a></p>
+                  </div>
+                  <div class="col-md-8 mb-2">
+                     <label class="form-label" data-i18n="maxmindLicenseKey" for="setting-geoip-license-key">MaxMind License Key</label>
+                     <div class="input-group">
+                        <input type="password" class="form-control" name="geoip_license_key" id="setting-geoip-license-key" placeholder="Enter License Key for Updates">
+                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="setting-geoip-license-key" data-i18n-label="togglePasswordVisibility" aria-label="Toggle password visibility"><i class="bi bi-eye"></i></button>
+                     </div>
+                  </div>
+                  <div class="col-md-4 d-flex align-items-end mb-2">
+                     <button class="btn btn-secondary w-100" type="button" id="btn-update-geoip" data-i18n="updateGeoIp">Update Database</button>
+                  </div>
+               </div>
+
                <!-- Hidden field to maintain backward compatibility if needed, or we can just ignore it -->
                <!-- <input type="hidden" name="ip_block_duration" id="setting-block-duration"> -->
 
-               <button class="btn btn-primary" type="submit" data-i18n="save">Save</button>
+               <button class="btn btn-primary" type="submit" data-i18n="save">Save Settings</button>
             </form>
-            <hr>
-            <div class="mt-3">
-               <h6 data-i18n="geoIpSettings">GeoIP Database</h6>
-               <p class="small text-muted mb-2" data-i18n="geoIpSettingsHelp">Update the local GeoIP database used for Region Locking. This downloads the latest MaxMind GeoLite2 data.</p>
-               <button class="btn btn-secondary" type="button" id="btn-update-geoip" data-i18n="updateGeoIp">Update GeoIP Database</button>
-            </div>
          </div>
       </div>
 
