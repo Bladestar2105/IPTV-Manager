@@ -391,6 +391,11 @@ export const getProviderChannels = (req, res) => {
     const { type, page, limit, search } = req.query;
     const providerId = Number(req.params.id);
 
+    if (!req.user.is_admin) {
+        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+        if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
     if (page || limit || search) {
       const pageNum = parseInt(page) || 1;
       const limitNum = parseInt(limit) || 50;
@@ -446,6 +451,10 @@ export const getProviderCategories = async (req, res) => {
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!provider) return res.status(404).json({error: 'Provider not found'});
+
+    if (!req.user.is_admin && provider.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
+    }
 
     const decryptedPassword = decrypt(provider.password);
 
