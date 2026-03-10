@@ -22,11 +22,19 @@ const sanitizeMetadata = (val) => {
   return String(val).replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
 };
 
+export const cppEndpoint = (req, res) => {
+  res.json(true);
+};
+
 export const playerApi = async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
     const password = (req.query.password || '').trim();
     const action = (req.query.action || '').trim();
+
+    if (action === 'cpp') {
+      return res.json(true);
+    }
 
     const user = await getXtreamUser(req);
     if (!user) {

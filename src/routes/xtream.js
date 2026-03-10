@@ -3,6 +3,7 @@ import * as xtreamController from '../controllers/xtreamController.js';
 
 const router = express.Router();
 
+router.get('/cpp', xtreamController.cppEndpoint);
 router.get('/player_api.php', xtreamController.playerApi);
 router.get('/get.php', xtreamController.getPlaylist);
 router.get('/xmltv.php', xtreamController.xmltv);
