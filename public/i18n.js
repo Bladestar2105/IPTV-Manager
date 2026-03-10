@@ -159,6 +159,8 @@ const translations = {
     typeLive: 'Live',
     typeMovie: 'Movies',
     typeSeries: 'Series',
+    toggleSidebar: 'Toggle sidebar',
+    hdhomerun: 'HDHomeRun',
 
     // Authentication
     login: 'Login',
@@ -621,6 +623,8 @@ const translations = {
     typeLive: 'Live',
     typeMovie: 'Filme',
     typeSeries: 'Serien',
+    toggleSidebar: 'Seitenleiste umschalten',
+    hdhomerun: 'HDHomeRun',
 
     // Authentication
     login: 'Anmelden',
@@ -1075,6 +1079,8 @@ const translations = {
     typeLive: 'Live',
     typeMovie: 'Films',
     typeSeries: 'Séries',
+    toggleSidebar: 'Basculer la barre latérale',
+    hdhomerun: 'HDHomeRun',
 
     // Authentication
     login: 'Connexion',
@@ -1529,6 +1535,8 @@ const translations = {
     typeLive: 'Live',
     typeMovie: 'Ταινίες',
     typeSeries: 'Σειρές',
+    toggleSidebar: 'Εναλλαγή πλευρικής μπάρας',
+    hdhomerun: 'HDHomeRun',
 
     // Authentication
     login: 'Σύνδεση',

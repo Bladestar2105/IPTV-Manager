@@ -29,6 +29,9 @@ importers:
       dotenv:
         specifier: ^17.3.1
         version: 17.3.1
+      esbuild:
+        specifier: ^0.27.3
+        version: 0.27.3
       express:
         specifier: ^4.21.2
         version: 4.22.1
