@@ -346,6 +346,8 @@ export function getProgramsSchedule(start, end) {
     // ⚡ Bolt: Aggregate array directly in SQLite using json_group_array
     // This avoids creating thousands of intermediate objects in V8 memory.
     // Ensure chronological order via subquery before grouping.
+    // ⚡ Bolt: Use ORDER BY channel_id ASC, start ASC to fully utilize idx_epg_programs_channel_start.
+    // This eliminates two temporary B-trees (one for ORDER BY, one for GROUP BY) during execution.
     return db.prepare(`
         SELECT json_group_object(channel_id, json(programs)) as json_data
         FROM (
@@ -355,7 +357,7 @@ export function getProgramsSchedule(start, end) {
             FROM (
                 SELECT * FROM epg_programs
                 WHERE stop >= ? AND start <= ?
-                ORDER BY start ASC
+                ORDER BY channel_id ASC, start ASC
             )
             GROUP BY channel_id
         )
