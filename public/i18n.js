@@ -313,6 +313,8 @@ const translations = {
     iptvBlockDuration: 'IPTV Block Duration (seconds)',
     geoIpSettings: 'GeoIP Database',
     geoIpSettingsHelp: 'Update the local GeoIP database used for Region Locking. This downloads the latest MaxMind GeoLite2 data.',
+    getFreeKeyHelp: 'Get a free License Key.',
+    maxmindLicenseKey: 'MaxMind License Key',
     updateGeoIp: 'Update GeoIP',
     confirmUpdateGeoIp: 'Start GeoIP database update? This will run in the background and may take a few minutes.',
     updating: 'Updating...',

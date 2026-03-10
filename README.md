@@ -49,6 +49,7 @@
 - **Node.js**: 20.x+
 - **npm**: 9.x+
 - **SQLite**: 3.x (included)
+- **MaxMind GeoLite2 License Key**: While basic region locking functions work out of the box with the included database, updating the internal GeoIP database requires a free MaxMind License Key. You can get one at [maxmind.com](https://support.maxmind.com/hc/en-us/articles/4407111582235-Generate-a-License-Key) and enter it in the WebUI Security Settings.
 
 ### Production Deployment
 For production environments, it is strongly recommended to set `NODE_ENV=production` and run the application behind a reverse proxy (like Nginx or Traefik) that handles HTTPS. The application will enforce secure cookies when in production mode.
