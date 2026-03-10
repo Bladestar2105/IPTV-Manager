@@ -243,7 +243,7 @@
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2"></select>
                              <div class="input-group input-group-sm mb-2">
                                 <input type="text" id="channel-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search..." disabled />
-                                <button class="btn btn-outline-secondary d-none" type="button" id="channel-search-clear" data-i18n-label="clearSearch">✕</button>
+                                <button class="btn btn-outline-secondary d-none" type="button" id="channel-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
                              </div>
 
                              <div class="row g-2">
@@ -731,7 +731,7 @@
          <h3 data-i18n="channelMappingList" class="m-0 border-0">Channel List</h3>
          <div class="input-group input-group-sm w-250px">
             <input type="text" id="epg-mapping-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search channels...">
-            <button class="btn btn-outline-secondary d-none" type="button" id="epg-mapping-search-clear" data-i18n-label="clearSearch">✕</button>
+            <button class="btn btn-outline-secondary d-none" type="button" id="epg-mapping-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
          </div>
       </div>
 
@@ -764,7 +764,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="importCategoriesTitle">Import Provider Categories</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
           <div class="mb-3 d-flex gap-2 justify-content-center">
@@ -783,7 +783,7 @@
           </div>
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="category-import-search" class="form-control" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="🔍 Search categories..." />
-             <button class="btn btn-outline-secondary d-none" type="button" id="category-import-search-clear" data-i18n-label="clearSearch">✕</button>
+             <button class="btn btn-outline-secondary d-none" type="button" id="category-import-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
           </div>
           <div class="d-flex justify-content-between mb-2">
              <div>
@@ -815,7 +815,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="syncConfig">Sync Configuration</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="sync-config-form">
           <div class="modal-body">
@@ -875,7 +875,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="syncLogs">Sync Logs</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
           <div class="table-responsive">
@@ -909,7 +909,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="addEpgSourceTitle">Add EPG Source</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="add-epg-source-form">
           <div class="modal-body">
@@ -955,7 +955,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="editEpgSourceTitle">Edit EPG Source</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="edit-epg-source-form">
           <div class="modal-body">
@@ -1002,13 +1002,13 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="browseEpgSourcesTitle">Browse Available EPG Sources</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
 
         <div class="modal-body">
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
-             <button class="btn btn-outline-secondary d-none" type="button" id="epg-browse-search-clear" data-i18n-label="clearSearch">✕</button>
+             <button class="btn btn-outline-secondary d-none" type="button" id="epg-browse-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
           </div>
           <ul id="available-epg-sources-list" class="list-group max-h-400-scroll">
             <li class="list-group-item text-muted" data-i18n="loading">Loading...</li>
@@ -1062,7 +1062,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="setup_2fa">Two-Factor Authentication</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
           <div id="otp-setup-step-1">
@@ -1092,7 +1092,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="editUser">Edit User</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="edit-user-form">
           <div class="modal-body">
@@ -1148,7 +1148,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="change_password">Change Password</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
           <form id="change-password-form" >
@@ -1189,7 +1189,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="addProvider">Add Provider</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="provider-form">
           <div class="modal-body">
@@ -1275,7 +1275,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="createShareLink">Create Share Link</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
           <form id="share-form">
@@ -1330,7 +1330,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="activeShares">Active Shares</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
            <div class="table-responsive">
@@ -1363,7 +1363,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title" data-i18n="selectEpgChannel">Select EPG Channel</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
           <div id="epg-suggest-container" class="mb-4 d-none">
@@ -1373,7 +1373,7 @@
           <h6 class="border-bottom pb-2 mb-2" data-i18n="allChannels">All Channels</h6>
           <div class="input-group input-group-sm mb-3">
              <input type="text" id="epg-select-search" class="form-control" data-i18n-placeholder="searchChannels" data-i18n-label="searchChannels" placeholder="Search EPG channels...">
-             <button class="btn btn-outline-secondary d-none" type="button" id="epg-select-search-clear" data-i18n-label="clearSearch">✕</button>
+             <button class="btn btn-outline-secondary d-none" type="button" id="epg-select-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
           </div>
           <ul id="epg-select-list" class="list-group max-h-400-scroll">
              <li class="list-group-item text-center text-muted">Loading...</li>
