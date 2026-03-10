@@ -89,7 +89,8 @@ export const playerApi = async (req, res) => {
       return cats.map(c => ({
         category_id: String(c.id),
         category_name: c.name,
-        parent_id: 0
+        parent_id: 0,
+        is_adult: c.is_adult || 0
       }));
     };
 
