@@ -97,15 +97,22 @@ describe('Picon Cache', () => {
     });
     fs.mkdirSync.mockImplementation(() => {});
     fs.writeFileSync.mockImplementation(() => {});
-    fs.createWriteStream.mockReturnValue({
-        on: vi.fn(),
+    const mockWriteStream = {
+        on: vi.fn((event, cb) => {
+            if (event === 'finish' || event === 'close') {
+                setTimeout(cb, 10);
+            }
+        }),
         once: vi.fn(),
         emit: vi.fn(),
         write: vi.fn(),
         end: vi.fn(),
         destroy: vi.fn(),
-        writableEnded: true
-    });
+        writableEnded: true,
+        closed: false,
+        destroyed: false
+    };
+    fs.createWriteStream.mockReturnValue(mockWriteStream);
 
     // Mock Fetch
     const mockBuffer = Buffer.from('fake-image');
@@ -126,6 +133,9 @@ describe('Picon Cache', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers['x-cache']).toBe('MISS');
+    // Wait for the pipeline promise to settle inside the app
+    await new Promise(r => setTimeout(r, 50));
+
     // Check if body matches
     expect(res.body.toString()).toBe('fake-image');
     expect(fs.promises.rename).toHaveBeenCalled();

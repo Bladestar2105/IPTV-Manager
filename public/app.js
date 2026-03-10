@@ -2461,8 +2461,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnUpdateGeoip) {
       btnUpdateGeoip.addEventListener('click', async () => {
           setLoadingState(btnUpdateGeoip, true, 'updating');
+          const license_key = document.getElementById('setting-geoip-license-key')?.value || '';
           try {
-              const res = await fetchJSON('/api/geoip/update', { method: 'POST' });
+              const res = await fetchJSON('/api/geoip/update', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ license_key })
+              });
               showToast(res.message || t('success'), 'success');
           } catch (e) {
               showToast(t('errorPrefix') + ' ' + e.message, 'danger');
