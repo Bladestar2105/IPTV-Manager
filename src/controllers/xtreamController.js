@@ -572,9 +572,12 @@ export const playerChannelsJson = async (req, res) => {
           streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
       }
 
+      // ⚡ Bolt: Replaced redundant O(N) streamUrl.includes() substring searches with O(1) property checks.
+      // 🎯 Why: This loop iterates over tens of thousands of channels for large playlists. String searching is expensive.
+      // 📊 Impact: Reduces CPU time significantly by skipping ~20,000+ substring operations per 10k channels.
       let type = 'live';
-      if (streamUrl.includes('/movie/')) type = 'movie';
-      else if (streamUrl.includes('/series/')) type = 'series';
+      if (ch.stream_type === 'movie') type = 'movie';
+      else if (ch.stream_type === 'series') type = 'series';
 
       const item = {
         name,
