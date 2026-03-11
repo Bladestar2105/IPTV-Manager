@@ -376,6 +376,12 @@ export async function* getEpgXmlForChannels(channelIds) {
     const ids = Array.from(channelIds);
     const BATCH_SIZE = 900; // SQLite limit
 
+    // ⚡ Bolt: Buffer XML strings to avoid massive overhead of individual res.write calls per program
+    // 🎯 Why: Tens of thousands of small `yield` strings severely block the Node event loop and network stack
+    // 📊 Impact: Drastically increases XMLTV generation throughput and lowers CPU usage
+    let buffer = '';
+    const FLUSH_LIMIT = 65536; // 64KB
+
     // 1. Fetch Channels
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
@@ -388,10 +394,11 @@ export async function* getEpgXmlForChannels(channelIds) {
         `).all(batch);
 
         for (const ch of channels) {
-            yield `<channel id="${escapeXml(ch.id)}">
-    <display-name>${escapeXml(ch.name)}</display-name>
-    <icon src="${escapeXml(ch.logo || '')}" />
-  </channel>\n`;
+            buffer += `<channel id="${escapeXml(ch.id)}">\n    <display-name>${escapeXml(ch.name)}</display-name>\n    <icon src="${escapeXml(ch.logo || '')}" />\n  </channel>\n`;
+            if (buffer.length >= FLUSH_LIMIT) {
+                yield buffer;
+                buffer = '';
+            }
         }
     }
 
@@ -423,11 +430,16 @@ export async function* getEpgXmlForChannels(channelIds) {
         `);
 
         for (const prog of stmt.iterate(batch)) {
-            yield `<programme start="${prog.xmltv_start}" stop="${prog.xmltv_stop}" channel="${escapeXml(prog.channel_id)}">
-    <title>${escapeXml(prog.title)}</title>
-    <desc>${escapeXml(prog.desc || '')}</desc>
-  </programme>\n`;
+            buffer += `<programme start="${prog.xmltv_start}" stop="${prog.xmltv_stop}" channel="${escapeXml(prog.channel_id)}">\n    <title>${escapeXml(prog.title)}</title>\n    <desc>${escapeXml(prog.desc || '')}</desc>\n  </programme>\n`;
+            if (buffer.length >= FLUSH_LIMIT) {
+                yield buffer;
+                buffer = '';
+            }
         }
+    }
+
+    if (buffer.length > 0) {
+        yield buffer;
     }
 }
 
