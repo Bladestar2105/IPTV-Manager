@@ -470,8 +470,8 @@ const translations = {
 ,
     success: 'Success',
     force_password_change: 'You must change your password immediately.',
-    2fa_enabled_success: '2FA Enabled Successfully',
-    2fa_disabled_success: '2FA Disabled'  },
+    '2fa_enabled_success': '2FA Enabled Successfully',
+    '2fa_disabled_success': '2FA Disabled'  },
   
   de: {
     // Accessibility
@@ -930,8 +930,8 @@ const translations = {
 ,
     success: 'Erfolg',
     force_password_change: 'Sie müssen Ihr Passwort sofort ändern.',
-    2fa_enabled_success: '2FA erfolgreich aktiviert',
-    2fa_disabled_success: '2FA deaktiviert'  },
+    '2fa_enabled_success': '2FA erfolgreich aktiviert',
+    '2fa_disabled_success': '2FA deaktiviert'  },
 
   fr: {
     // Accessibility
@@ -1390,8 +1390,8 @@ const translations = {
 ,
     success: 'Succès',
     force_password_change: 'Vous devez changer votre mot de passe immédiatement.',
-    2fa_enabled_success: '2FA activé avec succès',
-    2fa_disabled_success: '2FA désactivé'  },
+    '2fa_enabled_success': '2FA activé avec succès',
+    '2fa_disabled_success': '2FA désactivé'  },
 
   el: {
     // Accessibility
@@ -1850,8 +1850,8 @@ const translations = {
 ,
     success: 'Επιτυχία',
     force_password_change: 'Πρέπει να αλλάξετε τον κωδικό σας αμέσως.',
-    2fa_enabled_success: 'Το 2FA ενεργοποιήθηκε',
-    2fa_disabled_success: 'Το 2FA απενεργοποιήθηκε'  }
+    '2fa_enabled_success': 'Το 2FA ενεργοποιήθηκε',
+    '2fa_disabled_success': 'Το 2FA απενεργοποιήθηκε'  }
 };
 
 // Sprache automatisch erkennen
