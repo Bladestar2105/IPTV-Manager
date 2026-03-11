@@ -45,3 +45,7 @@
 ## 2024-03-08 - Added show/hide password buttons to export/import
 **Learning:** Missed toggles on password inputs like "Encryption Password" / "Decryption Password" degrade the user experience significantly because typos can easily occur, leading to data loss/failure. Centralized Javascript logic handles the toggling for `data-toggle-password` attributes, making it very easy to keep the UX consistent.
 **Action:** When adding new input fields that obscure data, always verify if existing components have toggles, and use the global `data-toggle-password` handler to easily give the users visibility into their inputs.
+
+## 2026-03-08 - [Helpful Empty States]
+**Learning:** Empty master-detail views (like a User Details panel before a user is selected from the list) often appear broken or confusing if they just show empty tabs and form fields.
+**Action:** Implement explicit "Empty State" UI components that hide the detail content and display a clear, centralized message instructing the user on what to do next (e.g., "Select a user from the list to manage their details").

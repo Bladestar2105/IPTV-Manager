@@ -445,6 +445,12 @@ function renderUserDetails(u) {
     const label = document.getElementById('selected-user-label');
     if (label) label.textContent = `${u.username} (id=${u.id})`;
 
+    const emptyState = document.getElementById('user-details-empty');
+    if (emptyState) emptyState.classList.add('d-none');
+
+    const contentState = document.getElementById('user-details-content');
+    if (contentState) contentState.classList.remove('d-none');
+
     const playBtn = document.getElementById('header-play-btn');
     if (playBtn) {
         playBtn.classList.remove('d-none');
@@ -646,6 +652,13 @@ async function loadUsers() {
           selectedUserId = null;
           selectedCategoryId = null;
           document.getElementById('selected-user-label').innerHTML = `<em data-i18n="noUserSelected">${t('noUserSelected')}</em>`;
+
+          const emptyState = document.getElementById('user-details-empty');
+          if (emptyState) emptyState.classList.remove('d-none');
+
+          const contentState = document.getElementById('user-details-content');
+          if (contentState) contentState.classList.add('d-none');
+
           document.getElementById('category-list').innerHTML = '';
           document.getElementById('user-channel-list').innerHTML = '';
 
@@ -4131,6 +4144,12 @@ function handleLogout() {
   selectedUserId = null;
   selectedCategoryId = null;
   
+  const emptyState = document.getElementById('user-details-empty');
+  if (emptyState) emptyState.classList.remove('d-none');
+
+  const contentState = document.getElementById('user-details-content');
+  if (contentState) contentState.classList.add('d-none');
+
   if (globalStatsInterval) {
       clearInterval(globalStatsInterval);
       globalStatsInterval = null;
