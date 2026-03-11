@@ -135,7 +135,7 @@ const translations = {
     pleaseSelectUserFirst: '⚠️ Please select a user first',
     pleaseSelectProvider: '⚠️ Please select a provider',
     error: '❌ Error',
-    errorPrefix: '❌ Error:',
+    errorPrefix: 'Error:',
     
     // Buttons
     delete: '🗑',
@@ -407,7 +407,7 @@ const translations = {
     minimize: 'Minimize',
     playbackError: 'Playback Error: Codec might not be supported',
     transcodeAudio: 'Fix Audio (Transcode)',
-    autoFixingAudio: 'Playback Error. Enabling audio fix...',
+    autoFixingAudio: 'Unsupported codec detected. Enabling audio fix...',
 
     // OTP / Permissions
     managed_by_admin: 'Managed by Admin',
@@ -450,7 +450,7 @@ const translations = {
 
     // Sharing
     share: 'Share',
-    updateShare: 'Update Share',
+    updateShare: 'Update Link',
     manageShares: 'Manage Shares',
     createShareLink: 'Create Share Link',
     shareName: 'Name (Optional)',
@@ -467,7 +467,11 @@ const translations = {
     validity: 'Validity',
     link: 'Link',
     confirmDeleteShare: 'Really delete this share?'
-  },
+,
+    success: 'Success',
+    force_password_change: 'You must change your password immediately.',
+    2fa_enabled_success: '2FA Enabled Successfully',
+    2fa_disabled_success: '2FA Disabled'  },
   
   de: {
     // Accessibility
@@ -601,7 +605,7 @@ const translations = {
     pleaseSelectUserFirst: '⚠️ Bitte zuerst einen User auswählen',
     pleaseSelectProvider: '⚠️ Bitte Provider auswählen',
     error: '❌ Fehler',
-    errorPrefix: '❌ Fehler:',
+    errorPrefix: 'Fehler:',
     
     // Buttons
     delete: '🗑',
@@ -810,7 +814,7 @@ const translations = {
     remove: 'Entfernen',
     none: 'Keine',
     noSelection: 'Keine Auswahl',
-    editUser: 'User bearbeiten',
+    editUser: 'Benutzer bearbeiten',
     leaveBlankToKeep: 'Leer lassen um aktuelles zu behalten',
     enableEpg: 'EPG aktivieren',
 
@@ -923,7 +927,11 @@ const translations = {
     validity: 'Gültigkeit',
     link: 'Link',
     confirmDeleteShare: 'Freigabe wirklich löschen?'
-  },
+,
+    success: 'Erfolg',
+    force_password_change: 'Sie müssen Ihr Passwort sofort ändern.',
+    2fa_enabled_success: '2FA erfolgreich aktiviert',
+    2fa_disabled_success: '2FA deaktiviert'  },
 
   fr: {
     // Accessibility
@@ -1025,7 +1033,7 @@ const translations = {
     createBackup: 'Créer une Sauvegarde',
     backupLimitInfo: 'Maximum 5 sauvegardes autorisées. Les anciennes sauvegardes doivent être supprimées pour en créer de nouvelles une fois la limite atteinte.',
     noBackupsFound: 'Aucune sauvegarde trouvée.',
-    enterBackupName: 'Entrez un nom pour la sauvegarde :',
+    enterBackupName: 'Entrez un nom pour la sauvegarde:',
     backupCreated: 'Sauvegarde créée avec succès.',
     confirmRestoreBackup: "Êtes-vous sûr de vouloir restaurer la sauvegarde '{name}' ? Cela écrasera vos catégories et chaînes actuelles.",
     backupRestored: 'Sauvegarde restaurée avec succès.',
@@ -1051,13 +1059,13 @@ const translations = {
     passwordPlaceholder: '<Votre Mot de Passe>',
     copyAll: 'Copier tous les identifiants',
     copiedToClipboard: 'Copié dans le presse-papiers',
-    copied: 'Copié !',
+    copied: 'Copié!',
     
     // Alerts & Errors
     pleaseSelectUserFirst: '⚠️ Veuillez d\'abord sélectionner un utilisateur',
     pleaseSelectProvider: '⚠️ Veuillez sélectionner un fournisseur',
     error: '❌ Erreur',
-    errorPrefix: '❌ Erreur :',
+    errorPrefix: 'Erreur:',
     
     // Buttons
     delete: '🗑',
@@ -1379,7 +1387,11 @@ const translations = {
     validity: 'Validité',
     link: 'Lien',
     confirmDeleteShare: 'Vraiment supprimer ce partage ?'
-  },
+,
+    success: 'Succès',
+    force_password_change: 'Vous devez changer votre mot de passe immédiatement.',
+    2fa_enabled_success: '2FA activé avec succès',
+    2fa_disabled_success: '2FA désactivé'  },
 
   el: {
     // Accessibility
@@ -1513,7 +1525,7 @@ const translations = {
     pleaseSelectUserFirst: '⚠️ Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
     pleaseSelectProvider: '⚠️ Παρακαλώ επιλέξτε πάροχο',
     error: '❌ Σφάλμα',
-    errorPrefix: '❌ Σφάλμα:',
+    errorPrefix: 'Σφάλμα:',
     
     // Buttons
     delete: '🗑',
@@ -1835,7 +1847,11 @@ const translations = {
     validity: 'Ισχύς',
     link: 'Σύνδεσμος',
     confirmDeleteShare: 'Διαγραφή κοινοποίησης;'
-  }
+,
+    success: 'Επιτυχία',
+    force_password_change: 'Πρέπει να αλλάξετε τον κωδικό σας αμέσως.',
+    2fa_enabled_success: 'Το 2FA ενεργοποιήθηκε',
+    2fa_disabled_success: 'Το 2FA απενεργοποιήθηκε'  }
 };
 
 // Sprache automatisch erkennen
