@@ -284,13 +284,18 @@ export const bulkDeleteUserChannels = (req, res) => {
 
 export const getCategoryMappings = (req, res) => {
   try {
+    const userId = Number(req.params.userId);
+    if (!req.user.is_admin && req.user.id !== userId) {
+        return res.status(403).json({error: 'Access denied'});
+    }
+
     const mappings = db.prepare(`
       SELECT cm.*, uc.name as user_category_name
       FROM category_mappings cm
       LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
       WHERE cm.provider_id = ? AND cm.user_id = ?
       ORDER BY cm.provider_category_name
-    `).all(Number(req.params.providerId), Number(req.params.userId));
+    `).all(Number(req.params.providerId), userId);
     res.json(mappings);
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -304,6 +309,10 @@ export const updateCategoryMapping = (req, res) => {
 
     const mapping = db.prepare('SELECT user_id FROM category_mappings WHERE id = ?').get(id);
     if (!mapping) return res.status(404).json({error: 'Mapping not found'});
+
+    if (!req.user.is_admin && mapping.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
+    }
 
     db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
       .run(user_category_id ? Number(user_category_id) : null, id);
