@@ -1,4 +1,6 @@
 import fetch from 'node-fetch';
+import { spawn } from 'child_process';
+import path from 'path';
 import db from '../database/db.js';
 import { performSync } from './syncService.js';
 import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgService.js';
@@ -110,4 +112,59 @@ export function startCleanupScheduler() {
     }
   }, 3600000); // Every hour
   console.log('🧹 Cleanup Scheduler started');
+}
+
+export function startGeoIpUpdater() {
+  // Update GeoIP database on startup, and then every week
+  const updateGeoIp = () => {
+    try {
+      const licenseKeyRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('geoip_license_key');
+      const licenseKey = licenseKeyRow ? licenseKeyRow.value : process.env.MAXMIND_LICENSE_KEY;
+
+      if (!licenseKey) {
+         console.info('🌍 GeoIP Auto-Update: No MaxMind License Key found in settings or environment. Skipping update.');
+         return;
+      }
+
+      console.info('🌍 GeoIP Auto-Update: Starting...');
+
+      const child = spawn(process.execPath, ['scripts/updatedb.js'], {
+          cwd: path.resolve('node_modules/geoip-lite'),
+          env: { ...process.env, LICENSE_KEY: licenseKey },
+          stdio: 'ignore'
+      });
+
+      child.on('error', (err) => {
+          console.error('🌍 GeoIP Auto-Update: Failed to start process:', err);
+      });
+
+      child.on('close', async (code) => {
+          if (code === 0) {
+              console.info('🌍 GeoIP Auto-Update: Completed successfully.');
+              try {
+                  const geoip = (await import('geoip-lite')).default;
+                  geoip.reloadDataSync();
+                  console.info('🌍 GeoIP Auto-Update: Reloaded in-memory cache.');
+              } catch (e) {
+                  console.error('🌍 GeoIP Auto-Update: Failed to reload cache:', e);
+              }
+              const now = Math.floor(Date.now() / 1000);
+              db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+                  '127.0.0.1', 'GeoIP Auto-Update', 'Database updated successfully', now
+              );
+          } else {
+              console.error(`🌍 GeoIP Auto-Update: Exited with code ${code}`);
+          }
+      });
+    } catch (e) {
+      console.error('🌍 GeoIP Auto-Update error:', e);
+    }
+  };
+
+  // Run on startup
+  updateGeoIp();
+
+  // Run weekly
+  setInterval(updateGeoIp, 7 * 24 * 3600 * 1000);
+  console.info('🌍 GeoIP Updater started');
 }

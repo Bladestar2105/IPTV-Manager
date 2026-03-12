@@ -10,7 +10,7 @@ import app from './app.js';
 import db, { initDb } from './database/db.js';
 import { initEpgDb } from './database/epgDb.js';
 import streamManager from './services/streamManager.js';
-import { startSyncScheduler, startEpgScheduler, startCleanupScheduler } from './services/schedulerService.js';
+import { startSyncScheduler, startEpgScheduler, startCleanupScheduler, startGeoIpUpdater } from './services/schedulerService.js';
 import { startSSDP } from './services/ssdpService.js';
 import { createDefaultAdmin } from './services/authService.js';
 import { PORT } from './config/constants.js';
@@ -81,6 +81,7 @@ let redisClient = null;
       startEpgScheduler();
       startCleanupScheduler();
       startSSDP();
+      startGeoIpUpdater();
     }
 
     app.listen(PORT, () => {
