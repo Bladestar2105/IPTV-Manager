@@ -7,7 +7,7 @@ import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../u
 import { calculateNextSync } from '../services/syncService.js';
 import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
-import { isSafeUrl } from '../utils/helpers.js';
+import { isSafeUrl, cleanIp } from '../utils/helpers.js';
 import si from 'systeminformation';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -94,7 +94,14 @@ export const getSecurityLogs = (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const limit = req.query.limit ? Number(req.query.limit) : 100;
     const logs = db.prepare('SELECT * FROM security_logs ORDER BY timestamp DESC LIMIT ?').all(limit);
-    res.json(logs);
+
+    // Augment with country code
+    const logsWithGeo = logs.map(log => {
+      const geo = geoip.lookup(cleanIp(log.ip));
+      return { ...log, country: geo && geo.country ? geo.country : null };
+    });
+
+    res.json(logsWithGeo);
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
@@ -113,8 +120,7 @@ export const getBlockedIps = (req, res) => {
 
     // Augment with country code for better admin check
     const ipsWithGeo = ips.map(b => {
-      const cleanIp = b.ip.startsWith('::ffff:') ? b.ip.replace(/^::ffff:/, '') : b.ip;
-      const geo = geoip.lookup(cleanIp);
+      const geo = geoip.lookup(cleanIp(b.ip));
       return { ...b, country: geo && geo.country ? geo.country : null };
     });
 

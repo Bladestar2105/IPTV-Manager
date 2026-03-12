@@ -3042,7 +3042,7 @@ async function loadSecurity() {
             tdDate.textContent = new Date(log.timestamp * 1000).toLocaleString();
 
             const tdIp = document.createElement('td');
-            tdIp.textContent = log.ip;
+            tdIp.textContent = log.ip + (log.country ? ` [${log.country}]` : '');
 
             const tdAction = document.createElement('td');
             tdAction.textContent = log.action;
