@@ -128,10 +128,11 @@ export function startGeoIpUpdater() {
 
       console.info('🌍 GeoIP Auto-Update: Starting...');
 
-      const child = spawn(process.execPath, ['scripts/updatedb.js'], {
+      const scriptPath = path.resolve('node_modules/geoip-lite/scripts/updatedb.js');
+      const child = spawn(process.execPath, ['--max-old-space-size=4096', scriptPath, `license_key=${licenseKey}`], {
           cwd: path.resolve('node_modules/geoip-lite'),
           env: { ...process.env, LICENSE_KEY: licenseKey },
-          stdio: 'ignore'
+          stdio: 'inherit'
       });
 
       child.on('error', (err) => {

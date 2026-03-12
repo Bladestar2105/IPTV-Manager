@@ -319,10 +319,11 @@ export const updateGeoIpDatabase = (req, res) => {
        return res.status(400).json({error: 'A MaxMind License Key is required to update the GeoIP database. Please add it in Settings.'});
     }
 
-    const child = spawn(process.execPath, ['scripts/updatedb.js'], {
+    const scriptPath = path.resolve('node_modules/geoip-lite/scripts/updatedb.js');
+    const child = spawn(process.execPath, ['--max-old-space-size=4096', scriptPath, `license_key=${licenseKey}`], {
         cwd: path.resolve('node_modules/geoip-lite'),
         env: { ...process.env, LICENSE_KEY: licenseKey },
-        stdio: 'ignore'
+        stdio: 'inherit'
     });
 
     child.on('error', (err) => {
