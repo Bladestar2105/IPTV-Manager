@@ -329,9 +329,16 @@ export const updateGeoIpDatabase = (req, res) => {
         console.error('Failed to start GeoIP update process:', err);
     });
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
         if (code === 0) {
             console.log('GeoIP database updated successfully.');
+            try {
+                const geoipLite = (await import('geoip-lite')).default;
+                geoipLite.reloadDataSync();
+                console.log('GeoIP in-memory cache reloaded successfully.');
+            } catch (e) {
+                console.error('Failed to reload GeoIP cache:', e);
+            }
             db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
                 req.ip, 'GeoIP Update', 'Database updated successfully', Math.floor(Date.now() / 1000)
             );
