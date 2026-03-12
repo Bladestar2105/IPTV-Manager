@@ -61,6 +61,7 @@ const translations = {
     // Category Section
     selectedUser: 'Selected User',
     noUserSelected: 'No user selected',
+    selectUserToManage: 'Select a user from the list to manage their details',
     copyFromUser: 'Copy from...',
     importCategories: '📥 Import Provider Categories',
     categoryName: 'Category Name',
@@ -531,6 +532,7 @@ const translations = {
     // Category Section
     selectedUser: 'Ausgewählter User',
     noUserSelected: 'Kein User gewählt',
+    selectUserToManage: 'Wählen Sie einen Benutzer aus der Liste, um seine Details zu verwalten',
     copyFromUser: 'Kopieren von...',
     importCategories: '📥 Provider-Kategorien importieren',
     categoryName: 'Kategorie-Name',
@@ -991,6 +993,7 @@ const translations = {
     // Category Section
     selectedUser: 'Utilisateur Sélectionné',
     noUserSelected: 'Aucun utilisateur sélectionné',
+    selectUserToManage: 'Sélectionnez un utilisateur dans la liste pour gérer ses détails',
     copyFromUser: 'Copier de...',
     importCategories: '📥 Importer Catégories Fournisseur',
     categoryName: 'Nom de la Catégorie',
@@ -1451,6 +1454,7 @@ const translations = {
     // Category Section
     selectedUser: 'Επιλεγμένος Χρήστης',
     noUserSelected: 'Δεν επιλέχθηκε χρήστης',
+    selectUserToManage: 'Επιλέξτε έναν χρήστη από τη λίστα για να διαχειριστείτε τις λεπτομέρειές του',
     copyFromUser: 'Αντιγραφή από...',
     importCategories: '📥 Εισαγωγή Κατηγοριών Παρόχου',
     categoryName: 'Όνομα Κατηγορίας',
