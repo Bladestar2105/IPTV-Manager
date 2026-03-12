@@ -24,7 +24,8 @@ export function isIpAllowedForUser(ip, user) {
   if (isWhitelisted) return true;
 
   // Resolve IP to country
-  const geo = geoip.lookup(ip);
+  const cleanIp = ip.startsWith('::ffff:') ? ip.replace(/^::ffff:/, '') : ip;
+  const geo = geoip.lookup(cleanIp);
 
   // If IP cannot be resolved, we have to block it because they enabled region lock
   if (!geo || !geo.country) return false;
