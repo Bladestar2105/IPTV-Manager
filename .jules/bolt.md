@@ -11,3 +11,7 @@
 ## 2026-03-10 - Expensive Substring Checks in Hot Loops
 **Learning:** Using `String.prototype.includes()` checks (e.g., `streamUrl.includes('/movie/')`) repeatedly inside hot loops containing tens of thousands of items causes a measurable performance bottleneck.
 **Action:** Replace URL/string-based inference with direct property equality checks (`ch.stream_type === 'movie'`) mapped directly from the database schema to ensure O(1) performance.
+
+## 2026-03-10 - Generator Stream Buffering for XMLTV
+**Learning:** Returning thousands of small string fragments (like individual XML elements) from an `async function*` generator and passing them directly to `res.write()` introduces massive network stack overhead and event loop blocking, drastically reducing throughput.
+**Action:** Implement string buffering directly inside the generator function, accumulating smaller yields into larger chunks (e.g., 64KB) before calling `yield`. This minimizes I/O operations and context switching overhead.
