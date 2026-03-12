@@ -11,6 +11,7 @@ import { isSafeUrl } from '../utils/helpers.js';
 import si from 'systeminformation';
 import { spawn } from 'child_process';
 import path from 'path';
+import geoip from 'geoip-lite';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -109,7 +110,15 @@ export const getBlockedIps = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const ips = db.prepare('SELECT * FROM blocked_ips ORDER BY created_at DESC').all();
-    res.json(ips);
+
+    // Augment with country code for better admin check
+    const ipsWithGeo = ips.map(b => {
+      const cleanIp = b.ip.startsWith('::ffff:') ? b.ip.replace(/^::ffff:/, '') : b.ip;
+      const geo = geoip.lookup(cleanIp);
+      return { ...b, country: geo && geo.country ? geo.country : null };
+    });
+
+    res.json(ipsWithGeo);
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 

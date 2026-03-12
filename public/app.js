@@ -3061,7 +3061,7 @@ async function loadSecurity() {
 
         const div = document.createElement('div');
         const strong = document.createElement('strong');
-        strong.textContent = b.ip;
+        strong.textContent = b.ip + (b.country ? ` [${b.country}]` : '');
         const br = document.createElement('br');
         const small = document.createElement('small');
         small.textContent = `${b.reason || ''} (Exp: ${new Date(b.expires_at * 1000).toLocaleString()})`;
