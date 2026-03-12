@@ -16,6 +16,17 @@ export function getBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
+export function cleanIp(ip) {
+  if (!ip || typeof ip !== 'string') return '';
+  // Handle comma-separated IPs (like X-Forwarded-For)
+  let cleaned = ip.split(',')[0].trim();
+  // Remove IPv6 mapped IPv4 prefix
+  if (cleaned.startsWith('::ffff:')) {
+    cleaned = cleaned.replace(/^::ffff:/, '');
+  }
+  return cleaned;
+}
+
 export function isUnsafeIP(ip) {
     const ipVer = isIP(ip);
     if (ipVer === 0) return false;
