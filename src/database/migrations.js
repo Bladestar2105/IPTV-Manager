@@ -708,3 +708,17 @@ export function migrateUserAllowedCountries(db) {
     console.error('User Allowed Countries migration error:', e);
   }
 }
+
+export function migrateUserChannelsCustomName(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(user_channels)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('custom_name')) {
+      db.exec("ALTER TABLE user_channels ADD COLUMN custom_name TEXT DEFAULT ''");
+      console.log('✅ DB Migration: custom_name column added to user_channels');
+    }
+  } catch (e) {
+    console.error('User Channels Custom Name migration error:', e);
+  }
+}

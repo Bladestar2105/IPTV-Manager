@@ -1642,15 +1642,16 @@ async function loadUserCategoryChannels() {
     li.appendChild(dragHandle);
     
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = ch.name; // textContent is safe
-    nameSpan.title = ch.name; // Tooltip for full name
+    const displayName = ch.custom_name ? `${ch.name} [${ch.custom_name}]` : ch.name;
+    nameSpan.textContent = displayName; // textContent is safe
+    nameSpan.title = displayName; // Tooltip for full name
     nameSpan.style.flex = '1';
     li.appendChild(nameSpan);
     
     if (ch.logo) {
       const img = document.createElement('img');
       img.src = getProxiedUrl(ch.logo);
-      img.alt = ch.name; // Accessible alt text
+      img.alt = displayName; // Accessible alt text
       img.style.width = '20px';
       img.style.height = '20px';
       img.style.marginLeft = '5px';
@@ -1658,17 +1659,39 @@ async function loadUserCategoryChannels() {
       li.appendChild(img);
     }
     
+    // Action Buttons Container
+    const actionDiv = document.createElement('div');
+    actionDiv.className = 'd-flex ms-2';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'btn btn-sm btn-outline-secondary me-1';
+    renameBtn.innerHTML = '<i class="bi bi-pencil"></i>';
+    renameBtn.title = t('renameChannel');
+    renameBtn.setAttribute('aria-label', t('renameChannel'));
+    renameBtn.onclick = async () => {
+      const newName = prompt(t('enterNewChannelName'), ch.custom_name || ch.name);
+      if (newName !== null) {
+        await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ custom_name: newName.trim() })
+        });
+        loadUserCategoryChannels();
+      }
+    };
+    actionDiv.appendChild(renameBtn);
+
     const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-sm btn-danger ms-2';
+    delBtn.className = 'btn btn-sm btn-danger';
     delBtn.textContent = t('delete');
-    delBtn.setAttribute('aria-label', `${t('deleteAction')} ${ch.name}`); // Accessible label
+    delBtn.setAttribute('aria-label', `${t('deleteAction')} ${displayName}`); // Accessible label
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
       loadUserCategoryChannels();
     };
     
-    li.appendChild(delBtn);
+    actionDiv.appendChild(delBtn);
+    li.appendChild(actionDiv);
     list.appendChild(li);
   });
   

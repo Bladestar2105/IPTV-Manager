@@ -112,10 +112,11 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
     expect(streamManager.cleanupUser).not.toHaveBeenCalled();
     expect(streamManager.add).not.toHaveBeenCalled();
-    expect(streamManager.remove).not.toHaveBeenCalled();
 
-    // We can't check setTimeout calls easily in vitest unless we spy on global.setTimeout
-    // But since cleanupUser was skipped, delay should also be skipped due to logic flow.
+    // We DO call remove for .m3u8 explicitly just before early return to ensure cleanup
+    // We can check if remove was called, or just ignore it if it doesn't hurt.
+    expect(streamManager.remove).toHaveBeenCalled();
+    // The main assertion is that add/cleanupUser are not called to save overhead.
 
     vi.useRealTimers();
   });

@@ -19,6 +19,7 @@ router.put('/user-categories/:catId/channels/reorder', authenticateToken, channe
 
 router.delete('/user-channels/:id', authenticateToken, channelController.deleteUserChannel);
 router.post('/user-channels/bulk-delete', authenticateToken, channelController.bulkDeleteUserChannels);
+router.put('/user-channels/:id', authenticateToken, channelController.updateUserChannel);
 
 router.get('/category-mappings/:providerId/:userId', authenticateToken, channelController.getCategoryMappings);
 router.put('/category-mappings/:id', authenticateToken, channelController.updateCategoryMapping);

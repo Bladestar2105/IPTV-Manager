@@ -15,7 +15,7 @@
     "bootstrap": "^5.3.0",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
-    "esbuild": "^0.27.3",
+    "esbuild": "^0.27.4",
     "express": "^4.21.2",
     "express-rate-limit": "^8.2.1",
     "ffmpeg-static": "^5.3.0",

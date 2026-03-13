@@ -154,6 +154,29 @@ export const updateUserCategoryAdult = (req, res) => {
   }
 };
 
+export const updateUserChannel = (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { custom_name } = req.body;
+
+    if (!req.user.is_admin) {
+        const uc = db.prepare(`
+          SELECT c.user_id
+          FROM user_channels uc
+          JOIN user_categories c ON uc.user_category_id = c.id
+          WHERE uc.id = ?
+        `).get(id);
+        if (!uc || uc.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    }
+
+    db.prepare("UPDATE user_channels SET custom_name = ? WHERE id = ?").run(custom_name || '', id);
+    res.json({success: true});
+  } catch (err) {
+    console.error('Update user channel error:', err);
+    res.status(500).json({error: 'Failed to update channel'});
+  }
+};
+
 export const getCategoryChannels = (req, res) => {
   try {
     const catId = Number(req.params.catId);
@@ -163,7 +186,7 @@ export const getCategoryChannels = (req, res) => {
     }
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, pc.*, map.epg_channel_id as manual_epg_id
+      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
