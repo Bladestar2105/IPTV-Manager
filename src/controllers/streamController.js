@@ -485,9 +485,7 @@ export const proxyLive = async (req, res) => {
       res.setHeader('Expires', '0');
       res.send(newText);
 
-      if (reqExt !== 'm3u8') {
-          streamManager.remove(connectionId);
-      }
+      streamManager.remove(connectionId);
       return;
     }
 
