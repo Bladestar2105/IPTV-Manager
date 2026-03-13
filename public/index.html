@@ -135,10 +135,10 @@
                      <input type="date" class="form-control form-control-sm" name="expiry_date" data-i18n-label="expiryDate">
                   </div>
                   <div class="col-12 col-lg-10">
-                     <select class="form-select form-select-sm" name="allowed_countries" id="user-allowed-countries" multiple size="3">
+                     <select class="form-select form-select-sm" name="allowed_countries" id="user-allowed-countries" multiple size="3" aria-describedby="user-allowed-countries-help">
                         <!-- Options populated dynamically -->
                      </select>
-                     <div class="form-text small mt-1" style="font-size: 0.7rem;" data-i18n="allowedCountriesHelp">Select countries to allow access. Leave empty to allow all. Ctrl+Click to select multiple.</div>
+                     <div id="user-allowed-countries-help" class="form-text small mt-1" style="font-size: 0.7rem;" data-i18n="allowedCountriesHelp">Select countries to allow access. Leave empty to allow all. Ctrl+Click to select multiple.</div>
                   </div>
                   <div class="col-9 col-lg-1"><button class="btn btn-sm btn-primary w-100 h-100" type="submit" data-i18n="addUser">Add</button></div>
                   <div class="col-3 col-lg-1"><button class="btn btn-sm btn-outline-secondary w-100 h-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
@@ -429,12 +429,12 @@
                <div class="row mb-3 mt-3">
                   <div class="col-12">
                      <h6 data-i18n="geoIpSettings">GeoIP Database</h6>
-                     <p class="small text-muted mb-2"><span data-i18n="geoIpSettingsHelp">Update the local GeoIP database used for Region Locking. This downloads the latest MaxMind GeoLite2 data.</span> <a href="https://support.maxmind.com/hc/en-us/articles/4407111582235-Generate-a-License-Key" target="_blank" data-i18n="getFreeKeyHelp">Get a free License Key.</a></p>
+                     <p id="geoip-settings-help" class="small text-muted mb-2"><span data-i18n="geoIpSettingsHelp">Update the local GeoIP database used for Region Locking. This downloads the latest MaxMind GeoLite2 data.</span> <a href="https://support.maxmind.com/hc/en-us/articles/4407111582235-Generate-a-License-Key" target="_blank" data-i18n="getFreeKeyHelp">Get a free License Key.</a></p>
                   </div>
                   <div class="col-md-8 mb-2">
                      <label class="form-label" data-i18n="maxmindLicenseKey" for="setting-geoip-license-key">MaxMind License Key</label>
                      <div class="input-group">
-                        <input type="password" class="form-control" name="geoip_license_key" id="setting-geoip-license-key" placeholder="Enter License Key for Updates">
+                        <input type="password" class="form-control" name="geoip_license_key" id="setting-geoip-license-key" placeholder="Enter License Key for Updates" aria-describedby="geoip-settings-help">
                         <button class="btn btn-outline-secondary" type="button" data-toggle-password="setting-geoip-license-key" data-i18n-label="togglePasswordVisibility" aria-label="Toggle password visibility"><i class="bi bi-eye"></i></button>
                      </div>
                   </div>
@@ -1141,8 +1141,8 @@
             </div>
             <div class="mb-3">
               <label class="form-label" data-i18n="allowedCountries" for="edit-user-allowed-countries">Allowed Countries (Region Lock)</label>
-              <div class="small text-muted mb-2" data-i18n="allowedCountriesHelp">Leave empty to allow all countries. Select countries to block access from everywhere else.</div>
-              <select class="form-select" id="edit-user-allowed-countries" multiple size="4">
+              <div id="edit-user-allowed-countries-help" class="small text-muted mb-2" data-i18n="allowedCountriesHelp">Leave empty to allow all countries. Select countries to block access from everywhere else.</div>
+              <select class="form-select" id="edit-user-allowed-countries" multiple size="4" aria-describedby="edit-user-allowed-countries-help">
                   <!-- Options populated dynamically -->
               </select>
             </div>
