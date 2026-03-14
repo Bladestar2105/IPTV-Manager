@@ -107,7 +107,8 @@ export function initDb(isPrimary) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_category_id INTEGER NOT NULL,
       provider_channel_id INTEGER NOT NULL,
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      custom_name TEXT DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS user_backups (
@@ -266,6 +267,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserExpiryDate(db);
             migrations.migrateUserTokenVersion(db);
             migrations.migrateUserAllowedCountries(db);
+            migrations.migrateUserChannelsCustomName(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

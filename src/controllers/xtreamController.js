@@ -109,7 +109,7 @@ export const playerApi = async (req, res) => {
     if (action === 'get_live_streams') {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
                map.epg_channel_id as manual_epg_id
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -129,9 +129,10 @@ export const playerApi = async (req, res) => {
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
         let iconUrl = ch.logo || '';
+        const displayName = ch.custom_name ? ch.custom_name : ch.name;
         return {
           num: i + 1,
-          name: ch.name,
+          name: displayName,
           stream_type: 'live',
           stream_id: Number(ch.user_channel_id),
           stream_icon: iconUrl,
@@ -152,7 +153,7 @@ export const playerApi = async (req, res) => {
     if (action === 'get_vod_streams') {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.mime_type, pc.rating, pc.rating_5based, pc.added, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -169,9 +170,10 @@ export const playerApi = async (req, res) => {
 
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
+        const displayName = ch.custom_name ? ch.custom_name : ch.name;
         return {
           num: i + 1,
-          name: ch.name,
+          name: displayName,
           stream_type: 'movie',
           stream_id: Number(ch.user_channel_id),
           stream_icon: ch.logo || '',
@@ -190,7 +192,7 @@ export const playerApi = async (req, res) => {
     if (action === 'get_series') {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
-        SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
                cat.is_adult as category_is_adult
         FROM user_channels uc
@@ -217,9 +219,11 @@ export const playerApi = async (req, res) => {
              } catch(e){}
         }
 
+        const displayName = ch.custom_name ? ch.custom_name : ch.name;
+
         return {
           num: i + 1,
-          name: ch.name,
+          name: displayName,
           series_id: Number(ch.user_channel_id),
           cover: ch.logo || '',
           plot: ch.plot || '',
@@ -244,7 +248,7 @@ export const playerApi = async (req, res) => {
       if (!seriesId) return res.json({});
 
       const channel = db.prepare(`
-        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
@@ -279,6 +283,10 @@ export const playerApi = async (req, res) => {
            }
         }
 
+        if (data.info && channel.custom_name) {
+            data.info.name = channel.custom_name;
+        }
+
         return res.json(data);
 
       } catch(e) {
@@ -292,7 +300,7 @@ export const playerApi = async (req, res) => {
       if (!vodId) return res.json({});
 
       const channel = db.prepare(`
-        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
@@ -315,6 +323,13 @@ export const playerApi = async (req, res) => {
         // Ensure stream_id matches our user_channel_id
         if (data && data.movie_data && data.movie_data.stream_id) {
            data.movie_data.stream_id = Number(channel.user_channel_id);
+           if (channel.custom_name) {
+               data.movie_data.name = channel.custom_name;
+           }
+        }
+
+        if (data && data.info && channel.custom_name) {
+            data.info.name = channel.custom_name;
         }
 
         return res.json(data);
@@ -389,7 +404,7 @@ export const getPlaylist = async (req, res) => {
     if (user.is_share_guest) return res.sendStatus(403);
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
+      SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -413,7 +428,7 @@ export const getPlaylist = async (req, res) => {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
       const logo = ch.logo || '';
       const group = ch.category_name || '';
-      const name = ch.name || 'Unknown';
+      const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
       const streamId = ch.user_channel_id;
 
       let ext = output === 'hls' ? 'm3u8' : 'ts';
@@ -509,6 +524,7 @@ export const playerChannelsJson = async (req, res) => {
     let channels = db.prepare(`
       SELECT
         uc.id as user_channel_id,
+        uc.custom_name,
         uc.user_category_id,
         pc.name,
         pc.logo,
@@ -544,7 +560,8 @@ export const playerChannelsJson = async (req, res) => {
     for (const ch of channels) {
       const group = ch.category_name || 'Uncategorized';
       const logo = ch.logo || '';
-      const name = ch.name ? String(ch.name).replace(/[\r\n]+/g, ' ').trim() : 'Unknown';
+      let name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
+      name = String(name).replace(/[\r\n]+/g, ' ').trim();
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
       let ext = 'ts';
