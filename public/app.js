@@ -1673,6 +1673,7 @@ async function loadUserCategoryChannels() {
       if (newName !== null) {
         await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {
           method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ custom_name: newName.trim() })
         });
         loadUserCategoryChannels();
