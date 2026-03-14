@@ -232,6 +232,7 @@ export const proxyMpd = async (req, res) => {
         successfulUrl = result.successfulUrl;
     } catch (e) {
         console.error(`MPD proxy failed: ${e.message}`);
+        streamManager.localStreams.delete(connectionId);
         streamManager.remove(connectionId);
         return res.sendStatus(502);
     }
@@ -260,8 +261,12 @@ export const proxyMpd = async (req, res) => {
 
   } catch (e) {
     console.error('MPD proxy error:', e);
+    if (!res.headersSent) {
+        streamManager.localStreams.delete(connectionId);
+        streamManager.remove(connectionId);
+        return res.sendStatus(500);
+    }
     streamManager.remove(connectionId);
-    if (!res.headersSent) res.sendStatus(500);
   }
 };
 
@@ -419,6 +424,7 @@ export const proxyLive = async (req, res) => {
 
       } catch (e) {
         console.error('Transcode setup error:', e.message);
+        streamManager.localStreams.delete(connectionId);
         streamManager.remove(connectionId);
         return res.sendStatus(502);
       }
@@ -434,6 +440,7 @@ export const proxyLive = async (req, res) => {
         successfulUrl = result.successfulUrl;
     } catch(e) {
         console.error(`Stream proxy error: ${e.message} for ${redactUrl(remoteUrl)}`);
+        streamManager.localStreams.delete(connectionId);
         streamManager.remove(connectionId);
         return res.sendStatus(502);
     }
@@ -511,16 +518,24 @@ export const proxyLive = async (req, res) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Stream error:', err.message);
       }
+      if (!res.headersSent) {
+          streamManager.localStreams.delete(connectionId);
+          streamManager.remove(connectionId);
+          return res.sendStatus(502);
+      }
       streamManager.remove(connectionId);
-      if (!res.headersSent) res.sendStatus(502);
     });
 
     req.on('close', () => streamManager.remove(connectionId));
 
   } catch (e) {
     console.error('Stream proxy error:', e.message);
+    if (!res.headersSent) {
+        streamManager.localStreams.delete(connectionId);
+        streamManager.remove(connectionId);
+        return res.sendStatus(500);
+    }
     streamManager.remove(connectionId);
-    if (!res.headersSent) res.sendStatus(500);
   }
 };
 
@@ -645,8 +660,12 @@ export const proxySegment = async (req, res) => {
 
   } catch (e) {
     console.error('Segment proxy error:', e.message);
+    if (!res.headersSent) {
+        if (channelName) streamManager.localStreams.delete(connectionId);
+        if (channelName) streamManager.remove(connectionId);
+        return res.sendStatus(500);
+    }
     if (channelName) streamManager.remove(connectionId);
-    if (!res.headersSent) res.sendStatus(500);
   }
 };
 
@@ -779,6 +798,7 @@ export const proxyMovie = async (req, res) => {
 
         } catch(e) {
             console.error('VOD Transcode error:', e);
+            streamManager.localStreams.delete(connectionId);
             streamManager.remove(connectionId);
             return res.sendStatus(500);
         }
@@ -822,14 +842,22 @@ export const proxyMovie = async (req, res) => {
         });
     } catch (e) {
         console.error('Movie proxy error:', e.message);
+        if (!res.headersSent) {
+            streamManager.localStreams.delete(connectionId);
+            streamManager.remove(connectionId);
+            return res.sendStatus(502);
+        }
         streamManager.remove(connectionId);
-        if (!res.headersSent) res.sendStatus(502);
     }
 
   } catch (e) {
     console.error('Movie proxy setup error:', e.message);
+    if (!res.headersSent) {
+        streamManager.localStreams.delete(connectionId);
+        streamManager.remove(connectionId);
+        return res.sendStatus(500);
+    }
     streamManager.remove(connectionId);
-    if (!res.headersSent) res.sendStatus(500);
   }
 };
 
@@ -930,14 +958,22 @@ export const proxySeries = async (req, res) => {
         });
     } catch(e) {
         console.error('Series proxy error:', e.message);
+        if (!res.headersSent) {
+            streamManager.localStreams.delete(connectionId);
+            streamManager.remove(connectionId);
+            return res.sendStatus(502);
+        }
         streamManager.remove(connectionId);
-        if (!res.headersSent) res.sendStatus(502);
     }
 
   } catch(e) {
     console.error('Series proxy setup error:', e.message);
+    if (!res.headersSent) {
+        streamManager.localStreams.delete(connectionId);
+        streamManager.remove(connectionId);
+        return res.sendStatus(500);
+    }
     streamManager.remove(connectionId);
-    if (!res.headersSent) res.sendStatus(500);
   }
 };
 
@@ -1025,6 +1061,7 @@ export const proxyTimeshift = async (req, res) => {
         successfulUrl = result.successfulUrl;
     } catch(e) {
         console.error(`Timeshift proxy error: ${e.message}`);
+        streamManager.localStreams.delete(connectionId);
         streamManager.remove(connectionId);
         return res.sendStatus(502);
     }
@@ -1086,10 +1123,12 @@ export const proxyTimeshift = async (req, res) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Timeshift stream error:', err.message);
       }
-      streamManager.remove(connectionId);
       if (!res.headersSent) {
-        res.sendStatus(500);
+          streamManager.localStreams.delete(connectionId);
+          streamManager.remove(connectionId);
+          return res.sendStatus(500);
       }
+      streamManager.remove(connectionId);
     });
 
     req.on('close', () => {
@@ -1101,9 +1140,11 @@ export const proxyTimeshift = async (req, res) => {
 
   } catch (e) {
     console.error('Timeshift proxy setup error:', e.message);
-    streamManager.remove(connectionId);
     if (!res.headersSent) {
-      res.sendStatus(500);
+        streamManager.localStreams.delete(connectionId);
+        streamManager.remove(connectionId);
+        return res.sendStatus(500);
     }
+    streamManager.remove(connectionId);
   }
 };

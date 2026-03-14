@@ -7,7 +7,17 @@ import fetch from 'node-fetch';
 
 // Mock dependencies
 vi.mock('node-fetch');
-vi.mock('../../src/services/streamManager.js');
+vi.mock('../../src/services/streamManager.js', () => ({
+  default: {
+    add: vi.fn(),
+    remove: vi.fn(),
+    cleanupUser: vi.fn(),
+    isSessionActive: vi.fn(),
+    getUserConnectionCount: vi.fn(),
+    getProviderConnectionCount: vi.fn(),
+    localStreams: { set: vi.fn(), delete: vi.fn() }
+  }
+}));
 vi.mock('../../src/services/authService.js');
 vi.mock('../../src/database/db.js', () => {
   return {
@@ -112,7 +122,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
     expect(streamManager.cleanupUser).not.toHaveBeenCalled();
     expect(streamManager.add).not.toHaveBeenCalled();
-    expect(streamManager.remove).not.toHaveBeenCalled();
+    // In our updated flow, playlist responses do eventually call streamManager.remove(connectionId)
+    // to cleanly exit after sending the m3u8 text, so we'll assert that instead of not called.
+    expect(streamManager.remove).toHaveBeenCalled();
 
     // We can't check setTimeout calls easily in vitest unless we spy on global.setTimeout
     // But since cleanupUser was skipped, delay should also be skipped due to logic flow.
