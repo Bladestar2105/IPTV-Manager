@@ -49,3 +49,6 @@
 ## 2026-03-08 - [Helpful Empty States]
 **Learning:** Empty master-detail views (like a User Details panel before a user is selected from the list) often appear broken or confusing if they just show empty tabs and form fields.
 **Action:** Implement explicit "Empty State" UI components that hide the detail content and display a clear, centralized message instructing the user on what to do next (e.g., "Select a user from the list to manage their details").
+## 2026-03-09 - [Form Submission Loading UX]
+**Learning:** Security forms like IP whitelisting/blocking and maxmind GeoIP updates were lacking asynchronous feedback (loading state), resulting in potential double submissions and user confusion since UI state didn't change while waiting for backend operations. Added the loading state directly handles this but encountered issue with elements becoming temporarily detached or button references being lost across states.
+**Action:** Consistently wrapped form API requests with `setLoadingState(btnElement, true)` before the action, and `setLoadingState(btnElement, false)` within a `finally` block. Used `document.body.contains(btn)` within the finally block to verify the button element still exists in the DOM before attempting to reset its state.
