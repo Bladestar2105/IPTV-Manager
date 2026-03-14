@@ -248,7 +248,7 @@ export const playerApi = async (req, res) => {
       if (!seriesId) return res.json({});
 
       const channel = db.prepare(`
-        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
@@ -283,6 +283,10 @@ export const playerApi = async (req, res) => {
            }
         }
 
+        if (data.info && channel.custom_name) {
+            data.info.name = channel.custom_name;
+        }
+
         return res.json(data);
 
       } catch(e) {
@@ -296,7 +300,7 @@ export const playerApi = async (req, res) => {
       if (!vodId) return res.json({});
 
       const channel = db.prepare(`
-        SELECT uc.id as user_channel_id, pc.*, p.url, p.username, p.password
+        SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
@@ -319,6 +323,13 @@ export const playerApi = async (req, res) => {
         // Ensure stream_id matches our user_channel_id
         if (data && data.movie_data && data.movie_data.stream_id) {
            data.movie_data.stream_id = Number(channel.user_channel_id);
+           if (channel.custom_name) {
+               data.movie_data.name = channel.custom_name;
+           }
+        }
+
+        if (data && data.info && channel.custom_name) {
+            data.info.name = channel.custom_name;
         }
 
         return res.json(data);
@@ -513,6 +524,7 @@ export const playerChannelsJson = async (req, res) => {
     let channels = db.prepare(`
       SELECT
         uc.id as user_channel_id,
+        uc.custom_name,
         uc.user_category_id,
         pc.name,
         pc.logo,
@@ -548,7 +560,8 @@ export const playerChannelsJson = async (req, res) => {
     for (const ch of channels) {
       const group = ch.category_name || 'Uncategorized';
       const logo = ch.logo || '';
-      const name = ch.name ? String(ch.name).replace(/[\r\n]+/g, ' ').trim() : 'Unknown';
+      let name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
+      name = String(name).replace(/[\r\n]+/g, ' ').trim();
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
       let ext = 'ts';
