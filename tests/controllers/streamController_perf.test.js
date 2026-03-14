@@ -7,7 +7,17 @@ import fetch from 'node-fetch';
 
 // Mock dependencies
 vi.mock('node-fetch');
-vi.mock('../../src/services/streamManager.js');
+vi.mock('../../src/services/streamManager.js', () => ({
+  default: {
+    add: vi.fn(),
+    remove: vi.fn(),
+    cleanupUser: vi.fn(),
+    isSessionActive: vi.fn(),
+    getUserConnectionCount: vi.fn(),
+    getProviderConnectionCount: vi.fn(),
+    localStreams: { set: vi.fn(), delete: vi.fn() }
+  }
+}));
 vi.mock('../../src/services/authService.js');
 vi.mock('../../src/database/db.js', () => {
   return {

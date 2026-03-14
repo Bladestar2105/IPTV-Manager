@@ -1273,14 +1273,18 @@ function renderProviderCategories() {
     importBtn.className = 'btn btn-sm btn-primary me-1';
     importBtn.textContent = t('importCategoryOnly');
     importBtn.onclick = async () => {
+      setLoadingState(importBtn, true, 'loading', false);
       await importCategory(cat, false);
+      if (document.body.contains(importBtn)) setLoadingState(importBtn, false);
     };
     
     const importWithChannelsBtn = document.createElement('button');
     importWithChannelsBtn.className = 'btn btn-sm btn-success';
     importWithChannelsBtn.textContent = t('importWithChannels');
     importWithChannelsBtn.onclick = async () => {
+      setLoadingState(importWithChannelsBtn, true, 'loading', false);
       await importCategory(cat, true);
+      if (document.body.contains(importWithChannelsBtn)) setLoadingState(importWithChannelsBtn, false);
     };
     
     btnGroup.appendChild(importBtn);

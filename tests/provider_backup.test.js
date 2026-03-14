@@ -26,7 +26,7 @@ vi.mock('../src/services/streamManager.js', () => ({
         add: vi.fn(),
         remove: vi.fn(),
         cleanupUser: vi.fn(),
-        localStreams: { set: vi.fn() }
+        localStreams: { set: vi.fn(), delete: vi.fn() }
     }
 }));
 
