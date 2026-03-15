@@ -287,6 +287,7 @@ export async function performSync(providerId, userId, isManual = false) {
 
     // Prepare statement unconditionally to avoid potential undefined issues
     const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+    const deleteUserChannel = db.prepare('DELETE FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?');
 
     if (config && config.auto_add_channels) {
       const existingAssignmentsRows = db.prepare(`
@@ -487,7 +488,26 @@ export async function performSync(providerId, userId, isManual = false) {
               (existingRow.youtube_trailer || '') !== newTrailer ||
               (existingRow.episode_run_time || '') !== newRuntime;
 
+            const categoryChanged = existingRow.original_category_id !== newCatId || (existingRow.stream_type || 'live') !== newStreamType;
+
             if (hasChanges) {
+              // If the provider moved this channel to a different category or stream type,
+              // remove it from the old user category (if auto_add_channels is enabled).
+              // The subsequent logic will add it to the new user category if applicable.
+              if (categoryChanged && config && config.auto_add_channels) {
+                const oldLookupKey = `${existingRow.original_category_id}_${existingRow.stream_type || 'live'}`;
+                const oldUserCatId = categoryMap.get(oldLookupKey);
+
+                if (oldUserCatId) {
+                  const assignmentKey = `${oldUserCatId}_${existingId}`;
+                  if (existingAssignments.has(assignmentKey)) {
+                    deleteUserChannel.run(oldUserCatId, existingId);
+                    existingAssignments.delete(assignmentKey);
+                    console.log(`  🗑️ Removed moved channel "${newName}" from old user category (id=${oldUserCatId})`);
+                  }
+                }
+              }
+
               // Update existing channel - preserves ID and user_channels relationships
               updateChannel.run(
                 newName,
