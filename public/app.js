@@ -1065,6 +1065,7 @@ async function loadUserCategories() {
     checkbox.type = 'checkbox';
     checkbox.className = 'form-check-input user-cat-check';
     checkbox.value = c.id;
+    checkbox.setAttribute('aria-label', c.name);
     checkbox.onclick = (e) => { e.stopPropagation(); updateCatBulkDeleteBtn(); };
     checkDiv.appendChild(checkbox);
     li.appendChild(checkDiv);
@@ -1250,6 +1251,7 @@ function renderProviderCategories() {
     checkbox.className = 'form-check-input me-3 cat-checkbox';
     checkbox.value = cat.category_id;
     checkbox.dataset.name = cat.category_name;
+    checkbox.setAttribute('aria-label', cat.category_name);
     checkbox.onchange = updateSelectedCount;
     li.appendChild(checkbox);
 
@@ -1615,6 +1617,8 @@ async function loadUserCategoryChannels() {
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = ch.user_channel_id;
     
+    const displayName = ch.custom_name ? `${ch.name} [${ch.custom_name}]` : ch.name;
+
     // Checkbox
     const checkDiv = document.createElement('div');
     checkDiv.className = 'form-check d-flex align-items-center me-2 mb-0';
@@ -1622,6 +1626,7 @@ async function loadUserCategoryChannels() {
     checkbox.type = 'checkbox';
     checkbox.className = 'form-check-input user-chan-check';
     checkbox.value = ch.user_channel_id;
+    checkbox.setAttribute('aria-label', displayName);
     if (globalSelectedChannels.has(ch.user_channel_id)) {
         checkbox.checked = true;
     }
@@ -1646,7 +1651,6 @@ async function loadUserCategoryChannels() {
     li.appendChild(dragHandle);
     
     const nameSpan = document.createElement('span');
-    const displayName = ch.custom_name ? `${ch.name} [${ch.custom_name}]` : ch.name;
     nameSpan.textContent = displayName; // textContent is safe
     nameSpan.title = displayName; // Tooltip for full name
     nameSpan.style.flex = '1';
@@ -2741,6 +2745,9 @@ document.addEventListener('DOMContentLoaded', () => {
              duration = Number(duration);
           }
 
+          const btn = blockForm.querySelector('button');
+          setLoadingState(btn, true, 'loading', false);
+
           try {
               await fetchJSON('/api/security/block', {
                   method: 'POST',
@@ -2751,7 +2758,11 @@ document.addEventListener('DOMContentLoaded', () => {
               // Reset select default
               if(blockForm.duration) blockForm.duration.value = '3600';
               loadSecurity();
-          } catch(e) { alert(e.message); }
+          } catch(e) {
+              alert(e.message);
+          } finally {
+              if (document.body.contains(btn)) setLoadingState(btn, false);
+          }
       });
   }
 
@@ -2759,6 +2770,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (settingsForm) {
       settingsForm.addEventListener('submit', async (e) => {
           e.preventDefault();
+          const btn = settingsForm.querySelector('button[type="submit"]');
+          setLoadingState(btn, true, 'saving', false);
+
           try {
               const body = {
                   admin_block_threshold: document.getElementById('setting-admin-threshold').value,
@@ -2774,7 +2788,11 @@ document.addEventListener('DOMContentLoaded', () => {
                   body: JSON.stringify(body)
               });
               alert(t('settingsSaved'));
-          } catch(e) { alert(e.message); }
+          } catch(e) {
+              alert(e.message);
+          } finally {
+              if (document.body.contains(btn)) setLoadingState(btn, false);
+          }
       });
   }
 
@@ -2784,6 +2802,9 @@ document.addEventListener('DOMContentLoaded', () => {
           e.preventDefault();
           const ip = whitelistForm.ip.value;
           const description = whitelistForm.description.value;
+          const btn = whitelistForm.querySelector('button');
+          setLoadingState(btn, true, 'loading', false);
+
           try {
               await fetchJSON('/api/security/whitelist', {
                   method: 'POST',
@@ -2792,7 +2813,11 @@ document.addEventListener('DOMContentLoaded', () => {
               });
               whitelistForm.reset();
               loadSecurity();
-          } catch(e) { alert(e.message); }
+          } catch(e) {
+              alert(e.message);
+          } finally {
+              if (document.body.contains(btn)) setLoadingState(btn, false);
+          }
       });
   }
 
