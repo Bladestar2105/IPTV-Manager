@@ -114,7 +114,7 @@ chmod +x proxmox.sh
 
 ### First Time Setup
 - **Default Username**: `admin`
-- **Default Password**: Random 16-char hex string (check console output).
+- **Default Password**: Automatically generated (check your console output).
 - **Important**: Change password immediately after login.
 
 ### CORS Configuration
