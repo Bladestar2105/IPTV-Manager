@@ -14,6 +14,17 @@ const SEARCH_TARGETS = [
     DEVICE_TYPE
 ];
 
+let cachedUsers = [];
+const getHdhrUsersStmt = db.prepare('SELECT id, username, hdhr_token FROM users WHERE hdhr_enabled = 1 AND is_active = 1');
+
+function refreshSsdpCache() {
+    try {
+        cachedUsers = getHdhrUsersStmt.all();
+    } catch (e) {
+        console.error('SSDP Cache Refresh Error:', e);
+    }
+}
+
 // Get all non-internal IPv4 addresses
 function getInterfaceAddresses() {
     const interfaces = os.networkInterfaces();
@@ -157,14 +168,10 @@ export function startSSDP() {
                     const ips = getInterfaceAddresses();
                     const primaryIp = ips[0] || '127.0.0.1';
 
-                    try {
-                        const users = db.prepare('SELECT id, username, hdhr_token FROM users WHERE hdhr_enabled = 1 AND is_active = 1').all();
-                        users.forEach(user => {
-                            sendResponse(socket, rinfo, user, primaryIp, st);
-                        });
-                    } catch (dbError) {
-                        console.error('SSDP DB Error:', dbError);
-                    }
+                    // Use cached users instead of hitting the DB per discovery probe
+                    cachedUsers.forEach(user => {
+                        sendResponse(socket, rinfo, user, primaryIp, st);
+                    });
                 }
             }
         });
@@ -174,17 +181,22 @@ export function startSSDP() {
             try { socket.close(); } catch(e) {}
         });
 
+        // Initial cache population
+        refreshSsdpCache();
+
         // Bind to 0.0.0.0:1900 to listen on all interfaces
         socket.bind(SSDP_PORT, '0.0.0.0');
 
         // Periodic NOTIFY (every 60s)
         setInterval(() => {
             try {
+                // Refresh cache periodically before broadcast
+                refreshSsdpCache();
+
                 const ips = getInterfaceAddresses();
                 const primaryIp = ips[0] || '127.0.0.1';
-                const users = db.prepare('SELECT id, username, hdhr_token FROM users WHERE hdhr_enabled = 1 AND is_active = 1').all();
 
-                users.forEach(user => {
+                cachedUsers.forEach(user => {
                     sendNotify(socket, user, primaryIp);
                 });
             } catch (e) {
