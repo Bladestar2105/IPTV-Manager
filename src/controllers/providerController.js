@@ -148,10 +148,9 @@ export const createProvider = async (req, res) => {
 
         if (resp.ok) {
           finalEpgUrl = discoveredUrl;
-          console.log('✅ Auto-discovered EPG URL:', finalEpgUrl);
         }
       } catch (e) {
-        console.log('⚠️ EPG Auto-discovery failed:', e.message);
+        /* ignore */
       }
     }
 
@@ -166,7 +165,6 @@ export const createProvider = async (req, res) => {
         const fetchedLimit = await fetchProviderDetails(url, username, password);
         if (fetchedLimit !== null) {
             finalMaxConnections = fetchedLimit;
-            console.log(`✅ Auto-detected max_connections for provider: ${finalMaxConnections}`);
         }
     }
 
@@ -290,7 +288,6 @@ export const updateProvider = async (req, res) => {
         const fetchedLimit = await fetchProviderDetails(url, username, pwdForFetch);
         if (fetchedLimit !== null) {
             finalMaxConnections = fetchedLimit;
-             console.log(`✅ Auto-detected max_connections for provider update: ${finalMaxConnections}`);
         }
     }
 
