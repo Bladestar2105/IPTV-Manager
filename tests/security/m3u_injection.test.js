@@ -58,6 +58,8 @@ describe('Security: M3U Injection', () => {
     };
     res = {
       send: vi.fn(),
+      write: vi.fn(),
+      end: vi.fn(),
       status: vi.fn().mockReturnThis(),
       setHeader: vi.fn(),
     };
@@ -90,8 +92,8 @@ describe('Security: M3U Injection', () => {
 
     await playerPlaylist(req, res);
 
-    expect(res.send).toHaveBeenCalled();
-    const output = res.send.mock.calls[0][0];
+    expect(res.write).toHaveBeenCalled();
+    const output = res.write.mock.calls[0][0];
 
     // Check that injection attempts are thwarted
     // Newlines should be replaced by spaces or removed

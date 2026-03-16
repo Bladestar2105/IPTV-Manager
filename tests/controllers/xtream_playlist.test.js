@@ -57,6 +57,8 @@ describe('xtreamController - playerPlaylist', () => {
     };
     res = {
       send: vi.fn(),
+      write: vi.fn(),
+      end: vi.fn(),
       status: vi.fn().mockReturnThis(),
       setHeader: vi.fn(),
     };
@@ -89,8 +91,8 @@ describe('xtreamController - playerPlaylist', () => {
 
     await playerPlaylist(req, res);
 
-    expect(res.send).toHaveBeenCalled();
-    const output = res.send.mock.calls[0][0];
+    expect(res.write).toHaveBeenCalled();
+    const output = res.write.mock.calls[0][0];
 
     // Check for attributes
     expect(output).toContain('plot="Line 1 Line 2"'); // Newline replaced

@@ -15,3 +15,7 @@
 ## 2026-03-10 - Generator Stream Buffering for XMLTV
 **Learning:** Returning thousands of small string fragments (like individual XML elements) from an `async function*` generator and passing them directly to `res.write()` introduces massive network stack overhead and event loop blocking, drastically reducing throughput.
 **Action:** Implement string buffering directly inside the generator function, accumulating smaller yields into larger chunks (e.g., 64KB) before calling `yield`. This minimizes I/O operations and context switching overhead.
+
+## 2026-03-10 - O(1) Memory Streaming for Massive M3U Playlists
+**Learning:** Storing massive M3U playlists containing tens of thousands of channel strings inside an array before joining them (`lines.join('\n')`) into a gigantic string at the end of the `playlist` endpoint exhausts V8 heap memory and blocks the event loop.
+**Action:** When dynamically generating M3U or large text payloads, use string buffers and stream them incrementally using `res.write(buffer)` instead of accumulating everything into memory to maintain a low memory footprint.
