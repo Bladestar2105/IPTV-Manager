@@ -612,3 +612,24 @@ span {
 .th-w-25 { width: 25%; }
 .th-w-30 { width: 30%; }
 .qr-code-img { max-width: 200px; }
+
+/* Focus visible styles for accessibility */
+[role="button"]:focus-visible,
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--tv-cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Add visual indicator for required form fields */
+.form-label:has(+ input[required])::after,
+.form-label:has(+ select[required])::after,
+.form-label:has(+ .input-group > input[required])::after,
+.form-label:has(+ .input-group > select[required])::after {
+  content: " *";
+  color: var(--tv-red);
+}
