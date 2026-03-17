@@ -230,6 +230,9 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_cs_user_ip ON current_streams(user_id, ip);
     CREATE INDEX IF NOT EXISTS idx_user_channels_cat_sort ON user_channels(user_category_id, sort_order);
     CREATE INDEX IF NOT EXISTS idx_user_channels_prov ON user_channels(provider_channel_id);
+
+    -- ⚡ Bolt: Add composite index for rapid rate-limiting queries to prevent full table scans during brute-force DoS attacks
+    CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
 
             console.log("✅ Database OK");
