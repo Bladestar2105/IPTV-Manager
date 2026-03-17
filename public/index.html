@@ -115,10 +115,10 @@
             <div class="card-header" data-i18n="userManagement">User Management</div>
             <div class="card-body">
                <form id="user-form" class="row g-2 mb-3">
-                  <div class="col-12 col-md-4 col-lg-2"><input class="form-control form-control-sm" name="username" data-i18n-placeholder="username" data-i18n-label="username" placeholder="Username" required /></div>
+                  <div class="col-12 col-md-4 col-lg-2"><input class="form-control form-control-sm" name="username" autocomplete="off" data-i18n-placeholder="username" data-i18n-label="username" placeholder="Username" required /></div>
                   <div class="col-12 col-md-4 col-lg-3">
                      <div class="input-group input-group-sm">
-                        <input class="form-control" name="password" id="new-user-password" type="password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
+                        <input class="form-control" name="password" id="new-user-password" type="password" autocomplete="new-password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
                         <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
                         <button class="btn btn-outline-secondary" type="button" data-copy-target="new-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                      </div>
@@ -1121,12 +1121,12 @@
             <input type="hidden" id="edit-user-id">
             <div class="mb-3">
               <label class="form-label" data-i18n="username" for="edit-user-username">Username</label>
-              <input type="text" class="form-control" id="edit-user-username" required>
+              <input type="text" class="form-control" id="edit-user-username" autocomplete="off" required>
             </div>
             <div class="mb-3">
               <label class="form-label" data-i18n="new_password" for="edit-user-password">New Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="edit-user-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
+                <input type="password" class="form-control" id="edit-user-password" autocomplete="new-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="edit-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
                 <button class="btn btn-outline-secondary" type="button" data-copy-target="edit-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
               </div>
@@ -1232,12 +1232,12 @@
              <div class="row mb-3">
                 <div class="col-md-6">
                    <label class="form-label" data-i18n="username" for="provider-username">Username</label>
-                   <input class="form-control" name="username" id="provider-username" required>
+                   <input class="form-control" name="username" id="provider-username" autocomplete="off" required>
                 </div>
                 <div class="col-md-6">
                    <label class="form-label" data-i18n="password" for="provider-password">Password</label>
                    <div class="input-group">
-                     <input class="form-control" name="password" id="provider-password" type="password" required>
+                     <input class="form-control" name="password" id="provider-password" type="password" autocomplete="new-password" required>
                      <button class="btn btn-outline-secondary" type="button" data-toggle-password="provider-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
                    </div>
                 </div>
