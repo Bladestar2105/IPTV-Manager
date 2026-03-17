@@ -130,6 +130,8 @@ let channelLimit = 50;
 let channelSearch = '';
 let channelTotal = 0;
 let isLoadingChannels = false;
+let userChannelSearch = '';
+let userCategoryChannelsData = [];
 
 // Utility: Debounce
 function debounce(func, wait) {
@@ -1419,7 +1421,7 @@ async function importCategory(cat, withChannels) {
 async function loadProviderChannels(reset = true) {
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
-  const searchInput = document.getElementById('channel-search');
+  const searchInput = document.getElementById('provider-channel-search');
   const list = document.getElementById('provider-channel-list');
   
   if (!providerId) {
@@ -1431,9 +1433,6 @@ async function loadProviderChannels(reset = true) {
 
   if (reset) {
     channelPage = 1;
-    // Keep search if it was triggered by search input logic, but if called from provider change, search is usually cleared?
-    // Let's assume the caller handles setting channelSearch global if needed.
-    // If we want to clear search on provider change:
     if (!searchInput.value) channelSearch = '';
 
     renderLoadingList('provider-channel-list', 'loadingChannels');
@@ -1594,17 +1593,37 @@ function renderProviderChannels(channels) {
 
 async function loadUserCategoryChannels() {
   if (!selectedCategoryId) return;
+  const searchInput = document.getElementById('user-channel-search');
+  if (searchInput) searchInput.disabled = false;
+
   renderLoadingList('user-channel-list');
-  const chans = await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels`);
+  userCategoryChannelsData = await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels`);
+
+  renderUserCategoryChannels();
+}
+
+function renderUserCategoryChannels() {
   const list = document.getElementById('user-channel-list');
+  if (!list) return;
   list.innerHTML = '';
 
-  // Update Assigned Header
+  const filteredChans = userCategoryChannelsData.filter(ch => {
+    if (!userChannelSearch) return true;
+    const search = userChannelSearch.toLowerCase();
+    const nameMatch = ch.name && ch.name.toLowerCase().includes(search);
+    const customNameMatch = ch.custom_name && ch.custom_name.toLowerCase().includes(search);
+    return nameMatch || customNameMatch;
+  });
+
   const assignedHeader = document.getElementById('assigned-channels-header');
-  if (assignedHeader) assignedHeader.textContent = t('assigned', {count: chans.length});
-  
-  if (chans.length === 0) {
-    list.innerHTML = `<li class="list-group-item text-muted">${t('noChannels')}</li>`;
+  if (assignedHeader) assignedHeader.textContent = t('assigned', {count: filteredChans.length});
+
+  if (filteredChans.length === 0) {
+    if (userCategoryChannelsData.length === 0) {
+      list.innerHTML = `<li class="list-group-item text-muted">${t('noChannels')}</li>`;
+    } else {
+      list.innerHTML = `<li class="list-group-item text-muted">${t('noResults', {search: escapeHtml(userChannelSearch)})}</li>`;
+    }
     if (channelSortable) {
       channelSortable.destroy();
       channelSortable = null;
@@ -1612,7 +1631,7 @@ async function loadUserCategoryChannels() {
     return;
   }
   
-  chans.forEach(ch => {
+  filteredChans.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = ch.user_channel_id;
@@ -1882,10 +1901,16 @@ document.getElementById('category-form').addEventListener('submit', async e => {
 
 // === Event Handlers ===
 document.getElementById('channel-provider-select').addEventListener('change', loadProviderChannels);
-document.getElementById('channel-search').addEventListener('input', debounce((e) => {
+
+document.getElementById('provider-channel-search').addEventListener('input', debounce((e) => {
   channelSearch = e.target.value.trim();
   loadProviderChannels(true);
 }, 500));
+
+document.getElementById('user-channel-search').addEventListener('input', debounce((e) => {
+  userChannelSearch = e.target.value.trim();
+  renderUserCategoryChannels();
+}, 200));
 
 // === Sync Configuration Management ===
 let currentSyncConfig = null;
@@ -2852,7 +2877,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
   
   // Initialize clearable inputs
-  ['channel-search', 'epg-mapping-search', 'category-import-search', 'epg-browse-search', 'epg-select-search'].forEach(id => {
+  ['provider-channel-search', 'user-channel-search', 'epg-mapping-search', 'category-import-search', 'epg-browse-search', 'epg-select-search'].forEach(id => {
       initClearableInput(id);
   });
 
@@ -2880,7 +2905,8 @@ document.addEventListener('DOMContentLoaded', () => {
         'epg-browse-search',
         'epg-select-search',
         // Views
-        'channel-search',
+        'provider-channel-search',
+        'user-channel-search',
         'epg-mapping-search'
       ];
 
