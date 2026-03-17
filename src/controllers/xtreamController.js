@@ -415,14 +415,20 @@ export const getPlaylist = async (req, res) => {
     `).all(user.id);
 
     const baseUrl = getBaseUrl(req);
-    // Use an array to build the playlist, optimizing performance for large lists
     let header = '#EXTM3U';
 
     if (type === 'm3u_plus') {
        header += ` url-tvg="${baseUrl}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}"`;
     }
 
-    const lines = [header];
+    res.setHeader('Content-Type', 'audio/x-mpegurl');
+    res.setHeader('Content-Disposition', `attachment; filename="playlist.m3u"`);
+
+    // ⚡ Bolt: Stream playlist generation to reduce V8 memory pressure for massive lists
+    // 🎯 Why: Storing 50,000+ channel strings in a massive array before joining them exhausts heap memory
+    // 📊 Impact: Significantly lowers RAM usage and event loop blocking overhead
+    let buffer = header + '\n';
+    const FLUSH_LIMIT = 65536;
 
     for (const ch of rows) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
@@ -451,16 +457,22 @@ export const getPlaylist = async (req, res) => {
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
 
       if (type === 'm3u_plus') {
-        lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}",${finalName}`);
+        buffer += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}",${finalName}\n`;
       } else {
-        lines.push(`#EXTINF:-1,${finalName}`);
+        buffer += `#EXTINF:-1,${finalName}\n`;
       }
-      lines.push(streamUrl);
+      buffer += streamUrl + '\n';
+
+      if (buffer.length >= FLUSH_LIMIT) {
+          res.write(buffer);
+          buffer = '';
+      }
     }
 
-    res.setHeader('Content-Type', 'audio/x-mpegurl');
-    res.setHeader('Content-Disposition', `attachment; filename="playlist.m3u"`);
-    res.send(lines.join('\n') + '\n');
+    if (buffer.length > 0) {
+        res.write(buffer);
+    }
+    res.end();
 
   } catch (e) {
     console.error('get.php error:', e);
@@ -675,8 +687,14 @@ export const playerPlaylist = async (req, res) => {
         }
     }
 
-    // Use an array to build the playlist, optimizing performance for large lists
-    const lines = ['#EXTM3U'];
+    res.setHeader('Content-Type', 'audio/x-mpegurl');
+
+    // ⚡ Bolt: Stream playlist generation to reduce V8 memory pressure for massive lists
+    // 🎯 Why: Storing 50,000+ channel strings in a massive array before joining them exhausts heap memory
+    // 📊 Impact: Significantly lowers RAM usage and event loop blocking overhead
+    let buffer = '#EXTM3U\n';
+    const FLUSH_LIMIT = 65536;
+
     const host = getBaseUrl(req);
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
@@ -731,18 +749,25 @@ export const playerPlaylist = async (req, res) => {
       // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
       const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
 
-      lines.push(`#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}"${extra},${finalName}`);
+      buffer += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}"${extra},${finalName}\n`;
 
       if (ch.drm_license_type || ch.drm_license_key) {
-          if (ch.drm_license_type) lines.push(`#KODIPROP:inputstream.adaptive.license_type=${ch.drm_license_type}`);
-          if (ch.drm_license_key) lines.push(`#KODIPROP:inputstream.adaptive.license_key=${ch.drm_license_key}`);
+          if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${ch.drm_license_type}\n`;
+          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${ch.drm_license_key}\n`;
       }
 
-      lines.push(streamUrl);
+      buffer += streamUrl + '\n';
+
+      if (buffer.length >= FLUSH_LIMIT) {
+          res.write(buffer);
+          buffer = '';
+      }
     }
 
-    res.setHeader('Content-Type', 'audio/x-mpegurl');
-    res.send(lines.join('\n') + '\n'); // Add final newline
+    if (buffer.length > 0) {
+        res.write(buffer);
+    }
+    res.end(); // Add final newline equivalent implicitly or via logic above
 
   } catch (e) {
     console.error('Playlist generation error:', e);
