@@ -588,14 +588,14 @@ export const importData = async (req, res) => {
       }
 
       const userAssignments = importData.channels.filter(c => c.type === 'user_assignment');
-      const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+      const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name) VALUES (?, ?, ?, ?)');
 
       for (const ua of userAssignments) {
         const newUserCatId = categoryIdMap.get(ua.user_category_id);
         const newProvChannelId = providerChannelIdMap.get(ua.provider_channel_id);
 
         if (newUserCatId && newProvChannelId) {
-          insertUserChannel.run(newUserCatId, newProvChannelId, ua.sort_order);
+          insertUserChannel.run(newUserCatId, newProvChannelId, ua.sort_order, ua.custom_name || '');
           stats.channels++;
         }
       }

@@ -277,13 +277,13 @@ export const createUser = async (req, res) => {
                 // We need to iterate over source user's categories to find channels
                 // Or simply select all user_channels linked to source user's categories
                 const insertUserChan = db.prepare(`
-                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order)
-                    VALUES (?, ?, ?)
+                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name)
+                    VALUES (?, ?, ?, ?)
                 `);
 
                 // Fetch all user channels for source user categories
                 const sourceUserChans = db.prepare(`
-                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order
+                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name
                     FROM user_channels uc
                     JOIN user_categories cat ON uc.user_category_id = cat.id
                     WHERE cat.user_id = ?
@@ -294,7 +294,7 @@ export const createUser = async (req, res) => {
                     const newProvChanId = channelMap[uc.provider_channel_id];
 
                     if (newCatId && newProvChanId) {
-                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order);
+                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order, uc.custom_name || '');
                     }
                 }
             }
