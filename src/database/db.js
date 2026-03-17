@@ -75,14 +75,6 @@ export function initDb(isPrimary) {
       created_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
 
-    CREATE TABLE IF NOT EXISTS temporary_tokens (
-      token TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      created_at INTEGER DEFAULT (strftime('%s', 'now')),
-      expires_at INTEGER NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
@@ -92,6 +84,14 @@ export function initDb(isPrimary) {
       max_connections INTEGER DEFAULT 0,
       expiry_date INTEGER,
       allowed_countries TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS temporary_tokens (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      expires_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS user_categories (
