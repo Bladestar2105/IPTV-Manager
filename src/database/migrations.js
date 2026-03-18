@@ -739,3 +739,17 @@ export function migrateUserChannelsIsHidden(db) {
     console.error('User Channels is_hidden migration error:', e);
   }
 }
+
+export function migrateProviderUseMappedEpgIcon(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(providers)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('use_mapped_epg_icon')) {
+      db.exec('ALTER TABLE providers ADD COLUMN use_mapped_epg_icon INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: use_mapped_epg_icon column added to providers');
+    }
+  } catch (e) {
+    console.error('Provider use_mapped_epg_icon migration error:', e);
+  }
+}
