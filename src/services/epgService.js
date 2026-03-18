@@ -230,6 +230,12 @@ export async function updateProviderEpg(providerId, skipPrune = false) {
     const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
 
+    // Explicitly check if EPG syncing is enabled for this provider
+    if (!provider.epg_enabled) {
+        console.log(`⚠️ Skipping EPG update for disabled provider ${providerId}`);
+        return;
+    }
+
     const now = Math.floor(Date.now() / 1000);
 
     try {
