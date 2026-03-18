@@ -76,7 +76,7 @@ export const lineup = async (req, res) => {
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE cat.user_id = ? AND pc.stream_type = 'live'
+      WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(user.id);
 
@@ -118,7 +118,7 @@ export const auto = async (req, res) => {
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
-      WHERE uc.id = ? AND cat.user_id = ?
+      WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
     `).get(channelId, user.id);
 
     if (!channel) return res.status(404).send('Channel not found');

@@ -108,7 +108,8 @@ export function initDb(isPrimary) {
       user_category_id INTEGER NOT NULL,
       provider_channel_id INTEGER NOT NULL,
       sort_order INTEGER DEFAULT 0,
-      custom_name TEXT DEFAULT ''
+      custom_name TEXT DEFAULT '',
+      is_hidden INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS user_backups (
@@ -268,6 +269,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserTokenVersion(db);
             migrations.migrateUserAllowedCountries(db);
             migrations.migrateUserChannelsCustomName(db);
+            migrations.migrateUserChannelsIsHidden(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

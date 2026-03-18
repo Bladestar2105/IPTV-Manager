@@ -722,3 +722,17 @@ export function migrateUserChannelsCustomName(db) {
     console.error('User Channels Custom Name migration error:', e);
   }
 }
+
+export function migrateUserChannelsIsHidden(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(user_channels)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('is_hidden')) {
+      db.exec('ALTER TABLE user_channels ADD COLUMN is_hidden INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: is_hidden column added to user_channels');
+    }
+  } catch (e) {
+    console.error('User Channels is_hidden migration error:', e);
+  }
+}
