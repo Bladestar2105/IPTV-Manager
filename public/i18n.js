@@ -362,6 +362,7 @@ const translations = {
     editUser: 'Edit User',
     leaveBlankToKeep: 'Leave blank to keep current',
     enableEpg: 'Enable EPG',
+    useMappedEpgIcon: 'Use Mapped EPG Icon',
 
     // Sync Configuration
     enableAutomaticSync: 'Enable Automatic Sync',
@@ -827,6 +828,7 @@ const translations = {
     editUser: 'Benutzer bearbeiten',
     leaveBlankToKeep: 'Leer lassen um aktuelles zu behalten',
     enableEpg: 'EPG aktivieren',
+    useMappedEpgIcon: 'Gezieltes EPG-Icon verwenden',
 
     // Sync Configuration
     enableAutomaticSync: 'Automatischen Sync aktivieren',
@@ -1292,6 +1294,7 @@ const translations = {
     editUser: 'Modifier Utilisateur',
     leaveBlankToKeep: 'Laisser vide pour conserver l\'actuel',
     enableEpg: 'Activer EPG',
+    useMappedEpgIcon: 'Utiliser l\'icône EPG mappée',
 
     // Sync Configuration
     enableAutomaticSync: 'Activer la synchronisation automatique',
@@ -1757,6 +1760,7 @@ const translations = {
     editUser: 'Επεξεργασία Χρήστη',
     leaveBlankToKeep: 'Αφήστε κενό για να διατηρήσετε τον τρέχοντα',
     enableEpg: 'Ενεργοποίηση EPG',
+    useMappedEpgIcon: 'Χρήση αντιστοιχισμένου εικονιδίου EPG',
 
     // Sync Configuration
     enableAutomaticSync: 'Ενεργοποίηση αυτόματου συγχρονισμού',

@@ -977,6 +977,7 @@ function prepareEditProvider(p) {
   form.user_id.value = p.user_id || '';
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
+  form.use_mapped_epg_icon.checked = p.use_mapped_epg_icon !== 0;
   form.max_connections.value = p.max_connections || 0;
 
   const backupInput = document.getElementById('provider-backup-urls');
@@ -1832,6 +1833,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     user_id: f.user_id.value || null,
     epg_update_interval: f.epg_update_interval.value,
     epg_enabled: f.epg_enabled.checked,
+    use_mapped_epg_icon: f.use_mapped_epg_icon.checked,
     backup_urls: backupUrls,
     max_connections: f.max_connections.value || 0
   };
