@@ -572,11 +572,14 @@ export function clearEpgData() {
     const transaction = db.transaction(() => {
         db.prepare('DELETE FROM epg_programs').run();
         db.prepare('DELETE FROM epg_channels').run();
-        db.prepare('DELETE FROM epg_sources').run();
 
         // Note: epg_channel_mappings table is intentionally left alone to preserve mapping.
     });
 
     transaction();
+
+    // Reset update status on sources
+    mainDb.prepare('UPDATE epg_sources SET last_update = 0, is_updating = 0').run();
+
     console.log("✅ EPG data cleared successfully.");
 }
