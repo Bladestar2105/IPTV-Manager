@@ -230,6 +230,12 @@ export async function updateProviderEpg(providerId, skipPrune = false) {
     const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
 
+    // Explicitly check if EPG syncing is enabled for this provider
+    if (!provider.epg_enabled) {
+        console.log(`⚠️ Skipping EPG update for disabled provider ${providerId}`);
+        return;
+    }
+
     const now = Math.floor(Date.now() / 1000);
 
     try {
@@ -572,11 +578,14 @@ export function clearEpgData() {
     const transaction = db.transaction(() => {
         db.prepare('DELETE FROM epg_programs').run();
         db.prepare('DELETE FROM epg_channels').run();
-        db.prepare('DELETE FROM epg_sources').run();
 
         // Note: epg_channel_mappings table is intentionally left alone to preserve mapping.
     });
 
     transaction();
+
+    // Reset update status on sources
+    mainDb.prepare('UPDATE epg_sources SET last_update = 0, is_updating = 0').run();
+
     console.log("✅ EPG data cleared successfully.");
 }

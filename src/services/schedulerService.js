@@ -57,7 +57,7 @@ export function startEpgScheduler() {
 
     // 2. Provider Sources
     try {
-      const providers = db.prepare("SELECT * FROM providers WHERE epg_url IS NOT NULL AND TRIM(epg_url) != '' AND epg_enabled = 1").all();
+      const providers = db.prepare("SELECT * FROM providers WHERE epg_enabled = 1").all();
       for (const provider of providers) {
         const interval = provider.epg_update_interval || 86400;
 
@@ -71,10 +71,12 @@ export function startEpgScheduler() {
           try {
             console.log(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
 
-            if (!(await isSafeUrl(provider.epg_url))) {
-              console.error(`Unsafe EPG URL for provider ${provider.name}`);
-              failedUpdates.set(provider.id, now);
-              continue;
+            if (provider.epg_url && provider.epg_url.trim() !== '') {
+              if (!(await isSafeUrl(provider.epg_url))) {
+                console.error(`Unsafe EPG URL for provider ${provider.name}`);
+                failedUpdates.set(provider.id, now);
+                continue;
+              }
             }
 
             await updateProviderEpg(provider.id);

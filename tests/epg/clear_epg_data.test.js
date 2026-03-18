@@ -17,11 +17,17 @@ vi.mock('../../src/database/epgDb.js', () => ({
     default: mockEpgDb,
 }));
 
+const { mockMainDb } = vi.hoisted(() => {
+    return {
+        mockMainDb: {
+            prepare: vi.fn(),
+        },
+    };
+});
+
 // Mock mainDb as it's also imported
 vi.mock('../../src/database/db.js', () => ({
-    default: {
-        prepare: vi.fn(),
-    },
+    default: mockMainDb,
 }));
 
 // Mock other dependencies to avoid side effects during import
@@ -55,21 +61,24 @@ describe('clearEpgData', () => {
         vi.clearAllMocks();
     });
 
-    it('should clear epg_programs, epg_channels, and epg_sources within a transaction', () => {
+    it('should clear epg_programs and epg_channels within a transaction, and reset epg_sources', () => {
         const mockRun = vi.fn();
         mockEpgDb.prepare.mockReturnValue({ run: mockRun });
+        mockMainDb.prepare.mockReturnValue({ run: mockRun });
 
         clearEpgData();
 
         // Verify transaction was created and called
         expect(mockEpgDb.transaction).toHaveBeenCalled();
 
-        // Verify all three tables are deleted
+        // Verify tables are deleted in epgDb
         expect(mockEpgDb.prepare).toHaveBeenCalledWith('DELETE FROM epg_programs');
         expect(mockEpgDb.prepare).toHaveBeenCalledWith('DELETE FROM epg_channels');
-        expect(mockEpgDb.prepare).toHaveBeenCalledWith('DELETE FROM epg_sources');
 
-        // Verify run was called for all three
+        // Verify epg_sources status is reset in mainDb
+        expect(mockMainDb.prepare).toHaveBeenCalledWith('UPDATE epg_sources SET last_update = 0, is_updating = 0');
+
+        // Verify run was called for all three commands
         expect(mockRun).toHaveBeenCalledTimes(3);
     });
 

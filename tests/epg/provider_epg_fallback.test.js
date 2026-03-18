@@ -75,7 +75,7 @@ describe('updateProviderEpg', () => {
         const providerId = 1;
 
         // Mock provider fetch
-        const mockGetProvider = vi.fn().mockReturnValue({ id: providerId, epg_url: null });
+        const mockGetProvider = vi.fn().mockReturnValue({ id: providerId, epg_url: null, epg_enabled: 1 });
         // Mock channels fetch
         const mockGetChannels = vi.fn().mockReturnValue([
             { epg_channel_id: 'ch1', name: 'Channel 1', logo: 'logo1.png' }
@@ -104,7 +104,7 @@ describe('updateProviderEpg', () => {
         const epgUrl = 'http://example.com/xmltv';
 
         // Mock provider fetch
-        const mockGetProvider = vi.fn().mockReturnValue({ id: providerId, epg_url: epgUrl });
+        const mockGetProvider = vi.fn().mockReturnValue({ id: providerId, epg_url: epgUrl, epg_enabled: 1 });
         const mockGetChannels = vi.fn(); // Should not be called
 
         mockMainDb.prepare.mockImplementation((query) => {
