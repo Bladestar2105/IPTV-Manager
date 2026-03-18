@@ -273,6 +273,9 @@ export function initDb(isPrimary) {
             migrations.migrateUserAllowedCountries(db);
             migrations.migrateUserChannelsCustomName(db);
             migrations.migrateUserChannelsIsHidden(db);
+            if (typeof migrations.migrateProviderUseMappedEpgIcon === 'function') {
+                migrations.migrateProviderUseMappedEpgIcon(db);
+            }
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

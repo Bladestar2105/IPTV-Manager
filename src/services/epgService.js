@@ -322,6 +322,20 @@ export async function loadAllEpgChannels() {
     return channels;
 }
 
+export function loadEpgChannelLogosMap() {
+    const channels = db.prepare(`
+        SELECT id, logo
+        FROM epg_channels
+        WHERE logo IS NOT NULL AND logo != ''
+    `).all();
+
+    const logoMap = new Map();
+    for (const ch of channels) {
+        logoMap.set(ch.id, ch.logo);
+    }
+    return logoMap;
+}
+
 export async function getEpgPrograms(channelId, limit = 1000) {
     const now = Math.floor(Date.now() / 1000);
     // Get future/current programs
