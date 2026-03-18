@@ -19,3 +19,7 @@
 ## 2026-03-10 - O(1) Memory Streaming for Massive M3U Playlists
 **Learning:** Storing massive M3U playlists containing tens of thousands of channel strings inside an array before joining them (`lines.join('\n')`) into a gigantic string at the end of the `playlist` endpoint exhausts V8 heap memory and blocks the event loop.
 **Action:** When dynamically generating M3U or large text payloads, use string buffers and stream them incrementally using `res.write(buffer)` instead of accumulating everything into memory to maintain a low memory footprint.
+
+## 2026-03-17 - SQLite Rate Limiting Query Optimization
+**Learning:** Querying log tables (like `security_logs`) without proper indices for rate-limiting operations (e.g., checking failed logins) can result in continuous full table scans. During brute-force attacks or frequent automated scans, this degrades performance exponentially, consuming vast amounts of CPU and blocking the event loop since SQLite operates synchronously in the Node thread.
+**Action:** Always ensure that time-series log tables queried for rate-limiting or aggregate analysis have composite indices matching the primary access patterns, typically `(identifier, timestamp)` or `(timestamp)` depending on whether queries filter by specific entities.

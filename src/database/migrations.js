@@ -370,6 +370,9 @@ export function migrateIndexes(db) {
     db.exec('CREATE INDEX IF NOT EXISTS idx_sync_logs_prov ON sync_logs(provider_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_current_streams_prov ON current_streams(provider_id)');
 
+    // ⚡ Bolt: Add composite index for rapid rate-limiting queries to prevent full table scans during brute-force DoS attacks
+    db.exec('CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp)');
+
     // Only log if we suspect something changed or strictly once?
     // Since IF NOT EXISTS is silent, we can just say verified.
     // However, to avoid spamming logs on every restart, we might want to check existence, but it's fast enough.
