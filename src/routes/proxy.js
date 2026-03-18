@@ -94,7 +94,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
       },
-      // timeout: 5000 // Add timeout? default is usually fine but maybe too long.
+      timeout: 30000
     });
 
     if (!response.ok) {
@@ -234,7 +234,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
       return res.status(502).send('Bad Gateway (Upstream Unreachable)');
     }
 
-    if (error.code === 'ETIMEDOUT') {
+    if (error.code === 'ETIMEDOUT' || error.name === 'AbortError' || error.type === 'aborted') {
       return res.status(504).send('Gateway Timeout');
     }
 
