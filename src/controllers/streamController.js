@@ -831,15 +831,19 @@ export const proxyMovie = async (req, res) => {
 
         upstream.body.pipe(res);
 
+        streamManager.localStreams.set(connectionId, {
+          destroy: () => {
+            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
+            try { if (!res.destroyed) res.destroy(); } catch(e) {}
+          }
+        });
+
         upstream.body.on('error', (err) => {
           console.error('Movie stream error:', err.message);
           streamManager.remove(connectionId);
         });
 
-        req.on('close', () => {
-          streamManager.remove(connectionId);
-          if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
-        });
+        req.on('close', () => streamManager.remove(connectionId));
     } catch (e) {
         console.error('Movie proxy error:', e.message);
         if (!res.headersSent) {
@@ -947,15 +951,19 @@ export const proxySeries = async (req, res) => {
 
         upstream.body.pipe(res);
 
+        streamManager.localStreams.set(connectionId, {
+          destroy: () => {
+            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
+            try { if (!res.destroyed) res.destroy(); } catch(e) {}
+          }
+        });
+
         upstream.body.on('error', (err) => {
           console.error('Series stream error:', err.message);
           streamManager.remove(connectionId);
         });
 
-        req.on('close', () => {
-          streamManager.remove(connectionId);
-          if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
-        });
+        req.on('close', () => streamManager.remove(connectionId));
     } catch(e) {
         console.error('Series proxy error:', e.message);
         if (!res.headersSent) {
@@ -1119,6 +1127,13 @@ export const proxyTimeshift = async (req, res) => {
 
     upstream.body.pipe(res);
 
+    streamManager.localStreams.set(connectionId, {
+      destroy: () => {
+        try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
+        try { if (!res.destroyed) res.destroy(); } catch(e) {}
+      }
+    });
+
     upstream.body.on('error', (err) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
         console.error('Timeshift stream error:', err.message);
@@ -1126,17 +1141,12 @@ export const proxyTimeshift = async (req, res) => {
       if (!res.headersSent) {
           streamManager.localStreams.delete(connectionId);
           streamManager.remove(connectionId);
-          return res.sendStatus(500);
+          return res.sendStatus(502);
       }
       streamManager.remove(connectionId);
     });
 
-    req.on('close', () => {
-      streamManager.remove(connectionId);
-      if (upstream.body && !upstream.body.destroyed) {
-        upstream.body.destroy();
-      }
-    });
+    req.on('close', () => streamManager.remove(connectionId));
 
   } catch (e) {
     console.error('Timeshift proxy setup error:', e.message);
