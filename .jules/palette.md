@@ -7,3 +7,6 @@
 ## 2026-03-12 - Emojis vs Icon Fonts in Form Fields
 **Learning:** When standardizing form inputs, do not blindly replace existing icon font classes (like `.bi-eye`) with emojis (like `👁️`) just to match other hardcoded parts of the app. Emojis break visual consistency, don't inherit text colors (crucial for dark mode), and removing hardcoded `aria-label`s before JS hydration is an accessibility regression.
 **Action:** Avoid replacing proper icon fonts with emojis. Ensure icon-only buttons always have a fallback `aria-label` attribute in HTML.
+## 2026-03-18 - Add ARIA attributes to mobile navbar toggler
+**Learning:** The Bootstrap mobile navbar toggle button (`.navbar-toggler`) was missing standard ARIA attributes (`aria-controls` and `aria-expanded`), causing screen readers to not properly announce its state or purpose.
+**Action:** When implementing or modifying Bootstrap collapse components, always explicitly initialize `aria-controls="<target_id>"` and `aria-expanded="false"` in the HTML markup. Bootstrap's JS will handle toggling the state, but the initial markup must be compliant.
