@@ -190,7 +190,7 @@ export const getCategoryChannels = (req, res) => {
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE uc.user_category_id = ?
+      WHERE uc.user_category_id = ? AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(catId);
     res.json(rows);
@@ -212,9 +212,19 @@ export const addUserChannel = (req, res) => {
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
     const newSortOrder = (maxSort?.max_sort || -1) + 1;
 
-    const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
+    const existingHidden = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ? AND is_hidden = 1').get(catId, Number(provider_channel_id));
+
+    let insertId;
+    if (existingHidden) {
+        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ? WHERE id = ?').run(newSortOrder, existingHidden.id);
+        insertId = existingHidden.id;
+    } else {
+        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
+        insertId = info.lastInsertRowid;
+    }
+
     clearChannelsCache(cat.user_id);
-    res.json({id: info.lastInsertRowid});
+    res.json({id: insertId});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
@@ -262,7 +272,7 @@ export const deleteUserChannel = (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    db.prepare('DELETE FROM user_channels WHERE id = ?').run(id);
+    db.prepare('UPDATE user_channels SET is_hidden = 1 WHERE id = ?').run(id);
     clearChannelsCache(channel.user_id);
     res.json({success: true});
   } catch (e) {
@@ -298,7 +308,7 @@ export const bulkDeleteUserChannels = (req, res) => {
         }
     }
 
-    db.prepare(`DELETE FROM user_channels WHERE id IN (${placeholders})`).run(...ids);
+    db.prepare(`UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders})`).run(...ids);
 
     userIdsToClear.forEach(uId => clearChannelsCache(uId));
     res.json({success: true, deleted: ids.length});

@@ -82,7 +82,7 @@ export const playerApi = async (req, res) => {
         FROM user_categories cat
         JOIN user_channels uc ON uc.user_category_id = cat.id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-        WHERE cat.user_id = ? AND pc.stream_type = ?
+        WHERE cat.user_id = ? AND pc.stream_type = ? AND uc.is_hidden = 0
         ORDER BY cat.sort_order
       `).all(user.id, type);
 
@@ -115,7 +115,7 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-        WHERE cat.user_id = ? AND pc.stream_type = 'live'`;
+        WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
       const params = [user.id];
 
       if (categoryId && categoryId !== '*' && categoryId !== '0') {
@@ -157,7 +157,7 @@ export const playerApi = async (req, res) => {
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE cat.user_id = ? AND pc.stream_type = 'movie'`;
+        WHERE cat.user_id = ? AND pc.stream_type = 'movie' AND uc.is_hidden = 0`;
       const params = [user.id];
 
       if (categoryId && categoryId !== '*' && categoryId !== '0') {
@@ -198,7 +198,7 @@ export const playerApi = async (req, res) => {
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE cat.user_id = ? AND pc.stream_type = 'series'`;
+        WHERE cat.user_id = ? AND pc.stream_type = 'series' AND uc.is_hidden = 0`;
       const params = [user.id];
 
       if (categoryId && categoryId !== '*' && categoryId !== '0') {
@@ -253,7 +253,7 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE uc.id = ? AND cat.user_id = ?
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
       `).get(seriesId, user.id);
 
       if (!channel) return res.json({});
@@ -305,7 +305,7 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE uc.id = ? AND cat.user_id = ?
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
       `).get(vodId, user.id);
 
       if (!channel) return res.json({});
@@ -352,7 +352,7 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-        WHERE uc.id = ? AND cat.user_id = ?
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
       `).get(streamId, user.id);
 
       if (!channel) return res.json({epg_listings: []});
@@ -410,7 +410,7 @@ export const getPlaylist = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE cat.user_id = ?
+      WHERE cat.user_id = ? AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(user.id);
 
@@ -494,7 +494,7 @@ export const xmltv = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-        WHERE cat.user_id = ?
+        WHERE cat.user_id = ? AND uc.is_hidden = 0
         AND (map.epg_channel_id IS NOT NULL OR pc.epg_channel_id IS NOT NULL)
     `).all(user.id);
 
@@ -553,7 +553,7 @@ export const playerChannelsJson = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE cat.user_id = ? AND pc.stream_type != 'series'
+      WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(user.id);
 
@@ -672,7 +672,7 @@ export const playerPlaylist = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE cat.user_id = ? AND pc.stream_type != 'series'
+      WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(user.id);
 
