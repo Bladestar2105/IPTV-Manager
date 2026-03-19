@@ -70,6 +70,12 @@ const LANGUAGE_MAP = (() => {
   map['greece'] = 'el';
   map['greek'] = 'el';
 
+  // Zusätzliche Ländercodes, die oft in EPG IDs (z.B. .at, .ch) oder IPTV Namen (| AT |) auftauchen
+  map['at'] = 'at'; // Austria
+  map['ch'] = 'ch'; // Switzerland
+  map['be'] = 'be'; // Belgium
+  map['nl'] = 'nl'; // Netherlands
+
   return map;
 })();
 
@@ -247,18 +253,34 @@ export class ChannelMatcher {
       .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
       .replace(/^the\s+/gi, '') // Startwort "The" entfernen ("The History Channel" -> "history channel")
       .replace(/\s+(?:network|channel|tv)\s*$/gi, '') // Typische Suffixe entfernen
-      .replace(/\s+/g, ' ') // Multiple Spaces
       .trim();
 
     // Strip leading zeros from numbers
     base = base.replace(/\b0+(\d+)\b/g, '$1');
+
+    // Remove all spaces AFTER stripping leading zeros, otherwise \b word boundary won't work correctly for zeros
+    base = base.replace(/\s+/g, '');
+
     return base;
   }
 
   /**
    * Matcht IPTV-Channel zu EPG-Einträgen
    */
-  match(iptvChannelName) {
+  match(iptvChannelName, providedEpgId = null) {
+    // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
+    if (providedEpgId) {
+      const exactEpgIdMatch = this.epgChannels.find(c => c.id === providedEpgId);
+      if (exactEpgIdMatch) {
+        return {
+          epgChannel: exactEpgIdMatch,
+          confidence: 1.0,
+          method: 'exact_tvg_id',
+          parsed: this.parseChannelName(iptvChannelName)
+        };
+      }
+    }
+
     const parsed = this.parseChannelName(iptvChannelName);
 
     const iptvNumsString = parsed.numbersString;
