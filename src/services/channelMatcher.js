@@ -2,11 +2,12 @@ import ISO6391 from 'iso-639-1';
 
 // Optimization: Pre-compile regex patterns to avoid re-compilation on every match
 const CHANNEL_NAME_PATTERNS = [
-  // "| DE | Arte", "[EN] CNN", "|FR| TF1", "(DE) RTL"
-  /^[\|\-_\.\[\]\(\)]+\s*([A-Z]{2,3})\s*[\-_\.\|:\]\)]+\s*(.+)$/i,
+  // "| DE | Arte", "[EN] CNN", "|FR| TF1", "(DE) RTL", "┃DE┃ SKY"
+  // Added unicode ranges for Box Drawing (\u2500-\u257F), Block Elements (\u2580-\u259F), Geometric Shapes (\u25A0-\u25FF)
+  /^[\|\-_\.\[\]\(\)\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]+\s*([A-Z]{2,3})\s*[\-_\.\|:\]\)\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]+\s*(.+)$/i,
 
-  // "DE: Arte", "EN: CNN", "DE| RTL", "DE - RTL"
-  /^([A-Z]{2,3})\s*[\-_\.\|:]\s*(.+)$/i,
+  // "DE: Arte", "EN: CNN", "DE| RTL", "DE - RTL", "DE┃ RTL"
+  /^([A-Z]{2,3})\s*[\-_\.\|:\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]\s*(.+)$/i,
 
   // "Arte HD DE", "CNN INT", "Eurosport 1 FR"
   /^(.+?)\s+([A-Z]{2,3})$/i,
@@ -15,11 +16,11 @@ const CHANNEL_NAME_PATTERNS = [
   // Fixed regex: removed extra backslashes to correctly match parenthesis
   /^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]$/i,
 
-  // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL"
-  /^(.+?)[\-_\.\|]([A-Z]{2,3})$/i,
+  // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL", "Arte┃DE"
+  /^(.+?)[\-_\.\|\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]([A-Z]{2,3})$/i,
 
   // "DE: Arte", "EN: CNN", "DE| RTL"
-  /^([A-Z]{2,3})[\-_\.\|:]\s*(.+)$/i,
+  /^([A-Z]{2,3})[\-_\.\|:\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]\s*(.+)$/i,
 ];
 
 // Optimization: Pre-compute language map once
@@ -119,6 +120,14 @@ export class ChannelMatcher {
     // Optimization: Build indexes for O(1) lookups
     this.baseNameIndex = new Map();
     this.numbersIndex = new Map();
+
+    // Optimization: O(1) lookup for explicit tvg-id matches
+    this.epgIdIndex = new Map();
+    for (const c of this.epgChannels) {
+        if (c.id) {
+            this.epgIdIndex.set(c.id.toLowerCase(), c);
+        }
+    }
 
     // Intermediate storage for deduplication: Map<numbersString, Map<baseName, ParsedChannel>>
     // This dramatically reduces the number of candidates for fuzzy matching by grouping variations (HD, SD, etc.)
@@ -286,7 +295,8 @@ export class ChannelMatcher {
   match(iptvChannelName, providedEpgId = null) {
     // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
     if (providedEpgId) {
-      const exactEpgIdMatch = this.epgChannels.find(c => c.id === providedEpgId);
+      const lowerEpgId = providedEpgId.toLowerCase();
+      const exactEpgIdMatch = this.epgIdIndex.get(lowerEpgId);
       if (exactEpgIdMatch) {
         return {
           epgChannel: exactEpgIdMatch,
@@ -517,7 +527,8 @@ export class ChannelMatcher {
 
     // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
     if (providedEpgId) {
-      const exactEpgIdMatch = this.epgChannels.find(c => c.id === providedEpgId);
+      const lowerEpgId = providedEpgId.toLowerCase();
+      const exactEpgIdMatch = this.epgIdIndex.get(lowerEpgId);
       if (exactEpgIdMatch) {
         allCandidates.push({
           epgChannel: exactEpgIdMatch,
