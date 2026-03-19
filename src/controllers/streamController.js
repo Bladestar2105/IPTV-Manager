@@ -77,6 +77,46 @@ function getProvider(id) {
     return stmts.getProvider.get(id);
 }
 
+function getProviderPool(userId, providerUrl) {
+    const base = providerUrl.replace(/\/+$/, '');
+    // Fetch all providers for the same user with the same base url
+    const providers = db.prepare('SELECT * FROM providers WHERE user_id = ? AND url LIKE ?').all(userId, `${base}%`);
+    // Filter strictly by normalized base URL in case of LIKE edge cases
+    return providers.filter(p => p.url.replace(/\/+$/, '') === base);
+}
+
+async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
+    const pool = getProviderPool(userId, originalProvider.provider_url || originalProvider.url);
+
+    for (const p of pool) {
+        let isSessionActive = false;
+
+        // Handle provider object structure differences (from getChannel vs getProvider)
+        const pId = p.id;
+        const pMaxConnections = p.max_connections;
+
+        // If the session is already active on this provider with this IP, it's free to use
+        isSessionActive = await streamManager.isSessionActive(userId, reqIp, sessionName, pId);
+        if (isSessionActive) {
+            return p;
+        }
+
+        // Check if provider has reached max connections
+        if (pMaxConnections > 0) {
+            const active = await streamManager.getProviderConnectionCount(pId);
+            if (active >= pMaxConnections) {
+                continue; // This provider is full, try next
+            }
+        }
+
+        // Found an available provider
+        return p;
+    }
+
+    // No available provider found in pool, return null to indicate failure
+    return null;
+}
+
 
 function isBrowser(req) {
   const ua = (req.headers['user-agent'] || '');
@@ -192,20 +232,32 @@ export const proxyMpd = async (req, res) => {
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
-    const isSessionActive = await streamManager.isSessionActive(user.id, req.ip, `${channel.name} (DASH)`, channel.provider_id);
-    if (!isSessionActive) {
-        if (user.max_connections > 0) {
+    const sessionName = `${channel.name} (DASH)`;
+
+    // Check User connection limit first
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
+        if (!isSessionActiveForUser) {
             const active = await streamManager.getUserConnectionCount(user.id);
             if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
-
-        if (channel.provider_max_connections > 0) {
-            const active = await streamManager.getProviderConnectionCount(channel.provider_id);
-            if (active >= channel.provider_max_connections) return res.status(403).send('Provider max connections reached');
-        }
     }
 
-    await streamManager.add(connectionId, user, `${channel.name} (DASH)`, req.ip, res, channel.provider_id);
+    // Provider Pooling: Find an available provider account with the same URL
+    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
+
+    // Override channel provider credentials with the available pool account
+    channel.provider_id = availableProvider.id;
+    channel.provider_url = availableProvider.url;
+    channel.provider_user = availableProvider.username;
+    channel.provider_pass = availableProvider.password; // Encrypted password
+    channel.backup_urls = availableProvider.backup_urls;
+    channel.user_agent = availableProvider.user_agent;
+
+    await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
     try {
         const now = Math.floor(Date.now() / 1000);
         const existingStat = getStat(channel.provider_channel_id);
@@ -303,14 +355,24 @@ export const proxyLive = async (req, res) => {
         await streamManager.cleanupUser(user.id, req.ip);
 
         if (user.max_connections > 0) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
+            if (!isSessionActiveForUser) {
+                const active = await streamManager.getUserConnectionCount(user.id);
+                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+            }
         }
 
-        if (channel.provider_max_connections > 0) {
-            const active = await streamManager.getProviderConnectionCount(channel.provider_id);
-            if (active >= channel.provider_max_connections) return res.status(403).send('Provider max connections reached');
+        const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
+        if (!availableProvider) {
+            return res.status(403).send('Provider max connections reached across all accounts');
         }
+
+        channel.provider_id = availableProvider.id;
+        channel.provider_url = availableProvider.url;
+        channel.provider_user = availableProvider.username;
+        channel.provider_pass = availableProvider.password;
+        channel.backup_urls = availableProvider.backup_urls;
+        channel.user_agent = availableProvider.user_agent;
 
         await new Promise(resolve => setTimeout(resolve, 100));
         await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id);
@@ -635,6 +697,11 @@ export const proxySegment = async (req, res) => {
     }
 
     if (channelName && providerId) {
+        // Technically segment proxy is mostly stateless and shouldn't hit limits,
+        // but it registers as a stream. It's better not to change providerId mid-stream,
+        // so we use the providerId passed in the payload (which was the one chosen by the playlist generator).
+        // For segments, pooling might have already happened when generating the M3U8,
+        // or we just track it against the original provider.
         await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId);
     }
 
@@ -692,20 +759,29 @@ export const proxyMovie = async (req, res) => {
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
-    const isSessionActive = await streamManager.isSessionActive(user.id, req.ip, `${channel.name} (VOD)`, channel.provider_id);
-    if (!isSessionActive) {
-        if (user.max_connections > 0) {
+    const sessionName = `${channel.name} (VOD)`;
+
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
+        if (!isSessionActiveForUser) {
             const active = await streamManager.getUserConnectionCount(user.id);
             if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
-
-        if (channel.provider_max_connections > 0) {
-            const active = await streamManager.getProviderConnectionCount(channel.provider_id);
-            if (active >= channel.provider_max_connections) return res.status(403).send('Provider max connections reached');
-        }
     }
 
-    await streamManager.add(connectionId, user, `${channel.name} (VOD)`, req.ip, res, channel.provider_id);
+    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
+
+    channel.provider_id = availableProvider.id;
+    channel.provider_url = availableProvider.url;
+    channel.provider_user = availableProvider.username;
+    channel.provider_pass = availableProvider.password;
+    channel.backup_urls = availableProvider.backup_urls;
+    channel.user_agent = availableProvider.user_agent;
+
+    await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
 
     try {
         const now = Math.floor(Date.now() / 1000);
@@ -889,39 +965,41 @@ export const proxySeries = async (req, res) => {
 
     if (user.is_share_guest) return res.sendStatus(403);
 
-    const isSessionActive = await streamManager.isSessionActive(user.id, req.ip, `Series Episode ${remoteEpisodeId}`, provider.id);
-    if (!isSessionActive) {
-        if (user.max_connections > 0) {
+    const sessionName = `Series Episode ${remoteEpisodeId}`;
+
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, provider.id);
+        if (!isSessionActiveForUser) {
             const active = await streamManager.getUserConnectionCount(user.id);
             if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
-
-        if (provider.max_connections > 0) {
-            const active = await streamManager.getProviderConnectionCount(provider.id);
-            if (active >= provider.max_connections) return res.status(403).send('Provider max connections reached');
-        }
     }
 
-    await streamManager.add(connectionId, user, `Series Episode ${remoteEpisodeId}`, req.ip, res, provider.id);
+    const availableProvider = await findAvailableProvider(user.id, provider, req.ip, sessionName);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
 
-    provider.password = decrypt(provider.password);
+    await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
 
-    const base = provider.url.replace(/\/+$/, '');
-    const remoteUrl = `${base}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
+    availableProvider.password = decrypt(availableProvider.password);
+
+    const base = availableProvider.url.replace(/\/+$/, '');
+    const remoteUrl = `${base}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
 
     let backupStreamUrls = [];
     try {
-        if (provider.backup_urls) {
-            const backups = JSON.parse(provider.backup_urls);
+        if (availableProvider.backup_urls) {
+            const backups = JSON.parse(availableProvider.backup_urls);
             backupStreamUrls = backups.map(bUrl => {
                 const bBase = bUrl.replace(/\/+$/, '');
-                return `${bBase}/series/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${remoteEpisodeId}.${ext}`;
+                return `${bBase}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
             });
         }
     } catch(e) {}
 
     const headers = {
-      'User-Agent': provider.user_agent || DEFAULT_USER_AGENT,
+      'User-Agent': availableProvider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
 
@@ -1009,20 +1087,29 @@ export const proxyTimeshift = async (req, res) => {
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
     }
 
-    const isSessionActive = await streamManager.isSessionActive(user.id, req.ip, `${channel.name} (Timeshift)`, channel.provider_id);
-    if (!isSessionActive) {
-        if (user.max_connections > 0) {
+    const sessionName = `${channel.name} (Timeshift)`;
+
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
+        if (!isSessionActiveForUser) {
             const active = await streamManager.getUserConnectionCount(user.id);
             if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
-
-        if (channel.provider_max_connections > 0) {
-            const active = await streamManager.getProviderConnectionCount(channel.provider_id);
-            if (active >= channel.provider_max_connections) return res.status(403).send('Provider max connections reached');
-        }
     }
 
-    await streamManager.add(connectionId, user, `${channel.name} (Timeshift)`, req.ip, res, channel.provider_id);
+    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
+
+    channel.provider_id = availableProvider.id;
+    channel.provider_url = availableProvider.url;
+    channel.provider_user = availableProvider.username;
+    channel.provider_pass = availableProvider.password;
+    channel.backup_urls = availableProvider.backup_urls;
+    channel.user_agent = availableProvider.user_agent;
+
+    await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
 
     channel.provider_pass = decrypt(channel.provider_pass);
 

@@ -44,7 +44,7 @@ vi.mock('../../src/database/db.js', () => ({
         prepare: vi.fn((query) => {
             if (query.includes('user_channels')) {
                 return {
-                    get: vi.fn().mockImplementation((streamId) => {
+                    get: vi.fn().mockImplementation((streamId, userId) => {
                         // Return based on streamId to test different scenarios
                         const base = {
                             user_channel_id: 1,
@@ -60,17 +60,36 @@ vi.mock('../../src/database/db.js', () => ({
                             provider_max_connections: 0
                         };
 
-                        if (streamId === 101) {
+                        if (streamId === 101 || streamId === '101') {
                             return { ...base, provider_id: 101, provider_max_connections: 1 };
                         }
                         return base;
                     })
                 };
             }
+            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
+                return {
+                    all: vi.fn().mockImplementation((userId, urlPattern) => {
+                        // Return mock providers based on the pool request
+                        if (urlPattern.includes('example.com')) {
+                            // If we set global._testMode = 'block', make all providers limited
+                            if (global._testMode === 'block') {
+                                return [
+                                    { id: 101, url: 'http://example.com', username: 'user', password: 'pass', max_connections: 1 }
+                                ];
+                            }
+                            return [
+                                { id: 100, url: 'http://example.com', username: 'user', password: 'pass', max_connections: 0 }
+                            ];
+                        }
+                        return [];
+                    })
+                };
+            }
             if (query.includes('SELECT id FROM stream_stats')) {
                  return { get: vi.fn().mockReturnValue({ id: 1 }) };
             }
-            return { run: vi.fn(), get: vi.fn() };
+            return { run: vi.fn(), get: vi.fn(), all: vi.fn() };
         })
     }
 }));
@@ -113,6 +132,7 @@ vi.mock('../../src/utils/crypto.js', () => ({
 describe('Provider Connection Limit', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        global._testMode = null;
     });
 
     it('should allow stream if provider max_connections is 0', async () => {
@@ -135,6 +155,7 @@ describe('Provider Connection Limit', () => {
     });
 
     it('should block stream if provider active >= provider max_connections', async () => {
+        global._testMode = 'block';
         getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 0 });
         streamManager.getProviderConnectionCount.mockResolvedValue(1);
 
@@ -147,6 +168,7 @@ describe('Provider Connection Limit', () => {
         };
         const res = {
             sendStatus: vi.fn(),
+            setHeader: vi.fn(),
             status: vi.fn().mockReturnThis(),
             send: vi.fn()
         };
@@ -160,6 +182,7 @@ describe('Provider Connection Limit', () => {
     });
 
     it('should allow stream if provider active < provider max_connections', async () => {
+        global._testMode = 'block';
         getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 0 });
         streamManager.getProviderConnectionCount.mockResolvedValue(0);
 
