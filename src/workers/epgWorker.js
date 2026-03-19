@@ -28,7 +28,7 @@ export function matchChannels(channels, allEpgChannels, globalMappings) {
        }
 
        // B. Automapping
-       const result = matcher.match(ch.name);
+       const result = matcher.match(ch.name, ch.epg_id);
 
        if (result.epgChannel) {
          updates.push({pid: ch.id, eid: result.epgChannel.id});

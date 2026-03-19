@@ -70,6 +70,12 @@ const LANGUAGE_MAP = (() => {
   map['greece'] = 'el';
   map['greek'] = 'el';
 
+  // Zusätzliche Ländercodes, die oft in EPG IDs (z.B. .at, .ch) oder IPTV Namen (| AT |) auftauchen
+  map['at'] = 'at'; // Austria
+  map['ch'] = 'ch'; // Switzerland
+  map['be'] = 'be'; // Belgium
+  map['nl'] = 'nl'; // Netherlands
+
   return map;
 })();
 
@@ -247,18 +253,34 @@ export class ChannelMatcher {
       .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
       .replace(/^the\s+/gi, '') // Startwort "The" entfernen ("The History Channel" -> "history channel")
       .replace(/\s+(?:network|channel|tv)\s*$/gi, '') // Typische Suffixe entfernen
-      .replace(/\s+/g, ' ') // Multiple Spaces
       .trim();
 
     // Strip leading zeros from numbers
     base = base.replace(/\b0+(\d+)\b/g, '$1');
+
+    // Remove all spaces AFTER stripping leading zeros, otherwise \b word boundary won't work correctly for zeros
+    base = base.replace(/\s+/g, '');
+
     return base;
   }
 
   /**
    * Matcht IPTV-Channel zu EPG-Einträgen
    */
-  match(iptvChannelName) {
+  match(iptvChannelName, providedEpgId = null) {
+    // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
+    if (providedEpgId) {
+      const exactEpgIdMatch = this.epgChannels.find(c => c.id === providedEpgId);
+      if (exactEpgIdMatch) {
+        return {
+          epgChannel: exactEpgIdMatch,
+          confidence: 1.0,
+          method: 'exact_tvg_id',
+          parsed: this.parseChannelName(iptvChannelName)
+        };
+      }
+    }
+
     const parsed = this.parseChannelName(iptvChannelName);
 
     const iptvNumsString = parsed.numbersString;
@@ -358,6 +380,11 @@ export class ChannelMatcher {
       // If the best candidate from the base name fallback has very low confidence (e.g. because of language penalty)
       // We should fall through to the global fuzzy search instead of immediately returning a bad match.
       if (similarityConfidence > 0.4) {
+          // Wait! Let's double check if we really want to return this.
+          // If we heavily penalized it, the score will be very low (e.g., 1.0 * 0.1 * 0.7 = 0.07).
+          // But what if it was initially very high and we didn't penalize it enough?
+          // If explicitly different language, we shouldn't return it as a good match unless we have to.
+          // With best.score *= 0.1, similarityConfidence is at most 0.07, so it will fall through anyway.
           return bestSimilarityFallback;
       }
 
@@ -462,7 +489,7 @@ export class ChannelMatcher {
   /**
    * Returns top N candidate matches for a given channel name.
    */
-  suggest(iptvChannelName, limit = 10) {
+  suggest(iptvChannelName, providedEpgId = null, limit = 10) {
     const parsed = this.parseChannelName(iptvChannelName);
     const iptvNumsString = parsed.numbersString;
 
@@ -471,6 +498,19 @@ export class ChannelMatcher {
     const checkNumbers = (epgItem) => {
         return iptvNumsString === epgItem.numbersString;
     };
+
+    // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
+    if (providedEpgId) {
+      const exactEpgIdMatch = this.epgChannels.find(c => c.id === providedEpgId);
+      if (exactEpgIdMatch) {
+        allCandidates.push({
+          epgChannel: exactEpgIdMatch,
+          confidence: 1.0,
+          method: 'exact_tvg_id',
+          parsed: parsed
+        });
+      }
+    }
 
     // 1. Check exact matches (with language)
     if (parsed.language) {

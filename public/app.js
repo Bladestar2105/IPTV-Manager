@@ -3847,7 +3847,7 @@ async function loadEpgSuggestions(channelId) {
     const res = await fetchJSON('/api/mapping/suggest', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ channel_name: channel.name })
+      body: JSON.stringify({ channel_name: channel.name, epg_id: channel.epg_id })
     });
 
     list.innerHTML = '';
