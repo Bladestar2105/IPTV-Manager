@@ -60,9 +60,9 @@ export const playerApi = async (req, res) => {
           status: 'Active',
           exp_date: user.expiry_date ? Math.floor(new Date(user.expiry_date).getTime() / 1000).toString() : '1773864593',
           is_trial: '0',
-          active_cons: activeCons.toString(),
+          active_cons: activeCons,
           created_at: now.toString(),
-          max_connections: user.max_connections === 0 ? '999999' : (user.max_connections || '1').toString(),
+          max_connections: user.max_connections === 0 ? 999999 : (user.max_connections || 1),
           allowed_output_formats: ['m3u8', 'ts']
         },
         server_info: {
