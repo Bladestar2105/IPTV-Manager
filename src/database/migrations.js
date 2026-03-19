@@ -370,6 +370,10 @@ export function migrateIndexes(db) {
     db.exec('CREATE INDEX IF NOT EXISTS idx_sync_logs_prov ON sync_logs(provider_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_current_streams_prov ON current_streams(provider_id)');
 
+    // ⚡ Bolt: Add composite indexes for rapid filtering and sorting in provider endpoints without creating Temp B-trees
+    db.exec('CREATE INDEX IF NOT EXISTS idx_pc_prov_type_sort_name ON provider_channels(provider_id, stream_type, original_sort_order, name)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_pc_prov_type_cat_sort_name ON provider_channels(provider_id, stream_type, original_category_id, original_sort_order, name)');
+
     // ⚡ Bolt: Add composite index for rapid rate-limiting queries to prevent full table scans during brute-force DoS attacks
     db.exec('CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp)');
 

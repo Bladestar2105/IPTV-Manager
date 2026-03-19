@@ -23,3 +23,7 @@
 ## 2026-03-17 - SQLite Rate Limiting Query Optimization
 **Learning:** Querying log tables (like `security_logs`) without proper indices for rate-limiting operations (e.g., checking failed logins) can result in continuous full table scans. During brute-force attacks or frequent automated scans, this degrades performance exponentially, consuming vast amounts of CPU and blocking the event loop since SQLite operates synchronously in the Node thread.
 **Action:** Always ensure that time-series log tables queried for rate-limiting or aggregate analysis have composite indices matching the primary access patterns, typically `(identifier, timestamp)` or `(timestamp)` depending on whether queries filter by specific entities.
+
+## 2026-03-19 - SQLite Temp B-Trees on Ordered Filtering
+**Learning:** Filtering and then ordering a large dataset in SQLite (e.g., `WHERE provider_id = ? ORDER BY original_sort_order ASC, name ASC`) will force the engine to allocate a temporary B-tree for the sort pass if the used index does not cover the sorting columns sequentially after the filtered ones. For datasets with millions of rows, this results in O(N log N) overhead per query instead of O(N) linear read.
+**Action:** When filtering by `A` and `B` and ordering by `C` and `D`, create a strict composite index `(A, B, C, D)` to allow SQLite to walk the B-tree sequentially without additional memory allocation or sorting passes.
