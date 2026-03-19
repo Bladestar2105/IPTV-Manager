@@ -105,7 +105,7 @@ describe('ChannelMatcher', () => {
 
     it('prioritizes language match', () => {
         const parsed = matcher.parseChannelName('US: CNN');
-        expect(parsed.language).toBe('en');
+        expect(parsed.language).toBe('us');
     });
 
     it('verifies memory optimization changes do not break logic', () => {

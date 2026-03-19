@@ -62,10 +62,10 @@ const LANGUAGE_MAP = (() => {
   map['fre'] = 'fr';
   map['esp'] = 'es';
   map['spa'] = 'es';
-  map['int'] = 'en'; // International = English
-  map['uk'] = 'en'; // UK = English
-  map['us'] = 'en'; // US = English
-  map['usa'] = 'en'; // USA = English
+  map['int'] = 'int'; // Keep distinct to prevent mismatching with specific regions
+  map['uk'] = 'uk'; // Keep distinct
+  map['us'] = 'us'; // Keep distinct
+  map['usa'] = 'us'; // USA = us
   map['gr'] = 'el'; // GR -> Greek (el)
   map['greece'] = 'el';
   map['greek'] = 'el';
@@ -75,6 +75,22 @@ const LANGUAGE_MAP = (() => {
   map['ch'] = 'ch'; // Switzerland
   map['be'] = 'be'; // Belgium
   map['nl'] = 'nl'; // Netherlands
+  map['au'] = 'au'; // Australia
+  map['nz'] = 'nz'; // New Zealand
+  map['ca'] = 'ca'; // Canada
+  map['za'] = 'za'; // South Africa
+  map['ie'] = 'ie'; // Ireland
+  map['se'] = 'se'; // Sweden
+  map['no'] = 'no'; // Norway
+  map['dk'] = 'dk'; // Denmark
+  map['fi'] = 'fi'; // Finland
+  map['pt'] = 'pt'; // Portugal
+  map['br'] = 'br'; // Brazil
+  map['mx'] = 'mx'; // Mexico
+  map['ar'] = 'ar'; // Argentina
+  map['cl'] = 'cl'; // Chile
+  map['co'] = 'co'; // Colombia
+  map['pe'] = 'pe'; // Peru
 
   return map;
 })();
