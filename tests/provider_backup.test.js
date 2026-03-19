@@ -7,7 +7,8 @@ const { mockDb, mockFetch } = vi.hoisted(() => {
     return {
         mockDb: {
             prepare: vi.fn(),
-            exec: vi.fn()
+            exec: vi.fn(),
+            pragma: vi.fn(),
         },
         mockFetch: vi.fn()
     };
