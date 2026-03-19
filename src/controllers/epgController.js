@@ -528,13 +528,13 @@ export const clearEpg = async (req, res) => {
 
 export const suggestMapping = async (req, res) => {
   try {
-    const { channel_name, limit } = req.body;
+    const { channel_name, epg_id, limit } = req.body;
     if (!channel_name) return res.status(400).json({error: 'channel_name required'});
 
     const allEpgChannels = await loadAllEpgChannels();
     const matcher = new ChannelMatcher(allEpgChannels);
 
-    const suggestions = matcher.suggest(channel_name, limit || 10);
+    const suggestions = matcher.suggest(channel_name, epg_id || null, limit || 10);
 
     res.json({ success: true, suggestions });
   } catch (e) {

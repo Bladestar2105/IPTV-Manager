@@ -2,11 +2,12 @@ import ISO6391 from 'iso-639-1';
 
 // Optimization: Pre-compile regex patterns to avoid re-compilation on every match
 const CHANNEL_NAME_PATTERNS = [
-  // "| DE | Arte", "[EN] CNN", "|FR| TF1", "(DE) RTL"
-  /^[\|\-_\.\[\]\(\)]+\s*([A-Z]{2,3})\s*[\-_\.\|:\]\)]+\s*(.+)$/i,
+  // "| DE | Arte", "[EN] CNN", "|FR| TF1", "(DE) RTL", "┃DE┃ SKY"
+  // Added unicode ranges for Box Drawing (\u2500-\u257F), Block Elements (\u2580-\u259F), Geometric Shapes (\u25A0-\u25FF)
+  /^[\|\-_\.\[\]\(\)\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]+\s*([A-Z]{2,3})\s*[\-_\.\|:\]\)\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]+\s*(.+)$/i,
 
-  // "DE: Arte", "EN: CNN", "DE| RTL", "DE - RTL"
-  /^([A-Z]{2,3})\s*[\-_\.\|:]\s*(.+)$/i,
+  // "DE: Arte", "EN: CNN", "DE| RTL", "DE - RTL", "DE┃ RTL"
+  /^([A-Z]{2,3})\s*[\-_\.\|:\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]\s*(.+)$/i,
 
   // "Arte HD DE", "CNN INT", "Eurosport 1 FR"
   /^(.+?)\s+([A-Z]{2,3})$/i,
@@ -15,11 +16,11 @@ const CHANNEL_NAME_PATTERNS = [
   // Fixed regex: removed extra backslashes to correctly match parenthesis
   /^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]$/i,
 
-  // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL"
-  /^(.+?)[\-_\.\|]([A-Z]{2,3})$/i,
+  // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL", "Arte┃DE"
+  /^(.+?)[\-_\.\|\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]([A-Z]{2,3})$/i,
 
   // "DE: Arte", "EN: CNN", "DE| RTL"
-  /^([A-Z]{2,3})[\-_\.\|:]\s*(.+)$/i,
+  /^([A-Z]{2,3})[\-_\.\|:\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]\s*(.+)$/i,
 ];
 
 // Optimization: Pre-compute language map once
@@ -62,10 +63,10 @@ const LANGUAGE_MAP = (() => {
   map['fre'] = 'fr';
   map['esp'] = 'es';
   map['spa'] = 'es';
-  map['int'] = 'en'; // International = English
-  map['uk'] = 'en'; // UK = English
-  map['us'] = 'en'; // US = English
-  map['usa'] = 'en'; // USA = English
+  map['int'] = 'int'; // Keep distinct to prevent mismatching with specific regions
+  map['uk'] = 'uk'; // Keep distinct
+  map['us'] = 'us'; // Keep distinct
+  map['usa'] = 'us'; // USA = us
   map['gr'] = 'el'; // GR -> Greek (el)
   map['greece'] = 'el';
   map['greek'] = 'el';
@@ -75,6 +76,22 @@ const LANGUAGE_MAP = (() => {
   map['ch'] = 'ch'; // Switzerland
   map['be'] = 'be'; // Belgium
   map['nl'] = 'nl'; // Netherlands
+  map['au'] = 'au'; // Australia
+  map['nz'] = 'nz'; // New Zealand
+  map['ca'] = 'ca'; // Canada
+  map['za'] = 'za'; // South Africa
+  map['ie'] = 'ie'; // Ireland
+  map['se'] = 'se'; // Sweden
+  map['no'] = 'no'; // Norway
+  map['dk'] = 'dk'; // Denmark
+  map['fi'] = 'fi'; // Finland
+  map['pt'] = 'pt'; // Portugal
+  map['br'] = 'br'; // Brazil
+  map['mx'] = 'mx'; // Mexico
+  map['ar'] = 'ar'; // Argentina
+  map['cl'] = 'cl'; // Chile
+  map['co'] = 'co'; // Colombia
+  map['pe'] = 'pe'; // Peru
 
   return map;
 })();
@@ -103,6 +120,14 @@ export class ChannelMatcher {
     // Optimization: Build indexes for O(1) lookups
     this.baseNameIndex = new Map();
     this.numbersIndex = new Map();
+
+    // Optimization: O(1) lookup for explicit tvg-id matches
+    this.epgIdIndex = new Map();
+    for (const c of this.epgChannels) {
+        if (c.id) {
+            this.epgIdIndex.set(c.id.toLowerCase(), c);
+        }
+    }
 
     // Intermediate storage for deduplication: Map<numbersString, Map<baseName, ParsedChannel>>
     // This dramatically reduces the number of candidates for fuzzy matching by grouping variations (HD, SD, etc.)
@@ -270,7 +295,8 @@ export class ChannelMatcher {
   match(iptvChannelName, providedEpgId = null) {
     // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
     if (providedEpgId) {
-      const exactEpgIdMatch = this.epgChannels.find(c => c.id === providedEpgId);
+      const lowerEpgId = providedEpgId.toLowerCase();
+      const exactEpgIdMatch = this.epgIdIndex.get(lowerEpgId);
       if (exactEpgIdMatch) {
         return {
           epgChannel: exactEpgIdMatch,
@@ -380,6 +406,11 @@ export class ChannelMatcher {
       // If the best candidate from the base name fallback has very low confidence (e.g. because of language penalty)
       // We should fall through to the global fuzzy search instead of immediately returning a bad match.
       if (similarityConfidence > 0.4) {
+          // Wait! Let's double check if we really want to return this.
+          // If we heavily penalized it, the score will be very low (e.g., 1.0 * 0.1 * 0.7 = 0.07).
+          // But what if it was initially very high and we didn't penalize it enough?
+          // If explicitly different language, we shouldn't return it as a good match unless we have to.
+          // With best.score *= 0.1, similarityConfidence is at most 0.07, so it will fall through anyway.
           return bestSimilarityFallback;
       }
 
@@ -484,7 +515,7 @@ export class ChannelMatcher {
   /**
    * Returns top N candidate matches for a given channel name.
    */
-  suggest(iptvChannelName, limit = 10) {
+  suggest(iptvChannelName, providedEpgId = null, limit = 10) {
     const parsed = this.parseChannelName(iptvChannelName);
     const iptvNumsString = parsed.numbersString;
 
@@ -493,6 +524,20 @@ export class ChannelMatcher {
     const checkNumbers = (epgItem) => {
         return iptvNumsString === epgItem.numbersString;
     };
+
+    // 0. Wenn eine tvg-id aus der Playlist vorliegt, versuche einen exakten Match auf diese ID
+    if (providedEpgId) {
+      const lowerEpgId = providedEpgId.toLowerCase();
+      const exactEpgIdMatch = this.epgIdIndex.get(lowerEpgId);
+      if (exactEpgIdMatch) {
+        allCandidates.push({
+          epgChannel: exactEpgIdMatch,
+          confidence: 1.0,
+          method: 'exact_tvg_id',
+          parsed: parsed
+        });
+      }
+    }
 
     // 1. Check exact matches (with language)
     if (parsed.language) {

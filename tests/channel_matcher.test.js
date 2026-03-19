@@ -105,7 +105,7 @@ describe('ChannelMatcher', () => {
 
     it('prioritizes language match', () => {
         const parsed = matcher.parseChannelName('US: CNN');
-        expect(parsed.language).toBe('en');
+        expect(parsed.language).toBe('us');
     });
 
     it('verifies memory optimization changes do not break logic', () => {
@@ -230,4 +230,10 @@ describe('myteamtv raw sports channels mapping', () => {
     expect(match3.epgChannel).not.toBeNull();
     expect(match3.epgChannel.id).toBe('3');
   });
+    it('matches channels with unicode block characters correctly', () => {
+        const matcherInstance = new ChannelMatcher([]);
+        const parsed = matcherInstance.parseChannelName('┃DE┃ SKY ONE FHD');
+        expect(parsed.language).toBe('de');
+        expect(parsed.baseName).toBe('skyone');
+    });
 });
