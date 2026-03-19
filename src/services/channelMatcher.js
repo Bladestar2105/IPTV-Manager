@@ -2,6 +2,9 @@ import ISO6391 from 'iso-639-1';
 
 // Optimization: Pre-compile regex patterns to avoid re-compilation on every match
 const CHANNEL_NAME_PATTERNS = [
+  // "| DE | Arte", "[EN] CNN", "|FR| TF1", "(DE) RTL"
+  /^[\|\-_\.\[\]\(\)]+\s*([A-Z]{2,3})\s*[\-_\.\|:\]\)]+\s*(.+)$/i,
+
   // "DE: Arte", "EN: CNN", "DE| RTL", "DE - RTL"
   /^([A-Z]{2,3})\s*[\-_\.\|:]\s*(.+)$/i,
 
