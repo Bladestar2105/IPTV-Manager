@@ -56,6 +56,20 @@ describe('ChannelMatcher', () => {
         expect(result.epgChannel.id).toBe('03');
     });
 
+    it('handles leading separators correctly (e.g. | DE | CHANNEL)', () => {
+        const result1 = matcher.parseChannelName('| DE | NICK TOONS HD');
+        expect(result1.language).toBe('de');
+        expect(result1.baseName).toContain('nick toons');
+
+        const result2 = matcher.parseChannelName('[EN] CNN');
+        expect(result2.language).toBe('en');
+        expect(result2.baseName).toBe('cnn');
+
+        const result3 = matcher.match('| DE | RTL TELEVISION');
+        expect(result3.epgChannel).not.toBeNull();
+        expect(result3.epgChannel.id).toBe('3'); // Maps to RTL Television
+    });
+
     it('matches fuzzy names', () => {
         const result = matcher.match('Sky Cin. Action');
         expect(result.epgChannel.id).toBe('10');
