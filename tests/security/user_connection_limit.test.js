@@ -58,10 +58,19 @@ vi.mock('../../src/database/db.js', () => ({
                     })
                 };
             }
+            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
+                return {
+                    all: vi.fn().mockImplementation((userId, urlPattern) => {
+                        return [
+                            { id: 100, url: 'http://example.com', username: 'user', password: 'pass', max_connections: 0 }
+                        ];
+                    })
+                };
+            }
             if (query.includes('SELECT id FROM stream_stats')) {
                  return { get: vi.fn().mockReturnValue({ id: 1 }) };
             }
-            return { run: vi.fn(), get: vi.fn() };
+            return { run: vi.fn(), get: vi.fn(), all: vi.fn().mockReturnValue([]) };
         })
     }
 }));

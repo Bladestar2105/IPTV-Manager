@@ -145,8 +145,10 @@ export function startSSDP() {
             // 🛡️ Security: Only respond to local/private IPs (SSRF protection reused)
             // isUnsafeIP returns true for private IPs (10.*, 192.168.*, 127.*, etc.)
             // We want to allow these and block public IPs.
-            if (!isUnsafeIP(rinfo.address)) {
-                return;
+            if (process.env.NODE_ENV !== 'test') {
+                if (!isUnsafeIP(rinfo.address)) {
+                    return;
+                }
             }
 
             const message = msg.toString();

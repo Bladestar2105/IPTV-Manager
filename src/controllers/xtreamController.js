@@ -48,6 +48,9 @@ export const playerApi = async (req, res) => {
     const now = Math.floor(Date.now() / 1000);
 
     if (!action || action === '') {
+      const { default: streamManager } = await import('../services/streamManager.js');
+      const activeCons = await streamManager.getUserConnectionCount(user.id);
+
       return res.json({
         user_info: {
           username: username,
@@ -57,7 +60,7 @@ export const playerApi = async (req, res) => {
           status: 'Active',
           exp_date: user.expiry_date ? Math.floor(new Date(user.expiry_date).getTime() / 1000).toString() : '1773864593',
           is_trial: '0',
-          active_cons: '0',
+          active_cons: activeCons.toString(),
           created_at: now.toString(),
           max_connections: user.max_connections === 0 ? '999999' : (user.max_connections || '1').toString(),
           allowed_output_formats: ['m3u8', 'ts']

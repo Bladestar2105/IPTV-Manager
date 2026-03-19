@@ -15,13 +15,14 @@
 ## 🚀 Features
 
 ### Core Functionality
-- **Multi-User Management**: Support for multiple users with individual channel configurations and secure login.
-- **Provider Management**: Connect to multiple IPTV providers via Xtream Codes API.
+- **Multi-User Management**: Support for multiple users with individual channel configurations, secure login, and customizable concurrent stream limits (max connections).
+- **Provider Management**: Connect to multiple IPTV providers via Xtream Codes API with automatic connection pooling.
 - **Category Organization**: Drag & drop sorting and visual channel assignment.
 - **EPG Integration**: Comprehensive Electronic Program Guide (EPG) support with automatic updates.
 
 ### Advanced Features
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
+- **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.
 - **Shared Links**: Create public share links with customizable slugs (short URLs) and expiration dates.
 - **Bulk Operations**: Optimized bulk category import and deletion for managing large playlists efficiently.
