@@ -449,12 +449,6 @@ export const autoMapping = async (req, res) => {
 
     if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
 
-    const globalMappings = db.prepare(`
-      SELECT pc.name, map.epg_channel_id
-      FROM epg_channel_mappings map
-      JOIN provider_channels pc ON pc.id = map.provider_channel_id
-    `).all();
-
     // Load ALL EPG Channels from DB to pass to worker
     const allEpgChannels = await loadAllEpgChannels();
 
@@ -465,8 +459,7 @@ export const autoMapping = async (req, res) => {
     const worker = new Worker(path.join(process.cwd(), 'src', 'workers', 'epgWorker.js'), {
       workerData: {
         channels,
-        allEpgChannels,
-        globalMappings
+        allEpgChannels
       }
     });
 
