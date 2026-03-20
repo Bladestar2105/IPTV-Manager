@@ -9,17 +9,30 @@ import { PORT } from '../config/constants.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
-  return String(val).replace(/[\r\n]+/g, ' ').replace(/"/g, '').trim();
+  let str = String(val);
+  // ⚡ Bolt: Fast-path check to avoid expensive regex allocations for strings without newlines
+  if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
+  if (str.indexOf('"') !== -1) str = str.replace(/"/g, '');
+  return str.trim();
 };
 
 const sanitizeM3uName = (val) => {
   if (val === null || val === undefined) return '';
-  return String(val).replace(/[\r\n]+/g, ' ').replace(/,/g, ' ').replace(/"/g, '').trim();
+  let str = String(val);
+  // ⚡ Bolt: Fast-path check to avoid expensive regex allocations for strings without newlines
+  if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
+  if (str.indexOf(',') !== -1) str = str.replace(/,/g, ' ');
+  if (str.indexOf('"') !== -1) str = str.replace(/"/g, '');
+  return str.trim();
 };
 
 const sanitizeMetadata = (val) => {
   if (val === null || val === undefined) return '';
-  return String(val).replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
+  let str = String(val);
+  // ⚡ Bolt: Fast-path check to avoid expensive regex allocations for strings without newlines
+  if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
+  if (str.indexOf('"') !== -1) str = str.replace(/"/g, "'");
+  return str.trim();
 };
 
 export const cppEndpoint = (req, res) => {
@@ -457,7 +470,12 @@ export const getPlaylist = async (req, res) => {
       const safeLogo = sanitizeM3uTag(logo);
       const safeGroup = sanitizeM3uTag(group);
       const groupId = ch.user_category_id || '';
-      const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
+
+      let finalName = String(name);
+      if (finalName.indexOf('\n') !== -1 || finalName.indexOf('\r') !== -1) {
+          finalName = finalName.replace(/[\r\n]+/g, ' ');
+      }
+      finalName = finalName.trim();
 
       if (type === 'm3u_plus') {
         buffer += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}",${finalName}\n`;
@@ -575,8 +593,11 @@ export const playerChannelsJson = async (req, res) => {
     for (const ch of channels) {
       const group = ch.category_name || 'Uncategorized';
       const logo = ch.logo || '';
-      let name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
-      name = String(name).replace(/[\r\n]+/g, ' ').trim();
+      let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
+      if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
+          name = name.replace(/[\r\n]+/g, ' ');
+      }
+      name = name.trim();
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
       let ext = 'ts';
@@ -750,7 +771,11 @@ export const playerPlaylist = async (req, res) => {
       const groupId = ch.user_category_id || '';
 
       // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
-      const finalName = String(name).replace(/[\r\n]+/g, ' ').trim();
+      let finalName = String(name);
+      if (finalName.indexOf('\n') !== -1 || finalName.indexOf('\r') !== -1) {
+          finalName = finalName.replace(/[\r\n]+/g, ' ');
+      }
+      finalName = finalName.trim();
 
       buffer += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}"${extra},${finalName}\n`;
 
