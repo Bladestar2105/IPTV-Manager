@@ -232,6 +232,10 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_user_channels_cat_sort ON user_channels(user_category_id, sort_order);
     CREATE INDEX IF NOT EXISTS idx_user_channels_prov ON user_channels(provider_channel_id);
 
+    -- ⚡ Bolt: Add composite index for rapid sorting of channels within categories while skipping hidden channels
+    CREATE INDEX IF NOT EXISTS idx_user_channels_cat_hidden_sort ON user_channels(user_category_id, is_hidden, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_user_categories_user_sort ON user_categories(user_id, sort_order);
+
     -- ⚡ Bolt: Add composite indexes for rapid filtering and sorting in provider endpoints without creating Temp B-trees
     CREATE INDEX IF NOT EXISTS idx_pc_prov_type_sort_name ON provider_channels(provider_id, stream_type, original_sort_order, name);
     CREATE INDEX IF NOT EXISTS idx_pc_prov_type_cat_sort_name ON provider_channels(provider_id, stream_type, original_category_id, original_sort_order, name);

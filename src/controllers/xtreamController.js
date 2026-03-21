@@ -127,9 +127,9 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
                map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM user_categories cat
+        JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-        JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
       const params = [user.id];
@@ -138,7 +138,9 @@ export const playerApi = async (req, res) => {
           query += ' AND cat.id = ?';
           params.push(Number(categoryId));
       }
-      query += ' ORDER BY uc.sort_order';
+      // ⚡ Bolt: Include cat.sort_order in the ORDER BY clause to fully utilize the composite index idx_cat_user_sort
+      // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
+      query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
       const rows = db.prepare(query).all(...params);
 
@@ -170,9 +172,9 @@ export const playerApi = async (req, res) => {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
-        FROM user_channels uc
+        FROM user_categories cat
+        JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-        JOIN user_categories cat ON cat.id = uc.user_category_id
         WHERE cat.user_id = ? AND pc.stream_type = 'movie' AND uc.is_hidden = 0`;
       const params = [user.id];
 
@@ -180,7 +182,9 @@ export const playerApi = async (req, res) => {
           query += ' AND cat.id = ?';
           params.push(Number(categoryId));
       }
-      query += ' ORDER BY uc.sort_order';
+      // ⚡ Bolt: Include cat.sort_order in the ORDER BY clause to fully utilize the composite index idx_cat_user_sort
+      // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
+      query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
       const rows = db.prepare(query).all(...params);
 
@@ -211,9 +215,9 @@ export const playerApi = async (req, res) => {
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
                cat.is_adult as category_is_adult
-        FROM user_channels uc
+        FROM user_categories cat
+        JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-        JOIN user_categories cat ON cat.id = uc.user_category_id
         WHERE cat.user_id = ? AND pc.stream_type = 'series' AND uc.is_hidden = 0`;
       const params = [user.id];
 
@@ -221,7 +225,9 @@ export const playerApi = async (req, res) => {
           query += ' AND cat.id = ?';
           params.push(Number(categoryId));
       }
-      query += ' ORDER BY uc.sort_order';
+      // ⚡ Bolt: Include cat.sort_order in the ORDER BY clause to fully utilize the composite index idx_cat_user_sort
+      // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
+      query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
       const rows = db.prepare(query).all(...params);
 
@@ -422,12 +428,13 @@ export const getPlaylist = async (req, res) => {
     const rows = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
-      FROM user_channels uc
+      FROM user_categories cat
+      JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND uc.is_hidden = 0
-      ORDER BY uc.sort_order
+      -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
+      ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `).all(user.id);
 
     const baseUrl = getBaseUrl(req);
@@ -570,12 +577,13 @@ export const playerChannelsJson = async (req, res) => {
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
-      FROM user_channels uc
+      FROM user_categories cat
+      JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
-      ORDER BY uc.sort_order
+      -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
+      ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `).all(user.id);
 
     if (user.is_share_guest) {
@@ -692,12 +700,13 @@ export const playerPlaylist = async (req, res) => {
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
-      FROM user_channels uc
+      FROM user_categories cat
+      JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN user_categories cat ON cat.id = uc.user_category_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
-      ORDER BY uc.sort_order
+      -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
+      ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `).all(user.id);
 
     if (user.is_share_guest) {
