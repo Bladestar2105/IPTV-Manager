@@ -135,7 +135,7 @@
                      <input type="date" class="form-control form-control-sm" name="expiry_date" data-i18n-label="expiryDate">
                   </div>
                   <div class="col-12 col-lg-10">
-                     <select class="form-select form-select-sm" name="allowed_countries" id="user-allowed-countries" multiple size="3" aria-describedby="user-allowed-countries-help">
+                     <select class="form-select form-select-sm" name="allowed_countries" id="user-allowed-countries" multiple size="3" aria-describedby="user-allowed-countries-help" data-i18n-label="allowedCountries" aria-label="Allowed Countries (Region Lock)">
                         <!-- Options populated dynamically -->
                      </select>
                      <div id="user-allowed-countries-help" class="form-text small mt-1" style="font-size: 0.7rem;" data-i18n="allowedCountriesHelp">Select countries to allow access. Leave empty to allow all. Ctrl+Click to select multiple.</div>
@@ -439,7 +439,7 @@
                      <label class="form-label" data-i18n="maxmindLicenseKey" for="setting-geoip-license-key">MaxMind License Key</label>
                      <div class="input-group">
                         <input type="password" class="form-control" name="geoip_license_key" id="setting-geoip-license-key" placeholder="Enter License Key for Updates" aria-describedby="geoip-settings-help">
-                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="setting-geoip-license-key" data-i18n-label="togglePasswordVisibility" aria-label="Toggle password visibility"><i class="bi bi-eye"></i></button>
+                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="setting-geoip-license-key" data-i18n-label="togglePasswordVisibility" aria-label="Toggle password visibility"><i class="bi bi-eye" aria-hidden="true"></i></button>
                      </div>
                   </div>
                   <div class="col-md-4 d-flex align-items-end mb-2">
@@ -1033,7 +1033,7 @@
 
         <div class="modal-body">
           <div class="input-group input-group-sm mb-3">
-             <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" placeholder="🔍 Search sources...">
+             <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" data-i18n-label="searchEpgSources" placeholder="🔍 Search sources..." aria-label="Search EPG Sources">
              <button class="btn btn-outline-secondary d-none" type="button" id="epg-browse-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
           </div>
           <ul id="available-epg-sources-list" class="list-group max-h-400-scroll">
@@ -1098,7 +1098,7 @@
              </div>
              <p data-i18n="scan_qr">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
              <div class="input-group mb-3">
-                <input type="text" id="otp-verify-input" class="form-control" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
+                <input type="text" id="otp-verify-input" class="form-control" data-i18n-placeholder="otpPlaceholder" data-i18n-label="otpPlaceholder" placeholder="123456" aria-label="123456">
                 <button class="btn btn-primary" data-action="action-verify-otp" data-i18n="verify">Verify</button>
              </div>
           </div>
