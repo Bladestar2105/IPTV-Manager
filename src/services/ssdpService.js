@@ -15,11 +15,20 @@ const SEARCH_TARGETS = [
 ];
 
 let cachedUsers = [];
+let cachedIps = [];
+let lastIpUpdate = 0;
 const getHdhrUsersStmt = db.prepare('SELECT id, username, hdhr_token FROM users WHERE hdhr_enabled = 1 AND is_active = 1');
 
-function refreshSsdpCache() {
+export function refreshSsdpCache() {
     try {
         cachedUsers = getHdhrUsersStmt.all();
+
+        const now = Date.now();
+        if (cachedIps.length === 0 || now - lastIpUpdate > 60000) {
+            // ⚡ Bolt: Cache network interfaces to avoid expensive synchronous os.networkInterfaces() calls on every UDP packet
+            cachedIps = getInterfaceAddresses();
+            lastIpUpdate = now;
+        }
     } catch (e) {
         console.error('SSDP Cache Refresh Error:', e);
     }
@@ -130,8 +139,8 @@ export function startSSDP() {
             }
 
             // Join multicast group on all available interfaces
-            const ips = getInterfaceAddresses();
-            ips.forEach(ip => {
+            if (cachedIps.length === 0) cachedIps = getInterfaceAddresses();
+            cachedIps.forEach(ip => {
                 try {
                     socket.addMembership(SSDP_ADDRESS, ip);
                     console.log(`📡 SSDP: Joined multicast group on ${ip}`);
@@ -167,8 +176,8 @@ export function startSSDP() {
 
                 // Check if ST is supported
                 if (SEARCH_TARGETS.includes(st)) {
-                    const ips = getInterfaceAddresses();
-                    const primaryIp = ips[0] || '127.0.0.1';
+                    if (cachedIps.length === 0) cachedIps = getInterfaceAddresses();
+                    const primaryIp = cachedIps[0] || '127.0.0.1';
 
                     // Use cached users instead of hitting the DB per discovery probe
                     cachedUsers.forEach(user => {
@@ -183,7 +192,7 @@ export function startSSDP() {
             try { socket.close(); } catch(e) {}
         });
 
-        // Initial cache population
+        // Initial cache population before socket binding
         refreshSsdpCache();
 
         // Bind to 0.0.0.0:1900 to listen on all interfaces
@@ -195,8 +204,8 @@ export function startSSDP() {
                 // Refresh cache periodically before broadcast
                 refreshSsdpCache();
 
-                const ips = getInterfaceAddresses();
-                const primaryIp = ips[0] || '127.0.0.1';
+                if (cachedIps.length === 0) cachedIps = getInterfaceAddresses();
+                const primaryIp = cachedIps[0] || '127.0.0.1';
 
                 cachedUsers.forEach(user => {
                     sendNotify(socket, user, primaryIp);

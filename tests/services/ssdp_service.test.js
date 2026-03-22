@@ -78,6 +78,9 @@ describe('SSDP Service', () => {
       ])
     });
 
+    // We must reset the module so that module-level cachedIps resets and picks up the os mock
+    vi.resetModules();
+
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -98,7 +101,8 @@ describe('SSDP Service', () => {
     expect(mockSocket.bind).toHaveBeenCalledWith(1900, '0.0.0.0');
   });
 
-  it('should set up multicast on listening event', () => {
+  it('should set up multicast on listening event', async () => {
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     // Trigger listening event
@@ -111,7 +115,8 @@ describe('SSDP Service', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('SSDP Service listening'));
   });
 
-  it('should respond to M-SEARCH requests', () => {
+  it('should respond to M-SEARCH requests', async () => {
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     const rinfo = { address: '192.168.1.50', port: 12345 };
@@ -140,7 +145,8 @@ describe('SSDP Service', () => {
     expect(response).toContain('ST: upnp:rootdevice');
   });
 
-  it('should filter M-SEARCH requests by ST header', () => {
+  it('should filter M-SEARCH requests by ST header', async () => {
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     const rinfo = { address: '192.168.1.50', port: 12345 };
@@ -164,7 +170,8 @@ describe('SSDP Service', () => {
     expect(response).toContain('ST: upnp:rootdevice');
   });
 
-  it('should ignore invalid M-SEARCH requests', () => {
+  it('should ignore invalid M-SEARCH requests', async () => {
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     const rinfo = { address: '192.168.1.50', port: 12345 };
@@ -182,7 +189,8 @@ describe('SSDP Service', () => {
     expect(mockSocket.send).not.toHaveBeenCalled();
   });
 
-  it('should send periodic NOTIFY messages', () => {
+  it('should send periodic NOTIFY messages', async () => {
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     // Fast-forward time by 60 seconds
@@ -199,7 +207,8 @@ describe('SSDP Service', () => {
     expect(notify).toContain(`LOCATION: http://192.168.1.100:${PORT}/hdhr/token123/device.xml`);
   });
 
-  it('should handle socket errors gracefully', () => {
+  it('should handle socket errors gracefully', async () => {
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     const error = new Error('Socket failure');
@@ -212,11 +221,12 @@ describe('SSDP Service', () => {
     expect(mockSocket.close).toHaveBeenCalled();
   });
 
-  it('should handle send errors in M-SEARCH response', () => {
+  it('should handle send errors in M-SEARCH response', async () => {
     mockSocket.send = vi.fn((msg, offset, length, port, address, cb) => {
       if (cb) cb(new Error('Send failed'));
     });
 
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     const rinfo = { address: '192.168.1.50', port: 12345 };
@@ -234,9 +244,10 @@ describe('SSDP Service', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('SSDP Response Error'), expect.any(Error));
   });
 
-  it('should fallback to 127.0.0.1 if no external interface found', () => {
+  it('should fallback to 127.0.0.1 if no external interface found', async () => {
     os.networkInterfaces.mockReturnValue({}); // No interfaces
 
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
     startSSDP();
 
     // Trigger listening
@@ -248,39 +259,33 @@ describe('SSDP Service', () => {
     expect(mockSocket.addMembership).toHaveBeenCalledWith('239.255.255.250', '127.0.0.1');
   });
 
-  it('should handle database errors during M-SEARCH', () => {
-    db.prepare.mockImplementation(() => {
+  it('should handle database errors during M-SEARCH', async () => {
+    vi.resetModules();
+    const mockAll = vi.fn().mockImplementation(() => {
         throw new Error('DB Error');
     });
+    db.prepare.mockReturnValue({ all: mockAll });
 
-    startSSDP();
+    const { refreshSsdpCache } = await import('../../src/services/ssdpService.js');
+    refreshSsdpCache();
 
-    const rinfo = { address: '192.168.1.50', port: 12345 };
-    const searchMessage = [
-        'M-SEARCH * HTTP/1.1',
-        'HOST: 239.255.255.250:1900',
-        'MAN: "ssdp:discover"',
-        'ST: ssdp:all'
-    ].join('\r\n');
-
-    if (socketListeners['message']) {
-        socketListeners['message'](Buffer.from(searchMessage), rinfo);
-    }
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith('SSDP DB Error:', expect.any(Error));
+    expect(consoleErrorSpy).toHaveBeenCalledWith('SSDP Cache Refresh Error:', expect.any(Error));
   });
 
-  it('should handle database errors during periodic notify', () => {
-    startSSDP();
-
-    // Make DB fail
-    db.prepare.mockImplementation(() => {
+  it('should handle database errors during periodic notify', async () => {
+    vi.resetModules();
+    const mockAll = vi.fn().mockImplementation(() => {
         throw new Error('DB Error');
     });
+    db.prepare.mockReturnValue({ all: mockAll });
+
+    const { startSSDP } = await import('../../src/services/ssdpService.js');
+    startSSDP();
 
     // Advance time
     vi.advanceTimersByTime(60000);
+    await new Promise(process.nextTick);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('SSDP Periodic Notify Error:', expect.any(Error));
+    expect(consoleErrorSpy).toHaveBeenCalledWith('SSDP Cache Refresh Error:', expect.any(Error));
   });
 });
