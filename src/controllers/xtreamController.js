@@ -425,7 +425,7 @@ export const getPlaylist = async (req, res) => {
 
     if (user.is_share_guest) return res.sendStatus(403);
 
-    const rows = db.prepare(`
+    const stmt = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_categories cat
@@ -435,7 +435,7 @@ export const getPlaylist = async (req, res) => {
       WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
-    `).all(user.id);
+    `);
 
     const baseUrl = getBaseUrl(req);
     let header = '#EXTM3U';
@@ -453,7 +453,10 @@ export const getPlaylist = async (req, res) => {
     let buffer = header + '\n';
     const FLUSH_LIMIT = 65536;
 
-    for (const ch of rows) {
+    // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+    // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
+    // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
+    for (const ch of stmt.iterate(user.id)) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
       const logo = ch.logo || '';
       const group = ch.category_name || '';
@@ -561,7 +564,7 @@ export const playerChannelsJson = async (req, res) => {
       return res.send(channelsJsonCache.get(cacheKey));
     }
 
-    let channels = db.prepare(`
+    const stmt = db.prepare(`
       SELECT
         uc.id as user_channel_id,
         uc.custom_name,
@@ -584,22 +587,29 @@ export const playerChannelsJson = async (req, res) => {
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
-    `).all(user.id);
+    `);
+
+    let allowedSet = null;
+    let isExpired = false;
 
     if (user.is_share_guest) {
-        const allowedSet = new Set(user.allowed_channels || []);
-        channels = channels.filter(ch => allowedSet.has(ch.user_channel_id));
-
+        allowedSet = new Set(user.allowed_channels || []);
         const nowSec = Date.now() / 1000;
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-             channels = [];
+             isExpired = true;
         }
     }
 
     const result = [];
 
-    for (const ch of channels) {
-      const group = ch.category_name || 'Uncategorized';
+    if (!isExpired) {
+        // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+        // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
+        // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+        for (const ch of stmt.iterate(user.id)) {
+          if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
+
+          const group = ch.category_name || 'Uncategorized';
       const logo = ch.logo || '';
       let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
       if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
@@ -665,7 +675,8 @@ export const playerChannelsJson = async (req, res) => {
           if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
       }
 
-      result.push(item);
+          result.push(item);
+        }
     }
 
     const jsonOutput = JSON.stringify(result);
@@ -685,7 +696,7 @@ export const playerPlaylist = async (req, res) => {
     const user = await getXtreamUser(req);
     if (!user) return res.status(401).send('Unauthorized');
 
-    let channels = db.prepare(`
+    const stmt = db.prepare(`
       SELECT
         uc.id as user_channel_id,
         uc.user_category_id,
@@ -707,16 +718,17 @@ export const playerPlaylist = async (req, res) => {
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
-    `).all(user.id);
+    `);
+
+    let allowedSet = null;
+    let isExpired = false;
 
     if (user.is_share_guest) {
-        const allowedSet = new Set(user.allowed_channels || []);
-        channels = channels.filter(ch => allowedSet.has(ch.user_channel_id));
-
+        allowedSet = new Set(user.allowed_channels || []);
         // Also check start/end time validity for the playlist itself (though stream controller enforces it too)
         const nowSec = Date.now() / 1000;
         if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-             channels = [];
+             isExpired = true;
         }
     }
 
@@ -731,8 +743,14 @@ export const playerPlaylist = async (req, res) => {
     const host = getBaseUrl(req);
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
-    for (const ch of channels) {
-      const group = ch.category_name || 'Uncategorized';
+    if (!isExpired) {
+        // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+        // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
+        // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
+        for (const ch of stmt.iterate(user.id)) {
+          if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
+
+          const group = ch.category_name || 'Uncategorized';
       const logo = ch.logo || '';
       const name = ch.name || 'Unknown';
 
@@ -799,6 +817,7 @@ export const playerPlaylist = async (req, res) => {
           res.write(buffer);
           buffer = '';
       }
+        }
     }
 
     if (buffer.length > 0) {

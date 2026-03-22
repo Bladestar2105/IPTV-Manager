@@ -32,3 +32,7 @@
 ## 2026-03-20 - SQLite Temp B-Trees on Implicit Ordered Joins
 **Learning:** Querying `user_channels` joined with `user_categories` and applying an absolute order using just `ORDER BY uc.sort_order` prevents SQLite from using composite indexes efficiently. Instead, it creates a temporary B-tree for the final order, resulting in O(N log N) overhead for massive channel lists (e.g., M3U generation).
 **Action:** For lists naturally scoped by categories, structure the `ORDER BY` clause hierarchically (e.g., `ORDER BY cat.sort_order ASC, uc.sort_order ASC`) to align with existing nested relationships. Then ensure matching composite indexes exist (e.g., `(user_category_id, is_hidden, sort_order)`). This allows SQLite to iterate linearly without creating a Temp B-Tree.
+
+## 2025-05-18 - [SQLite Iterator Optimization]
+**Learning:** Returning massive rows from SQLite using `.all()` pushes all resulting JS objects into the V8 heap at once, which blocks the event loop and triggers out-of-memory errors for playlists containing tens of thousands of channels.
+**Action:** When dynamically generating large M3U or JSON payloads natively without pagination, always use `stmt.iterate()` to stream the results chunk-by-chunk. This significantly reduces peak memory usage.
