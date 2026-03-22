@@ -431,19 +431,16 @@ export const deleteUser = (req, res) => {
     const id = Number(req.params.id);
 
     db.transaction(() => {
-      // 1. Delete owned providers and their dependencies
-      const userProviders = db.prepare('SELECT id FROM providers WHERE user_id = ?').all(id);
-      for (const p of userProviders) {
-        db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(p.id);
-        db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(p.id);
-        db.prepare('DELETE FROM stream_stats WHERE channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(p.id);
-        db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(p.id);
+      // 1. Delete owned providers and their dependencies (optimized bulk deletes)
+      db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?))').run(id);
+      db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?))').run(id);
+      db.prepare('DELETE FROM stream_stats WHERE channel_id IN (SELECT id FROM provider_channels WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?))').run(id);
+      db.prepare('DELETE FROM provider_channels WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
 
-        db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(p.id);
-        db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(p.id);
-        db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(p.id);
-        db.prepare('DELETE FROM providers WHERE id = ?').run(p.id);
-      }
+      db.prepare('DELETE FROM sync_configs WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
+      db.prepare('DELETE FROM sync_logs WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
+      db.prepare('DELETE FROM category_mappings WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
+      db.prepare('DELETE FROM providers WHERE user_id = ?').run(id);
 
       // 2. Delete user data
       db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);
