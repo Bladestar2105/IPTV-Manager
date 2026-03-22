@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3';
-import path from 'path';
 import fs from 'fs';
 import { DATA_DIR, EPG_DB_PATH } from '../config/constants.js';
 
