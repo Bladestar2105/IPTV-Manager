@@ -35,7 +35,7 @@ describe('Error Handling Middleware', () => {
         const res = await request(app).get('/error');
         expect(res.status).toBe(500);
         expect(res.headers['content-type']).toMatch(/json/);
-        expect(res.body).toEqual({ error: 'Generic Error' });
+        expect(res.body).toEqual({ error: 'Internal Server Error' });
     });
 
     it('should return 400 JSON for Multer LIMIT_FILE_SIZE', async () => {
