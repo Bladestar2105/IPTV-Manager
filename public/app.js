@@ -411,7 +411,7 @@ function togglePasswordVisibility(inputId, btn) {
     input.type = isPassword ? 'text' : 'password';
 
     // Update Button
-    btn.innerHTML = isPassword ? '🙈' : '👁️';
+    btn.innerHTML = isPassword ? '<i class="bi bi-eye-slash" aria-hidden="true"></i>' : '<i class="bi bi-eye" aria-hidden="true"></i>';
 
     // Update ARIA and Title
     const labelKey = isPassword ? 'hide_password' : 'show_password';

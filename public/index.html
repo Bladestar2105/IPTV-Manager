@@ -10,6 +10,7 @@
   <title>IPTV-Manager</title>
   <link rel="icon" type="image/png" href="logo.png">
   <link href="vendor/bootstrap.min.css" rel="stylesheet">
+  <link href="vendor/bootstrap-icons.min.css" rel="stylesheet">
   <link href="vendor/flag-icons/css/flag-icons.min.css" rel="stylesheet">
   <link href="style.css" rel="stylesheet">
 </head>
@@ -119,7 +120,7 @@
                   <div class="col-12 col-md-4 col-lg-3">
                      <div class="input-group input-group-sm">
                         <input class="form-control" name="password" id="new-user-password" type="password" autocomplete="new-password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
-                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-user-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                         <button class="btn btn-outline-secondary" type="button" data-copy-target="new-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                      </div>
                   </div>
@@ -330,7 +331,7 @@
                              <label class="form-label small fw-bold" data-i18n="password" for="xtream-pass">Password</label>
                              <div class="input-group input-group-sm">
                                 <input type="password" class="form-control" id="xtream-pass" readonly>
-                                <button class="btn btn-outline-secondary" type="button" data-toggle-password="xtream-pass" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                                <button class="btn btn-outline-secondary" type="button" data-toggle-password="xtream-pass" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                                 <button class="btn btn-outline-secondary" data-copy-target="xtream-pass" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
                              </div>
                           </div>
@@ -439,7 +440,7 @@
                      <label class="form-label" data-i18n="maxmindLicenseKey" for="setting-geoip-license-key">MaxMind License Key</label>
                      <div class="input-group">
                         <input type="password" class="form-control" name="geoip_license_key" id="setting-geoip-license-key" placeholder="Enter License Key for Updates" aria-describedby="geoip-settings-help">
-                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="setting-geoip-license-key" data-i18n-label="togglePasswordVisibility" aria-label="Toggle password visibility"><i class="bi bi-eye" aria-hidden="true"></i></button>
+                        <button class="btn btn-outline-secondary" type="button" data-toggle-password="setting-geoip-license-key" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                      </div>
                   </div>
                   <div class="col-md-4 d-flex align-items-end mb-2">
@@ -562,7 +563,7 @@
                   <label class="form-label" data-i18n="encryptionPassword" for="export-password">Encryption Password</label>
                   <div class="input-group">
                     <input type="password" class="form-control" name="password" id="export-password" required minlength="8" data-i18n-placeholder="passwordPlaceholder" aria-describedby="export-password-help">
-                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="export-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="export-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                   </div>
                   <div class="form-text" data-i18n="encryptionPasswordHint" id="export-password-help">This password will be required to decrypt and import the data.</div>
                 </div>
@@ -590,7 +591,7 @@
                   <label class="form-label" data-i18n="decryptionPassword" for="import-password">Decryption Password</label>
                   <div class="input-group">
                     <input type="password" class="form-control" name="password" id="import-password" required data-i18n-placeholder="passwordPlaceholder">
-                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="import-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                    <button class="btn btn-outline-secondary" type="button" data-toggle-password="import-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                   </div>
                 </div>
 
@@ -1067,7 +1068,7 @@
               <label for="login-password" class="form-label" data-i18n="password">Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="login-password" required>
-                <button class="btn btn-outline-secondary" type="button" data-toggle-password="login-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="login-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3 d-none" id="login-otp-group">
@@ -1131,7 +1132,7 @@
               <label class="form-label" data-i18n="new_password" for="edit-user-password">New Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="edit-user-password" autocomplete="new-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
-                <button class="btn btn-outline-secondary" type="button" data-toggle-password="edit-user-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="edit-user-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                 <button class="btn btn-outline-secondary" type="button" data-copy-target="edit-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
               </div>
             </div>
@@ -1182,14 +1183,14 @@
               <label for="old-password" class="form-label" data-i18n="old_password">Old Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="old-password" required>
-                <button class="btn btn-outline-secondary" type="button" data-toggle-password="old-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="old-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3">
               <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="new-password" required minlength="8" aria-describedby="new-password-help">
-                <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
               <small class="form-text text-secondary" data-i18n="password_min_length" id="new-password-help">Minimum 8 characters</small>
             </div>
@@ -1197,7 +1198,7 @@
               <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
               <div class="input-group">
                 <input type="password" class="form-control" id="confirm-password" required minlength="8">
-                <button class="btn btn-outline-secondary" type="button" data-toggle-password="confirm-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="confirm-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div id="change-password-error" class="alert alert-danger d-none"></div>
@@ -1242,7 +1243,7 @@
                    <label class="form-label" data-i18n="password" for="provider-password">Password</label>
                    <div class="input-group">
                      <input class="form-control" name="password" id="provider-password" type="password" autocomplete="new-password" required>
-                     <button class="btn btn-outline-secondary" type="button" data-toggle-password="provider-password" data-i18n-label="show_password" data-i18n-title="show_password">👁️</button>
+                     <button class="btn btn-outline-secondary" type="button" data-toggle-password="provider-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
                    </div>
                 </div>
              </div>
