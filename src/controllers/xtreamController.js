@@ -453,6 +453,15 @@ export const getPlaylist = async (req, res) => {
     let buffer = header + '\n';
     const FLUSH_LIMIT = 65536;
 
+    // ⚡ Bolt: Pre-encode credentials and pre-construct URL prefixes outside of the tight loop.
+    // 🎯 Why: Calling encodeURIComponent and interpolating complex templates 50,000+ times per request wastes massive CPU cycles.
+    // 📊 Impact: Significantly speeds up playlist generation loop and reduces V8 garbage collection pressure.
+    const encUser = encodeURIComponent(username);
+    const encPass = encodeURIComponent(password);
+    const livePrefix = `${baseUrl}/live/${encUser}/${encPass}/`;
+    const moviePrefix = `${baseUrl}/movie/${encUser}/${encPass}/`;
+    const seriesPrefix = `${baseUrl}/series/${encUser}/${encPass}/`;
+
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
@@ -463,18 +472,14 @@ export const getPlaylist = async (req, res) => {
       const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
       const streamId = ch.user_channel_id;
 
-      let ext = output === 'hls' ? 'm3u8' : 'ts';
-      let typePath = 'live';
-
+      let streamUrl;
       if (ch.stream_type === 'movie') {
-         typePath = 'movie';
-         ext = ch.mime_type || 'mp4';
+         streamUrl = moviePrefix + streamId + '.' + (ch.mime_type || 'mp4');
       } else if (ch.stream_type === 'series') {
-         typePath = 'series';
-         ext = ch.mime_type || 'mp4';
+         streamUrl = seriesPrefix + streamId + '.' + (ch.mime_type || 'mp4');
+      } else {
+         streamUrl = livePrefix + streamId + '.' + (output === 'hls' ? 'm3u8' : 'ts');
       }
-
-      const streamUrl = `${baseUrl}/${typePath}/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${streamId}.${ext}`;
 
       const safeName = sanitizeM3uName(name);
       const safeLogo = sanitizeM3uTag(logo);
@@ -603,6 +608,14 @@ export const playerChannelsJson = async (req, res) => {
     const result = [];
 
     if (!isExpired) {
+        // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
+        // 🎯 Why: Generating the prefix repeatedly for 50,000+ items consumes unnecessary CPU cycles.
+        // 📊 Impact: Optimizes the JSON payload generation loop.
+        const livePrefix = `${host}/live/token/auth/`;
+        const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
+        const moviePrefix = `${host}/movie/token/auth/`;
+        const seriesPrefix = `${host}/series/token/auth/`;
+
         // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
         // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
         // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
@@ -618,37 +631,22 @@ export const playerChannelsJson = async (req, res) => {
       name = name.trim();
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
 
-      let ext = 'ts';
-      let typePath = 'live';
+      let streamUrl;
+      let type = 'live';
 
       if (ch.stream_type === 'movie') {
-         typePath = 'movie';
-         ext = ch.mime_type || 'mp4';
+         type = 'movie';
+         streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
       } else if (ch.stream_type === 'series') {
-         typePath = 'series';
-         ext = ch.mime_type || 'mp4';
+         type = 'series';
+         streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
       } else {
          if (ch.mime_type === 'mpd') {
-             ext = 'mpd';
-             typePath = 'live/mpd';
+             streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
          } else {
-             ext = 'ts';
+             streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;
          }
       }
-
-      let streamUrl;
-      if (ext === 'mpd') {
-          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}/manifest.mpd${tokenParam}`;
-      } else {
-          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
-      }
-
-      // ⚡ Bolt: Replaced redundant O(N) streamUrl.includes() substring searches with O(1) property checks.
-      // 🎯 Why: This loop iterates over tens of thousands of channels for large playlists. String searching is expensive.
-      // 📊 Impact: Reduces CPU time significantly by skipping ~20,000+ substring operations per 10k channels.
-      let type = 'live';
-      if (ch.stream_type === 'movie') type = 'movie';
-      else if (ch.stream_type === 'series') type = 'series';
 
       const item = {
         name,
@@ -744,6 +742,14 @@ export const playerPlaylist = async (req, res) => {
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
     if (!isExpired) {
+        // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
+        // 🎯 Why: Generating the prefix repeatedly for 50,000+ items consumes unnecessary CPU cycles.
+        // 📊 Impact: Optimizes the M3U playlist generation loop.
+        const livePrefix = `${host}/live/token/auth/`;
+        const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
+        const moviePrefix = `${host}/movie/token/auth/`;
+        const seriesPrefix = `${host}/series/token/auth/`;
+
         // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
         // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
         // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
@@ -754,29 +760,17 @@ export const playerPlaylist = async (req, res) => {
       const logo = ch.logo || '';
       const name = ch.name || 'Unknown';
 
-      let ext = 'ts';
-      let typePath = 'live';
-
+      let streamUrl;
       if (ch.stream_type === 'movie') {
-         typePath = 'movie';
-         ext = ch.mime_type || 'mp4';
+         streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
       } else if (ch.stream_type === 'series') {
-         typePath = 'series';
-         ext = ch.mime_type || 'mp4';
+         streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
       } else {
          if (ch.mime_type === 'mpd') {
-             ext = 'mpd';
-             typePath = 'live/mpd';
+             streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
          } else {
-             ext = 'ts';
+             streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;
          }
-      }
-
-      let streamUrl;
-      if (ext === 'mpd') {
-          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}/manifest.mpd${tokenParam}`;
-      } else {
-          streamUrl = `${host}/${typePath}/token/auth/${ch.user_channel_id}.${ext}${tokenParam}`;
       }
 
       const safeGroup = sanitizeM3uTag(group);
