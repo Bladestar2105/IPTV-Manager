@@ -4557,7 +4557,7 @@ async function loadSharesList() {
                 <td>
                     <div class="input-group input-group-sm" style="max-width: 200px;">
                        <input class="form-control" value="${s.short_link || s.link}" readonly>
-                       <button class="btn btn-outline-secondary" data-copy-text="${s.short_link || s.link}" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}">📋</button>
+                       <button class="btn btn-outline-secondary" data-copy-text="${s.short_link || s.link}" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                     </div>
                 </td>
                 <td>

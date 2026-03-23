@@ -121,7 +121,7 @@
                      <div class="input-group input-group-sm">
                         <input class="form-control" name="password" id="new-user-password" type="password" autocomplete="new-password" data-i18n-placeholder="password" data-i18n-label="password" placeholder="Password" required />
                         <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-user-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
-                        <button class="btn btn-outline-secondary" type="button" data-copy-target="new-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                        <button class="btn btn-outline-secondary" type="button" data-copy-target="new-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                      </div>
                   </div>
                   <div class="col-6 col-md-4 col-lg-2">
@@ -142,7 +142,7 @@
                      <div id="user-allowed-countries-help" class="form-text small mt-1" style="font-size: 0.7rem;" data-i18n="allowedCountriesHelp">Select countries to allow access. Leave empty to allow all. Ctrl+Click to select multiple.</div>
                   </div>
                   <div class="col-9 col-lg-1"><button class="btn btn-sm btn-primary w-100 h-100" type="submit" data-i18n="addUser">Add</button></div>
-                  <div class="col-3 col-lg-1"><button class="btn btn-sm btn-outline-secondary w-100 h-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser">⚡</button></div>
+                  <div class="col-3 col-lg-1"><button class="btn btn-sm btn-outline-secondary w-100 h-100" type="button" data-action="action-generate-user" data-i18n-title="generateRandomUser" data-i18n-label="generateRandomUser"><i class="bi bi-lightning-fill" aria-hidden="true"></i></button></div>
                </form>
                <ul id="user-list" class="list-group list-group-flush max-h-400-scroll"></ul>
             </div>
@@ -181,7 +181,7 @@
               <div class="card-body">
                  <!-- Empty State -->
                  <div id="user-details-empty" class="text-center py-5 text-muted">
-                    <div class="fs-1 mb-3">👤</div>
+                    <div class="fs-1 mb-3"><i class="bi bi-person-circle" aria-hidden="true"></i></div>
                     <h5 data-i18n="selectUserToManage">Select a user from the list to manage their details</h5>
                  </div>
 
@@ -315,7 +315,7 @@
                           <label class="form-label small fw-bold" data-i18n="url" for="xtream-url">URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="xtream-url" readonly>
-                             <button class="btn btn-outline-secondary" data-copy-target="xtream-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" data-copy-target="xtream-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                           </div>
                        </div>
 
@@ -324,7 +324,7 @@
                              <label class="form-label small fw-bold" data-i18n="username" for="xtream-user">Username</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="xtream-user" readonly>
-                                <button class="btn btn-outline-secondary" data-copy-target="xtream-user" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" data-copy-target="xtream-user" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                              </div>
                           </div>
                           <div class="col-md-6">
@@ -332,7 +332,7 @@
                              <div class="input-group input-group-sm">
                                 <input type="password" class="form-control" id="xtream-pass" readonly>
                                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="xtream-pass" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
-                                <button class="btn btn-outline-secondary" data-copy-target="xtream-pass" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" data-copy-target="xtream-pass" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                              </div>
                           </div>
                        </div>
@@ -341,7 +341,7 @@
                           <label class="form-label small fw-bold" data-i18n="epgUrlLabel" for="epg-url">EPG URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="epg-url" readonly>
-                             <button class="btn btn-outline-secondary" data-copy-target="epg-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" data-copy-target="epg-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                           </div>
                        </div>
 
@@ -349,7 +349,7 @@
                           <label class="form-label small fw-bold" data-i18n="m3uLink" for="m3u-link">M3U Link</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="m3u-link" readonly>
-                             <button class="btn btn-outline-secondary" data-copy-target="m3u-link" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                             <button class="btn btn-outline-secondary" data-copy-target="m3u-link" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                           </div>
                        </div>
 
@@ -367,7 +367,7 @@
                              <label class="form-label small fw-bold" for="hdhr-url">Device URL</label>
                              <div class="input-group input-group-sm">
                                 <input type="text" class="form-control" id="hdhr-url" readonly>
-                                <button class="btn btn-outline-secondary" data-copy-target="hdhr-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                                <button class="btn btn-outline-secondary" data-copy-target="hdhr-url" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                              </div>
                           </div>
                        </div>
@@ -809,7 +809,7 @@
              </div>
           </div>
           <div class="input-group input-group-sm mb-3">
-             <input type="text" id="category-import-search" class="form-control" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="🔍 Search categories..." />
+             <input type="text" id="category-import-search" class="form-control" data-i18n-placeholder="searchCategories" data-i18n-label="searchCategories" placeholder="Search categories..." />
              <button class="btn btn-outline-secondary d-none" type="button" id="category-import-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
           </div>
           <div class="d-flex justify-content-between mb-2">
@@ -1034,7 +1034,7 @@
 
         <div class="modal-body">
           <div class="input-group input-group-sm mb-3">
-             <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" data-i18n-label="searchEpgSources" placeholder="🔍 Search sources..." aria-label="Search EPG Sources">
+             <input type="text" id="epg-browse-search" class="form-control" data-i18n-placeholder="searchEpgSources" data-i18n-label="searchEpgSources" placeholder="Search sources..." aria-label="Search EPG Sources">
              <button class="btn btn-outline-secondary d-none" type="button" id="epg-browse-search-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
           </div>
           <ul id="available-epg-sources-list" class="list-group max-h-400-scroll">
@@ -1133,7 +1133,7 @@
               <div class="input-group">
                 <input type="password" class="form-control" id="edit-user-password" autocomplete="new-password" data-i18n-placeholder="leaveBlankToKeep" placeholder="Leave blank to keep current">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="edit-user-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
-                <button class="btn btn-outline-secondary" type="button" data-copy-target="edit-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                <button class="btn btn-outline-secondary" type="button" data-copy-target="edit-user-password" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3">
@@ -1341,7 +1341,7 @@
                 <label class="form-label fw-bold text-success" data-i18n="shareLinkCreated" for="share-link-output">Share Link Created:</label>
                 <div class="input-group">
                    <input class="form-control" id="share-link-output" readonly>
-                   <button class="btn btn-outline-secondary" type="button" data-copy-target="share-link-output" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction">📋</button>
+                   <button class="btn btn-outline-secondary" type="button" data-copy-target="share-link-output" data-i18n-label="copyToClipboardAction" data-i18n-title="copyToClipboardAction"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                 </div>
              </div>
           </form>
