@@ -88,7 +88,7 @@ describe('Security: M3U Injection', () => {
       episode_run_time: ''
     };
 
-    mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue([maliciousChannel]) });
+    mockDb.prepare.mockReturnValue({ iterate: vi.fn().mockReturnValue([maliciousChannel]) });
 
     await playerPlaylist(req, res);
 

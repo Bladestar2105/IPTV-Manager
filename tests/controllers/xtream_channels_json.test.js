@@ -86,7 +86,7 @@ describe('xtreamController - playerChannelsJson', () => {
       episode_run_time: 120 // Numeric
     };
 
-    mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue([movieChannel]) });
+    mockDb.prepare.mockReturnValue({ iterate: vi.fn().mockReturnValue([movieChannel]) });
 
     await playerChannelsJson(req, res);
 
