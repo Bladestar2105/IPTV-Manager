@@ -744,6 +744,20 @@ export function migrateUserChannelsIsHidden(db) {
   }
 }
 
+export function migrateUserNotes(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('notes')) {
+      db.exec('ALTER TABLE users ADD COLUMN notes TEXT');
+      console.log('✅ DB Migration: notes column added to users');
+    }
+  } catch (e) {
+    console.error('User notes migration error:', e);
+  }
+}
+
 export function migrateProviderUseMappedEpgIcon(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(providers)").all();

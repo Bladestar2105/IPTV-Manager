@@ -445,7 +445,11 @@ function renderUserDetails(u) {
     selectedUser = u;
     selectedUserId = u.id;
     const label = document.getElementById('selected-user-label');
-    if (label) label.textContent = `${u.username} (id=${u.id})`;
+    let notesDisplay = '';
+    if (u.notes) {
+        notesDisplay = ` - <em>${escapeHtml(u.notes)}</em>`;
+    }
+    if (label) label.innerHTML = `${escapeHtml(u.username)} (id=${u.id})${notesDisplay}`;
 
     const emptyState = document.getElementById('user-details-empty');
     if (emptyState) emptyState.classList.add('d-none');
@@ -590,7 +594,11 @@ async function loadUsers() {
             displayExpiry = ` - <span class="text-danger">${t('expired')}</span>`;
         }
     }
-    span.innerHTML = `${escapeHtml(u.username)} (id=${u.id})${displayExpiry}`;
+    let displayNotes = '';
+    if (u.notes) {
+        displayNotes = `<br><small class="text-muted" style="font-size: 0.75rem;">${escapeHtml(u.notes)}</small>`;
+    }
+    span.innerHTML = `${escapeHtml(u.username)} (id=${u.id})${displayExpiry}${displayNotes}`;
     span.className = 'flex-grow-1 py-1 text-break';
     span.style.cursor = 'pointer';
     makeAccessible(span, () => {
@@ -748,6 +756,7 @@ function showEditUserModal(user) {
   document.getElementById('edit-user-username').value = user.username;
   document.getElementById('edit-user-password').value = '';
   document.getElementById('edit-user-max-connections').value = user.max_connections || 0;
+  document.getElementById('edit-user-notes').value = user.notes || '';
 
   if (user.expiry_date) {
     // Attempt to format assuming ISO date (e.g. 2024-12-31T00:00:00.000Z) or YYYY-MM-DD
@@ -783,6 +792,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const expiryDate = document.getElementById('edit-user-expiry-date').value;
   const webuiAccess = document.getElementById('edit-user-webui-access').checked;
   const hdhrEnabled = document.getElementById('edit-user-hdhr-enabled').checked;
+  const notes = document.getElementById('edit-user-notes').value;
 
   const allowedCountriesSelect = document.getElementById('edit-user-allowed-countries');
   const allowedCountries = Array.from(allowedCountriesSelect.selectedOptions).map(opt => opt.value).join(',');
@@ -793,7 +803,8 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
       hdhr_enabled: hdhrEnabled,
       max_connections: maxConnections,
       expiry_date: expiryDate ? expiryDate : null,
-      allowed_countries: allowedCountries || null
+      allowed_countries: allowedCountries || null,
+      notes: notes
   };
   if (password) body.password = password;
 
@@ -1785,6 +1796,10 @@ document.getElementById('user-form').addEventListener('submit', async e => {
         if (selected.length > 0) {
             body.allowed_countries = selected.join(',');
         }
+    }
+
+    if (f.notes && f.notes.value) {
+        body.notes = f.notes.value;
     }
 
     if (f.copy_from_user_id && f.copy_from_user_id.value) {
