@@ -17,10 +17,13 @@ const SEARCH_TARGETS = [
 let cachedUsers = [];
 let cachedIps = [];
 let lastIpUpdate = 0;
-const getHdhrUsersStmt = db.prepare('SELECT id, username, hdhr_token FROM users WHERE hdhr_enabled = 1 AND is_active = 1');
+let getHdhrUsersStmt = null;
 
 export function refreshSsdpCache() {
     try {
+        if (!getHdhrUsersStmt) {
+            getHdhrUsersStmt = db.prepare('SELECT id, username, hdhr_token FROM users WHERE hdhr_enabled = 1 AND is_active = 1');
+        }
         cachedUsers = getHdhrUsersStmt.all();
 
         const now = Date.now();
