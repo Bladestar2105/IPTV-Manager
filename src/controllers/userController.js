@@ -231,14 +231,25 @@ export const createUser = async (req, res) => {
 
                 // 3b. Copy EPG Channel Mappings
                 const insertEpgMap = db.prepare('INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (?, ?)');
-                // Optimization: Hoist db.prepare outside the loop to prevent O(N) database query compilations
-                const selectEpgMap = db.prepare('SELECT epg_channel_id FROM epg_channel_mappings WHERE provider_channel_id = ?');
-                // Get all mappings where provider_channel_id is in our key set
-                // Efficient way: loop channelMap keys
-                for (const oldChId of Object.keys(channelMap)) {
-                    const mapping = selectEpgMap.get(oldChId);
-                    if (mapping) {
-                        insertEpgMap.run(channelMap[oldChId], mapping.epg_channel_id);
+                // Optimization: Replace O(N) database queries with a single set-based lookup to avoid N+1 bottleneck
+                const oldChannelIds = Object.keys(channelMap);
+                if (oldChannelIds.length > 0) {
+                    const BATCH_SIZE = 900; // SQLite limit for IN clause
+                    for (let i = 0; i < oldChannelIds.length; i += BATCH_SIZE) {
+                        const batch = oldChannelIds.slice(i, i + BATCH_SIZE);
+                        const placeholders = batch.map(() => '?').join(',');
+                        const mappings = db.prepare(`
+                            SELECT provider_channel_id, epg_channel_id
+                            FROM epg_channel_mappings
+                            WHERE provider_channel_id IN (${placeholders})
+                        `).all(batch);
+
+                        for (const m of mappings) {
+                            const newChId = channelMap[m.provider_channel_id];
+                            if (newChId) {
+                                insertEpgMap.run(newChId, m.epg_channel_id);
+                            }
+                        }
                     }
                 }
 
