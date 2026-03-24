@@ -1798,6 +1798,10 @@ document.getElementById('user-form').addEventListener('submit', async e => {
         }
     }
 
+    if (f.notes && f.notes.value) {
+        body.notes = f.notes.value;
+    }
+
     if (f.copy_from_user_id && f.copy_from_user_id.value) {
         body.copy_from_user_id = f.copy_from_user_id.value;
     }
