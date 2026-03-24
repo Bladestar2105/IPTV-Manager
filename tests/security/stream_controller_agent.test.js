@@ -45,8 +45,8 @@ vi.mock('node-fetch', () => {
 });
 
 // Mock database
-vi.mock('../../src/database/db.js', () => ({
-    default: {
+vi.mock('../../src/database/db.js', () => {
+    const dbMock = {
         prepare: vi.fn((query) => {
             // Mock getChannel
             if (query.includes('user_channels')) {
@@ -64,15 +64,45 @@ vi.mock('../../src/database/db.js', () => ({
                     })
                 };
             }
+            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
+                return {
+                    all: vi.fn().mockReturnValue([{
+                        id: 1,
+                        user_id: 1,
+                        url: 'http://example.com',
+                        username: 'user',
+                        password: 'pass',
+                        max_connections: 10
+                    }])
+                };
+            }
             // Mock getStat
             if (query.includes('SELECT id FROM stream_stats')) {
                  return { get: vi.fn().mockReturnValue({ id: 1 }) };
             }
+            // Mock getProviderPool
+            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
+                return {
+                    all: vi.fn().mockReturnValue([{
+                        id: 1,
+                        user_id: 1,
+                        url: 'http://example.com',
+                        username: 'user',
+                        password: 'pass',
+                        max_connections: 10,
+                        backup_urls: JSON.stringify(['http://backup1.com', 'http://backup2.com'])
+                    }])
+                };
+            }
             // Mock updateStat/insertStat
-            return { run: vi.fn(), get: vi.fn() };
+            return { run: vi.fn(), get: vi.fn(), all: vi.fn().mockReturnValue([]) };
         })
-    }
-}));
+    };
+    return {
+        default: dbMock,
+        getDb: vi.fn(() => dbMock)
+    };
+});
 
 // Mock auth service
 vi.mock('../../src/services/authService.js', () => ({

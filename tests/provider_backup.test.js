@@ -24,10 +24,13 @@ vi.mock('node-fetch', () => ({
 
 vi.mock('../src/services/streamManager.js', () => ({
     default: {
+        isSessionActive: vi.fn().mockResolvedValue(false),
+        getUserConnectionCount: vi.fn().mockResolvedValue(0),
+        getProviderConnectionCount: vi.fn().mockResolvedValue(0),
         add: vi.fn(),
         remove: vi.fn(),
         cleanupUser: vi.fn(),
-        localStreams: { set: vi.fn(), delete: vi.fn() }
+        localStreams: new Map()
     }
 }));
 
@@ -102,10 +105,24 @@ describe('Stream Controller - Backup Failover', () => {
                     })
                 };
             }
+            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
+                return {
+                    all: vi.fn().mockReturnValue([{
+                        id: 100,
+                        user_id: 1,
+                        url: 'http://primary.com',
+                        username: 'user',
+                        password: 'pass',
+                        max_connections: 10,
+                        backup_urls: JSON.stringify(['http://backup1.com', 'http://backup2.com'])
+                    }])
+                };
+            }
             // Stats or other queries
             return {
                 get: vi.fn().mockReturnValue({ id: 99 }),
-                run: vi.fn()
+                run: vi.fn(),
+                all: vi.fn().mockReturnValue([])
             };
         });
     });

@@ -7,8 +7,13 @@ describe('Provider Password Visibility', () => {
     beforeAll(() => {
         initDb(true);
         // Clean up tables to avoid conflicts
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        try { db.prepare('DELETE FROM user_channels').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM user_categories').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM provider_channels').run(); } catch(e) {}
         db.prepare('DELETE FROM providers').run();
         db.prepare('DELETE FROM users').run();
+        db.prepare('PRAGMA foreign_keys = ON').run();
     });
 
     it('should return plain_password for admin', () => {

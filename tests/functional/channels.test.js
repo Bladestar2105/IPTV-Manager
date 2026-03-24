@@ -18,7 +18,10 @@ app.post('/api/users/:userId/categories', channelController.createUserCategory);
 describe('Channel Functional Tests', () => {
     beforeAll(() => {
         initDb(true);
-        db.prepare('DELETE FROM user_categories').run();
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        try { db.prepare('DELETE FROM user_channels').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM user_categories').run(); } catch(e) {}
+        db.prepare('PRAGMA foreign_keys = ON').run();
     });
 
     it('should create and retrieve a category', async () => {
