@@ -1693,7 +1693,7 @@ function renderUserCategoryChannels() {
 
     const renameBtn = document.createElement('button');
     renameBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    renameBtn.innerHTML = '<i class="bi bi-pencil"></i>';
+    renameBtn.innerHTML = '<i class="bi bi-pencil" aria-hidden="true"></i>';
     renameBtn.title = t('renameChannel');
     renameBtn.setAttribute('aria-label', t('renameChannel'));
     renameBtn.onclick = async () => {
@@ -4679,8 +4679,8 @@ async function loadUserBackups() {
                     <td>${backup.category_count}</td>
                     <td>${backup.channel_count}</td>
                     <td class="text-end">
-                        <button class="btn btn-sm btn-outline-success ms-1 btn-restore-backup" data-id="${backup.id}" data-name="${escapeHtml(backup.name)}" data-i18n-title="restore"><i class="bi bi-arrow-counterclockwise"></i> ${t('restore')}</button>
-                        <button class="btn btn-sm btn-outline-danger ms-1 btn-delete-backup" data-id="${backup.id}" data-name="${escapeHtml(backup.name)}" data-i18n-title="delete"><i class="bi bi-trash"></i> ${t('delete')}</button>
+                        <button class="btn btn-sm btn-outline-success ms-1 btn-restore-backup" data-id="${backup.id}" data-name="${escapeHtml(backup.name)}" data-i18n-title="restore"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i> ${t('restore')}</button>
+                        <button class="btn btn-sm btn-outline-danger ms-1 btn-delete-backup" data-id="${backup.id}" data-name="${escapeHtml(backup.name)}" data-i18n-title="delete"><i class="bi bi-trash" aria-hidden="true"></i> ${t('delete')}</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
