@@ -10,7 +10,7 @@ import { BCRYPT_ROUNDS } from '../config/constants.js';
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries FROM users ORDER BY id').all();
+    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes FROM users ORDER BY id').all();
     const result = users.map(u => {
         let plainPassword = null;
         if (req.user.is_admin && u.plain_password) {
@@ -31,7 +31,8 @@ export const getUsers = (req, res) => {
             hdhr_token: u.hdhr_token,
             max_connections: u.max_connections || 0,
             expiry_date: u.expiry_date,
-            allowed_countries: u.allowed_countries
+            allowed_countries: u.allowed_countries,
+            notes: u.notes
         };
     });
     res.json(result);
@@ -41,7 +42,7 @@ export const getUsers = (req, res) => {
 export const createUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date, allowed_countries } = req.body;
+    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date, allowed_countries, notes } = req.body;
 
     // Validation
     if (!username || !password) {
@@ -106,6 +107,13 @@ export const createUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
     const encryptedPlainPassword = encrypt(p);
 
+    if (notes && notes.length > 50) {
+      return res.status(400).json({
+        error: 'notes_too_long',
+        message: 'Notes must be up to 50 characters'
+      });
+    }
+
     let hdhrToken = null;
     const isHdhrEnabled = hdhr_enabled ? 1 : 0;
     if (isHdhrEnabled) {
@@ -115,7 +123,7 @@ export const createUser = async (req, res) => {
     // Use transaction for atomic creation + copying
     db.transaction(() => {
         // Insert user
-        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             u,
             hashedPassword,
             encryptedPlainPassword,
@@ -124,7 +132,8 @@ export const createUser = async (req, res) => {
             hdhrToken,
             (max_connections !== undefined && max_connections !== '') ? Number(max_connections) : 0,
             expiry_date || null,
-            (allowed_countries && allowed_countries !== 'null' && allowed_countries !== 'undefined') ? allowed_countries : null
+            (allowed_countries && allowed_countries !== 'null' && allowed_countries !== 'undefined') ? allowed_countries : null,
+            notes ? notes.trim() : null
         );
         const newUserId = info.lastInsertRowid;
 
@@ -316,7 +325,7 @@ export const updateUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password, webui_access, hdhr_enabled, max_connections, expiry_date, allowed_countries } = req.body;
+    const { username, password, webui_access, hdhr_enabled, max_connections, expiry_date, allowed_countries, notes } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -399,6 +408,14 @@ export const updateUser = async (req, res) => {
     if (allowed_countries !== undefined) {
         updates.push('allowed_countries = ?');
         params.push((allowed_countries && allowed_countries !== 'null' && allowed_countries !== 'undefined') ? allowed_countries : null);
+    }
+
+    if (notes !== undefined) {
+        if (notes && notes.length > 50) {
+            return res.status(400).json({ error: 'notes_too_long' });
+        }
+        updates.push('notes = ?');
+        params.push(notes ? notes.trim() : null);
     }
 
     if (updates.length === 0) return res.json({success: true}); // Nothing to update

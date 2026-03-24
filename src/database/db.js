@@ -83,7 +83,8 @@ export function initDb(isPrimary) {
       is_active INTEGER DEFAULT 1,
       max_connections INTEGER DEFAULT 0,
       expiry_date INTEGER,
-      allowed_countries TEXT
+      allowed_countries TEXT,
+      notes TEXT
     );
 
     CREATE TABLE IF NOT EXISTS temporary_tokens (
@@ -281,6 +282,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserAllowedCountries(db);
             migrations.migrateUserChannelsCustomName(db);
             migrations.migrateUserChannelsIsHidden(db);
+            migrations.migrateUserNotes(db);
             if (typeof migrations.migrateProviderUseMappedEpgIcon === 'function') {
                 migrations.migrateProviderUseMappedEpgIcon(db);
             }

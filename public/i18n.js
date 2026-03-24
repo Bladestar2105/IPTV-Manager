@@ -185,6 +185,8 @@ const translations = {
     invalid_username_length: 'Username must be 3-50 characters',
     maxConnections: 'Max Connections',
     maxConnectionsShort: 'Max',
+    notes: 'Notes',
+    notesMax: 'Max 50 characters',
     
     // EPG Section
     epgSources: 'EPG Sources',
@@ -661,6 +663,8 @@ const translations = {
     invalid_username_length: 'Benutzername muss 3-50 Zeichen lang sein',
     maxConnections: 'Max. Verbindungen',
     maxConnectionsShort: 'Max',
+    notes: 'Notizen',
+    notesMax: 'Max. 50 Zeichen',
     
     // EPG Section
     epgSources: 'EPG-Quellen',
@@ -1127,6 +1131,8 @@ const translations = {
     invalid_username_length: 'Le nom d\'utilisateur doit comporter entre 3 et 50 caractères',
     maxConnections: 'Connexions Max',
     maxConnectionsShort: 'Max',
+    notes: 'Notes',
+    notesMax: 'Max. 50 caractères',
     
     // EPG Section
     epgSources: 'Sources EPG',
@@ -1593,6 +1599,8 @@ const translations = {
     invalid_username_length: 'Το όνομα χρήστη πρέπει να είναι 3-50 χαρακτήρες',
     maxConnections: 'Μέγιστες Συνδέσεις',
     maxConnectionsShort: 'Μέγ',
+    notes: 'Σημειώσεις',
+    notesMax: 'Έως 50 χαρακτήρες',
 
     // EPG Section
     epgSources: 'Πηγές EPG',
