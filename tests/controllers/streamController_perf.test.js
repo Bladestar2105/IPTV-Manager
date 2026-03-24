@@ -39,12 +39,31 @@ vi.mock('../../src/database/db.js', () => {
             }),
           };
         }
+        if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
+            return {
+                all: vi.fn().mockReturnValue([{
+                    id: 100,
+                    user_id: 1,
+                    url: 'http://upstream.com',
+                    username: 'puser',
+                    password: 'ppass',
+                    max_connections: 10
+                }])
+            };
+        }
         if (query.includes('SELECT id FROM stream_stats')) {
            return { get: vi.fn().mockReturnValue({ id: 50 }), run: vi.fn() };
         }
-        return { get: vi.fn(), run: vi.fn() };
+        return { get: vi.fn(), run: vi.fn(), all: vi.fn().mockReturnValue([]) };
       }),
     },
+    getDb: vi.fn(() => ({
+      prepare: vi.fn(() => ({
+          get: vi.fn(),
+          all: vi.fn().mockReturnValue([]),
+          run: vi.fn()
+      }))
+    }))
   };
 });
 vi.mock('../../src/utils/crypto.js', () => ({

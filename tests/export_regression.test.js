@@ -25,8 +25,13 @@ describe('Export/Import Regression Tests', () => {
     beforeAll(() => {
         initDb(true);
         // Clean up previous runs
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        try { db.prepare('DELETE FROM user_channels').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM user_categories').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM provider_channels').run(); } catch(e) {}
         db.prepare('DELETE FROM providers').run();
         db.prepare('DELETE FROM users').run();
+        db.prepare('PRAGMA foreign_keys = ON').run();
 
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     });
@@ -68,8 +73,13 @@ describe('Export/Import Regression Tests', () => {
         fs.writeFileSync(tempFilePath, exportedBuffer);
 
         // 4. Import Data (Clear DB first)
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        try { db.prepare('DELETE FROM user_channels').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM user_categories').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM provider_channels').run(); } catch(e) {}
         db.prepare('DELETE FROM providers').run();
         db.prepare('DELETE FROM users').run();
+        db.prepare('PRAGMA foreign_keys = ON').run();
 
         const reqImport = {
             user: { is_admin: true },
@@ -95,8 +105,13 @@ describe('Export/Import Regression Tests', () => {
 
     it('should fallback to plaintext export if decryption fails (plaintext password in DB)', () => {
         // Clear DB
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        try { db.prepare('DELETE FROM user_channels').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM user_categories').run(); } catch(e) {}
+        try { db.prepare('DELETE FROM provider_channels').run(); } catch(e) {}
         db.prepare('DELETE FROM providers').run();
         db.prepare('DELETE FROM users').run();
+        db.prepare('PRAGMA foreign_keys = ON').run();
 
         // 1. Create User
         const userRes = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run('testuser_plain', 'userpass');
