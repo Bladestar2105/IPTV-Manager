@@ -84,7 +84,8 @@ export const bulkDeleteUserCategories = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
-    const placeholders = ids.map(() => '?').join(',');
+    // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+    const placeholders = Array(ids.length).fill('?').join(',');
 
     const cats = db.prepare(`SELECT DISTINCT user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
     const userIdsToClear = cats.map(c => c.user_id);
@@ -285,7 +286,8 @@ export const bulkDeleteUserChannels = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
-    const placeholders = ids.map(() => '?').join(',');
+    // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+    const placeholders = Array(ids.length).fill('?').join(',');
 
     const channels = db.prepare(`
         SELECT DISTINCT cat.user_id

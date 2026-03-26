@@ -612,9 +612,11 @@ export const importCategories = async (req, res) => {
     const channelsMap = new Map();
 
     if (categoryIds.length > 0) {
+      // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+      const placeholders = Array(categoryIds.length).fill('?').join(',');
       const allChannels = db.prepare(`
         SELECT id, original_category_id, stream_type FROM provider_channels
-        WHERE provider_id = ? AND original_category_id IN (${categoryIds.map(() => '?').join(',')})
+        WHERE provider_id = ? AND original_category_id IN (${placeholders})
         ORDER BY original_sort_order ASC, name ASC
       `).all(providerId, ...categoryIds);
 
