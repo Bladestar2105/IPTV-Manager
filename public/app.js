@@ -338,12 +338,12 @@ function copyToClipboard(text, btnElement) {
             const successText = t('copied') || 'Copied!';
 
             if (isSmallBtn) {
-                btnElement.innerHTML = '✅';
+                btnElement.innerHTML = '<i class="bi bi-check-circle" aria-hidden="true"></i>';
                 btnElement.className = 'btn btn-success ' + btnElement.className.replace('btn-outline-secondary', '');
             } else {
                 const width = btnElement.offsetWidth;
                 btnElement.style.width = width + 'px'; // Fix width
-                btnElement.innerHTML = `✅ ${successText}`;
+                btnElement.innerHTML = `<i class="bi bi-check-circle" aria-hidden="true"></i> ${successText}`;
                 btnElement.className = 'btn btn-success w-100';
             }
 
@@ -611,7 +611,7 @@ async function loadUsers() {
 
     const playBtn = document.createElement('button');
     playBtn.className = 'btn btn-sm btn-outline-success me-1';
-    playBtn.innerHTML = '▶️'; // Play icon
+    playBtn.innerHTML = '<i class="bi bi-play-fill" aria-hidden="true"></i>'; // Play icon
     playBtn.title = t('openWebPlayer') || 'Open Web Player';
     playBtn.setAttribute('aria-label', t('openWebPlayer') || 'Open Web Player');
     playBtn.onclick = async () => {
@@ -642,7 +642,7 @@ async function loadUsers() {
 
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    editBtn.innerHTML = '✏️'; // Edit icon
+    editBtn.innerHTML = '<i class="bi bi-pencil" aria-hidden="true"></i>'; // Edit icon
     editBtn.setAttribute('aria-label', t('editUser') || t('edit'));
     editBtn.title = t('editUser') || t('edit');
     editBtn.onclick = () => showEditUserModal(u);
@@ -860,7 +860,7 @@ async function loadProviders(filterUserId = null) {
     const li = document.createElement('li');
     li.className = 'list-group-item';
     
-    const epgStatus = p.epg_enabled ? '✅' : '❌';
+    const epgStatus = p.epg_enabled ? '<i class="bi bi-check-circle" aria-hidden="true"></i>' : '<i class="bi bi-x-circle" aria-hidden="true"></i>';
     const lastUpdate = p.epg_last_updated ? new Date(p.epg_last_updated * 1000).toLocaleString() : t('never');
     const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h) | ${t('lastEpgUpdate')}: ${lastUpdate}</small>` : '';
     const ownerInfo = p.owner_name ? `<br><small class="text-primary">${t('owner')}: ${p.owner_name}</small>` : '';
@@ -888,7 +888,7 @@ async function loadProviders(filterUserId = null) {
     if (isAdmin) {
         const editBtn = document.createElement('button');
         editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-        editBtn.innerHTML = '✏️';
+        editBtn.innerHTML = '<i class="bi bi-pencil" aria-hidden="true"></i>';
         editBtn.setAttribute('aria-label', t('edit'));
         editBtn.title = t('edit');
         editBtn.onclick = () => prepareEditProvider(p);
@@ -924,7 +924,7 @@ async function loadProviders(filterUserId = null) {
 
         const configBtn = document.createElement('button');
         configBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-        configBtn.innerHTML = '⚙️';
+        configBtn.innerHTML = '<i class="bi bi-gear" aria-hidden="true"></i>';
         configBtn.title = t('syncConfig');
         configBtn.setAttribute('aria-label', t('syncConfig'));
         configBtn.onclick = () => showSyncConfigModal(p.id);
@@ -1180,9 +1180,9 @@ function initCategorySortable() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({category_ids: categoryIds})
           });
-          console.log('✅ Category order saved');
+          console.log(' Category order saved');
         } catch (e) {
-          console.error('❌ Save error:', e);
+          console.error(' Save error:', e);
           alert(t('errorPrefix') + ' ' + e.message);
           loadUserCategories();
         }
@@ -1224,7 +1224,7 @@ async function loadProviderCategories() {
     providerCategories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
     renderProviderCategories();
   } catch (e) {
-    console.error('❌ Error:', e);
+    console.error(' Error:', e);
     list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
   }
 }
@@ -1374,7 +1374,7 @@ async function importSelectedCategories(withChannels) {
     updateSelectedCount();
 
   } catch (e) {
-    console.error('❌ Import error:', e);
+    console.error(' Import error:', e);
     alert(t('errorPrefix') + ' ' + e.message);
   } finally {
       if(btn) setLoadingState(btn, false);
@@ -1424,7 +1424,7 @@ async function importCategory(cat, withChannels) {
       modalInstance.hide();
     }
   } catch (e) {
-    console.error('❌ Import error:', e);
+    console.error(' Import error:', e);
     alert(t('errorPrefix') + ' ' + e.message);
   }
 }
@@ -1556,7 +1556,7 @@ function renderProviderChannels(channels) {
 
         // Success state
         btn.disabled = true; // Keep disabled during success message
-        btn.innerHTML = `✅ ${t('added')}`;
+        btn.innerHTML = `<i class="bi bi-check-circle" aria-hidden="true"></i> ${t('added')}`;
         btn.className = 'btn btn-sm btn-outline-success ms-2';
 
         setTimeout(() => {
@@ -1762,9 +1762,9 @@ function initChannelSortable() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({channel_ids: channelIds})
           });
-          console.log('✅ Channel order saved');
+          console.log(' Channel order saved');
         } catch (e) {
-          console.error('❌ Save error:', e);
+          console.error(' Save error:', e);
           alert(t('errorPrefix') + ' ' + e.message);
           loadUserCategoryChannels();
         }
@@ -2093,7 +2093,7 @@ async function loadEpgSources() {
       const isProvider = typeof source.id === 'string' && source.id.startsWith('provider_');
       const lastUpdate = source.last_update ? new Date(source.last_update * 1000).toLocaleString() : t('never');
       const isUpdating = source.is_updating ? `🔄 ${t('updating')}` : '';
-      const enabledStatus = source.enabled ? `✅ ${t('enabled')}` : `❌ ${t('disable')}`;
+      const enabledStatus = source.enabled ? `<i class="bi bi-check-circle text-success" aria-hidden="true"></i> ${t('enabled')}` : `<i class="bi bi-x-circle text-danger" aria-hidden="true"></i> ${t('disable')}`;
       
       const info = document.createElement('div');
       info.innerHTML = `
@@ -2131,7 +2131,7 @@ async function loadEpgSources() {
       if (!isProvider) {
         const editBtn = document.createElement('button');
         editBtn.className = 'btn btn-sm btn-outline-secondary';
-        editBtn.innerHTML = '✏️';
+        editBtn.innerHTML = '<i class="bi bi-pencil" aria-hidden="true"></i>';
         editBtn.title = t('edit');
         editBtn.setAttribute('aria-label', t('edit'));
         editBtn.onclick = () => showEditEpgSourceModal(source);
@@ -2150,7 +2150,7 @@ async function loadEpgSources() {
         
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-danger';
-        delBtn.textContent = '🗑';
+        delBtn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
         delBtn.setAttribute('aria-label', t('deleteAction'));
         delBtn.title = t('deleteAction');
         delBtn.onclick = async () => {
@@ -3026,7 +3026,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  console.log('✅ IPTV-Manager loaded with i18n & local assets');
+  console.log(' IPTV-Manager loaded with i18n & local assets');
 });
 
 // === View Management ===
@@ -4390,11 +4390,11 @@ function showToast(message, type = 'primary') {
 
     // Map types to icons
     const icons = {
-        success: '✅',
+        success: '<i class="bi bi-check-circle" aria-hidden="true"></i>',
         danger: '⚠️',
         warning: '⚠️',
-        info: 'ℹ️',
-        primary: 'ℹ️'
+        info: '<i class="bi bi-info-circle-fill me-2" aria-hidden="true"></i>',
+        primary: '<i class="bi bi-info-circle-fill me-2" aria-hidden="true"></i>'
     };
     const icon = icons[type] || '';
 
@@ -4576,8 +4576,8 @@ async function loadSharesList() {
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary me-1" data-action="action-edit-share" data-share='${JSON.stringify(s).replace(/'/g, "&#39;")}' title="${t('updateShare')}" aria-label="${t('updateShare')}">✏️</button>
-                    <button class="btn btn-sm btn-outline-danger" data-action="action-delete-share" data-token="${s.token}" title="${t('deleteAction')}" aria-label="${t('deleteAction')}">🗑</button>
+                    <button class="btn btn-sm btn-outline-secondary me-1" data-action="action-edit-share" data-share='${JSON.stringify(s).replace(/'/g, "&#39;")}' title="${t('updateShare')}" aria-label="${t('updateShare')}"><i class="bi bi-pencil" aria-hidden="true"></i></button>
+                    <button class="btn btn-sm btn-outline-danger" data-action="action-delete-share" data-token="${s.token}" title="${t('deleteAction')}" aria-label="${t('deleteAction')}"><i class="bi bi-trash" aria-hidden="true"></i></button>
                 </td>
             `;
             tbody.appendChild(tr);
