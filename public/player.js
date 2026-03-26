@@ -281,7 +281,7 @@ function escapeHtml(unsafe) {
     }
   }
 
-  // ─── VOD List Renderer ───
+  // ─── VOD/Series List Renderer ───
   function renderList() {
     var catId = catSelect.value;
     var search = searchInput.value.toLowerCase();
@@ -352,7 +352,12 @@ function escapeHtml(unsafe) {
       a.appendChild(div);
 
       a.onclick = (function(stream, el) {
-        return function() {
+        return function(e) {
+          e.preventDefault();
+          if (currentType === 'series') {
+            renderSeriesEpisodes(stream);
+            return;
+          }
           document.querySelectorAll('.vod-item').forEach(function(e) { e.classList.remove('active'); });
           el.classList.add('active');
           playStream(stream);
@@ -361,6 +366,132 @@ function escapeHtml(unsafe) {
       frag.appendChild(a);
     });
     listView.appendChild(frag);
+  }
+
+  // ─── Series Episodes Renderer ───
+  async function renderSeriesEpisodes(series) {
+    listView.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary"></div><div class="mt-2">' + (t('loading') || 'Loading...') + '</div></div>';
+
+    try {
+      var url = '/player_api.php?action=get_series_info&series_id=' + series.url.split('/').slice(-1)[0].split('.')[0] + '&' + getAuthParams();
+      var res = await fetch(url);
+      if (!res.ok) throw new Error('Series Info Fetch Error: ' + res.status);
+      var data = await res.json();
+
+      listView.innerHTML = '';
+
+      var backBtn = document.createElement('button');
+      backBtn.className = 'btn btn-outline-secondary btn-sm m-3';
+      backBtn.textContent = '← ' + (t('backToSeries') || 'Back to Series');
+      backBtn.onclick = function() {
+        renderList();
+      };
+      listView.appendChild(backBtn);
+
+      var header = document.createElement('div');
+      header.className = 'p-3 border-bottom border-secondary d-flex align-items-start';
+
+      if (data.info && data.info.cover) {
+        var img = document.createElement('img');
+        img.src = getProxiedUrl(data.info.cover);
+        img.style.cssText = 'width:80px;height:120px;object-fit:cover;margin-right:15px;border-radius:4px;background:#1a1a24;';
+        header.appendChild(img);
+      } else if (series.logo) {
+        var img2 = document.createElement('img');
+        img2.src = getProxiedUrl(series.logo);
+        img2.style.cssText = 'width:80px;height:120px;object-fit:cover;margin-right:15px;border-radius:4px;background:#1a1a24;';
+        header.appendChild(img2);
+      }
+
+      var infoDiv = document.createElement('div');
+      var title = document.createElement('h5');
+      title.textContent = data.info && data.info.name ? data.info.name : series.name;
+      infoDiv.appendChild(title);
+
+      if (data.info && data.info.plot) {
+        var plot = document.createElement('p');
+        plot.className = 'small text-muted mb-1';
+        plot.textContent = data.info.plot;
+        infoDiv.appendChild(plot);
+      }
+
+      if (data.info && data.info.cast) {
+        var cast = document.createElement('div');
+        cast.className = 'small text-muted';
+        cast.style.fontSize = '0.75rem';
+        cast.textContent = 'Cast: ' + data.info.cast;
+        infoDiv.appendChild(cast);
+      }
+      header.appendChild(infoDiv);
+      listView.appendChild(header);
+
+      if (!data.episodes || Object.keys(data.episodes).length === 0) {
+        var noEp = document.createElement('div');
+        noEp.className = 'p-4 text-center text-muted';
+        noEp.textContent = t('noEpisodesFound') || 'No episodes found';
+        listView.appendChild(noEp);
+        return;
+      }
+
+      var frag = document.createDocumentFragment();
+
+      // Seasons loop
+      for (var seasonKey in data.episodes) {
+        var seasonHeader = document.createElement('div');
+        seasonHeader.className = 'bg-secondary text-light p-2 fw-bold mt-2';
+        seasonHeader.textContent = (t('season') || 'Season') + ' ' + seasonKey;
+        frag.appendChild(seasonHeader);
+
+        var episodes = data.episodes[seasonKey];
+        episodes.forEach(function(ep) {
+          var a = document.createElement('a');
+          a.className = 'list-group-item list-group-item-action vod-item bg-dark text-light ps-4';
+
+          var titleDiv = document.createElement('div');
+          titleDiv.className = 'fw-bold';
+          titleDiv.textContent = ep.title || ((t('episode') || 'Episode') + ' ' + ep.episode_num);
+          a.appendChild(titleDiv);
+
+          if (ep.info && ep.info.plot) {
+            var plotDiv = document.createElement('div');
+            plotDiv.className = 'small text-muted';
+            plotDiv.textContent = ep.info.plot;
+            a.appendChild(plotDiv);
+          }
+
+          a.onclick = (function(episode, el) {
+             return function(e) {
+               e.preventDefault();
+               document.querySelectorAll('.vod-item').forEach(function(e) { e.classList.remove('active'); });
+               el.classList.add('active');
+
+               // Construct stream object for player
+               var epExt = episode.container_extension || 'mp4';
+               var urlParts = series.url.split('/');
+               // url is /series/username/password/seriesid.ext, we replace the last part
+               urlParts[urlParts.length - 1] = episode.id + '.' + epExt;
+               var epUrl = urlParts.join('/');
+
+               var epStream = {
+                 name: ep.title || series.name + ' S' + seasonKey + 'E' + ep.episode_num,
+                 url: epUrl,
+                 type: 'series'
+               };
+
+               playStream(epStream);
+             };
+          })(ep, a);
+
+          frag.appendChild(a);
+        });
+      }
+
+      listView.appendChild(frag);
+
+    } catch (e) {
+      console.error('Render series error', e);
+      listView.innerHTML = '<div class="alert alert-danger m-3">' + t('errorLoadingData') + ': ' + escapeHtml(e.message) + '</div>';
+    }
   }
 
   // ─── EPG Timeline Renderer ───

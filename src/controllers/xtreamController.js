@@ -589,7 +589,7 @@ export const playerChannelsJson = async (req, res) => {
       JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
+      WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `);
