@@ -1,6 +1,6 @@
 import geoip from 'geoip-lite';
 import db from '../database/db.js';
-import { cleanIp } from '../utils/helpers.js';
+import { cleanIp, isUnsafeIP } from '../utils/helpers.js';
 
 /**
  * Checks if the given IP is allowed for the given user based on region locks.
@@ -24,12 +24,16 @@ export function isIpAllowedForUser(ip, user) {
   const isWhitelisted = db.prepare('SELECT 1 FROM whitelisted_ips WHERE ip = ?').get(ip);
   if (isWhitelisted) return true;
 
-  // Resolve IP to country
   const sanitizedIp = cleanIp(ip);
+
+  // Always allow local/private IPs (LAN access)
+  if (isUnsafeIP(sanitizedIp)) return true;
+
+  // Resolve IP to country
   const geo = geoip.lookup(sanitizedIp);
 
-  // If IP cannot be resolved, we have to block it because they enabled region lock
-  if (!geo || !geo.country) return false;
+  // If IP cannot be resolved, we don't block it (fail-open)
+  if (!geo || !geo.country) return true;
 
   return allowedList.includes(geo.country.toUpperCase());
 }

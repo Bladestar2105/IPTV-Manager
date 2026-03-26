@@ -1,5 +1,5 @@
 import { clearChannelsCache } from '../services/cacheService.js';
-import { invalidateUserTokens } from '../services/authService.js';
+import { invalidateUserTokens, invalidateUserCache } from '../services/authService.js';
 import streamManager from '../services/streamManager.js';
 import db from '../database/db.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
@@ -444,6 +444,10 @@ export const updateUser = async (req, res) => {
         } catch (streamErr) {
             console.error(`Error terminating streams for user ${id}:`, streamErr);
         }
+
+        // Ensure cache is fully cleared so new settings (like region lock) apply immediately
+        invalidateUserTokens(id);
+        invalidateUserCache(id);
     }
 
     clearChannelsCache(id);
