@@ -1093,7 +1093,7 @@ async function loadUserCategories() {
     
     const span = document.createElement('span');
     if (c.is_adult) {
-        span.innerHTML = `<i class="bi bi-exclamation-triangle-fill text-warning me-1" aria-hidden="true" title="${t('adult')}"></i> ${escapeHtml(c.name)}`;
+        span.innerHTML = `<i class="bi bi-explicit text-danger me-1" aria-hidden="true" title="${t('adult')}"></i> ${escapeHtml(c.name)}`;
     } else {
         span.textContent = c.name;
     }
@@ -1280,7 +1280,7 @@ function renderProviderCategories() {
     row.className = 'd-flex justify-content-between align-items-center';
     
     const info = document.createElement('div');
-    const catNameDisplay = cat.is_adult ? `<i class="bi bi-exclamation-triangle-fill text-warning me-1" aria-hidden="true" title="${t('adult')}"></i> ${escapeHtml(cat.category_name)}` : escapeHtml(cat.category_name);
+    const catNameDisplay = cat.is_adult ? `<i class="bi bi-explicit text-danger me-1" aria-hidden="true" title="${t('adult')}"></i> ${escapeHtml(cat.category_name)}` : escapeHtml(cat.category_name);
     info.innerHTML = `
       <strong>${escapeHtml(catNameDisplay)}</strong><br>
       <small class="text-muted">${cat.channel_count} ${escapeHtml(t('channels'))}</small>
