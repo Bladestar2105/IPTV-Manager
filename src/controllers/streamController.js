@@ -842,14 +842,22 @@ export const proxyMovie = async (req, res) => {
         try {
             const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
+                method: 'HEAD',
                 redirect: 'follow'
             });
-            const upstream = result.response;
+            const successfulUrl = result.successfulUrl || remoteUrl;
+
+            // For VOD/MKV, ffmpeg needs to probe. It is much more reliable to let ffmpeg read the URL natively.
+            // Convert headers object to an array of strings for FFmpeg -headers option
+            const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');
 
-            const command = ffmpeg(upstream.body)
+            const command = ffmpeg(successfulUrl)
+              .inputOptions([
+                '-headers', headerStr
+              ])
               .outputOptions([
                 '-c:v copy',
                 '-c:a aac',
@@ -867,7 +875,7 @@ export const proxyMovie = async (req, res) => {
             command.pipe(res, { end: true });
 
             req.on('close', () => {
-                command.kill('SIGKILL');
+                try { command.kill('SIGKILL'); } catch(e) {}
                 streamManager.remove(connectionId);
             });
             return;
@@ -1012,14 +1020,21 @@ export const proxySeries = async (req, res) => {
         try {
             const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
+                method: 'HEAD',
                 redirect: 'follow'
             });
-            const upstream = result.response;
+            const successfulUrl = result.successfulUrl || remoteUrl;
+
+            // For Series/MKV, ffmpeg needs to probe. Let ffmpeg read the URL natively.
+            const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');
 
-            const command = ffmpeg(upstream.body)
+            const command = ffmpeg(successfulUrl)
+              .inputOptions([
+                '-headers', headerStr
+              ])
               .outputOptions([
                 '-c:v copy',
                 '-c:a aac',
@@ -1037,7 +1052,7 @@ export const proxySeries = async (req, res) => {
             command.pipe(res, { end: true });
 
             req.on('close', () => {
-                command.kill('SIGKILL');
+                try { command.kill('SIGKILL'); } catch(e) {}
                 streamManager.remove(connectionId);
             });
             return;
