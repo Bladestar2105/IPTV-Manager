@@ -1003,6 +1003,53 @@ export const proxySeries = async (req, res) => {
       'Connection': 'keep-alive'
     };
 
+    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && (ext === 'mkv' || ext === 'avi'));
+
+    if (shouldTranscode) {
+        const transcodeHeaders = { ...headers };
+        delete transcodeHeaders['Range'];
+
+        try {
+            const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
+                headers: transcodeHeaders,
+                redirect: 'follow'
+            });
+            const upstream = result.response;
+
+            res.setHeader('Content-Type', 'video/mp4');
+            res.setHeader('Connection', 'keep-alive');
+
+            const command = ffmpeg(upstream.body)
+              .outputOptions([
+                '-c:v copy',
+                '-c:a aac',
+                '-f mp4',
+                '-movflags frag_keyframe+empty_moov'
+              ])
+              .on('error', (err) => {
+                if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
+                   console.error('FFmpeg Series error:', err.message);
+                }
+                streamManager.remove(connectionId);
+              })
+              .on('end', () => streamManager.remove(connectionId));
+
+            command.pipe(res, { end: true });
+
+            req.on('close', () => {
+                command.kill('SIGKILL');
+                streamManager.remove(connectionId);
+            });
+            return;
+
+        } catch(e) {
+            console.error('Series Transcode error:', e);
+            streamManager.localStreams.delete(connectionId);
+            streamManager.remove(connectionId);
+            return res.sendStatus(500);
+        }
+    }
+
     if (req.headers.range) {
         headers['Range'] = req.headers.range;
     }
