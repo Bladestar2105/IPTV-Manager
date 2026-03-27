@@ -453,26 +453,28 @@
       <div class="row mb-4">
          <div class="col-md-6">
             <h5 data-i18n="blockIp">Block IP</h5>
-            <form id="block-ip-form" class="d-flex gap-2 mb-2 align-items-center">
-               <input class="form-control form-control-sm w-150px" name="ip" data-i18n-label="ip" placeholder="IP Address" required>
-               <input class="form-control form-control-sm flex-grow-1" name="reason" data-i18n-placeholder="whitelistReason" data-i18n-label="whitelistReason" placeholder="Reason">
-               <select class="form-select form-select-sm w-auto" name="duration" data-i18n-label="blockDuration">
-                  <option value="3600">1h</option>
-                  <option value="21600">6h</option>
-                  <option value="43200">12h</option>
-                  <option value="86400">24h</option>
-                  <option value="manual" data-i18n="custom">Custom</option>
-               </select>
-               <button class="btn btn-sm btn-danger" data-i18n="block">Block</button>
+            <form id="block-ip-form" class="row g-2 mb-2 align-items-center">
+               <div class="col-12 col-sm-4 col-md-auto"><input class="form-control form-control-sm" name="ip" data-i18n-label="ip" placeholder="IP Address" required></div>
+               <div class="col-12 col-sm-8 col-md"><input class="form-control form-control-sm" name="reason" data-i18n-placeholder="whitelistReason" data-i18n-label="whitelistReason" placeholder="Reason"></div>
+               <div class="col-8 col-sm-6 col-md-auto">
+                  <select class="form-select form-select-sm w-100" name="duration" data-i18n-label="blockDuration">
+                     <option value="3600">1h</option>
+                     <option value="21600">6h</option>
+                     <option value="43200">12h</option>
+                     <option value="86400">24h</option>
+                     <option value="manual" data-i18n="custom">Custom</option>
+                  </select>
+               </div>
+               <div class="col-4 col-sm-6 col-md-auto"><button class="btn btn-sm btn-danger w-100" data-i18n="block">Block</button></div>
             </form>
             <ul id="blocked-ip-list" class="list-group small max-h-200-scroll"></ul>
          </div>
          <div class="col-md-6">
             <h5 data-i18n="whitelistIp">Whitelist IP</h5>
-            <form id="whitelist-ip-form" class="d-flex gap-2 mb-2">
-               <input class="form-control form-control-sm" name="ip" data-i18n-label="ip" placeholder="IP Address" required>
-               <input class="form-control form-control-sm" name="description" data-i18n-placeholder="reasonPlaceholder" data-i18n-label="whitelistReason" placeholder="Reason">
-               <button class="btn btn-sm btn-success" data-i18n="whitelist">Whitelist</button>
+            <form id="whitelist-ip-form" class="row g-2 mb-2">
+               <div class="col-12 col-sm-4 col-md-auto"><input class="form-control form-control-sm" name="ip" data-i18n-label="ip" placeholder="IP Address" required></div>
+               <div class="col-12 col-sm-8 col-md"><input class="form-control form-control-sm" name="description" data-i18n-placeholder="reasonPlaceholder" data-i18n-label="whitelistReason" placeholder="Reason"></div>
+               <div class="col-12 col-sm-12 col-md-auto"><button class="btn btn-sm btn-success w-100" data-i18n="whitelist">Whitelist</button></div>
             </form>
             <ul id="whitelisted-ip-list" class="list-group small max-h-200-scroll"></ul>
          </div>
@@ -757,14 +759,14 @@
       </div>
 
       <div class="table-responsive max-h-600-scroll tv-container-border">
-        <table class="table table-striped table-hover mb-0 sticky-top-header">
+        <table class="table table-striped table-hover mb-0 sticky-top-header" style="table-layout: fixed; width: 100%;">
           <thead>
             <tr>
-              <th class="th-w-5">#</th>
+              <th class="th-w-5 d-none d-md-table-cell">#</th>
               <th class="th-w-30" data-i18n="channelName">Channel</th>
-              <th class="th-w-25" data-i18n="currentEpgId">Current EPG ID</th>
+              <th class="th-w-25 d-none d-sm-table-cell" data-i18n="currentEpgId">Current EPG ID</th>
               <th class="th-w-25" data-i18n="manualMapping">Manual Mapping</th>
-              <th class="th-w-15" data-i18n="actions">Actions</th>
+              <th class="th-w-15 text-end" data-i18n="actions">Actions</th>
             </tr>
           </thead>
           <tbody id="epg-mapping-tbody">
