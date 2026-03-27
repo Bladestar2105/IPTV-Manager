@@ -311,3 +311,11 @@ export function invalidateUserTokens(userId) {
     }
   }
 }
+
+export function invalidateUserCache(userId) {
+  for (const [key, data] of authCache.entries()) {
+    if (data.user && Number(data.user.id) === Number(userId)) {
+      authCache.delete(key);
+    }
+  }
+}
