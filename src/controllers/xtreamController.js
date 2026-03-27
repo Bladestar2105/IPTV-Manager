@@ -6,6 +6,7 @@ import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
 import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
+import { episodeNameCache } from '../services/episodeCache.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -293,20 +294,26 @@ export const playerApi = async (req, res) => {
         const OFFSET = 1000000000;
         const providerId = channel.provider_id;
 
+        if (data.info && channel.custom_name) {
+            data.info.name = channel.custom_name;
+        }
+
         if (data.episodes) {
            for (const seasonKey in data.episodes) {
               const episodes = data.episodes[seasonKey];
               if (Array.isArray(episodes)) {
                  episodes.forEach(ep => {
                     const originalId = Number(ep.id);
-                    ep.id = (providerId * OFFSET + originalId).toString();
+                    const newId = (providerId * OFFSET + originalId).toString();
+                    ep.id = newId;
+
+                    // Cache the episode name for the active streams dashboard
+                    const seriesName = data.info ? data.info.name : 'Unknown Series';
+                    const epTitle = ep.title ? ep.title : `Episode ${originalId}`;
+                    episodeNameCache.set(newId, `${seriesName} - ${epTitle}`);
                  });
               }
            }
-        }
-
-        if (data.info && channel.custom_name) {
-            data.info.name = channel.custom_name;
         }
 
         return res.json(data);

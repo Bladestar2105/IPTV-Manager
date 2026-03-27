@@ -8,6 +8,7 @@ import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
 import { fetchSafe } from '../utils/network.js';
+import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
@@ -833,7 +834,7 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
-    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && (ext === 'mkv' || ext === 'avi'));
+    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && ext === 'avi');
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -844,12 +845,22 @@ export const proxyMovie = async (req, res) => {
                 headers: transcodeHeaders,
                 redirect: 'follow'
             });
-            const upstream = result.response;
+            const successfulUrl = result.successfulUrl || remoteUrl;
+
+            // Release the initial probe connection immediately so it doesn't count against provider limits
+            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch(e) {}
+
+            // For VOD/MKV, ffmpeg needs to probe. It is much more reliable to let ffmpeg read the URL natively.
+            // Convert headers object to an array of strings for FFmpeg -headers option
+            const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');
 
-            const command = ffmpeg(upstream.body)
+            const command = ffmpeg(successfulUrl)
+              .inputOptions([
+                '-headers', headerStr
+              ])
               .outputOptions([
                 '-c:v copy',
                 '-c:a aac',
@@ -867,7 +878,7 @@ export const proxyMovie = async (req, res) => {
             command.pipe(res, { end: true });
 
             req.on('close', () => {
-                command.kill('SIGKILL');
+                try { command.kill('SIGKILL'); } catch(e) {}
                 streamManager.remove(connectionId);
             });
             return;
@@ -965,7 +976,8 @@ export const proxySeries = async (req, res) => {
 
     if (user.is_share_guest) return res.sendStatus(403);
 
-    const sessionName = `Series Episode ${remoteEpisodeId}`;
+    const cachedTitle = episodeNameCache.get(epIdRaw.toString());
+    const sessionName = cachedTitle ? cachedTitle : `Series Episode ${remoteEpisodeId}`;
 
     if (user.max_connections > 0) {
         const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, provider.id);
@@ -1003,7 +1015,7 @@ export const proxySeries = async (req, res) => {
       'Connection': 'keep-alive'
     };
 
-    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && (ext === 'mkv' || ext === 'avi'));
+    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && ext === 'avi');
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -1014,12 +1026,21 @@ export const proxySeries = async (req, res) => {
                 headers: transcodeHeaders,
                 redirect: 'follow'
             });
-            const upstream = result.response;
+            const successfulUrl = result.successfulUrl || remoteUrl;
+
+            // Release the initial probe connection immediately so it doesn't count against provider limits
+            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch(e) {}
+
+            // For Series/MKV, ffmpeg needs to probe. Let ffmpeg read the URL natively.
+            const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');
 
-            const command = ffmpeg(upstream.body)
+            const command = ffmpeg(successfulUrl)
+              .inputOptions([
+                '-headers', headerStr
+              ])
               .outputOptions([
                 '-c:v copy',
                 '-c:a aac',
@@ -1037,7 +1058,7 @@ export const proxySeries = async (req, res) => {
             command.pipe(res, { end: true });
 
             req.on('close', () => {
-                command.kill('SIGKILL');
+                try { command.kill('SIGKILL'); } catch(e) {}
                 streamManager.remove(connectionId);
             });
             return;
