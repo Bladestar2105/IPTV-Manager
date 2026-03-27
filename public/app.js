@@ -934,7 +934,7 @@ async function loadProviders(filterUserId = null) {
 
         const logsBtn = document.createElement('button');
         logsBtn.className = 'btn btn-sm btn-outline-info me-1';
-        logsBtn.innerHTML = '📊';
+        logsBtn.innerHTML = '<i class="bi bi-bar-chart-fill" aria-hidden="true"></i>';
         logsBtn.title = t('syncLogs');
         logsBtn.setAttribute('aria-label', t('syncLogs'));
         logsBtn.onclick = () => showSyncLogs(p.id);
@@ -2101,7 +2101,7 @@ async function loadEpgSources() {
       
       const isProvider = typeof source.id === 'string' && source.id.startsWith('provider_');
       const lastUpdate = source.last_update ? new Date(source.last_update * 1000).toLocaleString() : t('never');
-      const isUpdating = source.is_updating ? `🔄 ${t('updating')}` : '';
+      const isUpdating = source.is_updating ? `<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>${t('updating')}` : '';
       const enabledStatus = source.enabled ? `<i class="bi bi-check-circle text-success" aria-hidden="true"></i> ${t('enabled')}` : `<i class="bi bi-x-circle text-danger" aria-hidden="true"></i> ${t('disable')}`;
       
       const info = document.createElement('div');
@@ -2117,7 +2117,7 @@ async function loadEpgSources() {
       // Update button
       const updateBtn = document.createElement('button');
       updateBtn.className = 'btn btn-sm btn-outline-info';
-      updateBtn.innerHTML = '🔄';
+      updateBtn.innerHTML = '<i class="bi bi-arrow-repeat" aria-hidden="true"></i>';
       updateBtn.title = t('updateNow');
       updateBtn.setAttribute('aria-label', t('updateNow'));
       updateBtn.disabled = source.is_updating;
@@ -4404,8 +4404,8 @@ function showToast(message, type = 'primary') {
     // Map types to icons
     const icons = {
         success: '<i class="bi bi-check-circle" aria-hidden="true"></i>',
-        danger: '⚠️',
-        warning: '⚠️',
+        danger: '<i class="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i>',
+        warning: '<i class="bi bi-exclamation-triangle-fill me-2" aria-hidden="true"></i>',
         info: '<i class="bi bi-info-circle-fill me-2" aria-hidden="true"></i>',
         primary: '<i class="bi bi-info-circle-fill me-2" aria-hidden="true"></i>'
     };
