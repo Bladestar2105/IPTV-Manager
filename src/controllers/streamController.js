@@ -842,10 +842,12 @@ export const proxyMovie = async (req, res) => {
         try {
             const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
-                method: 'HEAD',
                 redirect: 'follow'
             });
             const successfulUrl = result.successfulUrl || remoteUrl;
+
+            // Release the initial probe connection immediately so it doesn't count against provider limits
+            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch(e) {}
 
             // For VOD/MKV, ffmpeg needs to probe. It is much more reliable to let ffmpeg read the URL natively.
             // Convert headers object to an array of strings for FFmpeg -headers option
@@ -1020,10 +1022,12 @@ export const proxySeries = async (req, res) => {
         try {
             const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
-                method: 'HEAD',
                 redirect: 'follow'
             });
             const successfulUrl = result.successfulUrl || remoteUrl;
+
+            // Release the initial probe connection immediately so it doesn't count against provider limits
+            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch(e) {}
 
             // For Series/MKV, ffmpeg needs to probe. Let ffmpeg read the URL natively.
             const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
