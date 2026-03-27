@@ -120,7 +120,7 @@ export function isAdultCategory(name) {
   const adultKeywords = [
     '18+', 'adult', 'xxx', 'porn', 'erotic', 'sex', 'nsfw',
     'for adults', 'erwachsene', '+18', '18 plus', 'mature',
-    'xxx', 'sexy', 'hot'
+    'sexy', 'hot'
   ];
   const nameLower = name.toLowerCase();
   return adultKeywords.some(kw => nameLower.includes(kw));
