@@ -386,7 +386,7 @@ export function getProgramsSchedule(start, end) {
 
 export function getLastEpgUpdate(sourceType, sourceId) {
     const row = db.prepare('SELECT MAX(updated_at) as last_update FROM epg_channels WHERE source_type = ? AND source_id = ?').get(sourceType, sourceId);
-    return row ? row.last_update : 0;
+    return row && row.last_update ? row.last_update : 0;
 }
 
 export async function* getEpgXmlForChannels(channelIds) {
