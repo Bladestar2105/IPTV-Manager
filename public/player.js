@@ -322,13 +322,13 @@ function escapeHtml(unsafe) {
       info.appendChild(name);
       if (s.plot) {
         var plot = document.createElement('div');
-        plot.className = 'small text-muted text-truncate';
+        plot.className = 'small text-light opacity-75 text-truncate';
         plot.textContent = s.plot;
         info.appendChild(plot);
       }
 
       var meta = document.createElement('div');
-      meta.className = 'small text-secondary mt-1';
+      meta.className = 'small text-light opacity-50 mt-1';
       meta.style.fontSize = '0.75rem';
       var metaParts = [];
       if (s.rating) metaParts.push('⭐ ' + s.rating);
@@ -342,7 +342,7 @@ function escapeHtml(unsafe) {
 
       if (s.cast) {
          var cast = document.createElement('div');
-         cast.className = 'small text-muted text-truncate';
+         cast.className = 'small text-light opacity-50 text-truncate';
          cast.style.fontSize = '0.7rem';
          cast.textContent = 'Cast: ' + s.cast;
          info.appendChild(cast);
@@ -389,7 +389,7 @@ function escapeHtml(unsafe) {
       listView.appendChild(backBtn);
 
       var header = document.createElement('div');
-      header.className = 'p-3 border-bottom border-secondary d-flex align-items-start';
+      header.className = 'p-3 border-bottom border-secondary d-flex align-items-start text-light';
 
       if (data.info && data.info.cover) {
         var img = document.createElement('img');
@@ -410,14 +410,14 @@ function escapeHtml(unsafe) {
 
       if (data.info && data.info.plot) {
         var plot = document.createElement('p');
-        plot.className = 'small text-muted mb-1';
+        plot.className = 'small text-light opacity-75 mb-1';
         plot.textContent = data.info.plot;
         infoDiv.appendChild(plot);
       }
 
       if (data.info && data.info.cast) {
         var cast = document.createElement('div');
-        cast.className = 'small text-muted';
+        cast.className = 'small text-light opacity-50';
         cast.style.fontSize = '0.75rem';
         cast.textContent = 'Cast: ' + data.info.cast;
         infoDiv.appendChild(cast);
@@ -454,7 +454,7 @@ function escapeHtml(unsafe) {
 
           if (ep.info && ep.info.plot) {
             var plotDiv = document.createElement('div');
-            plotDiv.className = 'small text-muted';
+            plotDiv.className = 'small text-light opacity-75';
             plotDiv.textContent = ep.info.plot;
             a.appendChild(plotDiv);
           }
