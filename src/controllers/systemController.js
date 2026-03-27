@@ -250,7 +250,8 @@ export const exportData = (req, res) => {
 
     if (usersToExport.length > 0) {
        const userIds = usersToExport.map(u => u.id);
-       const userPlaceholders = userIds.map(() => '?').join(',');
+       // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+       const userPlaceholders = Array(userIds.length).fill('?').join(',');
 
        const providers = db.prepare(`SELECT * FROM providers WHERE user_id IN (${userPlaceholders})`).all(...userIds);
 
@@ -262,7 +263,8 @@ export const exportData = (req, res) => {
        }
 
        if (providerIds.length > 0) {
-          const provPlaceholders = providerIds.map(() => '?').join(',');
+          // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+          const provPlaceholders = Array(providerIds.length).fill('?').join(',');
 
           const channels = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
           for (const c of channels) exportData.channels.push(c);

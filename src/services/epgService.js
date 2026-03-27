@@ -405,7 +405,8 @@ export async function* getEpgXmlForChannels(channelIds) {
     // 1. Fetch Channels
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
-        const placeholders = batch.map(() => '?').join(',');
+        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+        const placeholders = Array(batch.length).fill('?').join(',');
         const channels = db.prepare(`
             SELECT id, name, logo
             FROM epg_channels
@@ -434,7 +435,8 @@ export async function* getEpgXmlForChannels(channelIds) {
 
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
-        const placeholders = batch.map(() => '?').join(',');
+        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+        const placeholders = Array(batch.length).fill('?').join(',');
 
         // We need to stream programs to avoid memory issues.
         // better-sqlite3 iterate() is good for this.

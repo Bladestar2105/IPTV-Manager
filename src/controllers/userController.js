@@ -237,7 +237,8 @@ export const createUser = async (req, res) => {
                     const BATCH_SIZE = 900; // SQLite limit for IN clause
                     for (let i = 0; i < oldChannelIds.length; i += BATCH_SIZE) {
                         const batch = oldChannelIds.slice(i, i + BATCH_SIZE);
-                        const placeholders = batch.map(() => '?').join(',');
+                        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
+                        const placeholders = Array(batch.length).fill('?').join(',');
                         const mappings = db.prepare(`
                             SELECT provider_channel_id, epg_channel_id
                             FROM epg_channel_mappings
