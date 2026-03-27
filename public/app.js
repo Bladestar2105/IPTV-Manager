@@ -2486,7 +2486,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fix for tab switching issues (overlapping content)
   const triggerTabList = [].slice.call(document.querySelectorAll('#user-tabs button'));
   triggerTabList.forEach(function (triggerEl) {
-    triggerEl.addEventListener('shown.bs.tab', function (event) {
+    triggerEl.addEventListener('show.bs.tab', function (event) {
       const targetId = triggerEl.getAttribute('data-bs-target');
       document.querySelectorAll('#user-tab-content .tab-pane').forEach(pane => {
           if ('#' + pane.id !== targetId) {
