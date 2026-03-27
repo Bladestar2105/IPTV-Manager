@@ -649,7 +649,7 @@ async function loadUsers() {
 
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = t('delete');
+    delBtn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
     delBtn.setAttribute('aria-label', t('deleteAction'));
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
@@ -896,7 +896,9 @@ async function loadProviders(filterUserId = null) {
 
         const syncBtn = document.createElement('button');
         syncBtn.className = 'btn btn-sm btn-outline-primary me-1';
-        syncBtn.textContent = t('sync');
+        syncBtn.innerHTML = '<i class="bi bi-arrow-repeat" aria-hidden="true"></i>';
+        syncBtn.title = t('sync') || 'Sync';
+        syncBtn.setAttribute('aria-label', t('sync') || 'Sync');
         syncBtn.onclick = async () => {
           if (!selectedUserId) {
             alert(t('pleaseSelectUserFirst'));
@@ -942,7 +944,7 @@ async function loadProviders(filterUserId = null) {
     if (isAdmin) {
         const delBtn = document.createElement('button');
         delBtn.className = 'btn btn-sm btn-danger';
-        delBtn.textContent = t('delete');
+        delBtn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
         delBtn.setAttribute('aria-label', t('deleteAction'));
         delBtn.title = t('deleteAction');
         delBtn.onclick = async () => {
@@ -1127,7 +1129,9 @@ async function loadUserCategories() {
     
     const editBtn = document.createElement('button');
     editBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-    editBtn.textContent = t('edit');
+    editBtn.innerHTML = '<i class="bi bi-pencil" aria-hidden="true"></i>';
+    editBtn.title = t('edit');
+    editBtn.setAttribute('aria-label', t('edit'));
     editBtn.onclick = async () => {
       const newName = prompt(t('newName'), c.name);
       if (!newName) return;
@@ -1141,7 +1145,7 @@ async function loadUserCategories() {
     
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = t('delete');
+    delBtn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
     delBtn.setAttribute('aria-label', t('deleteAction'));
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
@@ -1537,7 +1541,8 @@ function renderProviderChannels(channels) {
     
     const btn = document.createElement('button');
     btn.className = 'btn btn-sm btn-success ms-2';
-    btn.textContent = t('add');
+    btn.innerHTML = '<i class="bi bi-plus" aria-hidden="true"></i>';
+    btn.title = t('add');
     btn.setAttribute('aria-label', `${t('add')} ${ch.name}`); // Accessible label
     btn.onclick = async () => {
       if (!selectedUserId || !selectedCategoryId) {
@@ -1726,7 +1731,7 @@ function renderUserCategoryChannels() {
 
     const delBtn = document.createElement('button');
     delBtn.className = 'btn btn-sm btn-danger';
-    delBtn.textContent = t('delete');
+    delBtn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
     delBtn.setAttribute('aria-label', `${t('deleteAction')} ${displayName}`); // Accessible label
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
@@ -3185,7 +3190,9 @@ async function loadSecurity() {
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm btn-outline-danger py-0';
-        btn.textContent = t('unblock');
+        btn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
+        btn.title = t('unblock');
+        btn.setAttribute('aria-label', t('unblock'));
         btn.onclick = () => unblockIp(b.id);
 
         li.appendChild(div);
@@ -3219,7 +3226,9 @@ async function loadSecurity() {
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm btn-outline-danger py-0';
-        btn.textContent = t('remove');
+        btn.innerHTML = '<i class="bi bi-trash" aria-hidden="true"></i>';
+        btn.title = t('remove');
+        btn.setAttribute('aria-label', t('remove'));
         btn.onclick = () => removeWhitelist(w.id);
 
         li.appendChild(div);
@@ -3690,19 +3699,19 @@ function renderEpgMappingChannels() {
     const manualDisplay = safeManualId ? `<b>${safeManualId}</b>` : '<span class="text-muted">-</span>';
 
     tr.innerHTML = `
-      <td>${idx + 1}</td>
-      <td>
+      <td class="d-none d-md-table-cell">${idx + 1}</td>
+      <td class="text-break">
         <div class="d-flex align-items-center">
-          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${safeName}" width="24" height="24" class="me-2" data-on-error="hide">` : ''}
+          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${safeName}" width="24" height="24" class="me-2 flex-shrink-0" data-on-error="hide">` : ''}
           <span title="${safeName}">${safeName}</span>
         </div>
       </td>
-      <td>${displayEpgId}</td>
-      <td>${manualDisplay}</td>
-      <td>
-        <div class="btn-group btn-group-sm">
-          <button class="btn btn-outline-primary map-btn" data-id="${ch.id}">${t('map')}</button>
-          ${ch.manual_epg_id ? `<button class="btn btn-outline-danger unmap-btn" data-id="${ch.id}">${t('unmap')}</button>` : ''}
+      <td class="d-none d-sm-table-cell text-break">${displayEpgId}</td>
+      <td class="text-break">${manualDisplay}</td>
+      <td class="text-end">
+        <div class="btn-group btn-group-sm flex-wrap">
+          <button class="btn btn-outline-primary map-btn" data-id="${ch.id}" title="${t('map')}" aria-label="${t('map')}"><i class="bi bi-link-45deg" aria-hidden="true"></i></button>
+          ${ch.manual_epg_id ? `<button class="btn btn-outline-danger unmap-btn" data-id="${ch.id}" title="${t('unmap')}" aria-label="${t('unmap')}"><i class="bi bi-trash" aria-hidden="true"></i></button>` : ''}
         </div>
       </td>
     `;
