@@ -390,29 +390,37 @@ export function migrateOtpSecrets(db) {
   try {
     const users = db.prepare('SELECT id, otp_secret FROM users WHERE otp_secret IS NOT NULL').all();
     let migratedUsers = 0;
-    for (const u of users) {
-      if (!u.otp_secret) continue;
-      // If NOT encrypted (doesn't match hex:hex)
-      if (!/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(u.otp_secret)) {
-        const encrypted = encrypt(u.otp_secret);
-        db.prepare('UPDATE users SET otp_secret = ? WHERE id = ?').run(encrypted, u.id);
-        migratedUsers++;
+    const updateUserStmt = db.prepare('UPDATE users SET otp_secret = ? WHERE id = ?');
+
+    db.transaction(() => {
+      for (const u of users) {
+        if (!u.otp_secret) continue;
+        // If NOT encrypted (doesn't match hex:hex)
+        if (!/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(u.otp_secret)) {
+          const encrypted = encrypt(u.otp_secret);
+          updateUserStmt.run(encrypted, u.id);
+          migratedUsers++;
+        }
       }
-    }
+    })();
 
     const admins = db.prepare('SELECT id, otp_secret FROM admin_users WHERE otp_secret IS NOT NULL').all();
     let migratedAdmins = 0;
-    for (const a of admins) {
-      if (!a.otp_secret) continue;
-      if (!/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(a.otp_secret)) {
-        const encrypted = encrypt(a.otp_secret);
-        db.prepare('UPDATE admin_users SET otp_secret = ? WHERE id = ?').run(encrypted, a.id);
-        migratedAdmins++;
+    const updateAdminStmt = db.prepare('UPDATE admin_users SET otp_secret = ? WHERE id = ?');
+
+    db.transaction(() => {
+      for (const a of admins) {
+        if (!a.otp_secret) continue;
+        if (!/^([0-9a-f]{24}|[0-9a-f]{32}):[0-9a-f]+(:[0-9a-f]+)?$/i.test(a.otp_secret)) {
+          const encrypted = encrypt(a.otp_secret);
+          updateAdminStmt.run(encrypted, a.id);
+          migratedAdmins++;
+        }
       }
-    }
+    })();
 
     if (migratedUsers > 0 || migratedAdmins > 0) {
-        console.log(`🔐 Encrypted OTP secrets for ${migratedUsers} users and ${migratedAdmins} admins`);
+      console.log(`🔐 Encrypted OTP secrets for ${migratedUsers} users and ${migratedAdmins} admins`);
     }
   } catch (e) {
     console.error('OTP Secret migration error:', e);
