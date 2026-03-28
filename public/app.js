@@ -1089,7 +1089,7 @@ async function loadUserCategories() {
     // Drag Handle
     const dragHandle = document.createElement('span');
     dragHandle.className = 'drag-handle me-2';
-    dragHandle.innerHTML = '⋮⋮';
+    dragHandle.innerHTML = '<i class="bi bi-grip-vertical" aria-hidden="true"></i>';
     dragHandle.title = t('dragToSort');
     li.appendChild(dragHandle);
     
@@ -1295,7 +1295,7 @@ function renderProviderCategories() {
     
     const importBtn = document.createElement('button');
     importBtn.className = 'btn btn-sm btn-primary me-1';
-    importBtn.textContent = t('importCategoryOnly');
+    importBtn.innerHTML = `<i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> ${t('importCategoryOnly')}`;
     importBtn.onclick = async () => {
       setLoadingState(importBtn, true, 'loading', false);
       await importCategory(cat, false);
@@ -1304,7 +1304,7 @@ function renderProviderCategories() {
     
     const importWithChannelsBtn = document.createElement('button');
     importWithChannelsBtn.className = 'btn btn-sm btn-success';
-    importWithChannelsBtn.textContent = t('importWithChannels');
+    importWithChannelsBtn.innerHTML = `<i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> ${t('importWithChannels')}`;
     importWithChannelsBtn.onclick = async () => {
       setLoadingState(importWithChannelsBtn, true, 'loading', false);
       await importCategory(cat, true);
@@ -2089,7 +2089,7 @@ async function loadEpgSources() {
       list.innerHTML = `<li class="list-group-item text-center py-4 text-muted">
         <div class="mb-2">${t('noEpgSourcesConfigured')}</div>
         <button class="btn btn-sm btn-primary mt-2" onclick="showAddEpgSourceModal()">
-          ${t('addEpgSource')}
+          <i class="bi bi-plus-lg" aria-hidden="true"></i> ${t('addEpgSource')}
         </button>
       </li>`;
       return;
