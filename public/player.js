@@ -260,7 +260,7 @@ function escapeHtml(unsafe) {
       if (c.type === currentType && c.group) groups.add(c.group);
     });
     catSelect.innerHTML = '<option value="">' + t('allCategories') + '</option>';
-    Array.from(groups).sort().forEach(function(c) {
+    Array.from(groups).forEach(function(c) {
       var opt = document.createElement('option');
       opt.value = c;
       opt.textContent = c;
