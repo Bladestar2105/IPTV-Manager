@@ -836,9 +836,21 @@ async function loadProviders(filterUserId = null) {
 
   const targetUserId = filterUserId || selectedUserId;
   const section = document.getElementById('provider-section');
+  const userSection = document.getElementById('user-section');
   if (section) {
-      if (targetUserId) section.classList.remove('d-none');
-      else section.classList.add('d-none');
+      if (targetUserId) {
+          section.classList.remove('d-none');
+          if (userSection) {
+              userSection.classList.remove('col-md-12');
+              userSection.classList.add('col-md-6');
+          }
+      } else {
+          section.classList.add('d-none');
+          if (userSection) {
+              userSection.classList.remove('col-md-6');
+              userSection.classList.add('col-md-12');
+          }
+      }
   }
 
   // Hide "Add Provider" button for non-admins
