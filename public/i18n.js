@@ -479,7 +479,27 @@ const translations = {
     success: 'Success',
     force_password_change: 'You must change your password immediately.',
     '2fa_enabled_success': '2FA Enabled Successfully',
-    '2fa_disabled_success': '2FA Disabled'  },
+    '2fa_disabled_success': '2FA Disabled',
+
+    editingShare: 'Editing Share:',
+    editShareInstructions: 'Modify channel selection and click \'Update Share\'.',
+    cancel: 'Cancel',
+    cancelEdit: 'Cancel Edit',
+
+    // Missing
+    enableHDHomeRun: 'Enable HDHomeRun',
+    useUrlToConfigurePlex: 'Use the URL below to configure Plex DVR or Emby Live TV.',
+    note: 'Note:',
+    featureEmulatesHDHomeRun: 'This feature emulates an HDHomeRun tuner.',
+    deviceUrl: 'Device URL',
+    userAgent: 'User Agent',
+    advancedSettings: 'Advanced Settings (Region Lock)',
+    saveSettings: 'Save Settings',
+    loadingEpg: 'Loading EPG...',
+    loadingChannels: 'Loading Channels...',
+    unsupportedCodec: 'Unsupported codec detected. Enabling audio fix...',
+    playbackErrorCodec: 'Playback Error: Codec might not be supported'
+  },
   
   de: {
     // Accessibility
@@ -796,6 +816,15 @@ const translations = {
     iptvBlockThreshold: 'IPTV-Blockschwelle (Versuche)',
     adminBlockDuration: 'Admin-Blockdauer (Sekunden)',
     iptvBlockDuration: 'IPTV-Blockdauer (Sekunden)',
+    geoIpSettings: 'GeoIP-Einstellungen (Region-Lock)',
+    geoIpSettingsHelp: 'Konfigurieren Sie MaxMind GeoLite2, um länderspezifische Beschränkungen (Region-Lock) für Benutzer zu ermöglichen. Hierfür ist ein kostenloser Lizenzschlüssel erforderlich.',
+    getFreeKeyHelp: 'Erhalten Sie einen kostenlosen Schlüssel unter:',
+    maxmindLicenseKey: 'MaxMind Lizenzschlüssel',
+    updateGeoIp: 'GeoIP-Datenbank aktualisieren',
+    confirmUpdateGeoIp: 'Dadurch wird die aktuelle GeoLite2-Datenbank heruntergeladen und aktualisiert. Fortfahren?',
+    allowedCountries: 'Erlaubte Länder (Region-Lock)',
+    allowedCountriesHelp: 'Leer lassen, um alle Länder zuzulassen. Wählen Sie Länder aus, um den Zugriff von überall sonst zu blockieren.',
+    allowedCountriesPlaceholder: 'Länder (z.B. US,GB)',
     level: 'Level',
     message: 'Nachricht',
     clearLogs: 'Protokolle löschen',
@@ -947,7 +976,27 @@ const translations = {
     success: 'Erfolg',
     force_password_change: 'Sie müssen Ihr Passwort sofort ändern.',
     '2fa_enabled_success': '2FA erfolgreich aktiviert',
-    '2fa_disabled_success': '2FA deaktiviert'  },
+    '2fa_disabled_success': '2FA deaktiviert',
+
+    editingShare: 'Bearbeite Freigabe:',
+    editShareInstructions: 'Passen Sie die Kanalauswahl an und klicken Sie auf \'Freigabe aktualisieren\'.',
+    cancel: 'Abbrechen',
+    cancelEdit: 'Bearbeiten abbrechen',
+
+    // Missing
+    enableHDHomeRun: 'HDHomeRun aktivieren',
+    useUrlToConfigurePlex: 'Verwenden Sie die folgende URL, um Plex DVR oder Emby Live TV zu konfigurieren.',
+    note: 'Hinweis:',
+    featureEmulatesHDHomeRun: 'Diese Funktion emuliert einen HDHomeRun-Tuner.',
+    deviceUrl: 'Geräte-URL',
+    userAgent: 'User Agent',
+    advancedSettings: 'Erweiterte Einstellungen (Region Lock)',
+    saveSettings: 'Einstellungen speichern',
+    loadingEpg: 'Lade EPG...',
+    loadingChannels: 'Lade Kanäle...',
+    unsupportedCodec: 'Nicht unterstützter Codec erkannt. Audio-Fix wird aktiviert...',
+    playbackErrorCodec: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt'
+  },
 
   fr: {
     // Accessibility
@@ -1264,6 +1313,15 @@ const translations = {
     iptvBlockThreshold: 'Seuil de blocage IPTV (tentatives)',
     adminBlockDuration: 'Durée de blocage Admin (secondes)',
     iptvBlockDuration: 'Durée de blocage IPTV (secondes)',
+    geoIpSettings: 'Paramètres GeoIP (Verrouillage Régional)',
+    geoIpSettingsHelp: 'Configurez MaxMind GeoLite2 pour activer les restrictions de pays (Region-Lock) pour les utilisateurs. Une clé de licence gratuite est requise.',
+    getFreeKeyHelp: 'Obtenez une clé gratuite sur :',
+    maxmindLicenseKey: 'Clé de Licence MaxMind',
+    updateGeoIp: 'Mettre à jour la base GeoIP',
+    confirmUpdateGeoIp: 'Cela va télécharger et mettre à jour la base de données GeoLite2 actuelle. Continuer ?',
+    allowedCountries: 'Pays Autorisés (Verrouillage Régional)',
+    allowedCountriesHelp: 'Laisser vide pour autoriser tous les pays. Sélectionnez des pays pour bloquer l\'accès depuis partout ailleurs.',
+    allowedCountriesPlaceholder: 'Pays (ex. US,GB)',
     level: 'Niveau',
     message: 'Message',
     clearLogs: 'Effacer les journaux',
@@ -1415,7 +1473,27 @@ const translations = {
     success: 'Succès',
     force_password_change: 'Vous devez changer votre mot de passe immédiatement.',
     '2fa_enabled_success': '2FA activé avec succès',
-    '2fa_disabled_success': '2FA désactivé'  },
+    '2fa_disabled_success': '2FA désactivé',
+
+    editingShare: 'Modification du partage :',
+    editShareInstructions: 'Modifiez la sélection des chaînes et cliquez sur \'Mettre à jour le partage\'.',
+    cancel: 'Annuler',
+    cancelEdit: 'Annuler la modification',
+
+    // Missing
+    enableHDHomeRun: 'Activer HDHomeRun',
+    useUrlToConfigurePlex: 'Utilisez l\'URL ci-dessous pour configurer Plex DVR ou Emby Live TV.',
+    note: 'Note :',
+    featureEmulatesHDHomeRun: 'Cette fonctionnalité émule un tuner HDHomeRun.',
+    deviceUrl: 'URL de l\'appareil',
+    userAgent: 'User Agent',
+    advancedSettings: 'Paramètres Avancés (Verrouillage de Région)',
+    saveSettings: 'Enregistrer les paramètres',
+    loadingEpg: 'Chargement de l\'EPG...',
+    loadingChannels: 'Chargement des chaînes...',
+    unsupportedCodec: 'Codec non pris en charge détecté. Activation de la correction audio...',
+    playbackErrorCodec: 'Erreur de lecture : Le codec peut ne pas être pris en charge'
+  },
 
   el: {
     // Accessibility
@@ -1732,6 +1810,15 @@ const translations = {
     iptvBlockThreshold: 'Όριο Αποκλεισμού IPTV (προσπάθειες)',
     adminBlockDuration: 'Διάρκεια Αποκλεισμού Admin (δευτερόλεπτα)',
     iptvBlockDuration: 'Διάρκεια Αποκλεισμού IPTV (δευτερόλεπτα)',
+    geoIpSettings: 'Ρυθμίσεις GeoIP (Κλείδωμα Περιοχής)',
+    geoIpSettingsHelp: 'Διαμορφώστε το MaxMind GeoLite2 για να ενεργοποιήσετε περιορισμούς χωρών για τους χρήστες. Απαιτείται ένα δωρεάν κλειδί άδειας.',
+    getFreeKeyHelp: 'Αποκτήστε δωρεάν κλειδί στο:',
+    maxmindLicenseKey: 'Κλειδί Άδειας MaxMind',
+    updateGeoIp: 'Ενημέρωση Βάσης Δεδομένων GeoIP',
+    confirmUpdateGeoIp: 'Αυτό θα κατεβάσει και θα ενημερώσει την τρέχουσα βάση δεδομένων GeoLite2. Συνέχεια;',
+    allowedCountries: 'Επιτρεπόμενες Χώρες (Κλείδωμα Περιοχής)',
+    allowedCountriesHelp: 'Αφήστε κενό για να επιτρέπονται όλες οι χώρες. Επιλέξτε χώρες για να αποκλείσετε την πρόσβαση από οπουδήποτε αλλού.',
+    allowedCountriesPlaceholder: 'Χώρες (π.χ. US,GB)',
     level: 'Επίπεδο',
     message: 'Μήνυμα',
     clearLogs: 'Εκκαθάριση Αρχείων',
@@ -1883,7 +1970,27 @@ const translations = {
     success: 'Επιτυχία',
     force_password_change: 'Πρέπει να αλλάξετε τον κωδικό σας αμέσως.',
     '2fa_enabled_success': 'Το 2FA ενεργοποιήθηκε',
-    '2fa_disabled_success': 'Το 2FA απενεργοποιήθηκε'  }
+    '2fa_disabled_success': 'Το 2FA απενεργοποιήθηκε',
+
+    editingShare: 'Επεξεργασία Κοινοποίησης:',
+    editShareInstructions: 'Τροποποιήστε την επιλογή καναλιών και κάντε κλικ στο \'Ενημέρωση Κοινοποίησης\'.',
+    cancel: 'Ακύρωση',
+    cancelEdit: 'Ακύρωση Επεξεργασίας',
+
+    // Missing
+    enableHDHomeRun: 'Ενεργοποίηση HDHomeRun',
+    useUrlToConfigurePlex: 'Χρησιμοποιήστε το παρακάτω URL για να ρυθμίσετε το Plex DVR ή το Emby Live TV.',
+    note: 'Σημείωση:',
+    featureEmulatesHDHomeRun: 'Αυτή η λειτουργία προσομοιώνει έναν δέκτη HDHomeRun.',
+    deviceUrl: 'URL συσκευής',
+    userAgent: 'User Agent',
+    advancedSettings: 'Προηγμένες Ρυθμίσεις (Κλείδωμα Περιοχής)',
+    saveSettings: 'Αποθήκευση Ρυθμίσεων',
+    loadingEpg: 'Φόρτωση EPG...',
+    loadingChannels: 'Φόρτωση καναλιών...',
+    unsupportedCodec: 'Εντοπίστηκε μη υποστηριζόμενο codec. Ενεργοποίηση διόρθωσης ήχου...',
+    playbackErrorCodec: 'Σφάλμα αναπαραγωγής: Το codec ενδέχεται να μην υποστηρίζεται'
+  }
 };
 
 // Sprache automatisch erkennen
