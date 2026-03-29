@@ -789,11 +789,11 @@
   </div>
 
   <!-- Category Import Modal -->
-  <div class="modal fade" id="importCategoryModal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="importCategoryModal" tabindex="-1" aria-hidden="true" aria-labelledby="importCategoryModal-title">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="importCategoriesTitle">Import Provider Categories</h5>
+          <h5 id="importCategoryModal-title" class="modal-title" data-i18n="importCategoriesTitle">Import Provider Categories</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
@@ -840,11 +840,11 @@
   </div>
 
   <!-- Sync Config Modal -->
-  <div class="modal fade" id="sync-config-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="sync-config-modal" tabindex="-1" aria-hidden="true" aria-labelledby="sync-config-modalLabel">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="syncConfig">Sync Configuration</h5>
+          <h5 id="sync-config-modalLabel" class="modal-title" data-i18n="syncConfig">Sync Configuration</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="sync-config-form">
@@ -900,11 +900,11 @@
   </div>
 
   <!-- Sync Logs Modal -->
-  <div class="modal fade" id="sync-logs-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="sync-logs-modal" tabindex="-1" aria-hidden="true" aria-labelledby="sync-logs-modalLabel">
     <div class="modal-dialog modal-xl">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="syncLogs">Sync Logs</h5>
+          <h5 id="sync-logs-modalLabel" class="modal-title" data-i18n="syncLogs">Sync Logs</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
@@ -934,11 +934,11 @@
   </div>
 
   <!-- Add EPG Source Modal -->
-  <div class="modal fade" id="add-epg-source-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="add-epg-source-modal" tabindex="-1" aria-hidden="true" aria-labelledby="add-epg-source-modalLabel">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="addEpgSourceTitle">Add EPG Source</h5>
+          <h5 id="add-epg-source-modalLabel" class="modal-title" data-i18n="addEpgSourceTitle">Add EPG Source</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="add-epg-source-form">
@@ -980,11 +980,11 @@
   </div>
 
   <!-- Edit EPG Source Modal -->
-  <div class="modal fade" id="edit-epg-source-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="edit-epg-source-modal" tabindex="-1" aria-hidden="true" aria-labelledby="edit-epg-source-modalLabel">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="editEpgSourceTitle">Edit EPG Source</h5>
+          <h5 id="edit-epg-source-modalLabel" class="modal-title" data-i18n="editEpgSourceTitle">Edit EPG Source</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="edit-epg-source-form">
@@ -1027,11 +1027,11 @@
   </div>
 
   <!-- Browse EPG Sources Modal -->
-  <div class="modal fade" id="browse-epg-sources-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="browse-epg-sources-modal" tabindex="-1" aria-hidden="true" aria-labelledby="browse-epg-sources-modalLabel">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="browseEpgSourcesTitle">Browse Available EPG Sources</h5>
+          <h5 id="browse-epg-sources-modalLabel" class="modal-title" data-i18n="browseEpgSourcesTitle">Browse Available EPG Sources</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
 
@@ -1052,11 +1052,11 @@
   </div>
 
   <!-- Login Modal -->
-  <div class="modal fade" id="login-modal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+  <div class="modal fade" id="login-modal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="login-modalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="login">Login</h5>
+          <h5 id="login-modalLabel" class="modal-title" data-i18n="login">Login</h5>
         </div>
         <div class="modal-body">
           <div class="text-center mb-4">
@@ -1087,11 +1087,11 @@
   </div>
 
   <!-- OTP Modal -->
-  <div class="modal fade" id="otp-modal" tabindex="-1">
+  <div class="modal fade" id="otp-modal" tabindex="-1" aria-labelledby="otp-modalLabel" aria-hidden="true">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="setup_2fa">Two-Factor Authentication</h5>
+          <h5 id="otp-modalLabel" class="modal-title" data-i18n="setup_2fa">Two-Factor Authentication</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
@@ -1117,11 +1117,11 @@
   </div>
 
   <!-- Edit User Modal -->
-  <div class="modal fade" id="edit-user-modal" tabindex="-1">
+  <div class="modal fade" id="edit-user-modal" tabindex="-1" aria-labelledby="edit-user-modalLabel" aria-hidden="true">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="editUser">Edit User</h5>
+          <h5 id="edit-user-modalLabel" class="modal-title" data-i18n="editUser">Edit User</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="edit-user-form">
@@ -1177,11 +1177,11 @@
   </div>
 
   <!-- Change Password Modal -->
-  <div class="modal fade" id="change-password-modal" tabindex="-1">
+  <div class="modal fade" id="change-password-modal" tabindex="-1" aria-labelledby="change-password-modalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="change_password">Change Password</h5>
+          <h5 id="change-password-modalLabel" class="modal-title" data-i18n="change_password">Change Password</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
@@ -1218,11 +1218,11 @@
   </div>
 
   <!-- Add Provider Modal -->
-  <div class="modal fade" id="add-provider-modal" tabindex="-1">
+  <div class="modal fade" id="add-provider-modal" tabindex="-1" aria-labelledby="add-provider-modalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="addProvider">Add Provider</h5>
+          <h5 id="add-provider-modalLabel" class="modal-title" data-i18n="addProvider">Add Provider</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <form id="provider-form">
@@ -1308,11 +1308,11 @@
   </div>
 
   <!-- Share Modal -->
-  <div class="modal fade" id="share-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="share-modal" tabindex="-1" aria-hidden="true" aria-labelledby="share-modalLabel">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="createShareLink">Create Share Link</h5>
+          <h5 id="share-modalLabel" class="modal-title" data-i18n="createShareLink">Create Share Link</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
@@ -1363,11 +1363,11 @@
   </div>
 
   <!-- Shares List Modal -->
-  <div class="modal fade" id="shares-list-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="shares-list-modal" tabindex="-1" aria-hidden="true" aria-labelledby="shares-list-modalLabel">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="activeShares">Active Shares</h5>
+          <h5 id="shares-list-modalLabel" class="modal-title" data-i18n="activeShares">Active Shares</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
@@ -1396,11 +1396,11 @@
   </div>
 
       <!-- EPG Channel Select Modal -->
-  <div class="modal fade" id="epg-select-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="epg-select-modal" tabindex="-1" aria-hidden="true" aria-labelledby="epg-select-modalLabel">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title" data-i18n="selectEpgChannel">Select EPG Channel</h5>
+          <h5 id="epg-select-modalLabel" class="modal-title" data-i18n="selectEpgChannel">Select EPG Channel</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
         <div class="modal-body">
