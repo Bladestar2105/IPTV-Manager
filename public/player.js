@@ -210,7 +210,7 @@ function escapeHtml(unsafe) {
     loadingEl.style.display = 'flex';
     loadingEl.classList.remove('d-none');
     var loadingTextSpan = loadingEl.querySelector('span');
-    if (loadingTextSpan) loadingTextSpan.textContent = t('loading') || 'Loading Channels...';
+    if (loadingTextSpan) loadingTextSpan.textContent = t('loadingChannels') || 'Loading Channels...';
     try {
       // 1. Fetch Channels
       var res = await fetch('/api/player/channels.json?' + getAuthParams());
@@ -219,7 +219,7 @@ function escapeHtml(unsafe) {
       console.log('Loaded ' + allChannels.length + ' channels');
 
       // 2. Fetch EPG Schedule
-      if (loadingTextSpan) loadingTextSpan.textContent = t('loading') || 'Loading EPG...';
+      if (loadingTextSpan) loadingTextSpan.textContent = t('loadingEpg') || 'Loading EPG...';
       var start = Math.floor(Date.now() / 1000) - 7200;
       var end = start + (TIMELINE_HOURS * 3600) + 7200;
       try {
@@ -1071,7 +1071,7 @@ function escapeHtml(unsafe) {
 
     if (!transcodeSwitch.checked) {
       console.log('Auto-enabling audio transcode...');
-      showToast(t('autoFixingAudio') || 'Unsupported codec detected. Enabling audio fix...', 'info');
+      showToast(t('unsupportedCodec') || 'Unsupported codec detected. Enabling audio fix...', 'info');
       transcodeSwitch.checked = true;
       localStorage.setItem('transcode_enabled', 'true');
     }
@@ -1099,7 +1099,7 @@ function escapeHtml(unsafe) {
   // ─── Final Failure Handler ───
   function handlePlaybackFailure(type) {
     console.error('All playback methods failed');
-    showToast(t('playbackError') || 'Playback Error: Codec might not be supported', 'danger', 6000);
+    showToast(t('playbackErrorCodec') || 'Playback Error: Codec might not be supported', 'danger', 6000);
     setPlayerStatus('Error', 'danger');
   }
 
