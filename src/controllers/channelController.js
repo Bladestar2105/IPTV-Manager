@@ -193,6 +193,7 @@ export const getCategoryChannels = (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE uc.user_category_id = ? AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(catId);

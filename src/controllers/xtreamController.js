@@ -134,6 +134,7 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
         WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
       const params = [user.id];
 
@@ -449,6 +450,7 @@ export const getPlaylist = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -631,6 +633,7 @@ export const playerChannelsJson = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -757,6 +760,7 @@ export const playerPlaylist = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
