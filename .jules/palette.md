@@ -10,3 +10,6 @@
 ## 2026-03-18 - Add ARIA attributes to mobile navbar toggler
 **Learning:** The Bootstrap mobile navbar toggle button (`.navbar-toggler`) was missing standard ARIA attributes (`aria-controls` and `aria-expanded`), causing screen readers to not properly announce its state or purpose.
 **Action:** When implementing or modifying Bootstrap collapse components, always explicitly initialize `aria-controls="<target_id>"` and `aria-expanded="false"` in the HTML markup. Bootstrap's JS will handle toggling the state, but the initial markup must be compliant.
+## 2026-03-29 - Added missing ARIA attributes to modals
+**Learning:** Bootstrap modals in this app consistently missed `aria-labelledby` linking the modal container to its title, and some lacked `aria-hidden="true"`. This is a critical a11y issue because screen readers won't announce the modal's name when focus shifts inside.
+**Action:** Always ensure new modals include `aria-labelledby="<title_id>"` and `aria-hidden="true"` on the `.modal` container, and that the title element has the matching ID.
