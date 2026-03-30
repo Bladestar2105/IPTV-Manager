@@ -378,7 +378,15 @@ export const importData = async (req, res) => {
       return res.status(400).json({error: 'Decryption failed. Wrong password?'});
     }
 
-    const jsonStr = zlib.gunzipSync(compressed).toString('utf8');
+    let jsonStr;
+    try {
+      // Security: Use maxOutputLength to prevent Zip Bomb / DoS attacks
+      // Limit to 200MB of uncompressed JSON data
+      jsonStr = zlib.gunzipSync(compressed, { maxOutputLength: 200 * 1024 * 1024 }).toString('utf8');
+    } catch (e) {
+      return res.status(400).json({error: 'Decompression failed or file too large.'});
+    }
+
     const importData = JSON.parse(jsonStr);
 
     if (!importData.version || !importData.users) {
