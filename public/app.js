@@ -1298,7 +1298,7 @@ function renderProviderCategories() {
     const info = document.createElement('div');
     const catNameDisplay = cat.is_adult ? `<i class="bi bi-explicit text-danger me-1" aria-hidden="true" title="${t('adult')}"></i> ${escapeHtml(cat.category_name)}` : escapeHtml(cat.category_name);
     info.innerHTML = `
-      <strong>${escapeHtml(catNameDisplay)}</strong><br>
+      <strong>${catNameDisplay}</strong><br>
       <small class="text-muted">${cat.channel_count} ${escapeHtml(t('channels'))}</small>
     `;
     row.appendChild(info);
