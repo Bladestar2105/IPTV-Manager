@@ -186,7 +186,17 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             stream.pipe(parser);
 
             stream.on('error', (err) => {
-                reject(err);
+                if (err.message === 'unexpected end of file') {
+                    console.warn(`⚠️ Ignoring unexpected end of file in GZIP stream for ${sourceType} ${sourceId}, saving parsed data...`);
+                    try {
+                        processBatches();
+                        resolve({ success: true });
+                    } catch (e) {
+                        reject(e);
+                    }
+                } else {
+                    reject(err);
+                }
             });
         });
 
