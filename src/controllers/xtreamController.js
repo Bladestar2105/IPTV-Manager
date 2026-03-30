@@ -127,11 +127,14 @@ export const playerApi = async (req, res) => {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
-               map.epg_channel_id as manual_epg_id
+               map.epg_channel_id as manual_epg_id,
+               COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as final_logo
         FROM user_categories cat
         JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
         WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
       const params = [user.id];
 
@@ -147,7 +150,7 @@ export const playerApi = async (req, res) => {
 
       const nowStr = now.toString();
       const result = rows.map((ch, i) => {
-        let iconUrl = ch.logo || '';
+        let iconUrl = ch.final_logo || '';
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
         return {
           num: i + 1,
@@ -172,10 +175,14 @@ export const playerApi = async (req, res) => {
     if (action === 'get_vod_streams') {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
-        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
+               COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as final_logo
         FROM user_categories cat
         JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
         WHERE cat.user_id = ? AND pc.stream_type = 'movie' AND uc.is_hidden = 0`;
       const params = [user.id];
 
@@ -197,7 +204,7 @@ export const playerApi = async (req, res) => {
           name: displayName,
           stream_type: 'movie',
           stream_id: Number(ch.user_channel_id),
-          stream_icon: ch.logo || '',
+          stream_icon: ch.final_logo || '',
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
           added: ch.added || nowStr,
@@ -215,10 +222,14 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
-               cat.is_adult as category_is_adult
+               cat.is_adult as category_is_adult,
+               COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as final_logo
         FROM user_categories cat
         JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
         WHERE cat.user_id = ? AND pc.stream_type = 'series' AND uc.is_hidden = 0`;
       const params = [user.id];
 
@@ -248,7 +259,7 @@ export const playerApi = async (req, res) => {
           num: i + 1,
           name: displayName,
           series_id: Number(ch.user_channel_id),
-          cover: ch.logo || '',
+          cover: ch.final_logo || '',
           plot: ch.plot || '',
           cast: ch.cast || '',
           director: ch.director || '',
@@ -434,11 +445,14 @@ export const getPlaylist = async (req, res) => {
 
     const stmt = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
-             cat.name as category_name, map.epg_channel_id as manual_epg_id
+             cat.name as category_name, map.epg_channel_id as manual_epg_id,
+             COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as final_logo
       FROM user_categories cat
       JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -474,7 +488,7 @@ export const getPlaylist = async (req, res) => {
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
     for (const ch of stmt.iterate(user.id)) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
-      const logo = ch.logo || '';
+      const logo = ch.final_logo || '';
       const group = ch.category_name || '';
       const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
       const streamId = ch.user_channel_id;
@@ -591,11 +605,14 @@ export const playerChannelsJson = async (req, res) => {
         json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
-        map.epg_channel_id as manual_epg_id
+        map.epg_channel_id as manual_epg_id,
+        COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as final_logo
       FROM user_categories cat
       JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -630,7 +647,7 @@ export const playerChannelsJson = async (req, res) => {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
-      const logo = ch.logo || '';
+      const logo = ch.final_logo || '';
       let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
       if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
           name = name.replace(/[\r\n]+/g, ' ');
@@ -715,11 +732,14 @@ export const playerPlaylist = async (req, res) => {
         json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
-        map.epg_channel_id as manual_epg_id
+        map.epg_channel_id as manual_epg_id,
+        COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as final_logo
       FROM user_categories cat
       JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -764,7 +784,7 @@ export const playerPlaylist = async (req, res) => {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
-      const logo = ch.logo || '';
+      const logo = ch.final_logo || '';
       const name = ch.name || 'Unknown';
 
       let streamUrl;
