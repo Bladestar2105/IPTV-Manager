@@ -16,6 +16,15 @@ db.pragma('synchronous = NORMAL');
 db.pragma('busy_timeout = 5000');
 
 export function initDb(isPrimary) {
+    // Attach EPG database
+    try {
+        db.exec(`ATTACH DATABASE '${path.join(DATA_DIR, 'epg.sqlite')}' AS epg_db;`);
+    } catch (e) {
+        if (!e.message.includes('database epg_db is already in use')) {
+            console.error('Failed to attach EPG database:', e);
+        }
+    }
+
     if (isPrimary) {
         try {
             db.exec(`

@@ -187,10 +187,13 @@ export const getCategoryChannels = (req, res) => {
     }
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id
+      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id,
+             COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN ec.logo ELSE NULL END, pc.logo) as logo
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN epg_db.epg_channels ec ON ec.id = COALESCE(map.epg_channel_id, pc.epg_channel_id)
       WHERE uc.user_category_id = ? AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(catId);
