@@ -389,7 +389,7 @@ export function getLastEpgUpdate(sourceType, sourceId) {
     return row && row.last_update ? row.last_update : 0;
 }
 
-export async function* getEpgXmlForChannels(channelIds) {
+export async function* getEpgXmlForChannels(channelIds, getProxiedUrl = null) {
     // channelIds is a Set or Array of strings (xml_id)
     if (!channelIds || channelIds.size === 0) return;
 
@@ -415,7 +415,8 @@ export async function* getEpgXmlForChannels(channelIds) {
         `).all(batch);
 
         for (const ch of channels) {
-            buffer += `<channel id="${escapeXml(ch.id)}">\n    <display-name>${escapeXml(ch.name)}</display-name>\n    <icon src="${escapeXml(ch.logo || '')}" />\n  </channel>\n`;
+            const logoUrl = getProxiedUrl ? getProxiedUrl(ch.logo) : ch.logo;
+            buffer += `<channel id="${escapeXml(ch.id)}">\n    <display-name>${escapeXml(ch.name)}</display-name>\n    <icon src="${escapeXml(logoUrl || '')}" />\n  </channel>\n`;
             if (buffer.length >= FLUSH_LIMIT) {
                 yield buffer;
                 buffer = '';

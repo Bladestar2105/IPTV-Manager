@@ -401,45 +401,62 @@ export const getProviderChannels = (req, res) => {
       const offset = (pageNum - 1) * limitNum;
       const searchTerm = (search || '').trim().toLowerCase();
 
-      let baseQuery = 'FROM provider_channels WHERE provider_id = ?';
+      let conditionQuery = 'WHERE pc.provider_id = ?';
       const params = [providerId];
 
       if (type) {
-        baseQuery += ' AND stream_type = ?';
+        conditionQuery += ' AND pc.stream_type = ?';
         params.push(type);
       }
 
       if (searchTerm) {
-        baseQuery += ' AND lower(name) LIKE ?';
+        conditionQuery += ' AND lower(pc.name) LIKE ?';
         params.push(`%${searchTerm}%`);
       }
 
-      const countQuery = `SELECT COUNT(*) as count ${baseQuery}`;
+      const countQuery = `SELECT COUNT(*) as count FROM provider_channels pc ${conditionQuery}`;
       const total = db.prepare(countQuery).get(...params).count;
 
-      const dataQuery = `SELECT * ${baseQuery} ORDER BY original_sort_order ASC, name ASC LIMIT ? OFFSET ?`;
+      const dataQuery = `
+          SELECT pc.*,
+                 COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN (SELECT logo FROM epg_db.epg_channels WHERE id = COALESCE(map.epg_channel_id, pc.epg_channel_id) AND logo IS NOT NULL LIMIT 1) ELSE NULL END, pc.logo) as final_logo
+          FROM provider_channels pc
+          JOIN providers p ON p.id = pc.provider_id
+          LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+          ${conditionQuery}
+          ORDER BY pc.original_sort_order ASC, pc.name ASC LIMIT ? OFFSET ?
+      `;
       const rows = db.prepare(dataQuery).all(...params, limitNum, offset);
+      const mappedRows = rows.map(r => ({ ...r, logo: r.final_logo }));
 
       return res.json({
-        channels: rows,
+        channels: mappedRows,
         total: total,
         page: pageNum,
         limit: limitNum
       });
     }
 
-    let query = 'SELECT * FROM provider_channels WHERE provider_id = ?';
+    let query = `
+        SELECT pc.*,
+               COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN (SELECT logo FROM epg_db.epg_channels WHERE id = COALESCE(map.epg_channel_id, pc.epg_channel_id) AND logo IS NOT NULL LIMIT 1) ELSE NULL END, pc.logo) as final_logo
+        FROM provider_channels pc
+        JOIN providers p ON p.id = pc.provider_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        WHERE pc.provider_id = ?
+    `;
     const params = [providerId];
 
     if (type) {
-        query += ' AND stream_type = ?';
+        query += ' AND pc.stream_type = ?';
         params.push(type);
     }
 
-    query += ' ORDER BY original_sort_order ASC, name ASC';
+    query += ' ORDER BY pc.original_sort_order ASC, pc.name ASC';
 
     const rows = db.prepare(query).all(...params);
-    res.json(rows);
+    const mappedRows = rows.map(r => ({ ...r, logo: r.final_logo }));
+    res.json(mappedRows);
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 

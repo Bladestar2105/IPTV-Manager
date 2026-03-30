@@ -757,25 +757,36 @@ export const getStatistics = async (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
 
     const topChannels = db.prepare(`
-      SELECT ss.views, ss.last_viewed, pc.name, pc.logo
+      SELECT ss.views, ss.last_viewed, pc.name,
+             COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN (SELECT logo FROM epg_db.epg_channels WHERE id = COALESCE(map.epg_channel_id, pc.epg_channel_id) AND logo IS NOT NULL LIMIT 1) ELSE NULL END, pc.logo) as final_logo
       FROM stream_stats ss
       JOIN provider_channels pc ON pc.id = ss.channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       ORDER BY ss.views DESC
       LIMIT 10
     `).all();
+    const mappedTopChannels = topChannels.map(r => ({ ...r, logo: r.final_logo }));
 
     const allStreams = await streamManager.getAll();
 
     // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
     // This provides a massive speedup without the memory overhead of fetching tens of thousands of channels.
-    const getLogoStmt = db.prepare('SELECT logo FROM provider_channels WHERE name = ? AND provider_id = ? LIMIT 1');
+    const getLogoStmt = db.prepare(`
+        SELECT COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN (SELECT logo FROM epg_db.epg_channels WHERE id = COALESCE(map.epg_channel_id, pc.epg_channel_id) AND logo IS NOT NULL LIMIT 1) ELSE NULL END, pc.logo) as final_logo
+        FROM provider_channels pc
+        JOIN providers p ON p.id = pc.provider_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        WHERE pc.name = ? AND pc.provider_id = ?
+        LIMIT 1
+    `);
 
     const streams = allStreams.map(s => {
       // Find logo if possible (for Active Streams)
       let logo = null;
       if (s.channel_name && s.provider_id) {
           const ch = getLogoStmt.get(s.channel_name, s.provider_id);
-          if (ch) logo = ch.logo;
+          if (ch) logo = ch.final_logo;
       }
       return {
         ...s,
@@ -830,7 +841,7 @@ export const getStatistics = async (req, res) => {
 
     res.json({
       active_streams: streams,
-      top_channels: topChannels,
+      top_channels: mappedTopChannels,
       system_info: systemInfo
     });
   } catch (e) {

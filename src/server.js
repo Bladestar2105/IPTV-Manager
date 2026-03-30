@@ -37,8 +37,9 @@ let redisClient = null;
 
   if (cluster.isPrimary) {
     // Init DB and Run Migrations
-    initDb(true);
+    // Initialize EPG DB BEFORE main DB so cross-database queries in prepared statements don't fail
     initEpgDb();
+    initDb(true);
   }
 
   // Initialize Stream Manager (Redis or SQLite)

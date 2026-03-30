@@ -22,11 +22,7 @@ async function authenticateAnyToken(req, res, next) {
             token = req.query.token;
         }
 
-        if (!token) {
-            return res.status(401).json({ error: 'No token provided' });
-        }
-
-        // Try using getXtreamUser which resolves player tokens, shared links, etc.
+        // Try using getXtreamUser which resolves player tokens, shared links, and username/password pairs
         const user = await getXtreamUser(req);
         if (user) {
             // Check WebUI Access for normal users (only if not a share guest)

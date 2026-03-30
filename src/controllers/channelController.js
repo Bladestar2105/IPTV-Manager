@@ -187,14 +187,19 @@ export const getCategoryChannels = (req, res) => {
     }
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id
+      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id,
+             COALESCE(CASE WHEN p.use_mapped_epg_icon = 1 THEN (SELECT logo FROM epg_db.epg_channels WHERE id = COALESCE(map.epg_channel_id, pc.epg_channel_id) AND logo IS NOT NULL LIMIT 1) ELSE NULL END, pc.logo) as final_logo
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE uc.user_category_id = ? AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(catId);
-    res.json(rows);
+
+    // Map final_logo to logo for the frontend
+    const mappedRows = rows.map(r => ({ ...r, logo: r.final_logo }));
+    res.json(mappedRows);
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
