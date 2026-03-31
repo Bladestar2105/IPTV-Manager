@@ -84,7 +84,7 @@ export const getEpgSources = (req, res) => {
     const providers = db.prepare("SELECT id, name, epg_url, epg_update_interval, epg_enabled, last_epg_update FROM providers").all();
 
     const allSources = [
-      ...providers.map(p => {
+      ...providers.filter(p => p.epg_enabled !== 0).map(p => {
         return {
           id: `provider_${p.id}`,
           name: `${p.name} (Provider EPG)`,
