@@ -32,7 +32,8 @@ vi.mock('fs', () => {
         rename: vi.fn(),
         unlink: vi.fn(),
         readdir: vi.fn(),
-        access: vi.fn()
+        access: vi.fn(),
+        stat: vi.fn()
       },
       constants: {
         F_OK: 0
@@ -53,7 +54,8 @@ vi.mock('fs', () => {
         rename: vi.fn(),
         unlink: vi.fn(),
         readdir: vi.fn(),
-        access: vi.fn()
+        access: vi.fn(),
+        stat: vi.fn()
     }
   };
 });
@@ -143,10 +145,14 @@ describe('Picon Cache', () => {
 
   it('should serve from cache on HIT', async () => {
     // Setup mocks
-    fs.promises.access.mockResolvedValue();
+    fs.promises.stat.mockResolvedValue({ size: 12 });
     fs.existsSync.mockReturnValue(true);
     const mockReadStream = {
-      pipe: (res) => { res.write('cached-image'); res.end(); }
+      pipe: (res) => {
+          // mock stream pipe behavior
+          res.write(Buffer.from('cached-image'));
+          res.end();
+      }
     };
     fs.createReadStream.mockReturnValue(mockReadStream);
 
@@ -154,6 +160,7 @@ describe('Picon Cache', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers['x-cache']).toBe('HIT');
+    expect(res.headers['content-length']).toBe('12');
     expect(res.body.toString()).toBe('cached-image');
     expect(fetch).not.toHaveBeenCalled();
   });

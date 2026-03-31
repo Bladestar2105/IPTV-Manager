@@ -76,16 +76,32 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
 
     // Check Cache
     try {
-      await fs.promises.access(filePath, fs.constants.F_OK);
+      const stat = await fs.promises.stat(filePath);
       // Serve from Cache
       res.setHeader('X-Cache', 'HIT');
+      res.setHeader('Content-Length', stat.size);
 
       // Update provider icon cache tracking if provider_id is provided
       if (providerId && !isNaN(providerId)) {
         registerProviderCachedIcon(providerId, url, hash);
       }
 
-      res.setHeader('Content-Type', 'image/png'); // Simplified
+      // Guess Content-Type from URL extension
+      let contentType = 'image/png'; // Fallback
+      try {
+        const parsedUrl = new URL(url);
+        const ext = path.extname(parsedUrl.pathname).toLowerCase();
+        if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+        else if (ext === '.gif') contentType = 'image/gif';
+        else if (ext === '.webp') contentType = 'image/webp';
+        else if (ext === '.svg') contentType = 'image/svg+xml';
+        else if (ext === '.avif') contentType = 'image/avif';
+        else if (ext === '.png') contentType = 'image/png';
+      } catch (err) {
+        // Ignore URL parsing errors, keep fallback
+      }
+
+      res.setHeader('Content-Type', contentType);
       res.setHeader('Cache-Control', 'public, max-age=86400');
       fs.createReadStream(filePath).pipe(res);
       return;
