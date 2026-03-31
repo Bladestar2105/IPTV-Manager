@@ -39,6 +39,7 @@ vi.mock('../../src/utils/helpers.js', () => ({
 vi.mock('../../src/config/constants.js', () => ({
   PORT: 3000,
   DATA_DIR: '/tmp',
+  EPG_DB_PATH: '/tmp/epg.db',
 }));
 
 // Import the controller after mocking

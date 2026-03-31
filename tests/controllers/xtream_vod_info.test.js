@@ -30,6 +30,7 @@ vi.mock('../../src/services/epgService.js', () => ({
 vi.mock('../../src/config/constants.js', () => ({
   PORT: 3000,
   DATA_DIR: '/tmp',
+  EPG_DB_PATH: '/tmp/epg.db',
 }));
 
 vi.mock('../../src/utils/crypto.js', () => ({

@@ -6,6 +6,7 @@ import mainDb from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
+import { invalidateEpgLogosCache } from './logoResolver.js';
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
     console.log(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
@@ -214,6 +215,9 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             mainDb.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
         }
 
+        // Invalidate EPG logos cache after successful update
+        invalidateEpgLogosCache();
+
         console.log(`✅ EPG updated for ${sourceType} ${sourceId}`);
         return { success: true };
 
@@ -302,6 +306,10 @@ async function importChannelsFromProvider(providerId) {
             }
         });
         updateTx();
+
+        // Invalidate EPG logos cache after importing channels
+        invalidateEpgLogosCache();
+
         console.log(`✅ Imported ${channels.length} channels from provider ${providerId} into EPG DB`);
     } catch (e) {
         console.error(`❌ Failed to import channels from provider ${providerId}:`, e.message);
@@ -612,6 +620,9 @@ export function clearEpgData() {
 
     // Reset update status on sources
     mainDb.prepare('UPDATE epg_sources SET last_update = 0, is_updating = 0').run();
+
+    // Invalidate EPG logos cache after clearing data
+    invalidateEpgLogosCache();
 
     console.log("✅ EPG data cleared successfully.");
 }

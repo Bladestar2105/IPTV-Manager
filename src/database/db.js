@@ -287,6 +287,9 @@ export function initDb(isPrimary) {
             if (typeof migrations.migrateProviderUseMappedEpgIcon === 'function') {
                 migrations.migrateProviderUseMappedEpgIcon(db);
             }
+            if (typeof migrations.migrateProviderIconCache === 'function') {
+                migrations.migrateProviderIconCache(db);
+            }
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

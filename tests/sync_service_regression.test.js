@@ -50,6 +50,7 @@ describe('Sync Service Regression', () => {
 
     // Setup minimal schema for performSync
     memDb.exec(`
+      CREATE TABLE IF NOT EXISTS provider_icon_cache (id INTEGER PRIMARY KEY, provider_id INTEGER, logo_url TEXT, cache_hash TEXT, last_accessed INTEGER, access_count INTEGER);
       CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT, url TEXT, username TEXT, password TEXT, expiry_date INTEGER);
       CREATE TABLE sync_configs (id INTEGER PRIMARY KEY, provider_id INTEGER, user_id INTEGER, sync_interval TEXT, auto_add_channels INTEGER, auto_add_categories INTEGER, last_sync INTEGER, next_sync INTEGER);
       CREATE TABLE provider_channels (

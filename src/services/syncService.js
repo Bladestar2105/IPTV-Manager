@@ -5,6 +5,7 @@ import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory } from '../utils/helpers.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
+import { prePopulateProviderIconCache } from './logoResolver.js';
 
 function createXtreamClient(provider) {
   let baseUrl = (provider.url || '').trim();
@@ -604,6 +605,9 @@ export async function performSync(providerId, userId, isManual = false) {
 
     // Invalidate cache since channels might have been added/updated
     clearChannelsCache(userId);
+
+    // Pre-populate provider icon cache for faster logo lookups
+    prePopulateProviderIconCache(providerId);
 
     // Log success
     db.prepare(`

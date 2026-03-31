@@ -12,6 +12,7 @@ import si from 'systeminformation';
 import { spawn } from 'child_process';
 import path from 'path';
 import geoip from 'geoip-lite';
+import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -764,26 +765,59 @@ export const getStatistics = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
 
+    // Load EPG logos cache for logo resolution
+    loadEpgLogosCache();
+
     const topChannels = db.prepare(`
-      SELECT ss.views, ss.last_viewed, pc.name, pc.logo
+      SELECT ss.views, ss.last_viewed, pc.name, pc.logo, pc.epg_channel_id,
+             map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
       FROM stream_stats ss
       JOIN provider_channels pc ON pc.id = ss.channel_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN providers p ON p.id = pc.provider_id
       ORDER BY ss.views DESC
       LIMIT 10
     `).all();
+
+    // Resolve EPG logos for top channels
+    const topChannelsWithLogos = topChannels.map(ch => {
+      const epgId = ch.manual_epg_id || ch.epg_channel_id;
+      let logo = ch.logo;
+      if (ch.use_mapped_epg_icon && epgId) {
+        const epgLogo = getEpgLogo(epgId);
+        if (epgLogo) logo = epgLogo;
+      }
+      return { ...ch, logo };
+    });
 
     const allStreams = await streamManager.getAll();
 
     // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
     // This provides a massive speedup without the memory overhead of fetching tens of thousands of channels.
-    const getLogoStmt = db.prepare('SELECT logo FROM provider_channels WHERE name = ? AND provider_id = ? LIMIT 1');
+    const getChannelStmt = db.prepare(`
+      SELECT pc.logo, pc.epg_channel_id, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
+      FROM provider_channels pc
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN providers p ON p.id = pc.provider_id
+      WHERE pc.name = ? AND pc.provider_id = ? LIMIT 1
+    `);
 
     const streams = allStreams.map(s => {
       // Find logo if possible (for Active Streams)
       let logo = null;
       if (s.channel_name && s.provider_id) {
-          const ch = getLogoStmt.get(s.channel_name, s.provider_id);
-          if (ch) logo = ch.logo;
+          const ch = getChannelStmt.get(s.channel_name, s.provider_id);
+          if (ch) {
+            logo = ch.logo;
+            // Try to resolve EPG logo if provider has use_mapped_epg_icon enabled
+            if (ch.use_mapped_epg_icon) {
+              const epgId = ch.manual_epg_id || ch.epg_channel_id;
+              if (epgId) {
+                const epgLogo = getEpgLogo(epgId);
+                if (epgLogo) logo = epgLogo;
+              }
+            }
+          }
       }
       return {
         ...s,
@@ -838,7 +872,7 @@ export const getStatistics = async (req, res) => {
 
     res.json({
       active_streams: streams,
-      top_channels: topChannels,
+      top_channels: topChannelsWithLogos,
       system_info: systemInfo
     });
   } catch (e) {
