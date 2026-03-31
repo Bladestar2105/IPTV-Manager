@@ -13,3 +13,9 @@
 ## 2026-03-29 - Added missing ARIA attributes to modals
 **Learning:** Bootstrap modals in this app consistently missed `aria-labelledby` linking the modal container to its title, and some lacked `aria-hidden="true"`. This is a critical a11y issue because screen readers won't announce the modal's name when focus shifts inside.
 **Action:** Always ensure new modals include `aria-labelledby="<title_id>"` and `aria-hidden="true"` on the `.modal` container, and that the title element has the matching ID.
+## 2026-03-30 - Added missing ARIA attributes to player tabs and sidebar toggle
+**Learning:** The vanilla JavaScript player UI lacked proper ARIA roles (, ) and states (, , ) for its navigation tabs and mobile sidebar toggle. This prevented screen readers from correctly announcing tab selection and sidebar expansion states.
+**Action:** Explicitly set , , and  attributes in the HTML markup for the player tabs, and manually synchronized  and  in  during click events.
+## 2026-03-31 - Added missing ARIA attributes to player tabs and sidebar toggle
+**Learning:** The vanilla JavaScript player UI lacked proper ARIA roles (`role="tablist"`, `role="tab"`) and states (`aria-selected`, `aria-expanded`, `aria-controls`) for its navigation tabs and mobile sidebar toggle. This prevented screen readers from correctly announcing tab selection and sidebar expansion states.
+**Action:** Explicitly set `role`, `aria-controls`, and `aria-selected` attributes in the HTML markup for the player tabs, and manually synchronized `aria-selected` and `aria-expanded` in `public/player.js` during click events.

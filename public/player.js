@@ -1109,8 +1109,12 @@ function escapeHtml(unsafe) {
   document.querySelectorAll('#player-tabs .nav-link').forEach(function(link) {
     link.addEventListener('click', function(e) {
       e.preventDefault();
-      document.querySelectorAll('#player-tabs .nav-link').forEach(function(l) { l.classList.remove('active'); });
+      document.querySelectorAll('#player-tabs .nav-link').forEach(function(l) {
+        l.classList.remove('active');
+        l.setAttribute('aria-selected', 'false');
+      });
       e.target.classList.add('active');
+      e.target.setAttribute('aria-selected', 'true');
       currentType = e.target.dataset.type;
       catSelect.value = '';
       searchInput.value = '';
@@ -1158,6 +1162,8 @@ function escapeHtml(unsafe) {
     sidebarToggle.addEventListener('click', function() {
       sidebarEl.classList.toggle('open');
       sidebarOverlay.classList.toggle('active');
+      var isOpen = sidebarEl.classList.contains('open');
+      sidebarToggle.setAttribute('aria-expanded', isOpen);
     });
   }
   if (sidebarOverlay) {
@@ -1167,6 +1173,9 @@ function escapeHtml(unsafe) {
   function closeSidebar() {
     sidebarEl.classList.remove('open');
     sidebarOverlay.classList.remove('active');
+    if (sidebarToggle) {
+      sidebarToggle.setAttribute('aria-expanded', 'false');
+    }
   }
 
   // Debounce utility
