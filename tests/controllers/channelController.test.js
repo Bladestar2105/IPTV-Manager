@@ -9,8 +9,11 @@ const TEST_DB_DIR = path.join(process.cwd(), 'tests/temp_db_channel');
 
 // Mock Constants
 vi.mock('../../src/config/constants.js', async () => {
+    const path = require('path');
+    const testDir = path.join(process.cwd(), 'tests/temp_db_channel');
     return {
-        DATA_DIR: require('path').join(process.cwd(), 'tests/temp_db_channel'),
+        DATA_DIR: testDir,
+        EPG_DB_PATH: path.join(testDir, 'epg.db'),
         PORT: 3000,
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',

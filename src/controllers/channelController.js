@@ -1,6 +1,7 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { isAdultCategory } from '../utils/helpers.js';
+import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 
 export const getUserCategories = (req, res) => {
   try {
@@ -186,15 +187,31 @@ export const getCategoryChannels = (req, res) => {
         if (!cat || cat.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
     }
 
+    // Load EPG logos cache for logo resolution
+    loadEpgLogosCache();
+
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id
+      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
       FROM user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN providers p ON p.id = pc.provider_id
       WHERE uc.user_category_id = ? AND uc.is_hidden = 0
       ORDER BY uc.sort_order
     `).all(catId);
-    res.json(rows);
+
+    // Resolve EPG logos for channels
+    const rowsWithLogos = rows.map(ch => {
+      const epgId = ch.manual_epg_id || ch.epg_channel_id;
+      let logo = ch.logo;
+      if (ch.use_mapped_epg_icon && epgId) {
+        const epgLogo = getEpgLogo(epgId);
+        if (epgLogo) logo = epgLogo;
+      }
+      return { ...ch, logo };
+    });
+
+    res.json(rowsWithLogos);
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
