@@ -7,6 +7,7 @@ import { getBaseUrl } from '../utils/helpers.js';
 import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
+import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -576,6 +577,9 @@ export const playerChannelsJson = async (req, res) => {
       return res.send(channelsJsonCache.get(cacheKey));
     }
 
+    // Load EPG logos cache for logo resolution
+    loadEpgLogosCache();
+
     const stmt = db.prepare(`
       SELECT
         uc.id as user_channel_id,
@@ -591,11 +595,13 @@ export const playerChannelsJson = async (req, res) => {
         json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
-        map.epg_channel_id as manual_epg_id
+        map.epg_channel_id as manual_epg_id,
+        p.use_mapped_epg_icon
       FROM user_categories cat
       JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN providers p ON p.id = pc.provider_id
       WHERE cat.user_id = ? AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -630,23 +636,28 @@ export const playerChannelsJson = async (req, res) => {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
-      const logo = ch.logo || '';
-      let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
-      if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
-          name = name.replace(/[\r\n]+/g, ' ');
-      }
-      name = name.trim();
-      const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
+          // Resolve logo: prefer EPG logo if provider has use_mapped_epg_icon enabled
+          const epgId = ch.manual_epg_id || ch.epg_channel_id;
+          let logo = ch.logo || '';
+          if (ch.use_mapped_epg_icon && epgId) {
+            const epgLogo = getEpgLogo(epgId);
+            if (epgLogo) logo = epgLogo;
+          }
+          let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
+          if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
+              name = name.replace(/[\r\n]+/g, ' ');
+          }
+          name = name.trim();
 
-      let streamUrl;
-      let type = 'live';
+          let streamUrl;
+          let type = 'live';
 
-      if (ch.stream_type === 'movie') {
-         type = 'movie';
-         streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
-      } else if (ch.stream_type === 'series') {
-         type = 'series';
-         streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
+          if (ch.stream_type === 'movie') {
+             type = 'movie';
+             streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
+          } else if (ch.stream_type === 'series') {
+             type = 'series';
+             streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
       } else {
          if (ch.mime_type === 'mpd') {
              streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
