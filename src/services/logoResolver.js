@@ -7,8 +7,8 @@ let epgLogosCache = null;
 let lastCacheUpdate = 0;
 const CACHE_TTL = 300000; // 5 minutes
 
-// Provider-specific logo cache: Map<provider_id, Map<epg_channel_id, logo_url>>
-const providerLogoCache = new Map();
+// In-memory cache for provider icon mappings: Map<provider_id, Set<cache_hash>>
+const providerIconMemoryCache = new Map();
 
 /**
  * Load EPG logos from epg_channels table into memory cache
@@ -72,6 +72,16 @@ export function getEpgLogo(epgChannelId) {
 }
 
 /**
+ * Generate a cache hash for a logo URL
+ * @param {string} logoUrl - Logo URL to hash
+ * @returns {string} - MD5 hash of the URL
+ */
+export function getLogoCacheHash(logoUrl) {
+    if (!logoUrl) return null;
+    return crypto.createHash('md5').update(logoUrl).digest('hex');
+}
+
+/**
  * Get a cache key for provider-specific logo caching
  * This ensures that channels from the same provider share the same cached logo
  * @param {number} providerId - Provider ID
@@ -80,10 +90,167 @@ export function getEpgLogo(epgChannelId) {
  */
 export function getPiconCacheKey(providerId, logoUrl) {
     if (!logoUrl) return null;
-    // Create a hash that includes provider ID for deduplication
-    // Channels with same provider and same logo URL will share the cached file
-    const hash = crypto.createHash('md5').update(logoUrl).digest('hex');
-    return hash; // The proxy endpoint already uses MD5 of URL for caching
+    // Use MD5 hash of URL - this allows sharing across all users with same provider
+    return getLogoCacheHash(logoUrl);
+}
+
+/**
+ * Register a cached icon for a provider
+ * This tracks which icons have been cached for each provider
+ * @param {number} providerId - Provider ID
+ * @param {string} logoUrl - Logo URL that was cached
+ * @param {string} cacheHash - The cache hash (MD5 of URL)
+ */
+export function registerProviderCachedIcon(providerId, logoUrl, cacheHash) {
+    if (!providerId || !logoUrl || !cacheHash) return;
+    
+    try {
+        db.prepare(`
+            INSERT OR REPLACE INTO provider_icon_cache (provider_id, logo_url, cache_hash, last_accessed, access_count)
+            VALUES (?, ?, ?, strftime('%s', 'now'), COALESCE((SELECT access_count FROM provider_icon_cache WHERE provider_id = ? AND logo_url = ?), 0) + 1)
+        `).run(providerId, logoUrl, cacheHash, providerId, logoUrl);
+        
+        // Update memory cache
+        if (!providerIconMemoryCache.has(providerId)) {
+            providerIconMemoryCache.set(providerId, new Set());
+        }
+        providerIconMemoryCache.get(providerId).add(cacheHash);
+    } catch (e) {
+        console.error('Failed to register provider cached icon:', e.message);
+    }
+}
+
+/**
+ * Check if an icon is already cached for a provider
+ * @param {number} providerId - Provider ID
+ * @param {string} logoUrl - Logo URL to check
+ * @returns {Object|null} - Cache info or null if not cached
+ */
+export function getProviderCachedIcon(providerId, logoUrl) {
+    if (!providerId || !logoUrl) return null;
+    
+    try {
+        const row = db.prepare(`
+            SELECT cache_hash, last_accessed, access_count
+            FROM provider_icon_cache
+            WHERE provider_id = ? AND logo_url = ?
+        `).get(providerId, logoUrl);
+        
+        if (row) {
+            // Update last accessed time
+            db.prepare(`
+                UPDATE provider_icon_cache
+                SET last_accessed = strftime('%s', 'now'), access_count = access_count + 1
+                WHERE provider_id = ? AND logo_url = ?
+            `).run(providerId, logoUrl);
+        }
+        
+        return row || null;
+    } catch (e) {
+        console.error('Failed to get provider cached icon:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Get all cached icons for a provider
+ * @param {number} providerId - Provider ID
+ * @returns {Array} - Array of cached icon info
+ */
+export function getProviderCachedIcons(providerId) {
+    if (!providerId) return [];
+    
+    try {
+        return db.prepare(`
+            SELECT logo_url, cache_hash, created_at, last_accessed, access_count
+            FROM provider_icon_cache
+            WHERE provider_id = ?
+            ORDER BY access_count DESC
+        `).all(providerId);
+    } catch (e) {
+        console.error('Failed to get provider cached icons:', e.message);
+        return [];
+    }
+}
+
+/**
+ * Pre-populate icon cache entries for a provider's channels
+ * Call this after syncing channels to prepare cache entries
+ * @param {number} providerId - Provider ID
+ */
+export function prePopulateProviderIconCache(providerId) {
+    if (!providerId) return;
+    
+    try {
+        // Get unique logos from provider's channels
+        const channels = db.prepare(`
+            SELECT DISTINCT logo
+            FROM provider_channels
+            WHERE provider_id = ? AND logo IS NOT NULL AND logo != ''
+        `).all(providerId);
+        
+        const insertStmt = db.prepare(`
+            INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
+            VALUES (?, ?, ?)
+        `);
+        
+        let count = 0;
+        for (const ch of channels) {
+            if (ch.logo) {
+                const hash = getLogoCacheHash(ch.logo);
+                insertStmt.run(providerId, ch.logo, hash);
+                count++;
+            }
+        }
+        
+        // Update memory cache
+        providerIconMemoryCache.set(providerId, new Set(
+            channels.filter(ch => ch.logo).map(ch => getLogoCacheHash(ch.logo))
+        ));
+        
+        if (count > 0) {
+            console.log(`✅ Pre-populated ${count} icon cache entries for provider ${providerId}`);
+        }
+    } catch (e) {
+        console.error('Failed to pre-populate provider icon cache:', e.message);
+    }
+}
+
+/**
+ * Clear icon cache entries for a provider
+ * @param {number} providerId - Provider ID
+ */
+export function clearProviderIconCache(providerId) {
+    if (!providerId) return;
+    
+    try {
+        db.prepare('DELETE FROM provider_icon_cache WHERE provider_id = ?').run(providerId);
+        providerIconMemoryCache.delete(providerId);
+        console.log(`🗑️ Cleared icon cache entries for provider ${providerId}`);
+    } catch (e) {
+        console.error('Failed to clear provider icon cache:', e.message);
+    }
+}
+
+/**
+ * Get cache statistics
+ * @returns {Object} - Cache statistics
+ */
+export function getIconCacheStats() {
+    try {
+        const stats = db.prepare(`
+            SELECT 
+                COUNT(DISTINCT provider_id) as provider_count,
+                COUNT(*) as total_entries,
+                SUM(access_count) as total_accesses
+            FROM provider_icon_cache
+        `).get();
+        
+        return stats || { provider_count: 0, total_entries: 0, total_accesses: 0 };
+    } catch (e) {
+        console.error('Failed to get icon cache stats:', e.message);
+        return { provider_count: 0, total_entries: 0, total_accesses: 0 };
+    }
 }
 
 /**
@@ -114,7 +281,7 @@ export function resolveLogosForChannels(channels, useEpgLogo = false) {
 export function invalidateEpgLogosCache() {
     epgLogosCache = null;
     lastCacheUpdate = 0;
-    providerLogoCache.clear();
+    providerIconMemoryCache.clear();
     console.log('🔄 EPG logos cache invalidated');
 }
 
@@ -122,7 +289,14 @@ export default {
     loadEpgLogosCache,
     resolveChannelLogo,
     getEpgLogo,
+    getLogoCacheHash,
     getPiconCacheKey,
+    registerProviderCachedIcon,
+    getProviderCachedIcon,
+    getProviderCachedIcons,
+    prePopulateProviderIconCache,
+    clearProviderIconCache,
+    getIconCacheStats,
     resolveLogosForChannels,
     invalidateEpgLogosCache
 };

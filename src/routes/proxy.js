@@ -8,6 +8,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import { CACHE_DIR } from '../config/constants.js';
 import { fetchSafe } from '../utils/network.js';
 import { getXtreamUser } from '../services/authService.js';
+import { getLogoCacheHash, registerProviderCachedIcon, getProviderCachedIcon } from '../services/logoResolver.js';
 
 const router = express.Router();
 
@@ -59,26 +60,31 @@ function ensureCacheDir() {
 ensureCacheDir();
 
 router.get('/image', authenticateAnyToken, async (req, res) => {
-  const { url } = req.query;
+  const { url, provider_id } = req.query;
 
   if (!url) {
     return res.status(400).send('URL is required');
   }
 
+  // Parse provider_id if provided
+  const providerId = provider_id ? parseInt(provider_id, 10) : null;
+
   try {
-    // Generate Hash for Filename
-    const hash = crypto.createHash('md5').update(url).digest('hex');
-    const filePath = path.join(PICON_CACHE_DIR, `${hash}.png`); // Default to png or detect extension?
+    // Generate Hash for Filename using the logoResolver service for consistency
+    const hash = getLogoCacheHash(url) || crypto.createHash('md5').update(url).digest('hex');
+    const filePath = path.join(PICON_CACHE_DIR, `${hash}.png`);
 
     // Check Cache
     try {
       await fs.promises.access(filePath, fs.constants.F_OK);
       // Serve from Cache
       res.setHeader('X-Cache', 'HIT');
-      // Try to determine content type from file extension or just default to image/png
-      // Since we save everything as .png (or just use hash without ext and rely on content-type detection?)
-      // Actually, saving with extension helps OS/browsers.
-      // Let's check if we can store metadata or just trust it's an image.
+      
+      // Update provider icon cache tracking if provider_id is provided
+      if (providerId && !isNaN(providerId)) {
+        registerProviderCachedIcon(providerId, url, hash);
+      }
+      
       res.setHeader('Content-Type', 'image/png'); // Simplified
       res.setHeader('Cache-Control', 'public, max-age=86400');
       fs.createReadStream(filePath).pipe(res);
@@ -198,6 +204,11 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
             if (!cacheError && !fileStream.destroyed) {
                 try {
                     await fs.promises.rename(tempPath, filePath);
+                    
+                    // Register the cached icon for the provider
+                    if (providerId && !isNaN(providerId)) {
+                        registerProviderCachedIcon(providerId, url, hash);
+                    }
                 } catch (renameErr) {
                     console.error('Cache rename error:', renameErr);
                 }
@@ -272,7 +283,16 @@ router.delete('/picons', authenticateToken, async (req, res) => {
         }
 
         await Promise.all(files.map(file => fs.promises.unlink(path.join(PICON_CACHE_DIR, file))));
-
+        
+        // Also clear the provider_icon_cache table
+        try {
+            const db = (await import('../database/db.js')).default;
+            db.exec('DELETE FROM provider_icon_cache');
+        } catch (dbErr) {
+            console.error('Failed to clear provider_icon_cache:', dbErr.message);
+            // Don't fail the request if DB cleanup fails
+        }
+        
         res.json({ deleted: files.length });
     } catch (error) {
         console.error('Failed to prune cache:', error);

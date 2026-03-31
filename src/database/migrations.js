@@ -780,3 +780,31 @@ export function migrateProviderUseMappedEpgIcon(db) {
     console.error('Provider use_mapped_epg_icon migration error:', e);
   }
 }
+
+export function migrateProviderIconCache(db) {
+  try {
+    // Create table to track cached icons per provider
+    // This allows sharing cached icons among users with the same provider
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_icon_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id INTEGER NOT NULL,
+        logo_url TEXT NOT NULL,
+        cache_hash TEXT NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        last_accessed INTEGER DEFAULT (strftime('%s', 'now')),
+        access_count INTEGER DEFAULT 0,
+        UNIQUE(provider_id, logo_url),
+        FOREIGN KEY (provider_id) REFERENCES providers(id)
+      )
+    `);
+    
+    // Create index for fast lookups
+    db.exec('CREATE INDEX IF NOT EXISTS idx_provider_icon_cache_provider ON provider_icon_cache(provider_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_provider_icon_cache_hash ON provider_icon_cache(cache_hash)');
+    
+    console.log('✅ DB Migration: provider_icon_cache table created');
+  } catch (e) {
+    console.error('Provider Icon Cache migration error:', e);
+  }
+}
