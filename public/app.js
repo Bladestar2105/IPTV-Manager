@@ -4433,7 +4433,7 @@ function showToast(message, type = 'primary') {
         <div class="d-flex">
             <div class="toast-body d-flex align-items-center gap-2">
                 ${icon ? `<span class="fs-5">${icon}</span>` : ''}
-                <div>${message}</div>
+                <div>${escapeHtml(message)}</div>
             </div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" data-i18n-label="close" data-i18n-title="close"></button>
         </div>
