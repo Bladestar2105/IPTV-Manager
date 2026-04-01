@@ -144,13 +144,18 @@ export const playerApi = async (req, res) => {
       // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
       query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
-      const rows = db.prepare(query).all(...params);
+      // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+      // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
+      // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+      const stmt = db.prepare(query);
 
       const nowStr = now.toString();
-      const result = rows.map((ch, i) => {
+      const result = [];
+      let i = 0;
+      for (const ch of stmt.iterate(...params)) {
         let iconUrl = ch.logo || '';
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
-        return {
+        result.push({
           num: i + 1,
           name: displayName,
           stream_type: 'live',
@@ -165,8 +170,9 @@ export const playerApi = async (req, res) => {
           tv_archive: ch.tv_archive || 0,
           direct_source: '',
           tv_archive_duration: ch.tv_archive_duration || 0
-        };
-      });
+        });
+        i++;
+      }
       return res.json(result);
     }
 
@@ -188,12 +194,17 @@ export const playerApi = async (req, res) => {
       // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
       query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
-      const rows = db.prepare(query).all(...params);
+      // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+      // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
+      // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+      const stmt = db.prepare(query);
 
       const nowStr = now.toString();
-      const result = rows.map((ch, i) => {
+      const result = [];
+      let i = 0;
+      for (const ch of stmt.iterate(...params)) {
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
-        return {
+        result.push({
           num: i + 1,
           name: displayName,
           stream_type: 'movie',
@@ -206,8 +217,9 @@ export const playerApi = async (req, res) => {
           container_extension: ch.mime_type || 'mp4',
           custom_sid: null,
           direct_source: ''
-        };
-      });
+        });
+        i++;
+      }
       return res.json(result);
     }
 
@@ -231,10 +243,15 @@ export const playerApi = async (req, res) => {
       // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
       query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
-      const rows = db.prepare(query).all(...params);
+      // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+      // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
+      // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+      const stmt = db.prepare(query);
 
       const nowStr = now.toString();
-      const result = rows.map((ch, i) => {
+      const result = [];
+      let i = 0;
+      for (const ch of stmt.iterate(...params)) {
         let backdrop_path = [];
         if (ch.backdrop_path) {
              try {
@@ -245,7 +262,7 @@ export const playerApi = async (req, res) => {
 
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
 
-        return {
+        result.push({
           num: i + 1,
           name: displayName,
           series_id: Number(ch.user_channel_id),
@@ -262,8 +279,9 @@ export const playerApi = async (req, res) => {
           youtube_trailer: ch.youtube_trailer || '',
           episode_run_time: ch.episode_run_time || '',
           category_id: String(ch.user_category_id)
-        };
-      });
+        });
+        i++;
+      }
       return res.json(result);
     }
 
