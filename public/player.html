@@ -14,7 +14,7 @@
 
 <!-- Video Player -->
 <div id="player-container">
-  <video id="video" controls autoplay playsinline webkit-playsinline></video>
+  <video id="video" controls autoplay playsinline webkit-playsinline aria-label="Video Player" data-i18n-label="videoPlayer"></video>
   <div id="now-playing-bar">
     <div id="now-playing-channel"></div>
     <div id="now-playing-program"></div>
@@ -71,7 +71,7 @@
 <div id="list-view" class="list-group list-group-flush"></div>
 
 <!-- Program Tooltip -->
-<div id="program-tooltip">
+<div id="program-tooltip" role="tooltip" aria-hidden="true">
   <div class="tt-title"></div>
   <div class="tt-time"></div>
   <div class="tt-desc"></div>

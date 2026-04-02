@@ -499,7 +499,8 @@ const translations = {
     loadingEpg: 'Loading EPG...',
     loadingChannels: 'Loading Channels...',
     unsupportedCodec: 'Unsupported codec detected. Enabling audio fix...',
-    playbackErrorCodec: 'Playback Error: Codec might not be supported'
+    playbackErrorCodec: 'Playback Error: Codec might not be supported',
+    videoPlayer: 'Video Player'
   },
   
   de: {
@@ -997,7 +998,8 @@ const translations = {
     loadingEpg: 'Lade EPG...',
     loadingChannels: 'Lade Kanäle...',
     unsupportedCodec: 'Nicht unterstützter Codec erkannt. Audio-Fix wird aktiviert...',
-    playbackErrorCodec: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt'
+    playbackErrorCodec: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt',
+    videoPlayer: 'Video-Player'
   },
 
   fr: {
@@ -1495,7 +1497,8 @@ const translations = {
     loadingEpg: 'Chargement de l\'EPG...',
     loadingChannels: 'Chargement des chaînes...',
     unsupportedCodec: 'Codec non pris en charge détecté. Activation de la correction audio...',
-    playbackErrorCodec: 'Erreur de lecture : Le codec peut ne pas être pris en charge'
+    playbackErrorCodec: 'Erreur de lecture : Le codec peut ne pas être pris en charge',
+    videoPlayer: 'Lecteur vidéo'
   },
 
   el: {
@@ -1993,7 +1996,8 @@ const translations = {
     loadingEpg: 'Φόρτωση EPG...',
     loadingChannels: 'Φόρτωση καναλιών...',
     unsupportedCodec: 'Εντοπίστηκε μη υποστηριζόμενο codec. Ενεργοποίηση διόρθωσης ήχου...',
-    playbackErrorCodec: 'Σφάλμα αναπαραγωγής: Το codec ενδέχεται να μην υποστηρίζεται'
+    playbackErrorCodec: 'Σφάλμα αναπαραγωγής: Το codec ενδέχεται να μην υποστηρίζεται',
+    videoPlayer: 'Πρόγραμμα αναπαραγωγής βίντεο'
   }
 };
 
