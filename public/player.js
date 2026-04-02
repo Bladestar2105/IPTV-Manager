@@ -370,7 +370,7 @@ function escapeHtml(unsafe) {
 
   // ─── Series Episodes Renderer ───
   async function renderSeriesEpisodes(series) {
-    listView.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary"></div><div class="mt-2">' + (t('loading') || 'Loading...') + '</div></div>';
+    listView.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary" role="status" aria-hidden="true"></div><div class="mt-2">' + (t('loading') || 'Loading...') + '</div></div>';
 
     try {
       var url = '/player_api.php?action=get_series_info&series_id=' + series.url.split('/').slice(-1)[0].split('.')[0] + '&' + getAuthParams();
