@@ -19,3 +19,6 @@
 ## 2026-03-31 - Added missing ARIA attributes to player tabs and sidebar toggle
 **Learning:** The vanilla JavaScript player UI lacked proper ARIA roles (`role="tablist"`, `role="tab"`) and states (`aria-selected`, `aria-expanded`, `aria-controls`) for its navigation tabs and mobile sidebar toggle. This prevented screen readers from correctly announcing tab selection and sidebar expansion states.
 **Action:** Explicitly set `role`, `aria-controls`, and `aria-selected` attributes in the HTML markup for the player tabs, and manually synchronized `aria-selected` and `aria-expanded` in `public/player.js` during click events.
+## 2026-04-01 - Missing tooltip on player search clear button
+**Learning:** The `#search-input-clear` button in the web player UI (`public/player.html`) lacked a `data-i18n-title` attribute, unlike its counterpart in the main dashboard (`public/index.html`). This meant sighted users hovering over the "✕" icon did not receive a native tooltip explaining its purpose, leading to an inconsistent and less accessible experience.
+**Action:** When adding or auditing icon-only buttons, always ensure both `data-i18n-label` (for ARIA/screen readers) and `data-i18n-title` (for native hover tooltips) are present.
