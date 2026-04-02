@@ -757,6 +757,7 @@ function showEditUserModal(user) {
   document.getElementById('edit-user-password').value = '';
   document.getElementById('edit-user-max-connections').value = user.max_connections || 0;
   document.getElementById('edit-user-notes').value = user.notes || '';
+  document.getElementById('edit-user-notes-count').textContent = (user.notes ? user.notes.length : 0) + '/50';
 
   if (user.expiry_date) {
     // Attempt to format assuming ISO date (e.g. 2024-12-31T00:00:00.000Z) or YYYY-MM-DD
@@ -2455,6 +2456,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Populate country dropdowns
   populateCountryDropdown('user-allowed-countries');
   populateCountryDropdown('edit-user-allowed-countries');
+
+  const notesInput = document.getElementById('edit-user-notes');
+  if (notesInput) {
+      notesInput.addEventListener('input', (e) => {
+          document.getElementById('edit-user-notes-count').textContent = e.target.value.length + '/50';
+      });
+  }
 
   // Make dashboard stats cards interactive
   const cardActions = {
