@@ -1065,18 +1065,18 @@
           <form id="login-form" >
             <div class="mb-3">
               <label for="login-username" class="form-label" data-i18n="username">Username</label>
-              <input type="text" class="form-control" id="login-username" required autofocus>
+              <input type="text" class="form-control" id="login-username" autocomplete="username" required autofocus>
             </div>
             <div class="mb-3">
               <label for="login-password" class="form-label" data-i18n="password">Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="login-password" required>
+                <input type="password" class="form-control" id="login-password" autocomplete="current-password" required>
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="login-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3 d-none" id="login-otp-group">
               <label for="login-otp" class="form-label" data-i18n="otp_code">2FA Code</label>
-              <input type="text" class="form-control" id="login-otp" autocomplete="off" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
+              <input type="text" class="form-control" id="login-otp" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
             </div>
             <div id="login-error" class="alert alert-danger d-none"></div>
             <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
@@ -1102,7 +1102,7 @@
              </div>
              <p data-i18n="scan_qr">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
              <div class="input-group mb-3">
-                <input type="text" id="otp-verify-input" class="form-control" data-i18n-placeholder="otpPlaceholder" data-i18n-label="otpPlaceholder" placeholder="123456" aria-label="123456">
+                <input type="text" id="otp-verify-input" class="form-control" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" data-i18n-placeholder="otpPlaceholder" data-i18n-label="otpPlaceholder" placeholder="123456" aria-label="123456">
                 <button class="btn btn-primary" data-action="action-verify-otp" data-i18n="verify">Verify</button>
              </div>
           </div>
@@ -1189,14 +1189,14 @@
             <div class="mb-3">
               <label for="old-password" class="form-label" data-i18n="old_password">Old Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="old-password" required>
+                <input type="password" class="form-control" id="old-password" autocomplete="current-password" required>
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="old-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3">
               <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="new-password" required minlength="8" aria-describedby="new-password-help">
+                <input type="password" class="form-control" id="new-password" autocomplete="new-password" required minlength="8" aria-describedby="new-password-help">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
               <small class="form-text text-secondary" data-i18n="password_min_length" id="new-password-help">Minimum 8 characters</small>
@@ -1204,7 +1204,7 @@
             <div class="mb-3">
               <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="confirm-password" required minlength="8">
+                <input type="password" class="form-control" id="confirm-password" autocomplete="new-password" required minlength="8">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="confirm-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
