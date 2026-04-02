@@ -408,26 +408,25 @@ export const playerApi = async (req, res) => {
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
       if (!epgId) return res.json({epg_listings: []});
 
-      const programs = await getEpgPrograms(epgId, limit);
+      // ⚡ Bolt: Remove await since getEpgPrograms now returns a synchronous iterator
+      const programs = getEpgPrograms(epgId, limit);
 
-      const listings = programs.map(p => {
-          // Format dates as YYYY-MM-DD HH:MM:SS
-          // p.start and p.stop are unix timestamps (seconds)
-          const format = (ts) => new Date(ts * 1000).toISOString().slice(0, 19).replace('T', ' ');
-
-          return {
+      const listings = [];
+      // ⚡ Bolt: Iterate directly over the SQLite generator and use pre-formatted dates
+      for (const p of programs) {
+          listings.push({
               id: String(p.start), // Unique ID for program? usually random or timestamp
               epg_id: epgId,
               title: p.title ? Buffer.from(p.title).toString('base64') : '',
               lang: p.lang || '',
-              start: format(p.start),
-              end: format(p.stop),
+              start: p.start_fmt,
+              end: p.stop_fmt,
               description: p.desc ? Buffer.from(p.desc).toString('base64') : '',
               channel_id: epgId,
               start_timestamp: String(p.start),
               stop_timestamp: String(p.stop)
-          };
-      });
+          });
+      }
 
       return res.json({epg_listings: listings});
     }
