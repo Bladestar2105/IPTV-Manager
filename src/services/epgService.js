@@ -1,4 +1,5 @@
 import zlib from 'zlib';
+import { Transform } from 'stream';
 import Database from 'better-sqlite3';
 import XmlStream from 'node-xml-stream';
 import db from '../database/epgDb.js';
@@ -39,9 +40,25 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             const [chunk, originalStream] = await peekStream(stream);
             if (chunk && chunk.length >= 2 && chunk[0] === 0x1f && chunk[1] === 0x8b) {
                 console.log(`📦 Detected GZIP stream for ${sourceType} ${sourceId}, decompressing...`);
+
+                const MAX_EPG_UNCOMPRESSED_SIZE = 500 * 1024 * 1024; // 500MB
+                let decompressedSize = 0;
                 const gunzip = zlib.createGunzip();
-                originalStream.pipe(gunzip);
-                stream = gunzip;
+
+                // Security Enhancement: Prevent Zip Bomb / DoS memory exhaustion
+                const sizeChecker = new Transform({
+                    transform(dataChunk, encoding, callback) {
+                        decompressedSize += dataChunk.length;
+                        if (decompressedSize > MAX_EPG_UNCOMPRESSED_SIZE) {
+                            callback(new Error('Uncompressed EPG data exceeds 500MB limit (potential Zip Bomb)'));
+                        } else {
+                            callback(null, dataChunk);
+                        }
+                    }
+                });
+
+                originalStream.pipe(gunzip).pipe(sizeChecker);
+                stream = sizeChecker;
             } else {
                 stream = originalStream;
             }
