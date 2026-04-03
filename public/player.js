@@ -31,8 +31,9 @@
   // ─── Timeline Config ───
   const PIXELS_PER_MINUTE = 4;
   const ROW_HEIGHT = 48;
-  const TIMELINE_HOURS = 24;
-  let timelineStart = Math.floor(Date.now() / 1000) - 3600;
+  const TIMELINE_HOURS = 36;
+  const CATCHUP_PAST_HOURS = 12;
+  let timelineStart = Math.floor(Date.now() / 1000) - (CATCHUP_PAST_HOURS * 3600);
   timelineStart = timelineStart - (timelineStart % 1800);
 
   // ─── DOM Elements ───
@@ -220,8 +221,8 @@ function escapeHtml(unsafe) {
 
       // 2. Fetch EPG Schedule
       if (loadingTextSpan) loadingTextSpan.textContent = t('loadingEpg') || 'Loading EPG...';
-      var start = Math.floor(Date.now() / 1000) - 7200;
-      var end = start + (TIMELINE_HOURS * 3600) + 7200;
+      var start = timelineStart - 3600;
+      var end = timelineStart + (TIMELINE_HOURS * 3600) + 3600;
       try {
         var epgRes = await fetch('/api/epg/schedule?start=' + start + '&end=' + end + '&' + getAuthParams());
         if (epgRes.ok) {
@@ -578,6 +579,14 @@ function escapeHtml(unsafe) {
         nameContainer.appendChild(epgNow);
       }
 
+      if (ch.tv_archive) {
+        var catchupBadge = document.createElement('span');
+        catchupBadge.className = 'catchup-badge';
+        catchupBadge.textContent = 'CU';
+        catchupBadge.title = t('catchupSupported') || 'Catchup supported';
+        nameContainer.appendChild(catchupBadge);
+      }
+
       rowDiv.appendChild(nameContainer);
 
       rowDiv.onclick = (function(channel, row) {
@@ -610,7 +619,13 @@ function escapeHtml(unsafe) {
 
         var bar = document.createElement('div');
         bar.className = 'program-bar';
-        if (prog.start <= now && prog.stop >= now) bar.classList.add('current');
+        if (prog.start <= now && prog.stop >= now) {
+          bar.classList.add('current');
+        } else if (prog.stop < now && ch.tv_archive) {
+          bar.classList.add('catchup');
+        } else if (prog.stop < now) {
+          bar.classList.add('past');
+        }
 
         bar.style.left = left + 'px';
         bar.style.width = Math.max(2, width - 2) + 'px';
@@ -628,22 +643,33 @@ function escapeHtml(unsafe) {
         bar.appendChild(titleSpan);
 
         // Tooltip on hover
-        bar.addEventListener('mouseenter', (function(program) {
+        bar.addEventListener('mouseenter', (function(program, channel) {
           return function(e) {
             var ttTitle = tooltip.querySelector('.tt-title');
             var ttTime = tooltip.querySelector('.tt-time');
             var ttDesc = tooltip.querySelector('.tt-desc');
+            var ttCatchup = tooltip.querySelector('.tt-catchup');
             ttTitle.textContent = program.title;
             var startDate = new Date(program.start * 1000);
             var stopDate = new Date(program.stop * 1000);
             var dateStr = startDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
             ttTime.textContent = dateStr + ', ' + startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' \u2013 ' + stopDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             ttDesc.textContent = program.desc || '';
+            if (ttCatchup) {
+              var nowSec = Math.floor(Date.now() / 1000);
+              if (program.stop < nowSec && channel.tv_archive) {
+                ttCatchup.textContent = t('catchupAvailable') || 'Catchup available - click to play';
+                ttCatchup.style.display = 'block';
+              } else {
+                ttCatchup.textContent = '';
+                ttCatchup.style.display = 'none';
+              }
+            }
             tooltip.style.display = 'block';
             tooltip.setAttribute('aria-hidden', 'false');
             positionTooltip(e);
           };
-        })(prog));
+        })(prog, ch));
         bar.addEventListener('mousemove', positionTooltip);
         bar.addEventListener('mouseleave', function() {
           tooltip.style.display = 'none';
@@ -1138,6 +1164,58 @@ function escapeHtml(unsafe) {
     showToast(t('playbackErrorCodec') || 'Playback Error: Codec might not be supported', 'danger', 6000);
     setPlayerStatus('Error', 'danger');
   }
+
+  // ─── EPG Navigation ───
+  async function navigateEpg(offsetHours) {
+    timelineStart += offsetHours * 3600;
+    timelineStart = timelineStart - (timelineStart % 1800);
+
+    // Fetch EPG data for the new range
+    var start = timelineStart - 3600;
+    var end = timelineStart + (TIMELINE_HOURS * 3600) + 3600;
+    try {
+      var epgRes = await fetch('/api/epg/schedule?start=' + start + '&end=' + end + '&' + getAuthParams());
+      if (epgRes.ok) {
+        var newData = await epgRes.json();
+        // Merge with existing data
+        for (var key in newData) {
+          if (!epgSchedule[key]) {
+            epgSchedule[key] = newData[key];
+          } else {
+            // Merge programs, avoid duplicates
+            var existing = {};
+            epgSchedule[key].forEach(function(p) { existing[p.start + '_' + p.stop] = true; });
+            newData[key].forEach(function(p) {
+              if (!existing[p.start + '_' + p.stop]) epgSchedule[key].push(p);
+            });
+            epgSchedule[key].sort(function(a, b) { return a.start - b.start; });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('EPG navigation fetch failed:', e.message);
+    }
+
+    renderTimeline();
+    updateCurrentTimeLine();
+  }
+
+  function scrollToNow() {
+    timelineStart = Math.floor(Date.now() / 1000) - (CATCHUP_PAST_HOURS * 3600);
+    timelineStart = timelineStart - (timelineStart % 1800);
+    navigateEpg(0);
+    requestAnimationFrame(function() {
+      var now = Math.floor(Date.now() / 1000);
+      var offset = ((now - timelineStart) / 60) * PIXELS_PER_MINUTE;
+      epgGridEl.scrollLeft = Math.max(0, offset - (epgGridEl.clientWidth / 3));
+    });
+  }
+
+  document.getElementById('epg-prev-day').addEventListener('click', function() { navigateEpg(-24); });
+  document.getElementById('epg-prev').addEventListener('click', function() { navigateEpg(-6); });
+  document.getElementById('epg-now').addEventListener('click', function() { scrollToNow(); });
+  document.getElementById('epg-next').addEventListener('click', function() { navigateEpg(6); });
+  document.getElementById('epg-next-day').addEventListener('click', function() { navigateEpg(24); });
 
   // ─── Event Listeners ───
 
