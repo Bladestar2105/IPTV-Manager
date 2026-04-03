@@ -22,3 +22,6 @@
 ## 2026-04-01 - Missing tooltip on player search clear button
 **Learning:** The `#search-input-clear` button in the web player UI (`public/player.html`) lacked a `data-i18n-title` attribute, unlike its counterpart in the main dashboard (`public/index.html`). This meant sighted users hovering over the "✕" icon did not receive a native tooltip explaining its purpose, leading to an inconsistent and less accessible experience.
 **Action:** When adding or auditing icon-only buttons, always ensure both `data-i18n-label` (for ARIA/screen readers) and `data-i18n-title` (for native hover tooltips) are present.
+## 2026-04-01 - Missing aria-busy in setLoadingState
+**Learning:** The global `setLoadingState` utility function disabled buttons and added a visual spinner, but failed to set `aria-busy="true"`. Screen readers would announce the button as disabled but might not convey that a background process is actively running, leaving visually impaired users unsure if their action succeeded or is still processing.
+**Action:** Always toggle `aria-busy="true"` and `aria-busy="false"` (or remove it) in tandem with the `disabled` state when managing loading UI for asynchronous operations to provide immediate feedback to screen readers.
