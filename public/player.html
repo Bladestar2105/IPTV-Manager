@@ -46,6 +46,14 @@
     <button class="btn btn-outline-secondary d-none border-secondary text-light" type="button" id="search-input-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch"><span aria-hidden="true">✕</span></button>
   </div>
 
+  <div class="epg-nav-buttons d-flex align-items-center gap-1">
+    <button id="epg-prev-day" class="btn btn-sm btn-outline-secondary epg-nav-btn" title="Previous Day" data-i18n-title="epgPrevDay">◀◀</button>
+    <button id="epg-prev" class="btn btn-sm btn-outline-secondary epg-nav-btn" title="Earlier" data-i18n-title="epgEarlier">◀</button>
+    <button id="epg-now" class="btn btn-sm btn-outline-primary epg-nav-btn" title="Now" data-i18n-title="epgNow" data-i18n="epgNow">Now</button>
+    <button id="epg-next" class="btn btn-sm btn-outline-secondary epg-nav-btn" title="Later" data-i18n-title="epgLater">▶</button>
+    <button id="epg-next-day" class="btn btn-sm btn-outline-secondary epg-nav-btn" title="Next Day" data-i18n-title="epgNextDay">▶▶</button>
+  </div>
+
   <div class="ms-auto d-flex align-items-center">
     <google-cast-launcher id="cast-button" class="cast-button-style"></google-cast-launcher>
     <div id="clock">00:00</div>
@@ -75,6 +83,7 @@
   <div class="tt-title"></div>
   <div class="tt-time"></div>
   <div class="tt-desc"></div>
+  <div class="tt-catchup"></div>
 </div>
 
 <script src="vendor/bootstrap.bundle.min.js"></script>

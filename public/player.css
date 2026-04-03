@@ -204,9 +204,35 @@ video {
   border-color: #3b82f6;
   color: #e0e8ff;
 }
+.program-bar.catchup {
+  background: #1a2e1a;
+  border-color: #2d5a2d;
+  color: #8bc98b;
+  cursor: pointer;
+}
+.program-bar.catchup:hover {
+  background: #254025;
+  border-color: #4a8a4a;
+  color: #b0e0b0;
+}
+.program-bar.catchup::after {
+  content: '\25B6';
+  font-size: 8px;
+  margin-left: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.program-bar.catchup:hover::after { opacity: 1; }
+.program-bar.past {
+  background: #151518;
+  border-color: #1e1e26;
+  color: #555;
+}
 .program-title { font-weight: 600; }
 .program-time { font-size: 9px; color: #666; flex-shrink: 0; }
 .program-bar.current .program-time { color: #8ab4f8; }
+.program-bar.catchup .program-time { color: #5a9a5a; }
 
 /* ── Current Time Line ── */
 .current-time-line {
@@ -267,6 +293,7 @@ video {
 #program-tooltip .tt-title { font-weight: 700; font-size: 14px; color: #fff; margin-bottom: 4px; }
 #program-tooltip .tt-time { font-size: 12px; color: #8ab4f8; margin-bottom: 6px; }
 #program-tooltip .tt-desc { font-size: 12px; color: #999; line-height: 1.4; max-height: 80px; overflow: hidden; }
+#program-tooltip .tt-catchup { font-size: 11px; color: #4ade80; font-weight: 600; margin-top: 6px; display: none; }
 
 /* ── Toast Notifications ── */
 .player-toast {
@@ -317,7 +344,33 @@ video {
   #category-select { width: 100% !important; order: 10; }
   #search-input { width: 100% !important; order: 11; }
   #clock { display: none; }
+  .epg-nav-buttons { order: 9; }
+  #epg-prev-day, #epg-next-day { display: none; }
   #player-container { height: auto; aspect-ratio: 16/9; min-height: unset; }
+}
+
+/* ── Catchup Badge ── */
+.catchup-badge {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  background: #2d5a2d;
+  color: #8bc98b;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 1.2;
+  letter-spacing: 0.5px;
+}
+
+/* ── EPG Navigation ── */
+.epg-nav-buttons { flex-shrink: 0; }
+.epg-nav-btn {
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+  line-height: 1.2;
+  min-width: unset;
 }
 
 /* Helper Classes */

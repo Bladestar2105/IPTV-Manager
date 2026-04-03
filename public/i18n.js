@@ -500,9 +500,16 @@ const translations = {
     loadingChannels: 'Loading Channels...',
     unsupportedCodec: 'Unsupported codec detected. Enabling audio fix...',
     playbackErrorCodec: 'Playback Error: Codec might not be supported',
-    videoPlayer: 'Video Player'
+    videoPlayer: 'Video Player',
+    catchupAvailable: 'Catchup available - click to play',
+    catchupSupported: 'Catchup supported',
+    epgPrevDay: 'Previous Day',
+    epgEarlier: 'Earlier',
+    epgNow: 'Now',
+    epgLater: 'Later',
+    epgNextDay: 'Next Day'
   },
-  
+
   de: {
     // Accessibility
     skipToContent: 'Zum Inhalt springen',
@@ -999,7 +1006,14 @@ const translations = {
     loadingChannels: 'Lade Kanäle...',
     unsupportedCodec: 'Nicht unterstützter Codec erkannt. Audio-Fix wird aktiviert...',
     playbackErrorCodec: 'Wiedergabefehler: Codec wird möglicherweise nicht unterstützt',
-    videoPlayer: 'Video-Player'
+    videoPlayer: 'Video-Player',
+    catchupAvailable: 'Catchup verfügbar - klicken zum Abspielen',
+    catchupSupported: 'Catchup unterstützt',
+    epgPrevDay: 'Vorheriger Tag',
+    epgEarlier: 'Früher',
+    epgNow: 'Jetzt',
+    epgLater: 'Später',
+    epgNextDay: 'Nächster Tag'
   },
 
   fr: {
@@ -1498,7 +1512,14 @@ const translations = {
     loadingChannels: 'Chargement des chaînes...',
     unsupportedCodec: 'Codec non pris en charge détecté. Activation de la correction audio...',
     playbackErrorCodec: 'Erreur de lecture : Le codec peut ne pas être pris en charge',
-    videoPlayer: 'Lecteur vidéo'
+    videoPlayer: 'Lecteur vidéo',
+    catchupAvailable: 'Rattrapage disponible - cliquez pour lire',
+    catchupSupported: 'Rattrapage pris en charge',
+    epgPrevDay: 'Jour précédent',
+    epgEarlier: 'Plus tôt',
+    epgNow: 'Maintenant',
+    epgLater: 'Plus tard',
+    epgNextDay: 'Jour suivant'
   },
 
   el: {
@@ -1997,7 +2018,14 @@ const translations = {
     loadingChannels: 'Φόρτωση καναλιών...',
     unsupportedCodec: 'Εντοπίστηκε μη υποστηριζόμενο codec. Ενεργοποίηση διόρθωσης ήχου...',
     playbackErrorCodec: 'Σφάλμα αναπαραγωγής: Το codec ενδέχεται να μην υποστηρίζεται',
-    videoPlayer: 'Πρόγραμμα αναπαραγωγής βίντεο'
+    videoPlayer: 'Πρόγραμμα αναπαραγωγής βίντεο',
+    catchupAvailable: 'Διαθέσιμο Catchup - κάντε κλικ για αναπαραγωγή',
+    catchupSupported: 'Υποστηρίζεται Catchup',
+    epgPrevDay: 'Προηγούμενη ημέρα',
+    epgEarlier: 'Νωρίτερα',
+    epgNow: 'Τώρα',
+    epgLater: 'Αργότερα',
+    epgNextDay: 'Επόμενη ημέρα'
   }
 };
 
