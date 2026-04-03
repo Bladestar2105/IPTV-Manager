@@ -172,6 +172,7 @@ function setLoadingState(btn, isLoading, textKey = 'loading', showText = true) {
   if (!btn) return;
   if (isLoading) {
     btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
     if (!btn.dataset.originalText) {
       btn.dataset.originalText = btn.innerHTML;
     }
@@ -184,6 +185,7 @@ function setLoadingState(btn, isLoading, textKey = 'loading', showText = true) {
     }
   } else {
     btn.disabled = false;
+    btn.removeAttribute('aria-busy');
     if (btn.dataset.originalText) {
       btn.innerHTML = btn.dataset.originalText;
       delete btn.dataset.originalText;
