@@ -1148,8 +1148,11 @@
               <input type="date" class="form-control" id="edit-user-expiry-date">
             </div>
             <div class="mb-3">
-              <label class="form-label" data-i18n="notes" for="edit-user-notes">Notes</label>
-              <input type="text" class="form-control" id="edit-user-notes" maxlength="50" data-i18n-placeholder="notesMax" placeholder="Max 50 characters">
+              <div class="d-flex justify-content-between align-items-end">
+                <label class="form-label mb-1" data-i18n="notes" for="edit-user-notes">Notes</label>
+                <small id="edit-user-notes-count" class="text-muted mb-1">0/50</small>
+              </div>
+              <input type="text" class="form-control" id="edit-user-notes" maxlength="50" data-i18n-placeholder="notesMax" placeholder="Max 50 characters" aria-describedby="edit-user-notes-count">
             </div>
             <div class="mb-3">
               <label class="form-label" data-i18n="allowedCountries" for="edit-user-allowed-countries">Allowed Countries (Region Lock)</label>
