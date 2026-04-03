@@ -308,6 +308,7 @@ function escapeHtml(unsafe) {
       if (s.logo) {
         var img = document.createElement('img');
         img.src = getProxiedUrl(s.logo);
+        img.alt = s.name || '';
         img.style.cssText = 'width:40px;height:40px;object-fit:contain;margin-right:10px;border-radius:4px;background:#1a1a24;';
         img.loading = 'lazy';
         img.onerror = function() { img.style.display = 'none'; };
@@ -370,7 +371,7 @@ function escapeHtml(unsafe) {
 
   // ─── Series Episodes Renderer ───
   async function renderSeriesEpisodes(series) {
-    listView.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary"></div><div class="mt-2">' + (t('loading') || 'Loading...') + '</div></div>';
+    listView.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary" role="status" aria-hidden="true"></div><div class="mt-2">' + (t('loading') || 'Loading...') + '</div></div>';
 
     try {
       var url = '/player_api.php?action=get_series_info&series_id=' + series.url.split('/').slice(-1)[0].split('.')[0] + '&' + getAuthParams();
@@ -394,11 +395,13 @@ function escapeHtml(unsafe) {
       if (data.info && data.info.cover) {
         var img = document.createElement('img');
         img.src = getProxiedUrl(data.info.cover);
+        img.alt = data.info.name || series.name || '';
         img.style.cssText = 'width:80px;height:120px;object-fit:cover;margin-right:15px;border-radius:4px;background:#1a1a24;';
         header.appendChild(img);
       } else if (series.logo) {
         var img2 = document.createElement('img');
         img2.src = getProxiedUrl(series.logo);
+        img2.alt = series.name || '';
         img2.style.cssText = 'width:80px;height:120px;object-fit:cover;margin-right:15px;border-radius:4px;background:#1a1a24;';
         header.appendChild(img2);
       }
@@ -546,6 +549,7 @@ function escapeHtml(unsafe) {
       if (ch.logo) {
         var img = document.createElement('img');
         img.src = getProxiedUrl(ch.logo);
+        img.alt = ch.name || '';
         img.loading = 'lazy';
         img.onerror = function() { this.style.display = 'none'; };
         rowDiv.appendChild(img);
