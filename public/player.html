@@ -14,7 +14,7 @@
 
 <!-- Video Player -->
 <div id="player-container">
-  <video id="video" controls autoplay playsinline webkit-playsinline></video>
+  <video id="video" controls autoplay playsinline webkit-playsinline aria-label="Video Player" data-i18n-label="videoPlayer"></video>
   <div id="now-playing-bar">
     <div id="now-playing-channel"></div>
     <div id="now-playing-program"></div>
@@ -24,7 +24,7 @@
 
 <!-- Controls Bar -->
 <div id="controls-bar">
-  <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary d-md-none p-2-8" data-i18n-label="toggleSidebar" aria-expanded="false" aria-controls="channel-sidebar">&#9776;</button>
+  <button id="sidebar-toggle" class="btn btn-sm btn-outline-secondary d-md-none p-2-8" data-i18n-label="toggleSidebar" aria-expanded="false" aria-controls="channel-sidebar"><span aria-hidden="true">&#9776;</span></button>
 
   <div class="form-check form-switch min-w-fit">
     <input class="form-check-input" type="checkbox" id="transcode-switch" data-i18n-title="transcodeAudio">
@@ -43,7 +43,7 @@
 
   <div class="input-group input-group-sm w-140px">
     <input type="text" id="search-input" class="form-control bg-dark text-light border-secondary" placeholder="Search..." data-i18n-placeholder="searchPlaceholder" aria-label="Search..." data-i18n-label="searchPlaceholder">
-    <button class="btn btn-outline-secondary d-none border-secondary text-light" type="button" id="search-input-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch">✕</button>
+    <button class="btn btn-outline-secondary d-none border-secondary text-light" type="button" id="search-input-clear" data-i18n-label="clearSearch" data-i18n-title="clearSearch"><span aria-hidden="true">✕</span></button>
   </div>
 
   <div class="ms-auto d-flex align-items-center">
@@ -62,7 +62,7 @@
     <div id="current-time-indicator" class="current-time-line"></div>
   </div>
   <div id="loading-overlay" class="d-none">
-    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+    <div class="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true"></div>
     <span data-i18n="loadingEpg">Loading EPG...</span>
   </div>
 </div>
@@ -71,7 +71,7 @@
 <div id="list-view" class="list-group list-group-flush"></div>
 
 <!-- Program Tooltip -->
-<div id="program-tooltip">
+<div id="program-tooltip" role="tooltip" aria-hidden="true">
   <div class="tt-title"></div>
   <div class="tt-time"></div>
   <div class="tt-desc"></div>
