@@ -17,3 +17,7 @@
 **Vulnerability:** IDOR in Provider Categories and Channels retrieval endpoints.
 **Learning:** `getProviderChannels` and `getProviderCategories` lacked ownership checks, allowing any user to query details of any provider by ID.
 **Prevention:** Always verify `!req.user.is_admin && provider.user_id !== req.user.id` when returning provider-specific data.
+## 2026-04-02 - Prevent Zip Bomb (DoS) via EPG Data
+**Vulnerability:** The application used `zlib.createGunzip()` without a maximum output size limit when decompressing downloaded EPG data streams. An attacker could provide a URL to a small but highly compressed payload that unpacks into gigabytes of data, causing memory or disk exhaustion (Zip Bomb).
+**Learning:** When decompressing network streams, attaching a `.on('data')` listener directly forces the stream into flowing mode, risking data loss if downstream parsers aren't immediately attached. Security mitigations on streams must respect pipeline flow.
+**Prevention:** Use a native `stream.Transform` piped into the decompression pipeline. This allows transparently tracking byte counts and safely emitting an error (destroying the stream) if uncompressed size limits are exceeded, without interfering with the consumer pipeline's backpressure or buffering.
