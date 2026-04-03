@@ -51,9 +51,22 @@ describe('isAdultCategory', () => {
     expect(isAdultCategory('XXX 18+ Adult')).toBe(true);
   });
 
-  it('should return true for "Adulting is hard" because it contains "adult"', () => {
-    // This confirms the current behavior which uses substring matching
+  it('should return true for "Adulting is hard" because it starts with "adult" prefix', () => {
+    // This confirms the new behavior which uses word prefix boundaries
     expect(isAdultCategory('Adulting is hard')).toBe(true);
+  });
+
+  it('should return true for word variations like "pornography", "porno", "sexual", "erotica"', () => {
+    expect(isAdultCategory('pornography')).toBe(true);
+    expect(isAdultCategory('porno')).toBe(true);
+    expect(isAdultCategory('sexual content')).toBe(true);
+    expect(isAdultCategory('erotica books')).toBe(true);
+  });
+
+  it('should return false for words where the keyword is a suffix or inside another word', () => {
+    expect(isAdultCategory('Sussex')).toBe(false);
+    expect(isAdultCategory('Middlesex')).toBe(false);
+    expect(isAdultCategory('Hotel')).toBe(false);
   });
 });
 

@@ -117,13 +117,29 @@ export function safeLookup(hostname, options, callback) {
 }
 
 export function isAdultCategory(name) {
-  const adultKeywords = [
-    '18+', 'adult', 'xxx', 'porn', 'erotic', 'sex', 'nsfw',
-    'for adults', 'erwachsene', '+18', '18 plus', 'mature',
-    'sexy', 'hot'
-  ];
   const nameLower = name.toLowerCase();
-  return adultKeywords.some(kw => nameLower.includes(kw));
+
+  // We want to match exact words or specific prefixes.
+  // But wait, \bhot matches "hotel" because 'hot' is at a word boundary.
+  // Instead of prefix matching, we should just match exact words, but allow known variations.
+  // A safer approach is to split the category name into words and check if any word matches the exact keyword
+  // or specific allowed variations (like 'adults', 'adulting', 'porno', 'pornography', 'sexual').
+  // Given the complexity of regex word stems, let's just use exact word matching + explicit variations.
+
+  const wordKeywords = [
+    'adult', 'adults', 'adulting', 'xxx', 'porn', 'porno', 'pornography',
+    'erotic', 'erotica', 'sex', 'sexual', 'nsfw', 'for adults',
+    'erwachsene', 'mature', 'sexy', 'hot'
+  ];
+
+  const specialKeywords = ['18\\+', '\\+18', '18 plus'];
+
+  // Exact word boundary matching for all words
+  const wordPattern = new RegExp(`(?:\\b|_|\\W|^)(${wordKeywords.join('|')})(?:\\b|_|\\W|$)`, 'i');
+  // Match special keywords as exact matches with boundary
+  const specialPattern = new RegExp(`(?:^|\\s|\\W)(${specialKeywords.join('|')})(?:\\s|$|\\W)`, 'i');
+
+  return wordPattern.test(nameLower) || specialPattern.test(nameLower);
 }
 
 let settingsCache = new Map();
