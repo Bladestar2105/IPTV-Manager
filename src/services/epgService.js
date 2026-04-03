@@ -1,4 +1,5 @@
 import zlib from 'zlib';
+import { Transform } from 'stream';
 import Database from 'better-sqlite3';
 import XmlStream from 'node-xml-stream';
 import db from '../database/epgDb.js';
@@ -39,9 +40,25 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             const [chunk, originalStream] = await peekStream(stream);
             if (chunk && chunk.length >= 2 && chunk[0] === 0x1f && chunk[1] === 0x8b) {
                 console.log(`📦 Detected GZIP stream for ${sourceType} ${sourceId}, decompressing...`);
+
+                const MAX_EPG_UNCOMPRESSED_SIZE = 500 * 1024 * 1024; // 500MB
+                let decompressedSize = 0;
                 const gunzip = zlib.createGunzip();
-                originalStream.pipe(gunzip);
-                stream = gunzip;
+
+                // Security Enhancement: Prevent Zip Bomb / DoS memory exhaustion
+                const sizeChecker = new Transform({
+                    transform(dataChunk, encoding, callback) {
+                        decompressedSize += dataChunk.length;
+                        if (decompressedSize > MAX_EPG_UNCOMPRESSED_SIZE) {
+                            callback(new Error('Uncompressed EPG data exceeds 500MB limit (potential Zip Bomb)'));
+                        } else {
+                            callback(null, dataChunk);
+                        }
+                    }
+                });
+
+                originalStream.pipe(gunzip).pipe(sizeChecker);
+                stream = sizeChecker;
             } else {
                 stream = originalStream;
             }
@@ -354,16 +371,21 @@ export function loadEpgChannelLogosMap() {
     return logoMap;
 }
 
-export async function getEpgPrograms(channelId, limit = 1000) {
+export function getEpgPrograms(channelId, limit = 1000) {
     const now = Math.floor(Date.now() / 1000);
-    // Get future/current programs
+    // ⚡ Bolt: Offload date formatting to SQLite using datetime() and use .iterate() to reduce V8 memory pressure.
+    // 🎯 Why: Creating Date objects and manipulating strings in JS for every program row causes CPU and GC overhead. Loading large lists of program objects into V8 memory at once can cause memory spikes.
+    // 📊 Impact: Significantly speeds up EPG endpoint and reduces memory allocations.
     return db.prepare(`
-        SELECT start, stop, title, desc, lang, channel_id
+        SELECT
+            start, stop, title, desc, lang, channel_id,
+            datetime(start, 'unixepoch') as start_fmt,
+            datetime(stop, 'unixepoch') as stop_fmt
         FROM epg_programs
         WHERE channel_id = ? AND stop > ?
         ORDER BY start ASC
         LIMIT ?
-    `).all(channelId, now, limit);
+    `).iterate(channelId, now, limit);
 }
 
 export function getProgramsNow() {

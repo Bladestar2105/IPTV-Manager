@@ -60,7 +60,7 @@
     </div>
   </nav>
 
-  <div class="container-fluid py-4 d-none" id="main-content">
+  <div class="container-fluid py-4 d-none" id="main-content" tabindex="-1">
 
     <!-- View: Dashboard -->
     <div id="view-dashboard">
@@ -190,23 +190,23 @@
                  <div id="user-details-content" class="d-none">
                  <!-- Tabs for User Details -->
                  <ul class="nav nav-tabs mb-3" id="user-tabs" role="tablist">
-                    <li class="nav-item">
-                       <button class="nav-link active" id="tab-channels-btn" data-bs-toggle="tab" data-bs-target="#tab-channels" type="button" data-i18n="channels">Channels</button>
+                    <li class="nav-item" role="presentation">
+                       <button class="nav-link active" id="tab-channels-btn" data-bs-toggle="tab" data-bs-target="#tab-channels" type="button" role="tab" aria-controls="tab-channels" aria-selected="true" data-i18n="channels">Channels</button>
                     </li>
-                    <li class="nav-item">
-                       <button class="nav-link" id="tab-backups-btn" data-bs-toggle="tab" data-bs-target="#tab-backups" type="button" data-i18n="backups">Backups</button>
+                    <li class="nav-item" role="presentation">
+                       <button class="nav-link" id="tab-backups-btn" data-bs-toggle="tab" data-bs-target="#tab-backups" type="button" role="tab" aria-controls="tab-backups" aria-selected="false" data-i18n="backups">Backups</button>
                     </li>
-                    <li class="nav-item">
-                       <button class="nav-link" id="tab-xtream-btn" data-bs-toggle="tab" data-bs-target="#tab-xtream" type="button" data-i18n="xtreamCodes">Xtream Codes</button>
+                    <li class="nav-item" role="presentation">
+                       <button class="nav-link" id="tab-xtream-btn" data-bs-toggle="tab" data-bs-target="#tab-xtream" type="button" role="tab" aria-controls="tab-xtream" aria-selected="false" data-i18n="xtreamCodes">Xtream Codes</button>
                     </li>
-                    <li class="nav-item">
-                       <button class="nav-link" id="tab-hdhr-btn" data-bs-toggle="tab" data-bs-target="#tab-hdhr" type="button" data-i18n-label="hdhomerun" data-i18n="hdhomerun">HDHomeRun</button>
+                    <li class="nav-item" role="presentation">
+                       <button class="nav-link" id="tab-hdhr-btn" data-bs-toggle="tab" data-bs-target="#tab-hdhr" type="button" role="tab" aria-controls="tab-hdhr" aria-selected="false" data-i18n-label="hdhomerun" data-i18n="hdhomerun">HDHomeRun</button>
                     </li>
                  </ul>
 
                  <div class="tab-content" id="user-tab-content">
                     <!-- Channels Tab -->
-                    <div class="tab-pane fade show active" id="tab-channels">
+                    <div class="tab-pane fade show active" id="tab-channels" role="tabpanel" aria-labelledby="tab-channels-btn">
                        <div class="row">
                           <div class="col-md-5">
                              <h6 data-i18n="categories">Categories</h6>
@@ -284,7 +284,7 @@
                     </div>
 
                     <!-- Backups Tab -->
-                    <div class="tab-pane fade" id="tab-backups">
+                    <div class="tab-pane fade" id="tab-backups" role="tabpanel" aria-labelledby="tab-backups-btn">
                        <div class="d-flex justify-content-between align-items-center mb-3">
                           <h6 class="m-0" data-i18n="buildedCategoriesBackups">Builded Categories Backups</h6>
                           <button class="btn btn-sm btn-primary" id="btn-create-backup" data-i18n="createBackup">Create Backup</button>
@@ -311,7 +311,7 @@
                     </div>
 
                     <!-- Xtream Codes Tab -->
-                    <div class="tab-pane fade" id="tab-xtream">
+                    <div class="tab-pane fade" id="tab-xtream" role="tabpanel" aria-labelledby="tab-xtream-btn">
                        <div class="mb-2">
                           <label class="form-label small fw-bold" data-i18n="url" for="xtream-url">URL</label>
                           <div class="input-group input-group-sm">
@@ -358,7 +358,7 @@
                     </div>
 
                     <!-- HDHomeRun Tab -->
-                    <div class="tab-pane fade" id="tab-hdhr">
+                    <div class="tab-pane fade" id="tab-hdhr" role="tabpanel" aria-labelledby="tab-hdhr-btn">
                        <div id="hdhr-enabled-section" class="d-none">
                           <div class="alert alert-info small">
                              <span data-i18n="useUrlToConfigurePlex">Use the URL below to configure Plex DVR or Emby Live TV.</span>
@@ -1065,18 +1065,18 @@
           <form id="login-form" >
             <div class="mb-3">
               <label for="login-username" class="form-label" data-i18n="username">Username</label>
-              <input type="text" class="form-control" id="login-username" required autofocus>
+              <input type="text" class="form-control" id="login-username" autocomplete="username" required autofocus>
             </div>
             <div class="mb-3">
               <label for="login-password" class="form-label" data-i18n="password">Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="login-password" required>
+                <input type="password" class="form-control" id="login-password" autocomplete="current-password" required>
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="login-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3 d-none" id="login-otp-group">
               <label for="login-otp" class="form-label" data-i18n="otp_code">2FA Code</label>
-              <input type="text" class="form-control" id="login-otp" autocomplete="off" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
+              <input type="text" class="form-control" id="login-otp" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" data-i18n-placeholder="otpPlaceholder" placeholder="123456">
             </div>
             <div id="login-error" class="alert alert-danger d-none"></div>
             <button type="submit" class="btn btn-primary w-100" id="login-btn" data-i18n="login">Login</button>
@@ -1102,7 +1102,7 @@
              </div>
              <p data-i18n="scan_qr">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
              <div class="input-group mb-3">
-                <input type="text" id="otp-verify-input" class="form-control" data-i18n-placeholder="otpPlaceholder" data-i18n-label="otpPlaceholder" placeholder="123456" aria-label="123456">
+                <input type="text" id="otp-verify-input" class="form-control" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" data-i18n-placeholder="otpPlaceholder" data-i18n-label="otpPlaceholder" placeholder="123456" aria-label="123456">
                 <button class="btn btn-primary" data-action="action-verify-otp" data-i18n="verify">Verify</button>
              </div>
           </div>
@@ -1192,14 +1192,14 @@
             <div class="mb-3">
               <label for="old-password" class="form-label" data-i18n="old_password">Old Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="old-password" required>
+                <input type="password" class="form-control" id="old-password" autocomplete="current-password" required>
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="old-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
             <div class="mb-3">
               <label for="new-password" class="form-label" data-i18n="new_password">New Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="new-password" required minlength="8" aria-describedby="new-password-help">
+                <input type="password" class="form-control" id="new-password" autocomplete="new-password" required minlength="8" aria-describedby="new-password-help">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="new-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
               <small class="form-text text-secondary" data-i18n="password_min_length" id="new-password-help">Minimum 8 characters</small>
@@ -1207,7 +1207,7 @@
             <div class="mb-3">
               <label for="confirm-password" class="form-label" data-i18n="confirm_password">Confirm Password</label>
               <div class="input-group">
-                <input type="password" class="form-control" id="confirm-password" required minlength="8">
+                <input type="password" class="form-control" id="confirm-password" autocomplete="new-password" required minlength="8">
                 <button class="btn btn-outline-secondary" type="button" data-toggle-password="confirm-password" data-i18n-label="show_password" data-i18n-title="show_password"><i class="bi bi-eye" aria-hidden="true"></i></button>
               </div>
             </div>
