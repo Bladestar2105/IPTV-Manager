@@ -15,5 +15,6 @@ router.get('/live/mpd/token/auth/:stream_id/*', streamController.proxyMpd);
 router.get(['/live/token/auth/:stream_id.ts', '/live/token/auth/:stream_id.m3u8', '/live/token/auth/:stream_id.mp4'], streamController.proxyLive);
 router.get('/movie/token/auth/:stream_id.:ext', streamController.proxyMovie);
 router.get('/series/token/auth/:episode_id.:ext', streamController.proxySeries);
+router.get(['/timeshift/token/auth/:duration/:start/:stream_id.ts', '/timeshift/token/auth/:duration/:start/:stream_id.m3u8'], streamController.proxyTimeshift);
 
 export default router;

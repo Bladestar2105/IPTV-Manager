@@ -452,6 +452,8 @@ export const getPlaylist = async (req, res) => {
 
     const stmt = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
+        pc.tv_archive,
+        pc.tv_archive_duration,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_categories cat
       JOIN user_channels uc ON cat.id = uc.user_category_id
@@ -689,7 +691,9 @@ export const playerChannelsJson = async (req, res) => {
         logo,
         epg_id: epgId,
         url: streamUrl,
-        type
+        type,
+        tv_archive: ch.tv_archive || 0,
+        tv_archive_duration: ch.tv_archive_duration || 0
       };
 
       if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
