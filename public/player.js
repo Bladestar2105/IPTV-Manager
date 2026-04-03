@@ -651,16 +651,44 @@ function escapeHtml(unsafe) {
         });
 
         // Click to play from EPG
-        bar.addEventListener('click', (function(channel) {
+        bar.addEventListener('click', (function(channel, program) {
           return function(e) {
             e.stopPropagation();
+            var nowSec = Math.floor(Date.now() / 1000);
+
+            // Check if it's a past program and channel supports catchup
+            if (program.stop < nowSec && channel.tv_archive) {
+              var catchupDuration = Math.round((program.stop - program.start) / 60); // duration in minutes
+              var d = new Date(program.start * 1000);
+              var pad = function(n) { return n < 10 ? '0' + n : n; };
+              var startTime = d.getUTCFullYear() + '-' + pad(d.getUTCMonth()+1) + '-' + pad(d.getUTCDate()) + ':' + pad(d.getUTCHours()) + '-' + pad(d.getUTCMinutes());
+
+              var urlObj = new URL(channel.url, window.location.origin);
+              var isTokenAuth = urlObj.pathname.includes('/token/auth/');
+              var catchupUrl = channel.url;
+              if (isTokenAuth) {
+                  catchupUrl = channel.url.replace('/live/token/auth/', '/timeshift/token/auth/' + catchupDuration + '/' + startTime + '/');
+              } else {
+                  var parts = channel.url.split('?')[0].split('/');
+                  var filename = parts.pop();
+                  catchupUrl = channel.url.replace('/live/', '/timeshift/').replace(filename, catchupDuration + '/' + startTime + '/' + filename);
+              }
+
+              var targetChannel = Object.assign({}, channel, {
+                url: catchupUrl,
+                name: channel.name + ' (Catchup: ' + program.title + ')'
+              });
+            } else {
+              var targetChannel = channel;
+            }
+
             document.querySelectorAll('.channel-row').forEach(function(el) { el.classList.remove('active'); });
             var sidebarRows = sidebarEl.querySelectorAll('.channel-row');
             var idx = currentChannels.indexOf(channel);
             if (idx >= 0 && sidebarRows[idx]) sidebarRows[idx].classList.add('active');
-            playStream(channel);
+            playStream(targetChannel);
           };
-        })(ch));
+        })(ch, prog));
 
         epgRow.appendChild(bar);
       });
