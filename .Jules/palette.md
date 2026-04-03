@@ -1,3 +1,7 @@
-## 2026-03-21 - Added Accessibility Roles and Labels to Player UI
-**Learning:** Custom javascript tooltips like `program-tooltip` and native media elements like `<video>` may visually make sense but need explicit definitions (`role="tooltip"`, `aria-hidden`) or accessible naming (`aria-label`) to ensure correct parsing by assistive technology. Simply showing and hiding a div with `display` leaves screen readers unaware of the element's actual visibility state unless `aria-hidden` is explicitly updated.
-**Action:** When implementing custom tooltips driven by JavaScript events (e.g. `mouseenter`, `mouseleave`), always define the element with `role="tooltip"` and explicitly toggle `aria-hidden` to "false" when displayed and "true" when hidden. Furthermore, all primary media components (like `<video>`) should contain descriptive `aria-label` properties, complete with i18n data bindings for localization.
+## 2026-03-20 - Missing ARIA Attributes in Bootstrap Tabs
+**Learning:** Bootstrap's tab components (`.nav-tabs`, `.nav-item`, `.nav-link`, `.tab-pane`) do not automatically receive the necessary ARIA roles and attributes required for screen reader accessibility in this vanilla JS implementation.
+**Action:** When implementing or updating Bootstrap tabbed interfaces (like `#user-tabs`), explicitly add `role="presentation"` to the `li.nav-item` wrappers, add `role="tab"`, `aria-controls`, and `aria-selected` to the tab `<button>` elements, and apply `role="tabpanel"` with `aria-labelledby` to the corresponding `.tab-pane` content containers.
+
+## 2026-03-20 - Skip-to-Content Link Focus Routing
+**Learning:** The "Skip to content" link at the top of the document correctly points to `#main-content`, but the target container lacked the ability to receive programmatic focus, causing the skip link to fail in some browsers or screen reader configurations.
+**Action:** Always add `tabindex="-1"` to the target container of a skip link (e.g., `<div id="main-content" tabindex="-1">`) to ensure reliable focus management and proper accessibility.
