@@ -640,11 +640,15 @@ function escapeHtml(unsafe) {
             ttTime.textContent = dateStr + ', ' + startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' \u2013 ' + stopDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             ttDesc.textContent = program.desc || '';
             tooltip.style.display = 'block';
+            tooltip.setAttribute('aria-hidden', 'false');
             positionTooltip(e);
           };
         })(prog));
         bar.addEventListener('mousemove', positionTooltip);
-        bar.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
+        bar.addEventListener('mouseleave', function() {
+          tooltip.style.display = 'none';
+          tooltip.setAttribute('aria-hidden', 'true');
+        });
 
         // Click to play from EPG
         bar.addEventListener('click', (function(channel) {
