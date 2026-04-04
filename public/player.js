@@ -703,10 +703,12 @@ function escapeHtml(unsafe) {
               var catchupUrl = channel.url;
               if (isTokenAuth) {
                   catchupUrl = channel.url.replace('/live/token/auth/', '/timeshift/token/auth/' + catchupDuration + '/' + startTime + '/');
+                  catchupUrl = catchupUrl.replace(/\.ts($|\?)/, '.m3u8$1');
               } else {
                   var parts = channel.url.split('?')[0].split('/');
                   var filename = parts.pop();
                   catchupUrl = channel.url.replace('/live/', '/timeshift/').replace(filename, catchupDuration + '/' + startTime + '/' + filename);
+                  catchupUrl = catchupUrl.replace(/\.ts($|\?)/, '.m3u8$1');
               }
 
               var targetChannel = Object.assign({}, channel, {
