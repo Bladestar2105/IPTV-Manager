@@ -551,7 +551,8 @@ export const xmltv = async (req, res) => {
     if (user.is_share_guest) return res.sendStatus(403);
 
     // Get allowed EPG IDs for this user
-    const rows = db.prepare(`
+    const allowedIds = new Set();
+    const stmt = db.prepare(`
         SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -559,9 +560,14 @@ export const xmltv = async (req, res) => {
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ? AND uc.is_hidden = 0
         AND (map.epg_channel_id IS NOT NULL OR pc.epg_channel_id IS NOT NULL)
-    `).all(user.id);
+    `);
 
-    const allowedIds = new Set(rows.map(r => r.epg_id).filter(id => id));
+    // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
+    // 🎯 Why: Using .all().map() creates massive intermediate arrays in V8 memory.
+    // 📊 Impact: Significantly reduces peak garbage collection pressure and memory usage for large EPGs.
+    for (const r of stmt.iterate(user.id)) {
+        if (r.epg_id) allowedIds.add(r.epg_id);
+    }
 
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
