@@ -1176,6 +1176,10 @@ function escapeHtml(unsafe) {
 
   // ─── EPG Navigation ───
   async function navigateEpg(offsetHours) {
+    loadingEl.style.display = 'flex';
+    loadingEl.classList.remove('d-none');
+    var loadingTextSpan = loadingEl.querySelector('span');
+    if (loadingTextSpan) loadingTextSpan.textContent = t('loadingEpg') || 'Loading EPG...';
     timelineStart += offsetHours * 3600;
     var nowSec = Math.floor(Date.now() / 1000);
     var maxPast = nowSec - (window.maxCatchupHours * 3600);
@@ -1209,6 +1213,9 @@ function escapeHtml(unsafe) {
       }
     } catch (e) {
       console.warn('EPG navigation fetch failed:', e.message);
+    } finally {
+      loadingEl.style.display = 'none';
+      loadingEl.classList.add('d-none');
     }
 
     renderTimeline();
