@@ -33,7 +33,7 @@
   const ROW_HEIGHT = 48;
   const TIMELINE_HOURS = 36;
   const CATCHUP_PAST_HOURS = 12;
-  let timelineStart = Math.floor(Date.now() / 1000) - (CATCHUP_PAST_HOURS * 3600);
+  let timelineStart = Math.floor(Date.now() / 1000) - ((window.maxCatchupHours ? Math.min(12, window.maxCatchupHours) : CATCHUP_PAST_HOURS) * 3600);
   timelineStart = timelineStart - (timelineStart % 1800);
 
   // ─── DOM Elements ───
@@ -217,6 +217,15 @@ function escapeHtml(unsafe) {
       var res = await fetch('/api/player/channels.json?' + getAuthParams());
       if (!res.ok) throw new Error('Channels Fetch Error: ' + res.status);
       allChannels = await res.json();
+      var maxCatchupDays = 0;
+      allChannels.forEach(function(ch) {
+         if (ch.tv_archive && ch.tv_archive_duration) {
+             var days = parseInt(ch.tv_archive_duration, 10);
+             if (!isNaN(days) && days > maxCatchupDays) maxCatchupDays = days;
+         }
+      });
+      // Allow navigation into past up to max CatchUp days, or default 1 day if none
+      window.maxCatchupHours = Math.max(24, maxCatchupDays * 24);
       console.log('Loaded ' + allChannels.length + ' channels');
 
       // 2. Fetch EPG Schedule
@@ -1168,6 +1177,12 @@ function escapeHtml(unsafe) {
   // ─── EPG Navigation ───
   async function navigateEpg(offsetHours) {
     timelineStart += offsetHours * 3600;
+    var nowSec = Math.floor(Date.now() / 1000);
+    var maxPast = nowSec - (window.maxCatchupHours * 3600);
+    if (timelineStart < maxPast) {
+        timelineStart = maxPast;
+        showToast(t('epgMaxPastReached') || 'Maximum CatchUp history reached', 'info', 3000);
+    }
     timelineStart = timelineStart - (timelineStart % 1800);
 
     // Fetch EPG data for the new range
@@ -1201,7 +1216,7 @@ function escapeHtml(unsafe) {
   }
 
   function scrollToNow() {
-    timelineStart = Math.floor(Date.now() / 1000) - (CATCHUP_PAST_HOURS * 3600);
+    timelineStart = Math.floor(Date.now() / 1000) - ((window.maxCatchupHours ? Math.min(12, window.maxCatchupHours) : CATCHUP_PAST_HOURS) * 3600);
     timelineStart = timelineStart - (timelineStart % 1800);
     navigateEpg(0);
     requestAnimationFrame(function() {
