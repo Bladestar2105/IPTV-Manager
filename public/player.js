@@ -703,10 +703,12 @@ function escapeHtml(unsafe) {
               var catchupUrl = channel.url;
               if (isTokenAuth) {
                   catchupUrl = channel.url.replace('/live/token/auth/', '/timeshift/token/auth/' + catchupDuration + '/' + startTime + '/');
+                  catchupUrl = catchupUrl.replace(/\.ts($|\?)/, '.m3u8$1');
               } else {
                   var parts = channel.url.split('?')[0].split('/');
                   var filename = parts.pop();
                   catchupUrl = channel.url.replace('/live/', '/timeshift/').replace(filename, catchupDuration + '/' + startTime + '/' + filename);
+                  catchupUrl = catchupUrl.replace(/\.ts($|\?)/, '.m3u8$1');
               }
 
               var targetChannel = Object.assign({}, channel, {
@@ -1176,6 +1178,10 @@ function escapeHtml(unsafe) {
 
   // ─── EPG Navigation ───
   async function navigateEpg(offsetHours) {
+    loadingEl.style.display = 'flex';
+    loadingEl.classList.remove('d-none');
+    var loadingTextSpan = loadingEl.querySelector('span');
+    if (loadingTextSpan) loadingTextSpan.textContent = t('loadingEpg') || 'Loading EPG...';
     timelineStart += offsetHours * 3600;
     var nowSec = Math.floor(Date.now() / 1000);
     var maxPast = nowSec - (window.maxCatchupHours * 3600);
@@ -1209,6 +1215,9 @@ function escapeHtml(unsafe) {
       }
     } catch (e) {
       console.warn('EPG navigation fetch failed:', e.message);
+    } finally {
+      loadingEl.style.display = 'none';
+      loadingEl.classList.add('d-none');
     }
 
     renderTimeline();
