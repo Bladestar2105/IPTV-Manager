@@ -95,21 +95,28 @@ export const playerApi = async (req, res) => {
     }
 
     const getUserCategoriesByType = (type) => {
-      const cats = db.prepare(`
+      // ⚡ Bolt: Replace .all().map() with .iterate() to eliminate intermediate V8 array allocation overhead
+      // 🎯 Why: Using .all().map() creates intermediate arrays. iterate() streams rows directly from SQLite.
+      // 📊 Impact: Lowers peak memory usage and garbage collection pressure when processing large category lists.
+      const stmt = db.prepare(`
         SELECT DISTINCT cat.*
         FROM user_categories cat
         JOIN user_channels uc ON uc.user_category_id = cat.id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = ? AND uc.is_hidden = 0
         ORDER BY cat.sort_order
-      `).all(user.id, type);
+      `);
 
-      return cats.map(c => ({
-        category_id: String(c.id),
-        category_name: c.name,
-        parent_id: 0,
-        is_adult: c.is_adult || 0
-      }));
+      const categories = [];
+      for (const c of stmt.iterate(user.id, type)) {
+        categories.push({
+          category_id: String(c.id),
+          category_name: c.name,
+          parent_id: 0,
+          is_adult: c.is_adult || 0
+        });
+      }
+      return categories;
     };
 
     if (action === 'get_live_categories') {
