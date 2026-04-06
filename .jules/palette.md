@@ -25,3 +25,6 @@
 ## 2026-04-01 - Missing aria-busy in setLoadingState
 **Learning:** The global `setLoadingState` utility function disabled buttons and added a visual spinner, but failed to set `aria-busy="true"`. Screen readers would announce the button as disabled but might not convey that a background process is actively running, leaving visually impaired users unsure if their action succeeded or is still processing.
 **Action:** Always toggle `aria-busy="true"` and `aria-busy="false"` (or remove it) in tandem with the `disabled` state when managing loading UI for asynchronous operations to provide immediate feedback to screen readers.
+## 2026-04-06 - Dynamic Element i18n Data Tags Ignored
+**Learning:** Adding `data-i18n-label` or `data-i18n-title` tags to elements generated dynamically via `.innerHTML` (such as the Toast Notification "Close" button) will fail to apply accessibility labels. The translation hydration script (`applyTranslations()`) only runs on page load. Sighted users won't get hover tooltips and screen readers won't announce the button correctly.
+**Action:** For elements dynamically injected into the DOM, manually translate accessibility strings using the `t()` function during string interpolation (e.g., `aria-label="${escapeHtml(t('close'))}"`) instead of relying on data tags.
