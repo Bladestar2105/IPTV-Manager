@@ -10,8 +10,13 @@ import { BCRYPT_ROUNDS } from '../config/constants.js';
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const users = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes FROM users ORDER BY id').all();
-    const result = users.map(u => {
+    // ⚡ Bolt: Replace .all().map() with .iterate() to eliminate intermediate V8 array allocation
+    // 🎯 Why: Loading a massive list of users into memory, only to map it into another array, causes double memory allocation and GC pressure.
+    // 📊 Impact: Lowers peak memory usage and garbage collection overhead, especially on instances with many users.
+    const stmt = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes FROM users ORDER BY id');
+    const result = [];
+
+    for (const u of stmt.iterate()) {
         let plainPassword = null;
         if (req.user.is_admin && u.plain_password) {
             try {
@@ -21,7 +26,7 @@ export const getUsers = (req, res) => {
             }
         }
 
-        return {
+        result.push({
             id: u.id,
             username: u.username,
             plain_password: plainPassword || '********',
@@ -33,8 +38,9 @@ export const getUsers = (req, res) => {
             expiry_date: u.expiry_date,
             allowed_countries: u.allowed_countries,
             notes: u.notes
-        };
-    });
+        });
+    }
+
     res.json(result);
   } catch (e) { res.status(500).json({error: e.message}); }
 };

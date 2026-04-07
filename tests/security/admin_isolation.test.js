@@ -90,13 +90,16 @@ describe('Admin Isolation', () => {
 
     it('getUsers should only select from users table', () => {
         const req = { user: { is_admin: 1 } };
-        const res = { json: vi.fn() };
+        const res = {
+            json: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
 
         db.prepare.mockImplementation((query) => {
             if (query.includes('FROM users ORDER BY id')) {
-                return { all: vi.fn().mockReturnValue([]) };
+                return { iterate: vi.fn(function* () { yield* []; }) };
             }
-            return { all: vi.fn() };
+            return { iterate: vi.fn(function* () { yield* []; }) };
         });
 
         userController.getUsers(req, res);
