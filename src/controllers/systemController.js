@@ -880,6 +880,24 @@ export const getStatistics = async (req, res) => {
   }
 };
 
+export const terminateActiveStream = async (req, res) => {
+  try {
+    if (!req.user?.is_admin) return res.status(403).json({ error: 'Access denied' });
+
+    const streamId = (req.params.streamId || '').trim();
+    if (!streamId) return res.status(400).json({ error: 'Stream ID required' });
+
+    const allStreams = await streamManager.getAll();
+    const exists = allStreams.some(s => s.id === streamId);
+    if (!exists) return res.status(404).json({ error: 'Stream not found' });
+
+    await streamManager.remove(streamId);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 export const resetStatistics = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});

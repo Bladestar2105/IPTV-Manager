@@ -3004,6 +3004,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    const terminateBtn = e.target.closest('.terminate-stream-btn');
+    if (terminateBtn) {
+        terminateActiveStream(terminateBtn.dataset.streamId);
+        return;
+    }
+
     // 4. Simple action buttons (no args)
     const actionMap = {
         'action-logout': handleLogout,
@@ -3400,7 +3406,7 @@ async function loadStatistics() {
 
     activeTbody.innerHTML = '';
     if (data.active_streams.length === 0) {
-        activeTbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">${t('noResults', {search: ''})}</td></tr>`;
+        activeTbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">${t('noResults', {search: ''})}</td></tr>`;
     } else {
         data.active_streams.forEach(s => {
             const tr = document.createElement('tr');
@@ -3408,11 +3414,17 @@ async function loadStatistics() {
             if (s.logo) {
                 logoHtml = `<img src="${getProxiedUrl(s.logo)}" alt="Logo" width="20" class="me-1" data-on-error="hide">`;
             }
+            const actionLabel = t('terminateStream');
             tr.innerHTML = `
                 <td>${escapeHtml(s.username)}</td>
                 <td>${logoHtml}${escapeHtml(s.channel_name)}</td>
                 <td>${formatDuration(s.duration)}</td>
                 <td>${escapeHtml(s.ip || '-')}</td>
+                <td>
+                  <button class="btn btn-sm btn-outline-danger terminate-stream-btn" data-stream-id="${escapeHtml(s.id)}" title="${escapeHtml(actionLabel)}">
+                    ${escapeHtml(actionLabel)}
+                  </button>
+                </td>
             `;
             activeTbody.appendChild(tr);
         });
@@ -3464,6 +3476,18 @@ async function loadStatistics() {
   } catch(e) {
     console.error('Stats error:', e);
   }
+}
+
+async function terminateActiveStream(streamId) {
+    if (!streamId) return;
+    if (!confirm(t('confirmTerminateStream'))) return;
+
+    try {
+        await fetchJSON(`/api/statistics/streams/${encodeURIComponent(streamId)}/terminate`, { method: 'POST' });
+        await loadStatistics();
+    } catch (e) {
+        alert(`${t('errorPrefix')} ${e.message}`);
+    }
 }
 
 async function resetStatistics() {

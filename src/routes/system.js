@@ -33,6 +33,7 @@ router.delete('/sync-configs/:id', authenticateToken, systemController.deleteSyn
 router.get('/sync-logs', authenticateToken, systemController.getSyncLogs);
 
 router.get('/statistics', authenticateToken, systemController.getStatistics);
+router.post('/statistics/streams/:streamId/terminate', authenticateToken, systemController.terminateActiveStream);
 router.post('/statistics/reset', authenticateToken, systemController.resetStatistics);
 
 router.post('/geoip/update', authenticateToken, systemController.updateGeoIpDatabase);
