@@ -7,3 +7,7 @@
 ## 2024-05-18 - [SQLite Performance: Replace .all().map() with .iterate()]
 **Learning:** When rendering huge payloads in SQLite endpoints (like xtreamController.js generating tens of thousands of channel entries), chaining .all() to fetch all rows into a massive array followed by .map() duplicates memory allocations and causes V8 GC pressure.
 **Action:** Always use stmt.iterate() in a for...of loop to stream rows natively from better-sqlite3 when handling massive datasets, pushing directly to the final payload array.
+
+## 2024-04-07 - [Promise.all with Mass File I/O]
+**Learning:** Using `Promise.all` with `fs.promises.unlink` for massive file I/O operations (like pruning a large picon cache) can rapidly exhaust the system's file descriptors (`EMFILE`) and block the Node.js event loop due to spawning thousands of concurrent promises.
+**Action:** Always use sequential `for...of` loops or batched processing chunks when performing file system operations on unbound, potentially massive arrays of files.

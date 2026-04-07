@@ -298,7 +298,11 @@ router.delete('/picons', authenticateToken, async (req, res) => {
             throw err;
         }
 
-        await Promise.all(files.map(file => fs.promises.unlink(path.join(PICON_CACHE_DIR, file))));
+        // ⚡ Bolt: Replace Promise.all with sequential file deletion
+        // 🎯 Why: Promise.all with thousands of files can exhaust file descriptors and block the event loop
+        for (const file of files) {
+            await fs.promises.unlink(path.join(PICON_CACHE_DIR, file));
+        }
 
         // Also clear the provider_icon_cache table
         try {
