@@ -41,6 +41,21 @@ export const cppEndpoint = (req, res) => {
   res.json(true);
 };
 
+const streamJsonResponse = (res, stmt, params, mapFn) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.write('[');
+  let isFirst = true;
+  let i = 0;
+  for (const row of stmt.iterate(...params)) {
+    if (!isFirst) res.write(',');
+    res.write(JSON.stringify(mapFn(row, i)));
+    isFirst = false;
+    i++;
+  }
+  res.write(']');
+  res.end();
+};
+
 export const playerApi = async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
@@ -157,12 +172,10 @@ export const playerApi = async (req, res) => {
       const stmt = db.prepare(query);
 
       const nowStr = now.toString();
-      const result = [];
-      let i = 0;
-      for (const ch of stmt.iterate(...params)) {
+      return streamJsonResponse(res, stmt, params, (ch, i) => {
         let iconUrl = ch.logo || '';
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
-        result.push({
+        return {
           num: i + 1,
           name: displayName,
           stream_type: 'live',
@@ -177,10 +190,8 @@ export const playerApi = async (req, res) => {
           tv_archive: ch.tv_archive || 0,
           direct_source: '',
           tv_archive_duration: ch.tv_archive_duration || 0
-        });
-        i++;
-      }
-      return res.json(result);
+        };
+      });
     }
 
     if (action === 'get_vod_streams') {
@@ -207,11 +218,9 @@ export const playerApi = async (req, res) => {
       const stmt = db.prepare(query);
 
       const nowStr = now.toString();
-      const result = [];
-      let i = 0;
-      for (const ch of stmt.iterate(...params)) {
+      return streamJsonResponse(res, stmt, params, (ch, i) => {
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
-        result.push({
+        return {
           num: i + 1,
           name: displayName,
           stream_type: 'movie',
@@ -224,10 +233,8 @@ export const playerApi = async (req, res) => {
           container_extension: ch.mime_type || 'mp4',
           custom_sid: null,
           direct_source: ''
-        });
-        i++;
-      }
-      return res.json(result);
+        };
+      });
     }
 
     if (action === 'get_series') {
@@ -256,9 +263,7 @@ export const playerApi = async (req, res) => {
       const stmt = db.prepare(query);
 
       const nowStr = now.toString();
-      const result = [];
-      let i = 0;
-      for (const ch of stmt.iterate(...params)) {
+      return streamJsonResponse(res, stmt, params, (ch, i) => {
         let backdrop_path = [];
         if (ch.backdrop_path) {
              try {
@@ -269,7 +274,7 @@ export const playerApi = async (req, res) => {
 
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
 
-        result.push({
+        return {
           num: i + 1,
           name: displayName,
           series_id: Number(ch.user_channel_id),
@@ -286,10 +291,8 @@ export const playerApi = async (req, res) => {
           youtube_trailer: ch.youtube_trailer || '',
           episode_run_time: ch.episode_run_time || '',
           category_id: String(ch.user_category_id)
-        });
-        i++;
-      }
-      return res.json(result);
+        };
+      });
     }
 
     if (action === 'get_series_info') {
@@ -652,25 +655,23 @@ export const playerChannelsJson = async (req, res) => {
         }
     }
 
-    const result = [];
+    // ⚡ Bolt: Build JSON string iteratively instead of allocating a massive intermediate array
+    // 🎯 Why: JSON.stringify on an array of 50,000+ objects consumes significant V8 heap memory and blocks event loop.
+    // 📊 Impact: Significantly lowers RAM usage and speeds up response generation for player JSON payload.
+    let jsonOutput = '[';
+    let isFirst = true;
 
     if (!isExpired) {
         // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
-        // 🎯 Why: Generating the prefix repeatedly for 50,000+ items consumes unnecessary CPU cycles.
-        // 📊 Impact: Optimizes the JSON payload generation loop.
         const livePrefix = `${host}/live/token/auth/`;
         const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
         const moviePrefix = `${host}/movie/token/auth/`;
         const seriesPrefix = `${host}/series/token/auth/`;
 
-        // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-        // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
-        // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
         for (const ch of stmt.iterate(user.id)) {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
-          // Resolve logo: prefer EPG logo if provider has use_mapped_epg_icon enabled
           const epgId = ch.manual_epg_id || ch.epg_channel_id;
           let logo = ch.logo || '';
           if (ch.use_mapped_epg_icon && epgId) {
@@ -692,46 +693,50 @@ export const playerChannelsJson = async (req, res) => {
           } else if (ch.stream_type === 'series') {
              type = 'series';
              streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
-      } else {
-         if (ch.mime_type === 'mpd') {
-             streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
-         } else {
-             streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;
-         }
-      }
+          } else {
+             if (ch.mime_type === 'mpd') {
+                 streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
+             } else {
+                 streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;
+             }
+          }
 
-      const item = {
-        name,
-        group,
-        logo,
-        epg_id: epgId,
-        url: streamUrl,
-        type,
-        tv_archive: ch.tv_archive || 0,
-        tv_archive_duration: ch.tv_archive_duration || 0
-      };
+          const item = {
+            name,
+            group,
+            logo,
+            epg_id: epgId,
+            url: streamUrl,
+            type,
+            tv_archive: ch.tv_archive || 0,
+            tv_archive_duration: ch.tv_archive_duration || 0
+          };
 
-      if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
-        if (ch.plot) item.plot = ch.plot;
-        if (ch.cast) item.cast = ch.cast;
-        if (ch.director) item.director = ch.director;
-        if (ch.genre) item.genre = ch.genre;
-        if (ch.releaseDate) item.releaseDate = ch.releaseDate;
-        if (ch.rating) item.rating = ch.rating;
-        if (ch.episode_run_time) item.duration = ch.episode_run_time;
-      }
+          if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
+            if (ch.plot) item.plot = ch.plot;
+            if (ch.cast) item.cast = ch.cast;
+            if (ch.director) item.director = ch.director;
+            if (ch.genre) item.genre = ch.genre;
+            if (ch.releaseDate) item.releaseDate = ch.releaseDate;
+            if (ch.rating) item.rating = ch.rating;
+            if (ch.episode_run_time) item.duration = ch.episode_run_time;
+          }
 
-      if (ch.drm_license_type || ch.drm_license_key) {
-          item.drm = {};
-          if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-          if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
-      }
+          if (ch.drm_license_type || ch.drm_license_key) {
+              item.drm = {};
+              if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
+              if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
+          }
 
-          result.push(item);
+          if (!isFirst) {
+            jsonOutput += ',';
+          }
+          jsonOutput += JSON.stringify(item);
+          isFirst = false;
         }
     }
+    jsonOutput += ']';
 
-    const jsonOutput = JSON.stringify(result);
     channelsJsonCache.set(cacheKey, jsonOutput);
 
     res.setHeader('Content-Type', 'application/json');
