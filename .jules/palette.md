@@ -1,30 +1,3 @@
-## 2026-03-12 - Consistent Password Toggle Accessibility
-**Learning:** The password visibility toggle pattern in this app is generally good, using `data-toggle-password` and automatically updating the aria-label in JS (e.g. `public/app.js` line 416). However, some inputs (like the GeoIP License Key) use a different/inconsistent i18n label key (`togglePasswordVisibility` instead of `show_password`), and also have hardcoded `aria-label` attributes that bypass the dynamic translation, and use a different icon (`<i class="bi bi-eye"></i>` instead of `👁️`). This causes inconsistency for screen readers and visual users.
-**Action:** Standardized all password toggle buttons to use `data-i18n-label="show_password"`, `data-i18n-title="show_password"`, and the `👁️` icon, ensuring the global toggle script in `app.js` correctly manages their state and translations.
-## 2026-03-12 - Toast Close Button Missing Tooltip
-**Learning:** The toast notification close buttons only had a `data-i18n-label`, but were missing a `data-i18n-title` like all other `.btn-close` buttons in the UI. Sighted mouse users didn't get a tooltip on hover for the toast close button.
-**Action:** Add `data-i18n-title="close"` to the toast close button HTML template to ensure parity with modal close buttons.
-## 2026-03-12 - Emojis vs Icon Fonts in Form Fields
-**Learning:** When standardizing form inputs, do not blindly replace existing icon font classes (like `.bi-eye`) with emojis (like `👁️`) just to match other hardcoded parts of the app. Emojis break visual consistency, don't inherit text colors (crucial for dark mode), and removing hardcoded `aria-label`s before JS hydration is an accessibility regression.
-**Action:** Avoid replacing proper icon fonts with emojis. Ensure icon-only buttons always have a fallback `aria-label` attribute in HTML.
-## 2026-03-18 - Add ARIA attributes to mobile navbar toggler
-**Learning:** The Bootstrap mobile navbar toggle button (`.navbar-toggler`) was missing standard ARIA attributes (`aria-controls` and `aria-expanded`), causing screen readers to not properly announce its state or purpose.
-**Action:** When implementing or modifying Bootstrap collapse components, always explicitly initialize `aria-controls="<target_id>"` and `aria-expanded="false"` in the HTML markup. Bootstrap's JS will handle toggling the state, but the initial markup must be compliant.
-## 2026-03-29 - Added missing ARIA attributes to modals
-**Learning:** Bootstrap modals in this app consistently missed `aria-labelledby` linking the modal container to its title, and some lacked `aria-hidden="true"`. This is a critical a11y issue because screen readers won't announce the modal's name when focus shifts inside.
-**Action:** Always ensure new modals include `aria-labelledby="<title_id>"` and `aria-hidden="true"` on the `.modal` container, and that the title element has the matching ID.
-## 2026-03-30 - Added missing ARIA attributes to player tabs and sidebar toggle
-**Learning:** The vanilla JavaScript player UI lacked proper ARIA roles (, ) and states (, , ) for its navigation tabs and mobile sidebar toggle. This prevented screen readers from correctly announcing tab selection and sidebar expansion states.
-**Action:** Explicitly set , , and  attributes in the HTML markup for the player tabs, and manually synchronized  and  in  during click events.
-## 2026-03-31 - Added missing ARIA attributes to player tabs and sidebar toggle
-**Learning:** The vanilla JavaScript player UI lacked proper ARIA roles (`role="tablist"`, `role="tab"`) and states (`aria-selected`, `aria-expanded`, `aria-controls`) for its navigation tabs and mobile sidebar toggle. This prevented screen readers from correctly announcing tab selection and sidebar expansion states.
-**Action:** Explicitly set `role`, `aria-controls`, and `aria-selected` attributes in the HTML markup for the player tabs, and manually synchronized `aria-selected` and `aria-expanded` in `public/player.js` during click events.
-## 2026-04-01 - Missing tooltip on player search clear button
-**Learning:** The `#search-input-clear` button in the web player UI (`public/player.html`) lacked a `data-i18n-title` attribute, unlike its counterpart in the main dashboard (`public/index.html`). This meant sighted users hovering over the "✕" icon did not receive a native tooltip explaining its purpose, leading to an inconsistent and less accessible experience.
-**Action:** When adding or auditing icon-only buttons, always ensure both `data-i18n-label` (for ARIA/screen readers) and `data-i18n-title` (for native hover tooltips) are present.
-## 2026-04-01 - Missing aria-busy in setLoadingState
-**Learning:** The global `setLoadingState` utility function disabled buttons and added a visual spinner, but failed to set `aria-busy="true"`. Screen readers would announce the button as disabled but might not convey that a background process is actively running, leaving visually impaired users unsure if their action succeeded or is still processing.
-**Action:** Always toggle `aria-busy="true"` and `aria-busy="false"` (or remove it) in tandem with the `disabled` state when managing loading UI for asynchronous operations to provide immediate feedback to screen readers.
-## 2026-04-06 - Dynamic Element i18n Data Tags Ignored
-**Learning:** Adding `data-i18n-label` or `data-i18n-title` tags to elements generated dynamically via `.innerHTML` (such as the Toast Notification "Close" button) will fail to apply accessibility labels. The translation hydration script (`applyTranslations()`) only runs on page load. Sighted users won't get hover tooltips and screen readers won't announce the button correctly.
-**Action:** For elements dynamically injected into the DOM, manually translate accessibility strings using the `t()` function during string interpolation (e.g., `aria-label="${escapeHtml(t('close'))}"`) instead of relying on data tags.
+## 2025-04-08 - Keyboard Accessibility for Dynamic Player Elements
+**Learning:** In `public/player.js`, dynamically generated list items acting as buttons (such as `.vod-item` for movies/series, `.channel-row` for the sidebar, and `.program-bar` for EPG segments) lacked native keyboard focus (`tabindex`) and keydown handlers, making the web player inaccessible via keyboard navigation.
+**Action:** Always wrap dynamically generated, custom interactive elements with an accessibility helper function (e.g., `makeAccessible(element, clickHandler)`) that injects `tabIndex="0"`, `role="button"`, and a `keydown` listener capturing `Enter` and `Space` keys to invoke the equivalent `onclick` functionality.

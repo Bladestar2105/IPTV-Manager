@@ -36,6 +36,19 @@
   let timelineStart = Math.floor(Date.now() / 1000) - ((window.maxCatchupHours ? Math.min(12, window.maxCatchupHours) : CATCHUP_PAST_HOURS) * 3600);
   timelineStart = timelineStart - (timelineStart % 1800);
 
+  // ─── Utility: Accessibility Helper ───
+  function makeAccessible(element, clickHandler) {
+    element.tabIndex = 0;
+    element.role = 'button';
+    element.onclick = clickHandler;
+    element.onkeydown = function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        clickHandler(e);
+      }
+    };
+  }
+
   // ─── DOM Elements ───
   const catSelect = document.getElementById('category-select');
   const searchInput = document.getElementById('search-input');
@@ -362,7 +375,7 @@ function escapeHtml(unsafe) {
       div.appendChild(info);
       a.appendChild(div);
 
-      a.onclick = (function(stream, el) {
+      makeAccessible(a, (function(stream, el) {
         return function(e) {
           e.preventDefault();
           if (currentType === 'series') {
@@ -373,7 +386,7 @@ function escapeHtml(unsafe) {
           el.classList.add('active');
           playStream(stream);
         };
-      })(s, a);
+      })(s, a));
       frag.appendChild(a);
     });
     listView.appendChild(frag);
@@ -472,7 +485,7 @@ function escapeHtml(unsafe) {
             a.appendChild(plotDiv);
           }
 
-          a.onclick = (function(episode, el) {
+          makeAccessible(a, (function(episode, el) {
              return function(e) {
                e.preventDefault();
                document.querySelectorAll('.vod-item').forEach(function(e) { e.classList.remove('active'); });
@@ -493,7 +506,7 @@ function escapeHtml(unsafe) {
 
                playStream(epStream);
              };
-          })(ep, a);
+          })(ep, a));
 
           frag.appendChild(a);
         });
@@ -598,14 +611,14 @@ function escapeHtml(unsafe) {
 
       rowDiv.appendChild(nameContainer);
 
-      rowDiv.onclick = (function(channel, row) {
+      makeAccessible(rowDiv, (function(channel, row) {
         return function() {
           document.querySelectorAll('.channel-row').forEach(function(el) { el.classList.remove('active'); });
           row.classList.add('active');
           playStream(channel);
           if (isMobile) closeSidebar();
         };
-      })(ch, rowDiv);
+      })(ch, rowDiv));
 
       fragSidebar.appendChild(rowDiv);
 
@@ -686,7 +699,7 @@ function escapeHtml(unsafe) {
         });
 
         // Click to play from EPG
-        bar.addEventListener('click', (function(channel, program) {
+        makeAccessible(bar, (function(channel, program) {
           return function(e) {
             e.stopPropagation();
             var nowSec = Math.floor(Date.now() / 1000);
@@ -733,7 +746,7 @@ function escapeHtml(unsafe) {
       // If no EPG data, show empty clickable row
       if (programs.length === 0) {
         epgRow.style.cursor = 'pointer';
-        epgRow.onclick = (function(channel) {
+        makeAccessible(epgRow, (function(channel) {
           return function() {
             document.querySelectorAll('.channel-row').forEach(function(el) { el.classList.remove('active'); });
             var sidebarRows = sidebarEl.querySelectorAll('.channel-row');
@@ -741,7 +754,7 @@ function escapeHtml(unsafe) {
             if (idx >= 0 && sidebarRows[idx]) sidebarRows[idx].classList.add('active');
             playStream(channel);
           };
-        })(ch);
+        })(ch));
       }
 
       fragRows.appendChild(epgRow);
