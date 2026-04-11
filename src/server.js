@@ -72,8 +72,28 @@ let redisClient = null;
       const newWorker = cluster.fork(env);
       if (isScheduler) schedulerPid = newWorker.process.pid;
     });
+
+    // Forward stream termination requests to the worker that owns the stream.
+    cluster.on('message', (worker, message) => {
+      if (!message || message.type !== 'terminate_stream' || !message.targetPid || !message.streamId) return;
+      const targetWorker = Object.values(cluster.workers).find(w => w && w.process && w.process.pid === message.targetPid);
+      if (!targetWorker) return;
+      targetWorker.send({
+        type: 'terminate_stream',
+        streamId: message.streamId
+      });
+    });
   } else {
     // Worker Process
+
+    process.on('message', async (message) => {
+      if (!message || message.type !== 'terminate_stream' || !message.streamId) return;
+      try {
+        await streamManager.remove(message.streamId);
+      } catch (e) {
+        console.error('Failed to terminate forwarded stream:', e.message);
+      }
+    });
 
     // Start Schedulers if flagged
     if (process.env.IS_SCHEDULER === 'true') {

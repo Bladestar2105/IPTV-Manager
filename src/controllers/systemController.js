@@ -888,9 +888,27 @@ export const terminateActiveStream = async (req, res) => {
     if (!streamId) return res.status(400).json({ error: 'Stream ID required' });
 
     const allStreams = await streamManager.getAll();
-    const exists = allStreams.some(s => s.id === streamId);
-    if (!exists) return res.status(404).json({ error: 'Stream not found' });
+    const stream = allStreams.find(s => s.id === streamId);
+    if (!stream) return res.status(404).json({ error: 'Stream not found' });
 
+    // If the stream belongs to this worker, terminate directly.
+    if (!stream.worker_pid || stream.worker_pid === process.pid) {
+      await streamManager.remove(streamId);
+      return res.json({ success: true });
+    }
+
+    // In cluster mode, ask primary process to forward the terminate command
+    // to the worker that owns this stream resource.
+    if (typeof process.send === 'function') {
+      process.send({
+        type: 'terminate_stream',
+        streamId,
+        targetPid: stream.worker_pid
+      });
+      return res.json({ success: true, forwarded: true });
+    }
+
+    // Single-process fallback.
     await streamManager.remove(streamId);
     res.json({ success: true });
   } catch (e) {
