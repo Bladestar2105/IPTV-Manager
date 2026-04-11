@@ -38,7 +38,7 @@ export async function checkProviderExpiry(providerId) {
       }
 
       db.prepare('UPDATE providers SET expiry_date = ? WHERE id = ?').run(expiry, providerId);
-      console.log(`✅ Updated expiry date for provider ${provider.name}: ${expiry}`);
+      console.info(`✅ Updated expiry date for provider ${provider.name}: ${expiry}`);
       return expiry;
     }
   } catch (e) {
@@ -80,7 +80,7 @@ export async function performSync(providerId, userId, isManual = false) {
     // Decrypt password for usage
     provider.password = decrypt(provider.password);
 
-    console.log(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
+    console.info(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
 
     // Fetch Data from Provider
     const xtream = createXtreamClient(provider);
@@ -118,7 +118,7 @@ export async function performSync(providerId, userId, isManual = false) {
              if (m3uResp.ok) {
                  const parsed = await parseM3uStream(m3uResp.body);
                  if (parsed.isM3u) {
-                     console.log('  📂 Detected M3U Playlist');
+                     console.debug('  📂 Detected M3U Playlist');
                      m3uMode = true;
 
                      // Map to Xtream format
@@ -182,11 +182,11 @@ export async function performSync(providerId, userId, isManual = false) {
 
     // 2. Movies (VOD)
     try {
-       console.log('Fetching VOD streams...');
+       console.debug('Fetching VOD streams...');
        const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`, { timeout: 60000 });
        if(resp.ok) {
          const vods = await resp.json();
-         console.log(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
+         console.debug(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
          if (Array.isArray(vods)) {
             vods.forEach(c => {
                 c.stream_type = 'movie';
@@ -367,7 +367,7 @@ export async function performSync(providerId, userId, isManual = false) {
           });
 
           categoriesAdded++;
-          console.log(`  ✅ Created category: ${catName} (${catType}) (id=${newCategoryId})`);
+          console.debug(`  ✅ Created category: ${catName} (${catType}) (id=${newCategoryId})`);
         } else if (!mapping && isFirstSync) {
           // First sync: Create mapping without user category
           db.prepare(`
@@ -386,7 +386,7 @@ export async function performSync(providerId, userId, isManual = false) {
             category_type: catType
           });
 
-          console.log(`  📋 Registered category: ${catName} (${catType})`);
+          console.debug(`  📋 Registered category: ${catName} (${catType})`);
         }
       }
 
@@ -504,7 +504,7 @@ export async function performSync(providerId, userId, isManual = false) {
                   if (existingAssignments.has(assignmentKey)) {
                     deleteUserChannel.run(oldUserCatId, existingId);
                     existingAssignments.delete(assignmentKey);
-                    console.log(`  🗑️ Removed moved channel "${newName}" from old user category (id=${oldUserCatId})`);
+                    console.debug(`  🗑️ Removed moved channel "${newName}" from old user category (id=${oldUserCatId})`);
                   }
                 }
               }
@@ -615,7 +615,7 @@ export async function performSync(providerId, userId, isManual = false) {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(providerId, userId, startTime, 'success', channelsAdded, channelsUpdated, categoriesAdded);
 
-    console.log(`✅ Sync completed: ${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`);
+    console.info(`✅ Sync completed: ${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`);
 
   } catch (e) {
     errorMessage = e.message;

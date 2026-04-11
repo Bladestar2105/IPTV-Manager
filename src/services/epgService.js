@@ -10,7 +10,7 @@ import { EPG_DB_PATH } from '../config/constants.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
-    console.log(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
+    console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
     // fetchSafe performs isSafeUrl check
     const response = await fetchSafe(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -39,7 +39,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         try {
             const [chunk, originalStream] = await peekStream(stream);
             if (chunk && chunk.length >= 2 && chunk[0] === 0x1f && chunk[1] === 0x8b) {
-                console.log(`📦 Detected GZIP stream for ${sourceType} ${sourceId}, decompressing...`);
+                console.debug(`📦 Detected GZIP stream for ${sourceType} ${sourceId}, decompressing...`);
 
                 const MAX_EPG_UNCOMPRESSED_SIZE = 500 * 1024 * 1024; // 500MB
                 let decompressedSize = 0;
@@ -235,7 +235,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         // Invalidate EPG logos cache after successful update
         invalidateEpgLogosCache();
 
-        console.log(`✅ EPG updated for ${sourceType} ${sourceId}`);
+        console.info(`✅ EPG updated for ${sourceType} ${sourceId}`);
         return { success: true };
 
     } catch (e) {
@@ -263,7 +263,7 @@ export async function updateProviderEpg(providerId, skipPrune = false) {
 
     // Explicitly check if EPG syncing is enabled for this provider
     if (!provider.epg_enabled) {
-        console.log(`⚠️ Skipping EPG update for disabled provider ${providerId}`);
+        console.debug(`⚠️ Skipping EPG update for disabled provider ${providerId}`);
         return;
     }
 
@@ -327,7 +327,7 @@ async function importChannelsFromProvider(providerId) {
         // Invalidate EPG logos cache after importing channels
         invalidateEpgLogosCache();
 
-        console.log(`✅ Imported ${channels.length} channels from provider ${providerId} into EPG DB`);
+        console.info(`✅ Imported ${channels.length} channels from provider ${providerId} into EPG DB`);
     } catch (e) {
         console.error(`❌ Failed to import channels from provider ${providerId}:`, e.message);
         throw e;
@@ -339,7 +339,7 @@ async function importChannelsFromProvider(providerId) {
 export function pruneOldEpgData(days = 7) {
     const cutoff = Math.floor(Date.now() / 1000) - (days * 86400);
     const result = db.prepare('DELETE FROM epg_programs WHERE stop < ?').run(cutoff);
-    console.log(`🧹 Pruned ${result.changes} old EPG programs`);
+    console.info(`🧹 Pruned ${result.changes} old EPG programs`);
 }
 
 export function deleteEpgSourceData(sourceId, sourceType) {
@@ -628,7 +628,7 @@ function peekStream(stream) {
 
 
 export function clearEpgData() {
-    console.log("🧹 Clearing EPG programs and channels from database...");
+    console.info("🧹 Clearing EPG programs and channels from database...");
 
     // Explicitly begin transaction to ensure consistency
     const transaction = db.transaction(() => {
@@ -646,5 +646,5 @@ export function clearEpgData() {
     // Invalidate EPG logos cache after clearing data
     invalidateEpgLogosCache();
 
-    console.log("✅ EPG data cleared successfully.");
+    console.info("✅ EPG data cleared successfully.");
 }
