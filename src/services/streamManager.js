@@ -14,9 +14,9 @@ class StreamManager {
     this.db = db;
     this.redis = redisClient;
     if (this.redis) {
-      console.log(`⚡ StreamManager using Redis (Worker ${this.pid})`);
+      console.info(`⚡ StreamManager using Redis (Worker ${this.pid})`);
     } else {
-      console.log(`💾 StreamManager using SQLite (Worker ${this.pid})`);
+      console.info(`💾 StreamManager using SQLite (Worker ${this.pid})`);
       if (this.db) {
         try {
           this.stmtAdd = this.db.prepare(`

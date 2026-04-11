@@ -31,7 +31,7 @@ export function startSyncScheduler() {
     }
   }, 60000);
 
-  console.log('📅 Sync Scheduler started');
+  console.info('📅 Sync Scheduler started');
 }
 
 export function startEpgScheduler() {
@@ -69,7 +69,7 @@ export function startEpgScheduler() {
 
         if (lastUpdate + interval <= now) {
           try {
-            console.log(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
+            console.debug(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
 
             if (provider.epg_url && provider.epg_url.trim() !== '') {
               if (!(await isSafeUrl(provider.epg_url))) {
@@ -90,7 +90,7 @@ export function startEpgScheduler() {
       }
     } catch (e) { console.error('EPG Scheduler (Provider) error:', e); }
   }, 60000);
-  console.log('📅 EPG Scheduler started');
+  console.info('📅 EPG Scheduler started');
 }
 
 export function startCleanupScheduler() {
@@ -113,7 +113,7 @@ export function startCleanupScheduler() {
       console.error('Cleanup error:', e);
     }
   }, 3600000); // Every hour
-  console.log('🧹 Cleanup Scheduler started');
+  console.info('🧹 Cleanup Scheduler started');
 }
 
 export function startGeoIpUpdater() {
