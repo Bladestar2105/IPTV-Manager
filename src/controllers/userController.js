@@ -175,14 +175,18 @@ export const createUser = async (req, res) => {
                     providerMap[prov.id] = result.lastInsertRowid;
                 }
 
+                const oldProviderIdsForSync = Object.keys(providerMap);
+
                 // 2. Copy Sync Configs
-                const sourceSyncs = db.prepare('SELECT * FROM sync_configs WHERE user_id = ?').all(sourceUserId);
-                const insertSync = db.prepare(`
-                    INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `);
-                for (const sync of sourceSyncs) {
-                    if (providerMap[sync.provider_id]) {
+                if (oldProviderIdsForSync.length > 0) {
+                    // Optimization: Use IN clause with provider_id (indexed) instead of user_id (not indexed)
+                    const placeholders = Array(oldProviderIdsForSync.length).fill('?').join(',');
+                    const sourceSyncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${placeholders})`).all(...oldProviderIdsForSync);
+                    const insertSync = db.prepare(`
+                        INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    `);
+                    for (const sync of sourceSyncs) {
                         insertSync.run(
                             providerMap[sync.provider_id],
                             newUserId,
@@ -201,12 +205,17 @@ export const createUser = async (req, res) => {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
 
-                // We need to fetch channels for each old provider
-                for (const oldProvId of Object.keys(providerMap)) {
-                    const newProvId = providerMap[oldProvId];
-                    const channels = db.prepare('SELECT * FROM provider_channels WHERE provider_id = ?').all(oldProvId);
+                // ⚡ Bolt: Replace N+1 sequential fetching with a single batched query using an IN clause and .iterate()
+                // 🎯 Why: Executing one query per provider is slow. Loading all channels into a large array with .all() can cause memory pressure.
+                // 📊 Impact: Significant reduction in query overhead and peak memory usage during user cloning.
+                if (oldProviderIdsForSync.length > 0) {
+                    const placeholders = Array(oldProviderIdsForSync.length).fill('?').join(',');
+                    const channelsStmt = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${placeholders})`);
 
-                    for (const ch of channels) {
+                    for (const ch of channelsStmt.iterate(...oldProviderIdsForSync)) {
+                        const newProvId = providerMap[ch.provider_id];
+                        if (!newProvId) continue;
+
                         const result = insertChannel.run(
                             newProvId,
                             ch.remote_stream_id,
