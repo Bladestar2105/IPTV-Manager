@@ -536,8 +536,9 @@ span {
 
 /* Fix EPG Sources Box scrolling */
 #epg-sources-list {
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
+  overflow-x: auto;
 }
 
 /* Fix table-danger visibility in dark mode (used in Client Logs) */
