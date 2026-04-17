@@ -56,6 +56,34 @@ const streamJsonResponse = (res, stmt, params, mapFn) => {
   res.end();
 };
 
+const getShareScope = (user) => {
+  const isShareGuest = !!user?.is_share_guest;
+  const allowedChannelIds = isShareGuest
+    ? (user.allowed_channels || [])
+        .map(id => Number(id))
+        .filter(id => Number.isInteger(id) && id > 0)
+    : null;
+  const allowedSet = isShareGuest ? new Set(allowedChannelIds) : null;
+  const nowSec = Date.now() / 1000;
+  const isExpired = isShareGuest &&
+    ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end));
+
+  return { isShareGuest, allowedChannelIds, allowedSet, isExpired };
+};
+
+const appendAllowedChannelFilter = (query, params, allowedChannelIds, column = 'uc.id') => {
+  if (!allowedChannelIds) return { query, params };
+  if (allowedChannelIds.length === 0) {
+    return { query: `${query} AND 1=0`, params };
+  }
+
+  const placeholders = allowedChannelIds.map(() => '?').join(',');
+  return {
+    query: `${query} AND ${column} IN (${placeholders})`,
+    params: [...params, ...allowedChannelIds]
+  };
+};
+
 export const playerApi = async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
@@ -71,11 +99,11 @@ export const playerApi = async (req, res) => {
       return res.json({user_info: {auth: 0, message: 'Invalid credentials'}});
     }
 
-    if (user.is_share_guest) {
-        return res.json({user_info: {auth: 0, message: 'Access denied'}});
-    }
-
     const now = Math.floor(Date.now() / 1000);
+    const shareScope = getShareScope(user);
+    if (shareScope.isExpired) {
+      return res.json({user_info: {auth: 0, message: 'Share expired'}});
+    }
 
     if (!action || action === '') {
       const { default: streamManager } = await import('../services/streamManager.js');
@@ -113,17 +141,20 @@ export const playerApi = async (req, res) => {
       // ⚡ Bolt: Replace .all().map() with .iterate() to eliminate intermediate V8 array allocation overhead
       // 🎯 Why: Using .all().map() creates intermediate arrays. iterate() streams rows directly from SQLite.
       // 📊 Impact: Lowers peak memory usage and garbage collection pressure when processing large category lists.
-      const stmt = db.prepare(`
+      let query = `
         SELECT DISTINCT cat.*
         FROM user_categories cat
         JOIN user_channels uc ON uc.user_category_id = cat.id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = ? AND uc.is_hidden = 0
-        ORDER BY cat.sort_order
-      `);
+      `;
+      let params = [user.id, type];
+      ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
+      query += ' ORDER BY cat.sort_order';
+      const stmt = db.prepare(query);
 
       const categories = [];
-      for (const c of stmt.iterate(user.id, type)) {
+      for (const c of stmt.iterate(...params)) {
         categories.push({
           category_id: String(c.id),
           category_name: c.name,
@@ -156,7 +187,8 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
-      const params = [user.id];
+      let params = [user.id];
+      ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
 
       if (categoryId && categoryId !== '*' && categoryId !== '0') {
           query += ' AND cat.id = ?';
@@ -202,7 +234,8 @@ export const playerApi = async (req, res) => {
         JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = 'movie' AND uc.is_hidden = 0`;
-      const params = [user.id];
+      let params = [user.id];
+      ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
 
       if (categoryId && categoryId !== '*' && categoryId !== '0') {
           query += ' AND cat.id = ?';
@@ -247,7 +280,8 @@ export const playerApi = async (req, res) => {
         JOIN user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = 'series' AND uc.is_hidden = 0`;
-      const params = [user.id];
+      let params = [user.id];
+      ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
 
       if (categoryId && categoryId !== '*' && categoryId !== '0') {
           query += ' AND cat.id = ?';
@@ -309,6 +343,7 @@ export const playerApi = async (req, res) => {
       `).get(seriesId, user.id);
 
       if (!channel) return res.json({});
+      if (shareScope.allowedSet && !shareScope.allowedSet.has(Number(channel.user_channel_id))) return res.json({});
 
       const provPass = decrypt(channel.password);
       const baseUrl = channel.url.replace(/\/+$/, '');
@@ -367,6 +402,7 @@ export const playerApi = async (req, res) => {
       `).get(vodId, user.id);
 
       if (!channel) return res.json({});
+      if (shareScope.allowedSet && !shareScope.allowedSet.has(Number(channel.user_channel_id))) return res.json({});
 
       const provPass = decrypt(channel.password);
       const baseUrl = channel.url.replace(/\/+$/, '');
@@ -414,6 +450,9 @@ export const playerApi = async (req, res) => {
       `).get(streamId, user.id);
 
       if (!channel) return res.json({epg_listings: []});
+      if (shareScope.allowedSet && !shareScope.allowedSet.has(Number(streamId))) {
+        return res.json({epg_listings: []});
+      }
 
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
       if (!epgId) return res.json({epg_listings: []});
@@ -457,10 +496,10 @@ export const getPlaylist = async (req, res) => {
 
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
+    const shareScope = getShareScope(user);
+    if (shareScope.isExpired) return res.sendStatus(403);
 
-    if (user.is_share_guest) return res.sendStatus(403);
-
-    const stmt = db.prepare(`
+    let query = `
       SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
         pc.tv_archive,
         pc.tv_archive_duration,
@@ -469,16 +508,25 @@ export const getPlaylist = async (req, res) => {
       JOIN user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-      WHERE cat.user_id = ? AND uc.is_hidden = 0
+      WHERE cat.user_id = ? AND uc.is_hidden = 0`;
+    let params = [user.id];
+    ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
+    query += `
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
-    `);
+    `;
+    const stmt = db.prepare(query);
 
     const baseUrl = getBaseUrl(req);
     let header = '#EXTM3U';
+    const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
     if (type === 'm3u_plus') {
-       header += ` url-tvg="${baseUrl}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}"`;
+      if (shareScope.isShareGuest && tokenParam) {
+        header += ` url-tvg="${baseUrl}/xmltv.php${tokenParam}"`;
+      } else {
+        header += ` url-tvg="${baseUrl}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}"`;
+      }
     }
 
     res.setHeader('Content-Type', 'audio/x-mpegurl');
@@ -493,16 +541,17 @@ export const getPlaylist = async (req, res) => {
     // ⚡ Bolt: Pre-encode credentials and pre-construct URL prefixes outside of the tight loop.
     // 🎯 Why: Calling encodeURIComponent and interpolating complex templates 50,000+ times per request wastes massive CPU cycles.
     // 📊 Impact: Significantly speeds up playlist generation loop and reduces V8 garbage collection pressure.
+    const useTokenAuth = shareScope.isShareGuest && !!req.query.token;
     const encUser = encodeURIComponent(username);
     const encPass = encodeURIComponent(password);
-    const livePrefix = `${baseUrl}/live/${encUser}/${encPass}/`;
-    const moviePrefix = `${baseUrl}/movie/${encUser}/${encPass}/`;
-    const seriesPrefix = `${baseUrl}/series/${encUser}/${encPass}/`;
+    const livePrefix = useTokenAuth ? `${baseUrl}/live/token/auth/` : `${baseUrl}/live/${encUser}/${encPass}/`;
+    const moviePrefix = useTokenAuth ? `${baseUrl}/movie/token/auth/` : `${baseUrl}/movie/${encUser}/${encPass}/`;
+    const seriesPrefix = useTokenAuth ? `${baseUrl}/series/token/auth/` : `${baseUrl}/series/${encUser}/${encPass}/`;
 
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
-    for (const ch of stmt.iterate(user.id)) {
+    for (const ch of stmt.iterate(...params)) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
       const logo = ch.logo || '';
       const group = ch.category_name || '';
@@ -516,6 +565,9 @@ export const getPlaylist = async (req, res) => {
          streamUrl = seriesPrefix + streamId + '.' + (ch.mime_type || 'mp4');
       } else {
          streamUrl = livePrefix + streamId + '.' + (output === 'hls' ? 'm3u8' : 'ts');
+      }
+      if (useTokenAuth) {
+        streamUrl += tokenParam;
       }
 
       const safeName = sanitizeM3uName(name);
@@ -557,12 +609,12 @@ export const xmltv = async (req, res) => {
   try {
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
-
-    if (user.is_share_guest) return res.sendStatus(403);
+    const shareScope = getShareScope(user);
+    if (shareScope.isExpired) return res.sendStatus(403);
 
     // Get allowed EPG IDs for this user
     const allowedIds = new Set();
-    const stmt = db.prepare(`
+    let query = `
         SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -570,12 +622,15 @@ export const xmltv = async (req, res) => {
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ? AND uc.is_hidden = 0
         AND (map.epg_channel_id IS NOT NULL OR pc.epg_channel_id IS NOT NULL)
-    `);
+    `;
+    let params = [user.id];
+    ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
+    const stmt = db.prepare(query);
 
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Using .all().map() creates massive intermediate arrays in V8 memory.
     // 📊 Impact: Significantly reduces peak garbage collection pressure and memory usage for large EPGs.
-    for (const r of stmt.iterate(user.id)) {
+    for (const r of stmt.iterate(...params)) {
         if (r.epg_id) allowedIds.add(r.epg_id);
     }
 

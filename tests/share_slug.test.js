@@ -44,11 +44,10 @@ describe('Share Controller - Slug Generation', () => {
         };
     });
 
-    it('should generate a slug when create_slug is true', () => {
+    it('should always generate a slug when name is provided', () => {
         mockReq.body = {
             channels: [1, 2, 3],
-            name: 'Soccer Night',
-            create_slug: true
+            name: 'Soccer Night'
         };
 
         // Mock slug check: first return undefined (no existing slug)
@@ -81,34 +80,21 @@ describe('Share Controller - Slug Generation', () => {
         }));
     });
 
-    it('should not generate a slug when create_slug is false', () => {
+    it('should require a name when creating a share', () => {
         mockReq.body = {
-            channels: [1],
-            name: 'Private Share',
-            create_slug: false
+            channels: [1]
         };
-
-        const stmtMock = { run: vi.fn() };
-        mockDb.prepare.mockReturnValue(stmtMock);
 
         shareController.createShare(mockReq, mockRes);
 
-        expect(stmtMock.run).toHaveBeenCalledWith(
-            expect.any(String), 1, 'Private Share', '[1]', null, null, null
-        );
-
-        expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
-            success: true,
-            short_link: null,
-            slug: null
-        }));
+        expect(mockRes.status).toHaveBeenCalledWith(400);
+        expect(mockRes.json).toHaveBeenCalledWith({ error: 'Name required' });
     });
 
     it('should handle duplicate slugs by appending a counter', () => {
         mockReq.body = {
             channels: [1],
-            name: 'My Share',
-            create_slug: true
+            name: 'My Share'
         };
 
         const stmtMock = {

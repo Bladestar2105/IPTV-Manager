@@ -4528,11 +4528,15 @@ if (bannerCancelBtn) {
 async function createShare() {
     // Use the current global selection
     const selected = Array.from(globalSelectedChannels);
-    const name = document.getElementById('share-name').value;
+    const name = document.getElementById('share-name').value.trim();
     const start = document.getElementById('share-start-time').value;
     const end = document.getElementById('share-end-time').value;
-    const createSlug = document.getElementById('share-create-slug') ? document.getElementById('share-create-slug').checked : false;
     const btn = document.getElementById('create-share-btn');
+
+    if (!name) {
+        alert(t('shareNameRequired') || 'Name is required');
+        return;
+    }
 
     setLoadingState(btn, true, editingShareToken ? 'saving' : 'creating');
 
@@ -4545,8 +4549,7 @@ async function createShare() {
             channels: selected,
             name: name,
             start_time: startTime,
-            end_time: endTime,
-            create_slug: createSlug
+            end_time: endTime
         };
         if (selectedUserId) body.user_id = selectedUserId;
 

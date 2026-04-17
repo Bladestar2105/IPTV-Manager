@@ -26,6 +26,11 @@ vi.mock('../../src/services/epgService.js', () => ({
   getEpgXmlForChannels: vi.fn(),
 }));
 
+vi.mock('../../src/services/logoResolver.js', () => ({
+  getEpgLogo: vi.fn(() => null),
+  loadEpgLogosCache: vi.fn(),
+}));
+
 vi.mock('../../src/utils/crypto.js', () => ({
   decrypt: vi.fn((val) => val), // Simple pass-through for test
 }));
