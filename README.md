@@ -176,6 +176,9 @@ The application blocks Cross-Origin Resource Sharing (CORS) by default for secur
 - `GET /series/:user/:pass/:id.ext`: Series Stream
 - `GET /xmltv.php`: XMLTV EPG
 
+### Share + Companion App Integration
+- Share companion integration guide (Xtream/M3U/EPG): `docs/SHARE_COMPANION_INTEGRATION.md`
+
 ### HDHomeRun Emulation
 - `GET /hdhr/:token/discover.json`
 - `GET /hdhr/:token/lineup.json`

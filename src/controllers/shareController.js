@@ -14,7 +14,7 @@ function generateSlug(name) {
 
 export const createShare = (req, res) => {
   try {
-    const { channels, name, start_time, end_time, create_slug } = req.body;
+    const { channels, name, start_time, end_time } = req.body;
     let user_id = req.user.id;
 
     if (req.user.is_admin && req.body.user_id) {
@@ -24,34 +24,35 @@ export const createShare = (req, res) => {
     if (!channels || !Array.isArray(channels) || channels.length === 0) {
       return res.status(400).json({ error: 'Channels array required' });
     }
+    if (!name || !name.toString().trim()) {
+      return res.status(400).json({ error: 'Name required' });
+    }
 
+    const normalizedName = name.toString().trim();
     const token = crypto.randomUUID();
     const startTime = start_time ? Math.floor(new Date(start_time).getTime() / 1000) : null;
     const endTime = end_time ? Math.floor(new Date(end_time).getTime() / 1000) : null;
 
-    let slug = null;
-    if (create_slug && name) {
-        let baseSlug = generateSlug(name);
-        if (!baseSlug) baseSlug = 'share';
+    let baseSlug = generateSlug(normalizedName);
+    if (!baseSlug) baseSlug = 'share';
 
-        slug = baseSlug;
-        let counter = 1;
-        while (true) {
-            const existing = db.prepare('SELECT token FROM shared_links WHERE slug = ?').get(slug);
-            if (!existing) break;
-            slug = `${baseSlug}-${counter}`;
-            counter++;
-        }
+    let slug = baseSlug;
+    let counter = 1;
+    while (true) {
+        const existing = db.prepare('SELECT token FROM shared_links WHERE slug = ?').get(slug);
+        if (!existing) break;
+        slug = `${baseSlug}-${counter}`;
+        counter++;
     }
 
     db.prepare(`
       INSERT INTO shared_links (token, user_id, name, channels, start_time, end_time, slug)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(token, user_id, name || 'Shared Link', JSON.stringify(channels), startTime, endTime, slug);
+    `).run(token, user_id, normalizedName, JSON.stringify(channels), startTime, endTime, slug);
 
     const baseUrl = getBaseUrl(req);
     const link = `${baseUrl}/player.html?token=${encodeURIComponent(token)}`;
-    const shortLink = slug ? `${baseUrl}/share/${slug}` : null;
+    const shortLink = `${baseUrl}/share/${slug}`;
 
     clearChannelsCache(req.user.id);
     res.json({ success: true, token, link, short_link: shortLink, slug });
