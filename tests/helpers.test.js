@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl } from '../src/utils/helpers.js';
+import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl } from '../src/utils/helpers.js';
 
 describe('isAdultCategory', () => {
   const adultKeywords = [
@@ -245,5 +245,75 @@ describe('redactUrl', () => {
   it('should handle multiple redactions in one URL', () => {
     const mixedUrl = '/live/user/pass/1.ts?password=secret&token=123';
     expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=123');
+  });
+});
+
+describe('getBaseUrl', () => {
+  it('should return base URL for standard HTTP request', () => {
+    const req = {
+      protocol: 'http',
+      get: vi.fn().mockReturnValue('localhost:3000'),
+      app: { get: vi.fn().mockReturnValue(false) }
+    };
+    expect(getBaseUrl(req)).toBe('http://localhost:3000');
+    expect(req.get).toHaveBeenCalledWith('host');
+  });
+
+  it('should return base URL for standard HTTPS request', () => {
+    const req = {
+      protocol: 'https',
+      get: vi.fn().mockReturnValue('example.com'),
+      app: { get: vi.fn().mockReturnValue(false) }
+    };
+    expect(getBaseUrl(req)).toBe('https://example.com');
+  });
+
+  it('should respect X-Forwarded-Host when trust proxy is enabled', () => {
+    const req = {
+      protocol: 'https',
+      get: vi.fn((header) => {
+        if (header === 'host') return 'internal-load-balancer';
+        if (header === 'x-forwarded-host') return 'proxy.example.com';
+      }),
+      app: { get: vi.fn().mockReturnValue(true) }
+    };
+    expect(getBaseUrl(req)).toBe('https://proxy.example.com');
+    expect(req.app.get).toHaveBeenCalledWith('trust proxy');
+  });
+
+  it('should use the first value if X-Forwarded-Host contains multiple hosts', () => {
+    const req = {
+      protocol: 'https',
+      get: vi.fn((header) => {
+        if (header === 'host') return 'internal';
+        if (header === 'x-forwarded-host') return 'external.com, proxy1.com, proxy2.com';
+      }),
+      app: { get: vi.fn().mockReturnValue(true) }
+    };
+    expect(getBaseUrl(req)).toBe('https://external.com');
+  });
+
+  it('should fallback to Host if X-Forwarded-Host is missing but trust proxy is enabled', () => {
+    const req = {
+      protocol: 'http',
+      get: vi.fn((header) => {
+        if (header === 'host') return 'fallback.com';
+        if (header === 'x-forwarded-host') return undefined;
+      }),
+      app: { get: vi.fn().mockReturnValue(true) }
+    };
+    expect(getBaseUrl(req)).toBe('http://fallback.com');
+  });
+
+  it('should ignore X-Forwarded-Host if trust proxy is disabled', () => {
+    const req = {
+      protocol: 'https',
+      get: vi.fn((header) => {
+        if (header === 'host') return 'direct.com';
+        if (header === 'x-forwarded-host') return 'proxy.com';
+      }),
+      app: { get: vi.fn().mockReturnValue(false) }
+    };
+    expect(getBaseUrl(req)).toBe('https://direct.com');
   });
 });
