@@ -17,6 +17,7 @@ describe('StreamManager (SQLite)', () => {
             username TEXT,
             channel_name TEXT,
             start_time INTEGER,
+            last_activity INTEGER,
             ip TEXT,
             worker_pid INTEGER,
             provider_id INTEGER
@@ -78,5 +79,21 @@ describe('StreamManager (SQLite)', () => {
 
          const streams = await streamManager.getAll();
          expect(streams).toHaveLength(2);
+    });
+
+    it('should cleanup streams from dead workers before counting limits', async () => {
+        const user = { id: 1, username: 'testuser' };
+        await streamManager.add('active-stream', user, 'C1', '127.0.0.1', null, 1);
+
+        db.prepare(`
+          INSERT INTO current_streams (id, user_id, username, channel_name, start_time, last_activity, ip, worker_pid, provider_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run('stale-stream', 1, 'testuser', 'Old C', Date.now() - 10000, Date.now() - 10000, '127.0.0.1', 999999, 1);
+
+        const count = await streamManager.getUserConnectionCount(1);
+        expect(count).toBe(1);
+
+        const streams = await streamManager.getAll();
+        expect(streams.map(s => s.id)).toEqual(['active-stream']);
     });
 });

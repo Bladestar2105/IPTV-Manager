@@ -123,6 +123,39 @@ async function findAvailableProvider(userId, originalProvider, reqIp, sessionNam
     return null;
 }
 
+function createSafeCleanup(connectionId) {
+  let cleanedUp = false;
+  return () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    streamManager.remove(connectionId);
+  };
+}
+
+function attachResponseCleanup(req, res, cleanup) {
+  if (req && typeof req.on === 'function') {
+    req.on('close', cleanup);
+    req.on('aborted', cleanup);
+  }
+  if (res && typeof res.on === 'function') {
+    res.on('close', cleanup);
+    res.on('finish', cleanup);
+    res.on('error', cleanup);
+  }
+}
+
+function attachStreamHeartbeat(upstreamBody, connectionId) {
+  if (!upstreamBody || typeof upstreamBody.on !== 'function') return;
+
+  let lastTouch = 0;
+  upstreamBody.on('data', () => {
+    const now = Date.now();
+    if (now - lastTouch < 30000) return;
+    lastTouch = now;
+    streamManager.touch(connectionId);
+  });
+}
+
 
 function isBrowser(req) {
   const ua = (req.headers['user-agent'] || '');
@@ -331,6 +364,7 @@ export const proxyMpd = async (req, res) => {
 // --- Live Stream Proxy ---
 export const proxyLive = async (req, res) => {
   const connectionId = crypto.randomUUID();
+  const cleanup = createSafeCleanup(connectionId);
 
   try {
     const streamId = Number(req.params.stream_id || 0);
@@ -471,11 +505,10 @@ export const proxyLive = async (req, res) => {
             if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                console.error('FFmpeg error:', err.message);
             }
-            streamManager.remove(connectionId);
+            cleanup();
           })
-          .on('end', () => {
-            streamManager.remove(connectionId);
-          });
+          .on('end', cleanup)
+          .on('progress', () => streamManager.touch(connectionId));
 
         command.pipe(res, { end: true });
 
@@ -487,13 +520,16 @@ export const proxyLive = async (req, res) => {
           }
         });
 
-        req.on('close', () => streamManager.remove(connectionId));
+        attachResponseCleanup(req, res, () => {
+          try { command.kill('SIGKILL'); } catch(e) {}
+          cleanup();
+        });
         return;
 
       } catch (e) {
         console.error('Transcode setup error:', e.message);
         streamManager.localStreams.delete(connectionId);
-        streamManager.remove(connectionId);
+        cleanup();
         return res.sendStatus(502);
       }
     }
@@ -509,7 +545,7 @@ export const proxyLive = async (req, res) => {
     } catch(e) {
         console.error(`Stream proxy error: ${e.message} for ${redactUrl(remoteUrl)}`);
         streamManager.localStreams.delete(connectionId);
-        streamManager.remove(connectionId);
+        cleanup();
         return res.sendStatus(502);
     }
 
@@ -560,7 +596,7 @@ export const proxyLive = async (req, res) => {
       res.setHeader('Expires', '0');
       res.send(newText);
 
-      streamManager.remove(connectionId);
+      cleanup();
       return;
     }
 
@@ -574,6 +610,7 @@ export const proxyLive = async (req, res) => {
     if (contentLength) res.setHeader('Content-Length', contentLength);
 
     upstream.body.pipe(res);
+    attachStreamHeartbeat(upstream.body, connectionId);
 
     streamManager.localStreams.set(connectionId, {
       destroy: () => {
@@ -588,22 +625,22 @@ export const proxyLive = async (req, res) => {
       }
       if (!res.headersSent) {
           streamManager.localStreams.delete(connectionId);
-          streamManager.remove(connectionId);
+          cleanup();
           return res.sendStatus(502);
       }
-      streamManager.remove(connectionId);
+      cleanup();
     });
 
-    req.on('close', () => streamManager.remove(connectionId));
+    attachResponseCleanup(req, res, cleanup);
 
   } catch (e) {
     console.error('Stream proxy error:', e.message);
     if (!res.headersSent) {
         streamManager.localStreams.delete(connectionId);
-        streamManager.remove(connectionId);
+        cleanup();
         return res.sendStatus(500);
     }
-    streamManager.remove(connectionId);
+    cleanup();
   }
 };
 
@@ -745,6 +782,7 @@ export const proxySegment = async (req, res) => {
 // --- Movie Proxy ---
 export const proxyMovie = async (req, res) => {
   const connectionId = crypto.randomUUID();
+  const cleanup = createSafeCleanup(connectionId);
 
   try {
     const streamId = Number(req.params.stream_id || 0);
@@ -876,15 +914,16 @@ export const proxyMovie = async (req, res) => {
                 if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                    console.error('FFmpeg VOD error:', err.message);
                 }
-                streamManager.remove(connectionId);
+                cleanup();
               })
-              .on('end', () => streamManager.remove(connectionId));
+              .on('end', cleanup)
+              .on('progress', () => streamManager.touch(connectionId));
 
             command.pipe(res, { end: true });
 
-            req.on('close', () => {
+            attachResponseCleanup(req, res, () => {
                 try { command.kill('SIGKILL'); } catch(e) {}
-                streamManager.remove(connectionId);
+                cleanup();
             });
             return;
 
@@ -922,6 +961,7 @@ export const proxyMovie = async (req, res) => {
         if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
 
         upstream.body.pipe(res);
+        attachStreamHeartbeat(upstream.body, connectionId);
 
         streamManager.localStreams.set(connectionId, {
           destroy: () => {
@@ -932,34 +972,35 @@ export const proxyMovie = async (req, res) => {
 
         upstream.body.on('error', (err) => {
           console.error('Movie stream error:', err.message);
-          streamManager.remove(connectionId);
+          cleanup();
         });
 
-        req.on('close', () => streamManager.remove(connectionId));
+        attachResponseCleanup(req, res, cleanup);
     } catch (e) {
         console.error('Movie proxy error:', e.message);
         if (!res.headersSent) {
             streamManager.localStreams.delete(connectionId);
-            streamManager.remove(connectionId);
+            cleanup();
             return res.sendStatus(502);
         }
-        streamManager.remove(connectionId);
+        cleanup();
     }
 
   } catch (e) {
     console.error('Movie proxy setup error:', e.message);
     if (!res.headersSent) {
         streamManager.localStreams.delete(connectionId);
-        streamManager.remove(connectionId);
+        cleanup();
         return res.sendStatus(500);
     }
-    streamManager.remove(connectionId);
+    cleanup();
   }
 };
 
 // --- Series Proxy ---
 export const proxySeries = async (req, res) => {
   const connectionId = crypto.randomUUID();
+  const cleanup = createSafeCleanup(connectionId);
 
   try {
     const epIdRaw = Number(req.params.episode_id || 0);
@@ -1056,15 +1097,16 @@ export const proxySeries = async (req, res) => {
                 if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                    console.error('FFmpeg Series error:', err.message);
                 }
-                streamManager.remove(connectionId);
+                cleanup();
               })
-              .on('end', () => streamManager.remove(connectionId));
+              .on('end', cleanup)
+              .on('progress', () => streamManager.touch(connectionId));
 
             command.pipe(res, { end: true });
 
-            req.on('close', () => {
+            attachResponseCleanup(req, res, () => {
                 try { command.kill('SIGKILL'); } catch(e) {}
-                streamManager.remove(connectionId);
+                cleanup();
             });
             return;
 
@@ -1101,6 +1143,7 @@ export const proxySeries = async (req, res) => {
         if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
 
         upstream.body.pipe(res);
+        attachStreamHeartbeat(upstream.body, connectionId);
 
         streamManager.localStreams.set(connectionId, {
           destroy: () => {
@@ -1111,28 +1154,28 @@ export const proxySeries = async (req, res) => {
 
         upstream.body.on('error', (err) => {
           console.error('Series stream error:', err.message);
-          streamManager.remove(connectionId);
+          cleanup();
         });
 
-        req.on('close', () => streamManager.remove(connectionId));
+        attachResponseCleanup(req, res, cleanup);
     } catch(e) {
         console.error('Series proxy error:', e.message);
         if (!res.headersSent) {
             streamManager.localStreams.delete(connectionId);
-            streamManager.remove(connectionId);
+            cleanup();
             return res.sendStatus(502);
         }
-        streamManager.remove(connectionId);
+        cleanup();
     }
 
   } catch(e) {
     console.error('Series proxy setup error:', e.message);
     if (!res.headersSent) {
         streamManager.localStreams.delete(connectionId);
-        streamManager.remove(connectionId);
+        cleanup();
         return res.sendStatus(500);
     }
-    streamManager.remove(connectionId);
+    cleanup();
   }
 };
 
