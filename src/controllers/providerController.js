@@ -472,22 +472,32 @@ export const getProviderCategories = async (req, res) => {
       console.error('Failed to fetch categories:', e);
     }
 
+    if (!categories || categories.length === 0) {
+      return res.json([]);
+    }
+
     let streamType = 'live';
     if(type === 'movie') streamType = 'movie';
     if(type === 'series') streamType = 'series';
 
-    const localCats = db.prepare(`
-      SELECT DISTINCT original_category_id,
-             COUNT(*) as channel_count
-      FROM provider_channels
-      WHERE provider_id = ? AND stream_type = ? AND original_category_id > 0
-      GROUP BY original_category_id
-      ORDER BY channel_count DESC
-    `).all(id, streamType);
-
+    // ⚡ Bolt: Extract category IDs and use an IN clause to fetch channel counts only for relevant categories.
+    // Also remove redundant DISTINCT and ORDER BY to reduce SQLite overhead.
+    const categoryIds = categories.map(cat => Number(cat.category_id)).filter(id => id > 0);
     const localCatsMap = new Map();
-    for (const l of localCats) {
-      localCatsMap.set(Number(l.original_category_id), l);
+
+    if (categoryIds.length > 0) {
+      const placeholders = Array(categoryIds.length).fill('?').join(',');
+      const localCats = db.prepare(`
+        SELECT original_category_id,
+               COUNT(*) as channel_count
+        FROM provider_channels
+        WHERE provider_id = ? AND stream_type = ? AND original_category_id IN (${placeholders})
+        GROUP BY original_category_id
+      `).all(id, streamType, ...categoryIds);
+
+      for (const l of localCats) {
+        localCatsMap.set(Number(l.original_category_id), l);
+      }
     }
 
     const merged = categories.map(cat => {
