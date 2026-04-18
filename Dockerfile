@@ -24,6 +24,10 @@ ENV NODE_ENV=production
 # Create data directory
 RUN mkdir -p /data
 
+# Drop root privileges for runtime
+RUN addgroup -S app && adduser -S -G app app && chown -R app:app /app /data
+USER app
+
 # Expose port
 EXPOSE 3000
 

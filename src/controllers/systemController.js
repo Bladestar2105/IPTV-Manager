@@ -221,7 +221,7 @@ export const exportData = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const user_id = req.body.user_id || req.query.user_id;
-    const password = req.body.password || req.query.password;
+    const password = req.body.password;
 
     if (!password) {
       return res.status(400).json({error: 'Password required for encryption'});
