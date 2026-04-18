@@ -13,7 +13,21 @@ export function getBaseUrl(req) {
       host = xfh.split(',')[0].trim();
   }
 
-  return `${protocol}://${host}`;
+  // Normalize and sanitize host to prevent header injection / malformed redirects.
+  const normalizedHost = normalizeHost(host) || normalizeHost(req.get('host')) || 'localhost';
+
+  return `${protocol}://${normalizedHost}`;
+}
+
+function normalizeHost(value) {
+  if (!value || typeof value !== 'string') return null;
+  const host = value.split(',')[0].trim();
+  if (!host || /[\/\\\s]/.test(host)) return null;
+  try {
+    return new URL(`http://${host}`).host;
+  } catch {
+    return null;
+  }
 }
 
 export function cleanIp(ip) {
