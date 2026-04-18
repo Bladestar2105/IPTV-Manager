@@ -5,7 +5,12 @@ import { isIpAllowedForUser } from '../services/geoIpService.js';
 
 export function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  let token = authHeader && authHeader.split(' ')[1];
+
+  // Compatibility: Web Player / companion clients may still send token via query
+  if (!token && req.query.token) {
+    token = req.query.token;
+  }
 
   if (!token) {
     return res.status(401).json({ error: 'No token provided' });
