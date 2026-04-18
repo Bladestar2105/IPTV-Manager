@@ -71,11 +71,11 @@ let redisClient = null;
       if (i === 0) schedulerPid = worker.process.pid;
     }
 
-    cluster.on('exit', (worker, code, signal) => {
+    cluster.on('exit', async (worker, _code, _signal) => {
       console.error(`Worker ${worker.process.pid} died. Restarting...`);
       // Cleanup streams for this worker
       try {
-        db.prepare('DELETE FROM current_streams WHERE worker_pid = ?').run(worker.process.pid);
+        await streamManager.cleanupWorkerStreams(worker.process.pid);
       } catch(e) { console.error('Cleanup error:', e); }
 
       const isScheduler = (worker.process.pid === schedulerPid);

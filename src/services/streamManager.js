@@ -1,6 +1,8 @@
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
+const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 0);
+const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 * 1000);
 
 class StreamManager {
   constructor() {
@@ -20,8 +22,8 @@ class StreamManager {
       if (this.db) {
         try {
           this.stmtAdd = this.db.prepare(`
-            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, ip, worker_pid, provider_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO current_streams (id, user_id, username, channel_name, start_time, last_activity, ip, worker_pid, provider_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
           this.stmtRemove = this.db.prepare('DELETE FROM current_streams WHERE id = ?');
           this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
@@ -29,6 +31,9 @@ class StreamManager {
           this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)');
           this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)');
           this.stmtIsActive = this.db.prepare('SELECT 1 FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? LIMIT 1');
+          this.stmtTouch = this.db.prepare('UPDATE current_streams SET last_activity = ? WHERE id = ?');
+          this.stmtGetById = this.db.prepare('SELECT * FROM current_streams WHERE id = ?');
+          this.stmtDeleteByPid = this.db.prepare('DELETE FROM current_streams WHERE worker_pid = ?');
         } catch (e) {
           console.error('Failed to prepare statements:', e);
         }
@@ -43,6 +48,7 @@ class StreamManager {
       username: user.username,
       channel_name: channelName,
       start_time: Date.now(),
+      last_activity: Date.now(),
       ip,
       worker_pid: this.pid,
       provider_id: providerId
@@ -61,7 +67,7 @@ class StreamManager {
       }
     } else if (this.db) {
       try {
-        this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, ip, this.pid, providerId);
+        this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, data.last_activity, ip, this.pid, providerId);
       } catch (e) {
         console.error('DB Add Error:', e.message);
       }
@@ -102,7 +108,7 @@ class StreamManager {
     } else if (this.db) {
       try {
         this.stmtRemove.run(id);
-      } catch (e) { /* ignore */ }
+      } catch { /* ignore */ }
     }
   }
 
@@ -130,11 +136,118 @@ class StreamManager {
     }
   }
 
+  async touch(id) {
+    const now = Date.now();
+
+    if (this.redis) {
+      try {
+        const json = await this.redis.hGet(REDIS_KEY_STREAMS, id);
+        if (!json) return;
+        const data = JSON.parse(json);
+        data.last_activity = now;
+        await this.redis.hSet(REDIS_KEY_STREAMS, id, JSON.stringify(data));
+      } catch (e) {
+        console.error('Redis Touch Error:', e);
+      }
+    } else if (this.db) {
+      try {
+        this.stmtTouch.run(now, id);
+      } catch (e) {
+        console.error('DB Touch Error:', e.message);
+      }
+    }
+  }
+
+  isWorkerAlive(workerPid) {
+    if (!workerPid || workerPid === this.pid) return true;
+    try {
+      process.kill(workerPid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  isStale(stream, now = Date.now()) {
+    if (!stream) return false;
+    if (!this.isWorkerAlive(stream.worker_pid)) return true;
+
+    const startTime = Number(stream.start_time || 0);
+    const lastActivity = Number(stream.last_activity || startTime || 0);
+    if (!lastActivity) return false;
+
+    if (STREAM_INACTIVITY_TIMEOUT_MS > 0 && now - lastActivity > STREAM_INACTIVITY_TIMEOUT_MS) return true;
+    if (startTime && now - startTime > STREAM_MAX_AGE_MS) return true;
+    return false;
+  }
+
+  async cleanupStaleStreams() {
+    const now = Date.now();
+
+    if (this.redis) {
+      try {
+        const all = await this.getAll();
+        const staleIds = all.filter(stream => this.isStale(stream, now)).map(stream => stream.id);
+        for (const staleId of staleIds) {
+          await this.remove(staleId);
+        }
+      } catch (e) {
+        console.error('Redis stale cleanup error:', e);
+      }
+      return;
+    }
+
+    if (this.db) {
+      try {
+        const all = this.stmtGetAll.all();
+        const staleIds = all.filter(stream => this.isStale(stream, now)).map(stream => stream.id);
+        for (const staleId of staleIds) {
+          await this.remove(staleId);
+        }
+      } catch (e) {
+        console.error('DB stale cleanup error:', e.message);
+      }
+    }
+  }
+
+  async cleanupWorkerStreams(workerPid) {
+    if (!workerPid) return;
+
+    if (this.redis) {
+      try {
+        const all = await this.getAll();
+        for (const stream of all) {
+          if (stream.worker_pid === workerPid) {
+            await this.remove(stream.id);
+          }
+        }
+      } catch (e) {
+        console.error('Redis worker cleanup error:', e);
+      }
+      return;
+    }
+
+    if (this.db) {
+      try {
+        this.stmtDeleteByPid.run(workerPid);
+      } catch (e) {
+        console.error('DB worker cleanup error:', e.message);
+      }
+    }
+  }
+
   async getAll() {
     if (this.redis) {
       try {
         const all = await this.redis.hGetAll(REDIS_KEY_STREAMS);
-        return Object.values(all).map(json => JSON.parse(json));
+        const parsed = Object.values(all).map(json => JSON.parse(json));
+        const now = Date.now();
+        const active = [];
+        for (const stream of parsed) {
+          if (this.isStale(stream, now)) await this.remove(stream.id);
+          else active.push(stream);
+        }
+        return active;
       } catch (e) {
         console.error('Redis GetAll Error:', e);
         return [];
@@ -142,7 +255,7 @@ class StreamManager {
     } else if (this.db) {
       try {
         return this.stmtGetAll.all();
-      } catch (e) {
+      } catch {
         return [];
       }
     }
@@ -150,6 +263,8 @@ class StreamManager {
   }
 
   async getUserConnectionCount(userId) {
+    await this.cleanupStaleStreams();
+
     if (this.redis) {
       try {
         // Since we don't have a direct index for count, we filter getAll.
@@ -184,6 +299,7 @@ class StreamManager {
 
   async getProviderConnectionCount(providerId) {
     if (!providerId) return 0;
+    await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {
@@ -212,17 +328,19 @@ class StreamManager {
   }
 
   async isSessionActive(userId, ip, channelName, providerId) {
+    await this.cleanupStaleStreams();
+
     if (this.redis) {
       try {
         const all = await this.getAll();
         return all.some(s => s.user_id === userId && s.ip === ip && s.channel_name === channelName && s.provider_id === providerId);
-      } catch (e) {
+      } catch {
         return false;
       }
     } else if (this.db) {
       try {
         return !!this.stmtIsActive.get(userId, ip, channelName, providerId);
-      } catch (e) {
+      } catch {
         return false;
       }
     }

@@ -650,6 +650,21 @@ export function migrateCurrentStreamsProviderId(db) {
   }
 }
 
+export function migrateCurrentStreamsLastActivity(db) {
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(current_streams)").all();
+    const columns = tableInfo.map(c => c.name);
+
+    if (!columns.includes('last_activity')) {
+      db.exec('ALTER TABLE current_streams ADD COLUMN last_activity INTEGER');
+      db.exec('UPDATE current_streams SET last_activity = COALESCE(start_time, CAST(strftime(\'%s\', \'now\') AS INTEGER) * 1000) WHERE last_activity IS NULL');
+      console.log('✅ DB Migration: last_activity column added to current_streams');
+    }
+  } catch (e) {
+    console.error('Current Streams last_activity migration error:', e);
+  }
+}
+
 export function migrateProviderLastEpgUpdate(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(providers)").all();

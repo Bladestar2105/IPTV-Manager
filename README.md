@@ -125,6 +125,18 @@ The application blocks Cross-Origin Resource Sharing (CORS) by default for secur
 - **Setup**: Add `ALLOWED_ORIGINS=https://your-web-player.com,https://another-site.com` to your `.env` file.
 - **Allow All**: Set `ALLOWED_ORIGINS=*` to allow all domains (⚠️ Not recommended for production).
 
+### Stream Session Cleanup (Live / VOD / Series)
+To prevent stale sessions from blocking new playback with false `Max connections reached` / `HTTP 403` responses, stream session cleanup is applied across **Live TV, Movies, and Series**.
+
+Optional tuning via environment variables:
+
+- `STREAM_MAX_AGE_MS` (default: `86400000` = 24h)  
+  Hard safety cap for a single session age. Very old orphan sessions are removed before limit checks.
+- `STREAM_INACTIVITY_TIMEOUT_MS` (default: `0` = disabled)  
+  Optional inactivity expiry. Set this only if you explicitly want inactivity-based stream expiration.
+
+For most deployments, keep the defaults unless you have a specific operational need.
+
 ## 📸 Screenshots
 
 | Login | Dashboard |

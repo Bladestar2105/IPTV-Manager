@@ -62,6 +62,7 @@ export function initDb(isPrimary) {
       username TEXT,
       channel_name TEXT,
       start_time INTEGER,
+      last_activity INTEGER,
       ip TEXT,
       worker_pid INTEGER,
       provider_id INTEGER
@@ -275,6 +276,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserMaxConnections(db);
             migrations.migrateProviderMaxConnections(db);
             migrations.migrateCurrentStreamsProviderId(db);
+            migrations.migrateCurrentStreamsLastActivity(db);
             migrations.migrateProviderLastEpgUpdate(db);
             migrations.migrateUserPlainPassword(db);
             migrations.migrateUserBackupsTable(db);
