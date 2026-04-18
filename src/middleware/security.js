@@ -1,35 +1,42 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import helmet from 'helmet';
 import db from '../database/db.js';
+import { cleanIp } from '../utils/helpers.js';
+
+function buildSafeRateLimiter(config) {
+  return rateLimit({
+    ...config,
+    // Normalize IPs so IPv4-mapped IPv6 (e.g. ::ffff:1.2.3.4) cannot bypass limits.
+    keyGenerator: (req) => ipKeyGenerator(cleanIp(req.ip) || req.ip || 'unknown'),
+    validate: { trustProxy: false }
+  });
+}
 
 // Rate limiting for authentication endpoints
-export const authLimiter = rateLimit({
+export const authLimiter = buildSafeRateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 20,
   message: { error: 'Too many authentication attempts, please try again later' },
   standardHeaders: true,
-  legacyHeaders: false,
-  validate: { trustProxy: false }
+  legacyHeaders: false
 });
 
 // General API rate limiting
-export const apiLimiter = rateLimit({
+export const apiLimiter = buildSafeRateLimiter({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 100,
   message: { error: 'Too many requests, please try again later' },
   standardHeaders: true,
-  legacyHeaders: false,
-  validate: { trustProxy: false }
+  legacyHeaders: false
 });
 
 // Stricter rate limiting for client logs (DoS protection)
-export const clientLogLimiter = rateLimit({
+export const clientLogLimiter = buildSafeRateLimiter({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 20, // Limit each IP to 20 log requests per hour
   message: { error: 'Too many log requests, please try again later' },
   standardHeaders: true,
-  legacyHeaders: false,
-  validate: { trustProxy: false }
+  legacyHeaders: false
 });
 
 export const securityHeaders = helmet({
