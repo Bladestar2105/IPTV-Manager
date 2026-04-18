@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import db, { initDb } from '../src/database/db.js';
 import * as userController from '../src/controllers/userController.js';
+import { encrypt } from '../src/utils/crypto.js';
 
 describe('User Deletion Regression', () => {
     beforeAll(() => {
@@ -41,5 +42,32 @@ describe('User Deletion Regression', () => {
         // Assert token is gone
         const token = db.prepare('SELECT * FROM temporary_tokens WHERE user_id = ?').get(userId);
         expect(token).toBeUndefined();
+    });
+});
+
+describe('User credential visibility for admins', () => {
+    beforeAll(() => {
+        initDb(true);
+    });
+
+    it('should return decrypted plain_password for admin requests', () => {
+        const encryptedPlain = encrypt('visible_for_admin');
+        db.prepare('INSERT INTO users (username, password, plain_password, is_active) VALUES (?, ?, ?, 1)')
+            .run(`admin_plain_pw_${Date.now()}`, 'hashedpw', encryptedPlain);
+
+        const req = {
+            user: { is_admin: true }
+        };
+
+        const res = {
+            status: vi.fn().mockReturnThis(),
+            json: vi.fn()
+        };
+
+        userController.getUsers(req, res);
+
+        const payload = res.json.mock.calls[0]?.[0] || [];
+        const found = payload.find(u => u.plain_password === 'visible_for_admin');
+        expect(found).toBeTruthy();
     });
 });
