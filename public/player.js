@@ -902,7 +902,7 @@ function escapeHtml(unsafe) {
         initNativePlayer(url, streamType);
       }
     } else if (url.match(/\.(mkv|avi|mp4|mov|wmv)($|\?)/i)) {
-      if (wantTranscode && !url.match(/\.(mkv|avi)($|\?)/i)) {
+      if (wantTranscode) {
         var vodTranscodeUrl = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
         initNativePlayer(vodTranscodeUrl, streamType);
       } else {

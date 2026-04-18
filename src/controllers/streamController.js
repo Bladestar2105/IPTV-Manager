@@ -839,7 +839,7 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
-    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && ext === 'avi');
+    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -1020,7 +1020,7 @@ export const proxySeries = async (req, res) => {
       'Connection': 'keep-alive'
     };
 
-    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && ext === 'avi');
+    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
