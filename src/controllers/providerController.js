@@ -1,12 +1,9 @@
-import fs from 'fs';
-import path from 'path';
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { updateProviderEpg } from '../services/epgService.js';
-import { EPG_CACHE_DIR } from '../config/constants.js';
 
 const fetchProviderDetails = async (url, username, password) => {
   try {
