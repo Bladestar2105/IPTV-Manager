@@ -391,7 +391,6 @@ export const updateUser = async (req, res) => {
         }
         const hashedPassword = await bcrypt.hash(p, BCRYPT_ROUNDS);
         const encryptedPlainPassword = encrypt(p);
-
         updates.push('password = ?');
         params.push(hashedPassword);
 

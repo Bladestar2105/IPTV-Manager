@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install build dependencies for native modules
-RUN apk add --no-cache python3 make g++
+RUN apk add --no-cache python3 make g++ su-exec
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -24,6 +24,13 @@ ENV NODE_ENV=production
 # Create data directory
 RUN mkdir -p /data
 
+# Drop root privileges for runtime
+RUN addgroup -S app && adduser -S -G app app && chown -R app:app /app /data
+
+# Entrypoint performs compatibility permission fix for mounted volumes, then drops privileges
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Expose port
 EXPOSE 3000
 
@@ -31,4 +38,5 @@ EXPOSE 3000
 VOLUME ["/data"]
 
 # Start application
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["npm", "start"]

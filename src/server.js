@@ -1,6 +1,7 @@
 import './utils/logger.js';
 import cluster from 'cluster';
 import os from 'os';
+import fs from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import { createClient } from 'redis';
@@ -19,6 +20,17 @@ dotenv.config();
 
 // Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
+
+// Validate ffmpeg binary is executable for current runtime user (important for non-root containers)
+try {
+  if (!ffmpegPath) {
+    console.error('FFmpeg binary path is not available. Transcoding features may not work.');
+  } else {
+    fs.accessSync(ffmpegPath, fs.constants.X_OK);
+  }
+} catch (e) {
+  console.error(`FFmpeg is not executable by current user (${process.getuid?.() ?? 'n/a'}). Transcoding may fail:`, e.message);
+}
 
 // Initialize Stream Manager (Redis or SQLite)
 let redisClient = null;
