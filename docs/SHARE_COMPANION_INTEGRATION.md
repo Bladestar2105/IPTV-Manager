@@ -38,6 +38,14 @@ A share should work without regular user credentials while still providing:
   - `...&action=get_series_info&series_id=<id>`
   - `...&action=get_short_epg&stream_id=<id>&limit=<n>`
 
+When calling `GET /player_api.php?token=<share_token>` the `user_info` object includes share validity metadata for share guests:
+
+- `valid_from`: UNIX timestamp (seconds) from when the share becomes valid, or `null`.
+- `valid_until`: UNIX timestamp (seconds) when the share expires, or `null`.
+- `is_valid_now`: `1` if currently valid, otherwise `0`.
+
+Companion clients should poll this endpoint every 5 minutes to detect window updates (e.g. changed start/end times) and react without a full re-import.
+
 ### M3U + EPG
 
 - Playlist: `GET /get.php?token=<share_token>&type=m3u_plus`
@@ -57,3 +65,4 @@ A share should work without regular user credentials while still providing:
 - Store tokens securely (never log raw tokens; avoid unencrypted persistence).
 - On HTTP 401/403, discard the token and prompt the user to re-open or re-import the share URL.
 - Cache EPG/metadata with a short TTL (e.g. 5–15 minutes), because shares can be revoked or expire.
+- For validity state, prefer a 5-minute `player_api.php` check and compare `valid_from`/`valid_until` to previously cached values.

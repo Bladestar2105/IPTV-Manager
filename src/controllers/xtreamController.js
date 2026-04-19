@@ -84,6 +84,22 @@ const appendAllowedChannelFilter = (query, params, allowedChannelIds, column = '
   };
 };
 
+const getShareValidityInfo = (user, nowSec) => {
+  if (!user?.is_share_guest) return {};
+
+  const validFrom = user.share_start ? Math.floor(user.share_start) : null;
+  const validUntil = user.share_end ? Math.floor(user.share_end) : null;
+  const isNotYetValid = validFrom !== null && nowSec < validFrom;
+  const isExpired = validUntil !== null && nowSec > validUntil;
+  const isCurrentlyValid = !isNotYetValid && !isExpired;
+
+  return {
+    valid_from: validFrom !== null ? String(validFrom) : null,
+    valid_until: validUntil !== null ? String(validUntil) : null,
+    is_valid_now: isCurrentlyValid ? 1 : 0
+  };
+};
+
 export const playerApi = async (req, res) => {
   try {
     const username = (req.query.username || '').trim();
@@ -102,12 +118,19 @@ export const playerApi = async (req, res) => {
     const now = Math.floor(Date.now() / 1000);
     const shareScope = getShareScope(user);
     if (shareScope.isExpired) {
-      return res.json({user_info: {auth: 0, message: 'Share expired'}});
+      return res.json({
+        user_info: {
+          auth: 0,
+          message: 'Share expired',
+          ...getShareValidityInfo(user, now)
+        }
+      });
     }
 
     if (!action || action === '') {
       const { default: streamManager } = await import('../services/streamManager.js');
       const activeCons = await streamManager.getUserConnectionCount(user.id);
+      const shareValidity = getShareValidityInfo(user, now);
 
       return res.json({
         user_info: {
@@ -121,7 +144,8 @@ export const playerApi = async (req, res) => {
           active_cons: activeCons,
           created_at: now.toString(),
           max_connections: user.max_connections === 0 ? 999999 : (user.max_connections || 1),
-          allowed_output_formats: ['m3u8', 'ts']
+          allowed_output_formats: ['m3u8', 'ts'],
+          ...shareValidity
         },
         server_info: {
           url: req.hostname,

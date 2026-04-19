@@ -108,13 +108,14 @@ describe('xtreamController share compatibility', () => {
   });
 
   it('serves Xtream metadata for active share tokens', async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
     req.query = { token: 'share-token' };
     getXtreamUser.mockResolvedValue({
       id: 1,
       is_share_guest: true,
       allowed_channels: [100],
-      share_start: null,
-      share_end: null,
+      share_start: nowSec - 300,
+      share_end: nowSec + 600,
       max_connections: 1
     });
 
@@ -122,7 +123,53 @@ describe('xtreamController share compatibility', () => {
 
     expect(res.sendStatus).not.toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      user_info: expect.objectContaining({ auth: 1 })
+      user_info: expect.objectContaining({
+        auth: 1,
+        valid_from: String(nowSec - 300),
+        valid_until: String(nowSec + 600),
+        is_valid_now: 1
+      })
+    }));
+  });
+
+  it('returns updated validity window on subsequent metadata checks', async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    req.query = { token: 'share-token' };
+
+    getXtreamUser.mockResolvedValueOnce({
+      id: 1,
+      is_share_guest: true,
+      allowed_channels: [100],
+      share_start: nowSec - 120,
+      share_end: nowSec + 120,
+      max_connections: 1
+    });
+
+    await playerApi(req, res);
+    expect(res.json).toHaveBeenLastCalledWith(expect.objectContaining({
+      user_info: expect.objectContaining({
+        valid_from: String(nowSec - 120),
+        valid_until: String(nowSec + 120),
+        is_valid_now: 1
+      })
+    }));
+
+    getXtreamUser.mockResolvedValueOnce({
+      id: 1,
+      is_share_guest: true,
+      allowed_channels: [100],
+      share_start: nowSec + 240,
+      share_end: nowSec + 900,
+      max_connections: 1
+    });
+
+    await playerApi(req, res);
+    expect(res.json).toHaveBeenLastCalledWith(expect.objectContaining({
+      user_info: expect.objectContaining({
+        valid_from: String(nowSec + 240),
+        valid_until: String(nowSec + 900),
+        is_valid_now: 0
+      })
     }));
   });
 
