@@ -9,7 +9,7 @@
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   </p>
-  <p><strong>⚠️ DISCLAIMER: This project is for educational purposes only.</strong></p>
+  <p><strong>⚠️ DISCLAIMER: This project is for educational purposes only.<br>IPTV-Manager does not provide any IPTV content or subscriptions. Use your own legal IPTV service.</strong></p>
 </div>
 
 ## 🚀 Features
