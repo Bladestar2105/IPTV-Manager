@@ -487,15 +487,17 @@ export const getProviderCategories = async (req, res) => {
 
     if (categoryIds.length > 0) {
       const placeholders = Array(categoryIds.length).fill('?').join(',');
-      const localCats = db.prepare(`
+      // ⚡ Bolt: Replace .all() with .iterate() to eliminate intermediate V8 array allocation overhead
+      // 🎯 Why: Iterating over potentially massive datasets avoids unnecessary memory usage and garbage collection spikes.
+      const stmt = db.prepare(`
         SELECT original_category_id,
                COUNT(*) as channel_count
         FROM provider_channels
         WHERE provider_id = ? AND stream_type = ? AND original_category_id IN (${placeholders})
         GROUP BY original_category_id
-      `).all(id, streamType, ...categoryIds);
+      `);
 
-      for (const l of localCats) {
+      for (const l of stmt.iterate(id, streamType, ...categoryIds)) {
         localCatsMap.set(Number(l.original_category_id), l);
       }
     }
@@ -556,24 +558,27 @@ export const importCategory = async (req, res) => {
       if(catType === 'movie') streamType = 'movie';
       if(catType === 'series') streamType = 'series';
 
-      const channels = db.prepare(`
+      // ⚡ Bolt: Replace .all() with .iterate() to eliminate intermediate V8 array allocation overhead
+      // 🎯 Why: Streaming channels via .iterate() handles massive imports gracefully without intermediate memory bloat.
+      const stmt = db.prepare(`
         SELECT id FROM provider_channels
         WHERE provider_id = ? AND original_category_id = ? AND stream_type = ?
         ORDER BY original_sort_order ASC, name ASC
-      `).all(providerId, Number(category_id), streamType);
+      `);
 
       const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
 
+      let importedCount = 0;
       db.transaction(() => {
-        channels.forEach((ch, idx) => {
-          insertChannel.run(newCategoryId, ch.id, idx);
-        });
+        for (const ch of stmt.iterate(providerId, Number(category_id), streamType)) {
+          insertChannel.run(newCategoryId, ch.id, importedCount++);
+        }
       })();
 
       res.json({
         success: true,
         category_id: newCategoryId,
-        channels_imported: channels.length,
+        channels_imported: importedCount,
         is_adult: isAdult
       });
     } else {
@@ -621,17 +626,19 @@ export const importCategories = async (req, res) => {
     if (categoryIds.length > 0) {
       // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
       const placeholders = Array(categoryIds.length).fill('?').join(',');
-      const allChannels = db.prepare(`
+      // ⚡ Bolt: Replace .all() with .iterate() to eliminate massive intermediate array allocations in V8
+      // 🎯 Why: .iterate() prevents fetching potentially 100k+ channels into a single array before mapping them.
+      const stmt = db.prepare(`
         SELECT id, original_category_id, stream_type FROM provider_channels
         WHERE provider_id = ? AND original_category_id IN (${placeholders})
         ORDER BY original_sort_order ASC, name ASC
-      `).all(providerId, ...categoryIds);
+      `);
 
-      allChannels.forEach(ch => {
+      for (const ch of stmt.iterate(providerId, ...categoryIds)) {
         const key = `${ch.original_category_id}_${ch.stream_type}`;
         if (!channelsMap.has(key)) channelsMap.set(key, []);
         channelsMap.get(key).push(ch);
-      });
+      }
     }
 
     db.transaction(() => {
