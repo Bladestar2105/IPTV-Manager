@@ -656,35 +656,41 @@ async function loadUsers() {
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       if (!confirm(t('deleteUserConfirm', {name: u.username}))) return;
-      await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
+      setLoadingState(delBtn, true, '', false);
+      try {
+        await fetchJSON(`/api/users/${u.id}`, {method: 'DELETE'});
 
-      // Clear state if deleted user was selected
-      if (selectedUserId === u.id) {
-          selectedUser = null;
-          selectedUserId = null;
-          selectedCategoryId = null;
-          document.getElementById('selected-user-label').innerHTML = `<em data-i18n="noUserSelected">${t('noUserSelected')}</em>`;
+        // Clear state if deleted user was selected
+        if (selectedUserId === u.id) {
+            selectedUser = null;
+            selectedUserId = null;
+            selectedCategoryId = null;
+            document.getElementById('selected-user-label').innerHTML = `<em data-i18n="noUserSelected">${t('noUserSelected')}</em>`;
 
-          const emptyState = document.getElementById('user-details-empty');
-          if (emptyState) emptyState.classList.remove('d-none');
+            const emptyState = document.getElementById('user-details-empty');
+            if (emptyState) emptyState.classList.remove('d-none');
 
-          const contentState = document.getElementById('user-details-content');
-          if (contentState) contentState.classList.add('d-none');
+            const contentState = document.getElementById('user-details-content');
+            if (contentState) contentState.classList.add('d-none');
 
-          document.getElementById('category-list').innerHTML = '';
-          document.getElementById('user-channel-list').innerHTML = '';
+            document.getElementById('category-list').innerHTML = '';
+            document.getElementById('user-channel-list').innerHTML = '';
 
-          // Reset headers
-          const availHeader = document.getElementById('available-channels-header');
-          if (availHeader) availHeader.textContent = t('available', {count: 0});
-          const assignedHeader = document.getElementById('assigned-channels-header');
-          if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
+            // Reset headers
+            const availHeader = document.getElementById('available-channels-header');
+            if (availHeader) availHeader.textContent = t('available', {count: 0});
+            const assignedHeader = document.getElementById('assigned-channels-header');
+            if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
 
-          if (categorySortable) { categorySortable.destroy(); categorySortable = null; }
-          if (channelSortable) { channelSortable.destroy(); channelSortable = null; }
+            if (categorySortable) { categorySortable.destroy(); categorySortable = null; }
+            if (channelSortable) { channelSortable.destroy(); channelSortable = null; }
+        }
+
+        loadUsers();
+      } catch (e) {
+        setLoadingState(delBtn, false);
+        alert(t('errorPrefix') + ' ' + e.message);
       }
-
-      loadUsers();
     };
     
     btnGroup.appendChild(playBtn);
@@ -964,8 +970,14 @@ async function loadProviders(filterUserId = null) {
         delBtn.title = t('deleteAction');
         delBtn.onclick = async () => {
           if (!confirm(t('deleteProviderConfirm', {name: p.name}))) return;
-          await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
-          loadProviders();
+          setLoadingState(delBtn, true, '', false);
+          try {
+            await fetchJSON(`/api/providers/${p.id}`, {method: 'DELETE'});
+            loadProviders();
+          } catch (e) {
+            setLoadingState(delBtn, false);
+            alert(t('errorPrefix') + ' ' + e.message);
+          }
         };
         btnGroup.appendChild(delBtn);
     }
@@ -1165,8 +1177,14 @@ async function loadUserCategories() {
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
       if (!confirm(t('deleteCategoryConfirm', {name: c.name}))) return;
-      await fetchJSON(`/api/user-categories/${c.id}`, {method: 'DELETE'});
-      loadUserCategories();
+      setLoadingState(delBtn, true, '', false);
+      try {
+        await fetchJSON(`/api/user-categories/${c.id}`, {method: 'DELETE'});
+        loadUserCategories();
+      } catch (e) {
+        setLoadingState(delBtn, false);
+        alert(t('errorPrefix') + ' ' + e.message);
+      }
     };
     
     btnGroup.appendChild(editBtn);
@@ -1750,8 +1768,14 @@ function renderUserCategoryChannels() {
     delBtn.setAttribute('aria-label', `${t('deleteAction')} ${displayName}`); // Accessible label
     delBtn.title = t('deleteAction');
     delBtn.onclick = async () => {
-      await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
-      loadUserCategoryChannels();
+      setLoadingState(delBtn, true, '', false);
+      try {
+        await fetchJSON(`/api/user-channels/${ch.user_channel_id}`, {method: 'DELETE'});
+        loadUserCategoryChannels();
+      } catch (e) {
+        setLoadingState(delBtn, false);
+        alert(t('errorPrefix') + ' ' + e.message);
+      }
     };
     
     actionDiv.appendChild(delBtn);
@@ -2179,8 +2203,14 @@ async function loadEpgSources() {
         delBtn.title = t('deleteAction');
         delBtn.onclick = async () => {
           if (!confirm(t('confirmDeleteEpgSource', {name: source.name}))) return;
-          await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
-          loadEpgSources();
+          setLoadingState(delBtn, true, '', false);
+          try {
+            await fetchJSON(`/api/epg-sources/${source.id}`, {method: 'DELETE'});
+            loadEpgSources();
+          } catch (e) {
+            setLoadingState(delBtn, false);
+            alert(t('errorPrefix') + ' ' + e.message);
+          }
         };
         
         btnGroup.appendChild(editBtn);
