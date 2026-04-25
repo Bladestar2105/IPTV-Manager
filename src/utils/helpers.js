@@ -97,7 +97,7 @@ export function isUnsafeIP(ip) {
     return false;
 }
 
-export async function isSafeUrl(urlStr) {
+export function isSafeUrl(urlStr) {
   try {
     const parsed = new URL(urlStr);
     if (!parsed.protocol.startsWith('http')) return false;

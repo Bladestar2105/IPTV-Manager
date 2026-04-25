@@ -72,7 +72,7 @@ export function startEpgScheduler() {
             console.debug(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
 
             if (provider.epg_url && provider.epg_url.trim() !== '') {
-              if (!(await isSafeUrl(provider.epg_url))) {
+              if (!(isSafeUrl(provider.epg_url))) {
                 console.error(`Unsafe EPG URL for provider ${provider.name}`);
                 failedUpdates.set(provider.id, now);
                 continue;
