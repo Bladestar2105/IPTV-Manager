@@ -556,7 +556,7 @@ export const proxyLive = async (req, res) => {
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
-      const isProviderSafe = await isSafeUrl(channel.provider_url);
+      const isProviderSafe = isSafeUrl(channel.provider_url);
 
       const headersToForward = { ...fetchHeaders };
       if (cookies) headersToForward['Cookie'] = cookies;
@@ -703,7 +703,7 @@ export const proxySegment = async (req, res) => {
     if (!targetUrl) return res.sendStatus(400);
 
     if (isOriginSafe) {
-        if (!(await isSafeUrl(targetUrl))) {
+        if (!(isSafeUrl(targetUrl))) {
             return res.sendStatus(403);
         }
     }
@@ -1282,7 +1282,7 @@ export const proxyTimeshift = async (req, res) => {
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
-      const isProviderSafe = await isSafeUrl(channel.provider_url);
+      const isProviderSafe = isSafeUrl(channel.provider_url);
 
       const headersToForward = { ...headers };
       const cookies = upstream.headers.get('set-cookie');
