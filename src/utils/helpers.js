@@ -145,8 +145,9 @@ const wordPattern = new RegExp(`(?:\\b|_|\\W|^)(${wordKeywords.join('|')})(?:\\b
 const specialPattern = new RegExp(`(?:^|\\s|\\W)(${specialKeywords.join('|')})(?:\\s|$|\\W)`, 'i');
 
 export function isAdultCategory(name) {
-  const nameLower = name.toLowerCase();
-  return wordPattern.test(nameLower) || specialPattern.test(nameLower);
+  // ⚡ Bolt: Removed .toLowerCase() before regex test. RegExp with 'i' flag ignores case natively.
+  // 🎯 Why: .toLowerCase() creates a new string in memory. Avoiding it reduces V8 allocations and GC pressure.
+  return wordPattern.test(name) || specialPattern.test(name);
 }
 
 let settingsCache = new Map();
