@@ -31,8 +31,7 @@ describe('Smart Stream Counting Logic', () => {
         const countQuery = calls.find(sql => sql.includes('SELECT COUNT(*) as count FROM') && sql.includes('user_id = ?'));
 
         expect(countQuery).toBeDefined();
-        // This expectation will fail BEFORE the fix, confirming reproduction
-        // We expect it to count distinct sessions
+        // Smart counting: Count unique sessions by content + IP + provider
         expect(countQuery).toContain('DISTINCT channel_name, ip, provider_id');
     });
 
