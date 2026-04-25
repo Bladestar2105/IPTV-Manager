@@ -1,30 +1,15 @@
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { DATA_DIR } from '../config/constants.js';
 
 let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  const jwtFile = path.join(DATA_DIR, 'jwt.secret');
-  if (fs.existsSync(jwtFile)) {
-    JWT_SECRET = fs.readFileSync(jwtFile, 'utf8').trim();
-  } else {
-    JWT_SECRET = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(jwtFile, JWT_SECRET, { mode: 0o600 });
-    console.log('🔐 Generated new unique JWT secret and saved to jwt.secret');
-  }
+  JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️  JWT_SECRET not set in environment. Using a temporary in-memory secret.');
 }
 
 let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 if (!ENCRYPTION_KEY) {
-  const keyFile = path.join(DATA_DIR, 'secret.key');
-  if (fs.existsSync(keyFile)) {
-    ENCRYPTION_KEY = fs.readFileSync(keyFile, 'utf8').trim();
-  } else {
-    ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(keyFile, ENCRYPTION_KEY, { mode: 0o600 });
-    console.log('🔐 Generated new unique encryption key and saved to secret.key');
-  }
+  ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️  ENCRYPTION_KEY not set in environment. Using a temporary in-memory key. Encrypted data (like provider passwords) will NOT be accessible after a restart!');
 }
 // Ensure key is 32 bytes for AES-256
 if (Buffer.from(ENCRYPTION_KEY, 'hex').length !== 32) {
