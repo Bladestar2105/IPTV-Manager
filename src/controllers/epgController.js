@@ -449,17 +449,9 @@ export const autoMapping = async (req, res) => {
 
     if (channels.length === 0) return res.json({matched: 0, message: 'No unmapped channels found'});
 
-    // Load ALL EPG Channels from DB to pass to worker
-    const allEpgChannels = await loadAllEpgChannels();
-
-    if (allEpgChannels.length === 0) {
-        return res.status(503).json({error: 'EPG data empty. Please update EPG sources.'});
-    }
-
     const worker = new Worker(path.join(process.cwd(), 'src', 'workers', 'epgWorker.js'), {
       workerData: {
-        channels,
-        allEpgChannels
+        channels
       }
     });
 
@@ -473,6 +465,9 @@ export const autoMapping = async (req, res) => {
 
     if (!result.success) {
       throw new Error(result.error || 'Worker failed');
+    }
+    if (result.epgEmpty) {
+      return res.status(503).json({error: 'EPG data empty. Please update EPG sources.'});
     }
 
     const { updates, matched } = result;

@@ -55,7 +55,7 @@ describe('EPG Controller', () => {
         });
 
         it('should block unsafe URLs', async () => {
-            helpers.isSafeUrl.mockResolvedValue(false);
+            helpers.isSafeUrl.mockReturnValue(false);
             const req = { user: { is_admin: true }, body: { name: 'Test', url: 'http://unsafe.local' } };
             const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
 
@@ -66,7 +66,7 @@ describe('EPG Controller', () => {
         });
 
         it('should create a valid EPG source', async () => {
-            helpers.isSafeUrl.mockResolvedValue(true);
+            helpers.isSafeUrl.mockReturnValue(true);
             const req = {
                 user: { is_admin: true },
                 body: { name: 'Test EPG', url: 'http://example.com/epg.xml', enabled: true, update_interval: 3600 }
@@ -85,7 +85,7 @@ describe('EPG Controller', () => {
 
     describe('updateEpgSourceEndpoint', () => {
         it('should update existing source fields', async () => {
-            helpers.isSafeUrl.mockResolvedValue(true);
+            helpers.isSafeUrl.mockReturnValue(true);
             const info = db.prepare('INSERT INTO epg_sources (name, url, enabled) VALUES (?, ?, ?)').run('Old Name', 'http://old.com', 1);
             const id = info.lastInsertRowid;
 
@@ -105,7 +105,7 @@ describe('EPG Controller', () => {
         });
 
         it('should block unsafe URLs during update', async () => {
-            helpers.isSafeUrl.mockResolvedValue(false);
+            helpers.isSafeUrl.mockReturnValue(false);
             const info = db.prepare('INSERT INTO epg_sources (name, url, enabled) VALUES (?, ?, ?)').run('Valid', 'http://valid.com', 1);
             const id = info.lastInsertRowid;
 

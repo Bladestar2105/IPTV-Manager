@@ -3,9 +3,11 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "build": "node -e \"console.log('No build step required for IPTV-Manager')\"",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:playwright:smoke": "node scripts/playwright_smoke.mjs"
   },
   "dependencies": {
     "@iptv/xtream-api": "^1.2.1",

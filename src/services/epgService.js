@@ -9,6 +9,11 @@ import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
+function decodeXmlIfNeeded(value) {
+    if (!value) return '';
+    return value.includes('&') ? decodeXml(value) : value;
+}
+
 export async function importEpgFromUrl(url, sourceType, sourceId) {
     console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
     // fetchSafe performs isSafeUrl check
@@ -78,15 +83,16 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
         let channelBatch = [];
         let programBatch = [];
-        const BATCH_SIZE = 500;
+        const BATCH_SIZE = 2000;
+
+        const processBatchTx = importDb.transaction((channelsToInsert, programsToInsert) => {
+            for (const ch of channelsToInsert) insertChannel.run(ch);
+            for (const prog of programsToInsert) insertProgram.run(prog);
+        });
 
         const processBatches = () => {
             if (channelBatch.length > 0 || programBatch.length > 0) {
-                const updateTx = importDb.transaction(() => {
-                    for (const ch of channelBatch) insertChannel.run(ch);
-                    for (const prog of programBatch) insertProgram.run(prog);
-                });
-                updateTx();
+                processBatchTx(channelBatch, programBatch);
                 channelBatch = [];
                 programBatch = [];
             }
@@ -167,13 +173,13 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             parser.on('closetag', function (name) {
                 if (currentChannel && name === 'display-name') {
                     if (!currentChannel.hasName) {
-                        currentChannel.name = decodeXml(currentText);
+                        currentChannel.name = decodeXmlIfNeeded(currentText);
                         currentChannel.hasName = true;
                     }
                 } else if (currentProgram && name === 'title') {
-                    currentProgram.title = decodeXml(currentText);
+                    currentProgram.title = decodeXmlIfNeeded(currentText);
                 } else if (currentProgram && name === 'desc') {
-                    currentProgram.desc = decodeXml(currentText);
+                    currentProgram.desc = decodeXmlIfNeeded(currentText);
                 }
 
                 if (name === 'channel' && currentChannel) {

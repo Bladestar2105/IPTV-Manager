@@ -1,11 +1,12 @@
 import { parentPort, workerData } from 'worker_threads';
 import { ChannelMatcher } from '../services/channelMatcher.js';
+import { loadAllEpgChannels } from '../services/epgService.js';
 
-export function matchChannels(channels, allEpgChannels) {
+export function matchChannels(channels, allEpgChannels = null) {
     const updates = [];
     let matched = 0;
 
-    const matcher = new ChannelMatcher(allEpgChannels);
+    const matcher = new ChannelMatcher(allEpgChannels || []);
 
     for (const ch of channels) {
        // Automapping
@@ -23,9 +24,15 @@ export function matchChannels(channels, allEpgChannels) {
 async function run() {
   if (!workerData) return; // Not running in worker thread
 
-  const { channels, allEpgChannels } = workerData;
+  const { channels } = workerData;
 
   try {
+    const allEpgChannels = await loadAllEpgChannels();
+    if (!allEpgChannels || allEpgChannels.length === 0) {
+      parentPort.postMessage({ success: true, updates: [], matched: 0, epgEmpty: true });
+      return;
+    }
+
     const { updates, matched } = matchChannels(channels, allEpgChannels || []);
     parentPort.postMessage({ success: true, updates, matched });
 
