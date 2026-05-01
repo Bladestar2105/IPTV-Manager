@@ -558,8 +558,6 @@ export const importCategory = async (req, res) => {
       if(catType === 'movie') streamType = 'movie';
       if(catType === 'series') streamType = 'series';
 
-      // ⚡ Bolt: Replace .all() with .iterate() to eliminate intermediate V8 array allocation overhead
-      // 🎯 Why: Streaming channels via .iterate() handles massive imports gracefully without intermediate memory bloat.
       const stmt = db.prepare(`
         SELECT id FROM provider_channels
         WHERE provider_id = ? AND original_category_id = ? AND stream_type = ?
@@ -567,12 +565,12 @@ export const importCategory = async (req, res) => {
       `);
 
       const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
-
-      let importedCount = 0;
+      const channels = stmt.all(providerId, Number(category_id), streamType);
+      const importedCount = channels.length;
       db.transaction(() => {
-        for (const ch of stmt.iterate(providerId, Number(category_id), streamType)) {
-          insertChannel.run(newCategoryId, ch.id, importedCount++);
-        }
+        channels.forEach((ch, idx) => {
+          insertChannel.run(newCategoryId, ch.id, idx);
+        });
       })();
 
       res.json({
