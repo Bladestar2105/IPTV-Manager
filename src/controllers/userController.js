@@ -258,7 +258,7 @@ export const createUser = async (req, res) => {
                             SELECT provider_channel_id, epg_channel_id
                             FROM epg_channel_mappings
                             WHERE provider_channel_id IN (${placeholders})
-                        `).all(batch);
+                        `).all(...batch);
 
                         for (const m of mappings) {
                             const newChId = channelMap[m.provider_channel_id];
