@@ -183,7 +183,7 @@ export const createUser = async (req, res) => {
                     const placeholders = Array(oldProviderIdsForSync.length).fill('?').join(',');
                     const sourceSyncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${placeholders})`).all(...oldProviderIdsForSync);
                     const insertSync = db.prepare(`
-                        INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels)
+                        INSERT OR IGNORE INTO sync_configs (provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels)
                         VALUES (?, ?, ?, ?, ?, ?)
                     `);
                     for (const sync of sourceSyncs) {
@@ -245,7 +245,7 @@ export const createUser = async (req, res) => {
                 }
 
                 // 3b. Copy EPG Channel Mappings
-                const insertEpgMap = db.prepare('INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (?, ?)');
+                const insertEpgMap = db.prepare('INSERT OR IGNORE INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (?, ?)');
                 // Optimization: Replace O(N) database queries with a single set-based lookup to avoid N+1 bottleneck
                 const oldChannelIds = Object.keys(channelMap);
                 if (oldChannelIds.length > 0) {
@@ -291,7 +291,7 @@ export const createUser = async (req, res) => {
                 // 5. Copy Category Mappings
                 const sourceMappings = db.prepare('SELECT * FROM category_mappings WHERE user_id = ?').all(sourceUserId);
                 const insertMapping = db.prepare(`
-                    INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+                    INSERT OR IGNORE INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 `);
 
@@ -313,13 +313,13 @@ export const createUser = async (req, res) => {
                 // We need to iterate over source user's categories to find channels
                 // Or simply select all user_channels linked to source user's categories
                 const insertUserChan = db.prepare(`
-                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden)
+                    VALUES (?, ?, ?, ?, ?)
                 `);
 
                 // Fetch all user channels for source user categories
                 const sourceUserChans = db.prepare(`
-                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name
+                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name, uc.is_hidden
                     FROM user_channels uc
                     JOIN user_categories cat ON uc.user_category_id = cat.id
                     WHERE cat.user_id = ?
@@ -330,7 +330,7 @@ export const createUser = async (req, res) => {
                     const newProvChanId = channelMap[uc.provider_channel_id];
 
                     if (newCatId && newProvChanId) {
-                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order, uc.custom_name || '');
+                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order, uc.custom_name || '', uc.is_hidden || 0);
                     }
                 }
             }
