@@ -7,6 +7,12 @@ import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
 
+const getClonedProviderChannelName = (channel) => {
+  if (typeof channel.name === 'string' && channel.name.trim()) return channel.name;
+  const fallbackId = channel.remote_stream_id ?? channel.id ?? 'unknown';
+  return `Channel ${fallbackId}`;
+};
+
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
@@ -153,8 +159,8 @@ export const createUser = async (req, res) => {
                 const sourceProviders = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(sourceUserId);
 
                 const insertProvider = db.prepare(`
-                    INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections, use_mapped_epg_icon)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
 
                 for (const prov of sourceProviders) {
@@ -170,7 +176,8 @@ export const createUser = async (req, res) => {
                         prov.expiry_date,
                         prov.backup_urls,
                         prov.user_agent,
-                        prov.max_connections || 0
+                        prov.max_connections || 0,
+                        prov.use_mapped_epg_icon ? 1 : 0
                     );
                     providerMap[prov.id] = result.lastInsertRowid;
                 }
@@ -215,11 +222,15 @@ export const createUser = async (req, res) => {
                     for (const ch of channelsStmt.iterate(...oldProviderIdsForSync)) {
                         const newProvId = providerMap[ch.provider_id];
                         if (!newProvId) continue;
+                        if (ch.remote_stream_id === null || ch.remote_stream_id === undefined) {
+                            console.warn(`Skipping cloned provider channel ${ch.id}: missing remote_stream_id`);
+                            continue;
+                        }
 
                         const result = insertChannel.run(
                             newProvId,
                             ch.remote_stream_id,
-                            ch.name,
+                            getClonedProviderChannelName(ch),
                             ch.original_category_id,
                             ch.logo,
                             ch.stream_type,
@@ -344,6 +355,7 @@ export const createUser = async (req, res) => {
     })();
 
   } catch (e) {
+    console.error('Create user failed:', e.message);
     res.status(400).json({error: e.message});
   }
 };
