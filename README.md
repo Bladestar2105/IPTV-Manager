@@ -112,6 +112,7 @@ chmod +x proxmox.sh
 ### Development
 - **Linting**: `npm run lint`
 - **Testing**: `npm test`
+- **Developer notes**: `docs/DEVELOPMENT.md`
 
 ### First Time Setup
 - **Default Username**: `admin`

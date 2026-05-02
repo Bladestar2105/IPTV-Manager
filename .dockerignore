@@ -3,6 +3,17 @@ node_modules
 .github
 .env
 data
+cache
+temp_*
+temp_uploads
+db.sqlite*
+epg.db*
+secret.key
+jwt.secret
 dist
 coverage
+test-results
+playwright-report
 npm-debug.log
+*.log
+.DS_Store
