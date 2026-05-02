@@ -22,6 +22,14 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 Update these files when routes, environment variables, setup, Docker behavior,
 or integration behavior changes.
 
+## Browser Player Audio Fix
+
+The Web Player can retry a stream with `transcode=true` when browser playback
+hits unsupported TV audio codecs such as AC-3, E-AC-3, DTS, or MP2/MPEG Layer 2.
+Manual audio fix remains a global user preference in `transcode_enabled`.
+Automatic codec fallback is scoped per stream in `player_auto_transcode_streams`
+so one incompatible channel does not force all later streams through FFmpeg.
+
 ## Local Data
 
 By default the app stores runtime data in the repo root unless `DATA_DIR` is set.

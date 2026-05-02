@@ -25,6 +25,8 @@
   let isRetrying = false;
   let retryCount = 0;
   const MAX_RETRIES = 3;
+  const MANUAL_TRANSCODE_KEY = 'transcode_enabled';
+  const AUTO_TRANSCODE_KEY = 'player_auto_transcode_streams';
 
   const video = document.getElementById('video');
 
@@ -836,12 +838,106 @@ function escapeHtml(unsafe) {
 
   // ─── Player Logic ───
   var transcodeSwitch = document.getElementById('transcode-switch');
-  transcodeSwitch.checked = localStorage.getItem('transcode_enabled') === 'true';
+  var manualTranscodeEnabled = localStorage.getItem(MANUAL_TRANSCODE_KEY) === 'true';
+  var autoTranscodeStreams = loadAutoTranscodeStreams();
+  transcodeSwitch.checked = manualTranscodeEnabled;
 
   transcodeSwitch.addEventListener('change', function() {
-    localStorage.setItem('transcode_enabled', transcodeSwitch.checked);
+    manualTranscodeEnabled = transcodeSwitch.checked;
+    localStorage.setItem(MANUAL_TRANSCODE_KEY, manualTranscodeEnabled);
+    if (!manualTranscodeEnabled && activeStream) {
+      forgetAutoTranscode(activeStream);
+    }
     if (activeStream) playStream(activeStream);
   });
+
+  function loadAutoTranscodeStreams() {
+    try {
+      var raw = localStorage.getItem(AUTO_TRANSCODE_KEY);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveAutoTranscodeStreams() {
+    try {
+      localStorage.setItem(AUTO_TRANSCODE_KEY, JSON.stringify(autoTranscodeStreams));
+    } catch (e) {
+      // ignore storage quota/private mode failures
+    }
+  }
+
+  function getStreamTranscodeKey(stream) {
+    if (!stream || !stream.url) return '';
+    try {
+      var parsed = new URL(stream.url, window.location.href);
+      return (stream.type || 'live') + ':' + parsed.pathname;
+    } catch (e) {
+      return (stream.type || 'live') + ':' + String(stream.url).split('?')[0];
+    }
+  }
+
+  function shouldTranscodeStream(stream) {
+    var key = getStreamTranscodeKey(stream);
+    return manualTranscodeEnabled || !!(key && autoTranscodeStreams[key]);
+  }
+
+  function withQueryParam(url, key, value) {
+    if (url.indexOf('?' + key + '=') !== -1 || url.indexOf('&' + key + '=') !== -1) return url;
+    return url + (url.includes('?') ? '&' : '?') + key + '=' + encodeURIComponent(value);
+  }
+
+  function buildTranscodeUrl(url) {
+    var targetUrl = url;
+    if (targetUrl.includes('.ts')) {
+      targetUrl = targetUrl.replace(/\.ts($|\?)/, '.mp4$1');
+    } else if (targetUrl.includes('/live/') && targetUrl.includes('.m3u8')) {
+      targetUrl = targetUrl.replace(/\.m3u8($|\?)/, '.mp4$1');
+    }
+    return withQueryParam(targetUrl, 'transcode', 'true');
+  }
+
+  function rememberAutoTranscode(stream) {
+    var key = getStreamTranscodeKey(stream);
+    if (!key) return;
+    autoTranscodeStreams[key] = Date.now();
+    saveAutoTranscodeStreams();
+  }
+
+  function forgetAutoTranscode(stream) {
+    var key = getStreamTranscodeKey(stream);
+    if (!key || !autoTranscodeStreams[key]) return;
+    delete autoTranscodeStreams[key];
+    saveAutoTranscodeStreams();
+  }
+
+  function isUnsupportedAudioCodec(audioCodec) {
+    if (!audioCodec) return false;
+    var codecLower = String(audioCodec).toLowerCase().replace(/[_\s]+/g, '-');
+    var unsupportedAudio = [
+      'ac-3',
+      'ac3',
+      'ec-3',
+      'eac3',
+      'eac-3',
+      'dts',
+      'dtsc',
+      'dtse',
+      'dtsh',
+      'dtsl',
+      'mp1',
+      'mp2',
+      'mpa',
+      'mpga',
+      'mpeg-1-layer-ii',
+      'mpeg-layer-2',
+      'mp4a.40.34'
+    ];
+    return unsupportedAudio.some(function(c) { return codecLower.includes(c); });
+  }
 
   function playStream(stream) {
     activeStream = stream;
@@ -864,7 +960,8 @@ function escapeHtml(unsafe) {
       url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
     }
 
-    var wantTranscode = transcodeSwitch.checked;
+    var wantTranscode = shouldTranscodeStream(stream);
+    transcodeSwitch.checked = wantTranscode;
     var streamType = stream.type || 'live';
 
     // Store DRM info
@@ -879,9 +976,7 @@ function escapeHtml(unsafe) {
       initDashPlayer(url);
     } else if (url.includes('.ts')) {
       if (wantTranscode) {
-        var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
-        var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
-        initNativePlayer(mp4TranscodeUrl, streamType);
+        initNativePlayer(buildTranscodeUrl(url), streamType);
       } else if (isIOS) {
         var hlsUrl2 = url.replace(/\.ts($|\?)/, '.m3u8$1');
         initNativePlayer(hlsUrl2, streamType);
@@ -894,7 +989,9 @@ function escapeHtml(unsafe) {
         initNativePlayer(url, streamType);
       }
     } else if (url.includes('.m3u8')) {
-      if (isIOS) {
+      if (wantTranscode) {
+        initNativePlayer(buildTranscodeUrl(url), streamType);
+      } else if (isIOS) {
         initNativePlayer(url, streamType);
       } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         initHlsPlayer(url, streamType, null);
@@ -903,8 +1000,7 @@ function escapeHtml(unsafe) {
       }
     } else if (url.match(/\.(mkv|avi|mp4|mov|wmv)($|\?)/i)) {
       if (wantTranscode) {
-        var vodTranscodeUrl = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
-        initNativePlayer(vodTranscodeUrl, streamType);
+        initNativePlayer(buildTranscodeUrl(url), streamType);
       } else {
         initNativePlayer(url, streamType);
       }
@@ -1040,16 +1136,13 @@ function escapeHtml(unsafe) {
     flvPlayer.load();
 
     var errorHandled = false;
-    var UNSUPPORTED_AUDIO = ['ac-3', 'ec-3', 'eac3', 'eac-3', 'dts', 'dtsc', 'dtse', 'dtsh', 'dtsl'];
 
     if (flvPlayer.on && mpegts.Events.MEDIA_INFO) {
       flvPlayer.on(mpegts.Events.MEDIA_INFO, function(mediaInfo) {
         if (errorHandled) return;
         var audioCodec = mediaInfo && mediaInfo.audioCodec;
         if (audioCodec) {
-          var codecLower = audioCodec.toLowerCase();
-          var isUnsupported = UNSUPPORTED_AUDIO.some(function(c) { return codecLower.includes(c); });
-          if (isUnsupported) {
+          if (isUnsupportedAudioCodec(audioCodec)) {
             console.warn('Unsupported audio codec: ' + audioCodec);
             errorHandled = true;
             enableTranscodeAndRetry(type);
@@ -1156,10 +1249,10 @@ function escapeHtml(unsafe) {
     isRetrying = true;
 
     if (!transcodeSwitch.checked) {
-      console.log('Auto-enabling audio transcode...');
+      console.log('Auto-enabling audio transcode for current stream...');
       showToast(t('unsupportedCodec') || 'Unsupported codec detected. Enabling audio fix...', 'info');
+      rememberAutoTranscode(activeStream);
       transcodeSwitch.checked = true;
-      localStorage.setItem('transcode_enabled', 'true');
     }
 
     destroyAllPlayers();
@@ -1172,12 +1265,9 @@ function escapeHtml(unsafe) {
       }
 
       if (url.includes('.ts')) {
-        var mp4Url = url.replace(/\.ts($|\?)/, '.mp4$1');
-        var mp4TranscodeUrl = mp4Url + (mp4Url.includes('?') ? '&' : '?') + 'transcode=true';
-        initNativePlayer(mp4TranscodeUrl, type);
+        initNativePlayer(buildTranscodeUrl(url), type);
       } else {
-        var transcodeUrl2 = url + (url.includes('?') ? '&' : '?') + 'transcode=true';
-        initNativePlayer(transcodeUrl2, type);
+        initNativePlayer(buildTranscodeUrl(url), type);
       }
     }, 500);
   }
