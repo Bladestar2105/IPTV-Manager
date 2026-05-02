@@ -430,6 +430,47 @@ export function getProgramsSchedule(start, end) {
     `).get(start, end);
 }
 
+export function getProgramsScheduleForChannels(start, end, channelIds) {
+    if (!channelIds || channelIds.size === 0 || channelIds.length === 0) {
+        return { json_data: '{}' };
+    }
+
+    const ids = Array.from(channelIds)
+        .filter(Boolean)
+        .map((id) => String(id));
+    if (ids.length === 0) return { json_data: '{}' };
+
+    const BATCH_SIZE = 900; // SQLite bind parameter limit safety
+    const fragments = [];
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const placeholders = Array(batch.length).fill('?').join(',');
+        const row = db.prepare(`
+            SELECT json_group_object(channel_id, json(programs)) as json_data
+            FROM (
+                SELECT channel_id, json_group_array(
+                    json_object('title', title, 'desc', IFNULL(desc, ''), 'start', start, 'stop', stop)
+                ) as programs
+                FROM (
+                    SELECT channel_id, title, desc, start, stop
+                    FROM epg_programs
+                    WHERE channel_id IN (${placeholders}) AND stop >= ? AND start <= ?
+                    ORDER BY channel_id ASC, start ASC
+                )
+                GROUP BY channel_id
+            )
+        `).get(...batch, start, end);
+
+        const json = row && row.json_data;
+        if (json && json !== '{}') {
+            fragments.push(json.slice(1, -1));
+        }
+    }
+
+    return { json_data: fragments.length > 0 ? `{${fragments.join(',')}}` : '{}' };
+}
+
 export function getLastEpgUpdate(sourceType, sourceId) {
     const row = db.prepare('SELECT MAX(updated_at) as last_update FROM epg_channels WHERE source_type = ? AND source_id = ?').get(sourceType, sourceId);
     return row && row.last_update ? row.last_update : 0;

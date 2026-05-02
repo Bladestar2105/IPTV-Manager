@@ -9,7 +9,7 @@ import {
   updateProviderEpg,
   deleteEpgSourceData,
   getProgramsNow,
-  getProgramsSchedule,
+  getProgramsScheduleForChannels,
   clearEpgData
 } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -17,6 +17,39 @@ import { ChannelMatcher } from '../services/channelMatcher.js';
 import { isSafeUrl } from '../utils/helpers.js';
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../utils/crypto.js';
+
+const getUserEpgChannelIds = (user) => {
+  let query = `
+    SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
+    FROM user_channels uc
+    JOIN user_categories cat ON cat.id = uc.user_category_id
+    JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+    LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+    WHERE cat.user_id = ? AND uc.is_hidden = 0
+      AND COALESCE(map.epg_channel_id, pc.epg_channel_id, '') != ''
+  `;
+  let params = [user.id];
+
+  if (user.is_share_guest) {
+    const nowSec = Date.now() / 1000;
+    if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
+      return new Set();
+    }
+
+    const allowedChannelIds = (user.allowed_channels || [])
+      .map(id => Number(id))
+      .filter(id => Number.isInteger(id) && id > 0);
+
+    if (allowedChannelIds.length === 0) return new Set();
+
+    const placeholders = Array(allowedChannelIds.length).fill('?').join(',');
+    query += ` AND uc.id IN (${placeholders})`;
+    params = params.concat(allowedChannelIds);
+  }
+
+  const rows = db.prepare(query).all(...params);
+  return new Set(rows.map(row => row.epg_id).filter(Boolean));
+};
 
 export const getEpgNow = async (req, res) => {
   try {
@@ -62,8 +95,13 @@ export const getEpgSchedule = async (req, res) => {
 
     const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200);
     const end = parseInt(req.query.end) || (Math.floor(Date.now() / 1000) + 86400);
+    const epgChannelIds = getUserEpgChannelIds(user);
 
-    const row = getProgramsSchedule(start, end);
+    if (epgChannelIds.size === 0) {
+      return res.json({});
+    }
+
+    const row = getProgramsScheduleForChannels(start, end, epgChannelIds);
     if (row && row.json_data) {
       res.setHeader('Content-Type', 'application/json');
       return res.send(row.json_data);

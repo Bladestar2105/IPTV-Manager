@@ -73,6 +73,10 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `POST /api/mapping/suggest`
 - `POST /api/mapping/auto`
 
+`GET /api/epg/schedule` is scoped to the authenticated user's visible channels
+and, for share guests, to the share's allowed channel list. The web player uses
+this endpoint for timeline data after rendering the channel list.
+
 ## User Backups
 
 - `GET /api/users/:userId/backups`

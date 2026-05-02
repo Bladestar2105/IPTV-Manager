@@ -80,3 +80,10 @@ Heavy one-time migrations should:
 - mark completion in `settings`
 - avoid repeated `VACUUM`
 - preserve existing user/provider data
+
+## Web Player Performance
+
+The browser player renders the channel list before EPG schedule data is loaded.
+Keep `/api/epg/schedule` scoped to the authenticated user's visible EPG channel
+IDs so large global EPG imports do not block player startup or send unrelated
+programme data to the browser.

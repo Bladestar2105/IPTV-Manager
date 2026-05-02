@@ -35,7 +35,7 @@ vi.mock('../../src/services/epgService.js', () => ({
     updateProviderEpg: vi.fn(),
     deleteEpgSourceData: vi.fn(),
     getProgramsNow: vi.fn(() => []),
-    getProgramsSchedule: vi.fn(() => [])
+    getProgramsScheduleForChannels: vi.fn(() => ({ json_data: '{}' }))
 }));
 
 import * as epgController from '../../src/controllers/epgController.js';

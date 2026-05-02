@@ -18,7 +18,7 @@ vi.mock('../../src/utils/network.js', () => ({
     fetchSafe: vi.fn()
 }));
 
-import { getLastEpgUpdate } from '../../src/services/epgService.js';
+import { getLastEpgUpdate, getProgramsScheduleForChannels } from '../../src/services/epgService.js';
 import db from '../../src/database/epgDb.js';
 
 describe('epgService - getLastEpgUpdate', () => {
@@ -66,5 +66,28 @@ describe('epgService - getLastEpgUpdate', () => {
         const result = getLastEpgUpdate('custom', 1);
 
         expect(result).toBe(0);
+    });
+
+    it('should return scoped schedule JSON only for requested EPG channels', () => {
+        const mockGet = vi.fn()
+            .mockReturnValueOnce({ json_data: '{"ch1":[{"title":"Now","start":10,"stop":20}],"ch2":[{"title":"Next","start":20,"stop":30}]}' });
+        const mockPrepare = vi.fn().mockReturnValue({ get: mockGet });
+        db.prepare.mockImplementation(mockPrepare);
+
+        const result = getProgramsScheduleForChannels(10, 30, ['ch1', 'ch2']);
+
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('WHERE channel_id IN (?,?) AND stop >= ? AND start <= ?'));
+        expect(mockGet).toHaveBeenCalledWith('ch1', 'ch2', 10, 30);
+        expect(JSON.parse(result.json_data)).toEqual({
+            ch1: [{ title: 'Now', start: 10, stop: 20 }],
+            ch2: [{ title: 'Next', start: 20, stop: 30 }]
+        });
+    });
+
+    it('should return an empty schedule without querying EPG when no channel IDs are supplied', () => {
+        const result = getProgramsScheduleForChannels(10, 30, []);
+
+        expect(result).toEqual({ json_data: '{}' });
+        expect(db.prepare).not.toHaveBeenCalled();
     });
 });

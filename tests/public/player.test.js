@@ -43,3 +43,14 @@ test('browser player treats common TV-only audio codecs as requiring audio fix',
     expect(playerJs).toContain("'" + codec + "'");
   });
 });
+
+test('browser player renders channel lists before background EPG load completes', () => {
+  const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
+
+  const renderIndex = playerJs.indexOf('renderView();\n      loadEpgSchedule().then');
+  const epgFunctionIndex = playerJs.indexOf('async function loadEpgSchedule()');
+
+  expect(renderIndex).toBeGreaterThan(-1);
+  expect(epgFunctionIndex).toBeGreaterThan(renderIndex);
+  expect(playerJs).toContain("if (loaded && currentType === 'live')");
+});

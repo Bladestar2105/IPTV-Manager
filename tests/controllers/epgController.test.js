@@ -6,9 +6,13 @@ import * as epgService from '../../src/services/epgService.js';
 import * as helpers from '../../src/utils/helpers.js';
 
 vi.mock('../../src/services/epgService.js', () => ({
+    loadAllEpgChannels: vi.fn(),
     deleteEpgSourceData: vi.fn(),
     updateEpgSource: vi.fn(),
-    updateProviderEpg: vi.fn()
+    updateProviderEpg: vi.fn(),
+    getProgramsNow: vi.fn(),
+    getProgramsScheduleForChannels: vi.fn(),
+    clearEpgData: vi.fn()
 }));
 
 vi.mock('../../src/utils/helpers.js', async (importOriginal) => {

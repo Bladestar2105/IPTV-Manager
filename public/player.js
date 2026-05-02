@@ -243,22 +243,14 @@ function escapeHtml(unsafe) {
       window.maxCatchupHours = Math.max(24, maxCatchupDays * 24);
       console.log('Loaded ' + allChannels.length + ' channels');
 
-      // 2. Fetch EPG Schedule
-      if (loadingTextSpan) loadingTextSpan.textContent = t('loadingEpg') || 'Loading EPG...';
-      var start = timelineStart - 3600;
-      var end = timelineStart + (TIMELINE_HOURS * 3600) + 3600;
-      try {
-        var epgRes = await fetch('/api/epg/schedule?start=' + start + '&end=' + end + '&' + getAuthParams());
-        if (epgRes.ok) {
-          epgSchedule = await epgRes.json();
-          console.log('EPG loaded: ' + Object.keys(epgSchedule).length + ' channels with data');
-        }
-      } catch (e) {
-        console.warn('EPG fetch failed:', e.message);
-      }
-
       updateCategories();
       renderView();
+      loadEpgSchedule().then(function(loaded) {
+        if (loaded && currentType === 'live') {
+          renderView();
+          updateNowPlayingInfo();
+        }
+      });
 
       // Scroll to current time
       if (currentType === 'live') {
@@ -275,6 +267,21 @@ function escapeHtml(unsafe) {
     } finally {
       loadingEl.style.display = 'none';
       loadingEl.classList.add('d-none');
+    }
+  }
+
+  async function loadEpgSchedule() {
+    var start = timelineStart - 3600;
+    var end = timelineStart + (TIMELINE_HOURS * 3600) + 3600;
+    try {
+      var epgRes = await fetch('/api/epg/schedule?start=' + start + '&end=' + end + '&' + getAuthParams());
+      if (!epgRes.ok) throw new Error('EPG Fetch Error: ' + epgRes.status);
+      epgSchedule = await epgRes.json();
+      console.log('EPG loaded: ' + Object.keys(epgSchedule).length + ' channels with data');
+      return true;
+    } catch (e) {
+      console.warn('EPG fetch failed:', e.message);
+      return false;
     }
   }
 

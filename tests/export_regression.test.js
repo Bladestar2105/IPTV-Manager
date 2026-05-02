@@ -1,28 +1,37 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
-
-import { initDb } from '../src/database/db.js';
-import db from '../src/database/db.js';
-import * as systemController from '../src/controllers/systemController.js';
-
-vi.mock('../src/database/db.js', async (importOriginal) => {
-    const mod = await importOriginal();
-    return {
-        ...mod,
-        initDb: vi.fn(),
-    }
-});
-import { encrypt, decrypt, decryptWithPassword } from '../src/utils/crypto.js';
 
 describe('Export/Import Regression Tests', () => {
     const TEST_EXPORT_PASSWORD = 'exportpassword123';
     const TEST_PROVIDER_PASSWORD = 'providerpassword456';
     const TEST_PROVIDER_PLAINTEXT = 'plaintextpassword';
-    let tempFilePath = path.join(process.cwd(), 'temp_export_regression.bin');
+    const previousDataDir = process.env.DATA_DIR;
+    let db;
+    let systemController;
+    let encrypt;
+    let decrypt;
+    let decryptWithPassword;
+    let testDataDir;
+    let tempFilePath;
 
-    beforeAll(() => {
+    beforeAll(async () => {
+        testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iptv-export-regression-'));
+        tempFilePath = path.join(testDataDir, 'export.bin');
+        process.env.DATA_DIR = testDataDir;
+        vi.resetModules();
+
+        const dbModule = await import('../src/database/db.js');
+        db = dbModule.default;
+        systemController = await import('../src/controllers/systemController.js');
+        const cryptoModule = await import('../src/utils/crypto.js');
+        encrypt = cryptoModule.encrypt;
+        decrypt = cryptoModule.decrypt;
+        decryptWithPassword = cryptoModule.decryptWithPassword;
+
+        const { initDb } = dbModule;
         initDb(true);
         // Clean up previous runs
         db.prepare('PRAGMA foreign_keys = OFF').run();
@@ -38,6 +47,13 @@ describe('Export/Import Regression Tests', () => {
 
     afterAll(() => {
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        try { db?.close(); } catch(e) {}
+        if (testDataDir) fs.rmSync(testDataDir, { recursive: true, force: true });
+        if (previousDataDir === undefined) {
+            delete process.env.DATA_DIR;
+        } else {
+            process.env.DATA_DIR = previousDataDir;
+        }
     });
 
     it('should export and import correctly (standard workflow)', async () => {
