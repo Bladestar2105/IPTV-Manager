@@ -1,9 +1,7 @@
-import fetch from 'node-fetch';
-import { spawn } from 'child_process';
-import path from 'path';
 import db from '../database/db.js';
 import { performSync } from './syncService.js';
 import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgService.js';
+import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 let syncInterval = null;
@@ -117,8 +115,16 @@ export function startCleanupScheduler() {
 }
 
 export function startGeoIpUpdater() {
+  let updateInProgress = false;
+
   // Update GeoIP database on startup, and then every week
-  const updateGeoIp = () => {
+  const updateGeoIp = async () => {
+    if (updateInProgress) {
+      console.info('🌍 GeoIP Auto-Update: Update already running. Skipping.');
+      return;
+    }
+
+    updateInProgress = true;
     try {
       const licenseKeyRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('geoip_license_key');
       const licenseKey = licenseKeyRow ? licenseKeyRow.value : process.env.MAXMIND_LICENSE_KEY;
@@ -128,39 +134,23 @@ export function startGeoIpUpdater() {
          return;
       }
 
-      console.info('🌍 GeoIP Auto-Update: Starting...');
+      console.info('🌍 GeoIP Auto-Update: Checking for updates...');
 
-      const scriptPath = path.resolve('node_modules/geoip-lite/scripts/updatedb.js');
-      const child = spawn(process.execPath, ['--max-old-space-size=4096', scriptPath, `license_key=${licenseKey}`], {
-          cwd: path.resolve('node_modules/geoip-lite'),
-          env: { ...process.env, LICENSE_KEY: licenseKey },
-          stdio: 'inherit'
-      });
+      const result = await updateGeoIpDatabaseIfNeeded(licenseKey);
+      if (result.status === 'up_to_date') {
+        console.info('🌍 GeoIP Auto-Update: Database already up to date.');
+        return;
+      }
 
-      child.on('error', (err) => {
-          console.error('🌍 GeoIP Auto-Update: Failed to start process:', err);
-      });
-
-      child.on('close', async (code) => {
-          if (code === 0) {
-              console.info('🌍 GeoIP Auto-Update: Completed successfully.');
-              try {
-                  const geoip = (await import('geoip-lite')).default;
-                  geoip.reloadDataSync();
-                  console.info('🌍 GeoIP Auto-Update: Reloaded in-memory cache.');
-              } catch (e) {
-                  console.error('🌍 GeoIP Auto-Update: Failed to reload cache:', e);
-              }
-              const now = Math.floor(Date.now() / 1000);
-              db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
-                  '127.0.0.1', 'GeoIP Auto-Update', 'Database updated successfully', now
-              );
-          } else {
-              console.error(`🌍 GeoIP Auto-Update: Exited with code ${code}`);
-          }
-      });
+      console.info('🌍 GeoIP Auto-Update: Completed successfully and reloaded in-memory cache.');
+      const now = Math.floor(Date.now() / 1000);
+      db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+        '127.0.0.1', 'GeoIP Auto-Update', 'Database updated successfully', now
+      );
     } catch (e) {
-      console.error('🌍 GeoIP Auto-Update error:', e);
+      console.error('🌍 GeoIP Auto-Update error:', e.message);
+    } finally {
+      updateInProgress = false;
     }
   };
 
@@ -168,6 +158,8 @@ export function startGeoIpUpdater() {
   updateGeoIp();
 
   // Run weekly
-  setInterval(updateGeoIp, 7 * 24 * 3600 * 1000);
+  setInterval(() => {
+    updateGeoIp();
+  }, 7 * 24 * 3600 * 1000);
   console.info('🌍 GeoIP Updater started');
 }

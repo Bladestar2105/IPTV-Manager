@@ -41,7 +41,9 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 - `IS_SCHEDULER`: Internal cluster flag used by the primary process when
   starting the scheduler worker.
 - `MAXMIND_LICENSE_KEY`: Optional MaxMind license key for GeoLite2 updates.
-  The Web UI security settings can also provide this value.
+  The Web UI security settings can also provide this value. Startup checks
+  MaxMind checksum files first and skips the heavy `geoip-lite` updater when
+  the local GeoIP database is already current.
 
 ## Docker Notes
 
@@ -49,6 +51,9 @@ The Docker image uses `/data` for mutable runtime files and `/app` for
 application code and dependencies. The entrypoint may recursively fix ownership
 of `/data` for older root-owned volumes, but it must not recursively chown
 `/app` because `/app/node_modules` can be large and make startup slow.
+GeoIP updates are persisted under `/data/geoip` by symlinking
+`/app/node_modules/geoip-lite/data` there at container start, so updated
+MaxMind data survives container recreation.
 
 Keep runtime files out of Git and Docker build context:
 

@@ -9,10 +9,9 @@ import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
 import { isSafeUrl, cleanIp } from '../utils/helpers.js';
 import si from 'systeminformation';
-import { spawn } from 'child_process';
-import path from 'path';
 import geoip from 'geoip-lite';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
+import { getGeoIpUpdatePlan, reloadGeoIpData, runGeoIpUpdateProcess } from '../services/geoIpUpdateService.js';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -304,11 +303,12 @@ export const exportData = (req, res) => {
   }
 };
 
-export const updateGeoIpDatabase = (req, res) => {
+export const updateGeoIpDatabase = async (req, res) => {
   try {
     if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
 
     let licenseKey = req.body?.license_key;
+    const force = req.body?.force === true || req.body?.force === 'true';
 
     if (licenseKey) {
        db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('geoip_license_key', licenseKey);
@@ -322,39 +322,40 @@ export const updateGeoIpDatabase = (req, res) => {
        return res.status(400).json({error: 'A MaxMind License Key is required to update the GeoIP database. Please add it in Settings.'});
     }
 
-    const scriptPath = path.resolve('node_modules/geoip-lite/scripts/updatedb.js');
-    const child = spawn(process.execPath, ['--max-old-space-size=4096', scriptPath, `license_key=${licenseKey}`], {
-        cwd: path.resolve('node_modules/geoip-lite'),
-        env: { ...process.env, LICENSE_KEY: licenseKey },
-        stdio: 'inherit'
-    });
+    const updatePlan = await getGeoIpUpdatePlan(licenseKey, { force });
+    if (!updatePlan.updateAvailable) {
+        return res.json({
+            success: true,
+            up_to_date: true,
+            message: 'GeoIP database is already up to date.'
+        });
+    }
 
-    child.on('error', (err) => {
-        console.error('Failed to start GeoIP update process:', err);
-    });
-
-    child.on('close', async (code) => {
-        if (code === 0) {
-            console.log('GeoIP database updated successfully.');
+    runGeoIpUpdateProcess(licenseKey, { force: updatePlan.forceRequired })
+        .then(async () => {
+            console.info('GeoIP database updated successfully.');
             try {
-                const geoipLite = (await import('geoip-lite')).default;
-                geoipLite.reloadDataSync();
-                console.log('GeoIP in-memory cache reloaded successfully.');
+                await reloadGeoIpData();
+                console.info('GeoIP in-memory cache reloaded successfully.');
             } catch (e) {
                 console.error('Failed to reload GeoIP cache:', e);
             }
             db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
                 req.ip, 'GeoIP Update', 'Database updated successfully', Math.floor(Date.now() / 1000)
             );
-        } else {
-            console.error(`GeoIP update process exited with code ${code}`);
+        })
+        .catch((e) => {
+            console.error('GeoIP update failed:', e.message);
             db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
-                req.ip, 'GeoIP Update Failed', `Process exited with code ${code}`, Math.floor(Date.now() / 1000)
+                req.ip, 'GeoIP Update Failed', e.message, Math.floor(Date.now() / 1000)
             );
-        }
-    });
+        });
 
-    res.json({ success: true, message: 'GeoIP database update started in the background.' });
+    res.json({
+        success: true,
+        update_available: true,
+        message: 'GeoIP database update started in the background.'
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

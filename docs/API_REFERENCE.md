@@ -108,6 +108,11 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `POST /api/statistics/reset`
 - `POST /api/geoip/update`
 
+`POST /api/geoip/update` stores a provided `license_key` when present, checks
+MaxMind country/city checksums, and only starts the background updater when the
+local GeoIP database is stale. It returns `up_to_date: true` when no download is
+needed. Pass `force: true` to force the underlying updater.
+
 ## Shares
 
 - `POST /api/shares`

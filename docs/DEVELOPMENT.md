@@ -62,7 +62,11 @@ If startup is slow, check logs for:
 
 - repeated ownership fixes on a large `/data` volume
 - one-time database migration logs such as `Running VACUUM`
-- GeoIP auto-update when a MaxMind license key is configured
+- GeoIP auto-update when a MaxMind license key is configured. The scheduler
+  fetches MaxMind checksum files first and only starts the expensive
+  `geoip-lite` update process when country or city data changed, or when local
+  GeoIP data files are missing. Docker persists updated GeoIP files in
+  `/data/geoip` by symlinking `geoip-lite/data` there before Node starts.
 
 ## Database Migrations
 

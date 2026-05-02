@@ -19,6 +19,9 @@ describe('repository smoke checks', () => {
   it('keeps Docker startup from recursively chowning /app', () => {
     const entrypoint = readRepoFile('scripts/docker-entrypoint.sh');
 
+    expect(entrypoint).toContain('persist_geoip_data');
+    expect(entrypoint).toContain('/data/geoip');
+    expect(entrypoint).toContain('ln -s "$GEOIP_DATA_DIR" "$GEOIP_PACKAGE_DIR"');
     expect(entrypoint).toContain('owner_of /data');
     expect(entrypoint).toContain('chown -R "$APP_OWNER" /data');
     expect(entrypoint).toContain('chown "$APP_OWNER" /app');
