@@ -189,6 +189,7 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
 
 ### Xtream Codes / Player API
 - `GET /player_api.php`: Auth & Metadata
+- `GET /player_api.php?action=get_epg_batch&stream_ids=<ids>&date=<YYYY-MM-DD>`: Batched Xtream EPG listings
 - `GET /live/:user/:pass/:id.ts`: Live Stream
 - `GET /movie/:user/:pass/:id.ext`: Movie Stream
 - `GET /series/:user/:pass/:id.ext`: Series Stream

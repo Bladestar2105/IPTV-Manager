@@ -18,7 +18,7 @@ vi.mock('../../src/utils/network.js', () => ({
     fetchSafe: vi.fn()
 }));
 
-import { getLastEpgUpdate, getProgramsScheduleForChannels } from '../../src/services/epgService.js';
+import { getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels } from '../../src/services/epgService.js';
 import db from '../../src/database/epgDb.js';
 
 describe('epgService - getLastEpgUpdate', () => {
@@ -89,5 +89,35 @@ describe('epgService - getLastEpgUpdate', () => {
 
         expect(result).toEqual({ json_data: '{}' });
         expect(db.prepare).not.toHaveBeenCalled();
+    });
+
+    it('should group batch Xtream EPG programs by EPG channel ID', () => {
+        const rows = [
+            { channel_id: 'ch1', start: 10, stop: 20, title: 'A' },
+            { channel_id: 'ch2', start: 30, stop: 40, title: 'B' },
+            { channel_id: 'ch1', start: 50, stop: 60, title: 'C' }
+        ];
+        const mockIterate = vi.fn().mockReturnValue(rows);
+        const mockPrepare = vi.fn().mockReturnValue({ iterate: mockIterate });
+        db.prepare.mockImplementation(mockPrepare);
+
+        const result = getEpgProgramsForChannels(new Set(['ch1', 'ch2']), 1, 100, 10);
+
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('WHERE channel_id IN (?,?) AND stop > ? AND start < ?'));
+        expect(mockIterate).toHaveBeenCalledWith('ch1', 'ch2', 1, 100);
+        expect(result.get('ch1')).toEqual([rows[0], rows[2]]);
+        expect(result.get('ch2')).toEqual([rows[1]]);
+    });
+
+    it('should cap batch Xtream EPG programs per channel', () => {
+        const rows = [
+            { channel_id: 'ch1', start: 10, stop: 20, title: 'A' },
+            { channel_id: 'ch1', start: 20, stop: 30, title: 'B' }
+        ];
+        db.prepare.mockReturnValue({ iterate: vi.fn().mockReturnValue(rows) });
+
+        const result = getEpgProgramsForChannels(['ch1'], 1, 100, 1);
+
+        expect(result.get('ch1')).toEqual([rows[0]]);
     });
 });

@@ -37,6 +37,7 @@ A share should work without regular user credentials while still providing:
   - `...&action=get_vod_info&vod_id=<id>`
   - `...&action=get_series_info&series_id=<id>`
   - `...&action=get_short_epg&stream_id=<id>&limit=<n>`
+  - `...&action=get_epg_batch&stream_ids=<id,id>&date=<YYYY-MM-DD>`
 
 When calling `GET /player_api.php?token=<share_token>` the `user_info` object includes share validity metadata for share guests:
 
@@ -45,6 +46,11 @@ When calling `GET /player_api.php?token=<share_token>` the `user_info` object in
 - `is_valid_now`: `1` if currently valid, otherwise `0`.
 
 Companion clients should poll this endpoint every 5 minutes to detect window updates (e.g. changed start/end times) and react without a full re-import.
+
+For faster guide loading, companion clients can request Xtream EPG in batches. The
+batch response is keyed by stream ID and each value contains the standard
+`epg_listings` array. `date` selects a UTC day and only channels visible to the
+authenticated user or share token are returned.
 
 ### M3U + EPG
 

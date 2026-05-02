@@ -1,6 +1,6 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getEpgPrograms, getEpgXmlForChannels } from '../services/epgService.js';
+import { getEpgPrograms, getEpgProgramsForChannels, getEpgXmlForChannels } from '../services/epgService.js';
 import { channelsJsonCache } from '../services/cacheService.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
@@ -35,6 +35,59 @@ const sanitizeMetadata = (val) => {
   if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
   if (str.indexOf('"') !== -1) str = str.replace(/"/g, "'");
   return str.trim();
+};
+
+const encodeXtreamEpgText = (val) => val ? Buffer.from(String(val)).toString('base64') : '';
+
+const formatXtreamEpgListing = (program, epgId) => ({
+  id: String(program.start),
+  epg_id: epgId,
+  title: encodeXtreamEpgText(program.title),
+  lang: program.lang || '',
+  start: program.start_fmt || new Date(Number(program.start) * 1000).toISOString().slice(0, 19).replace('T', ' '),
+  end: program.stop_fmt || new Date(Number(program.stop) * 1000).toISOString().slice(0, 19).replace('T', ' '),
+  description: encodeXtreamEpgText(program.desc),
+  channel_id: epgId,
+  start_timestamp: String(program.start),
+  stop_timestamp: String(program.stop)
+});
+
+const parseBatchStreamIds = (value) => {
+  const raw = Array.isArray(value) ? value.join(',') : String(value || '');
+  const ids = [];
+  const seen = new Set();
+
+  for (const part of raw.split(',')) {
+    const id = Number(part.trim());
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= 200) break;
+  }
+
+  return ids;
+};
+
+const getBatchDateRange = (dateValue) => {
+  const raw = Array.isArray(dateValue) ? dateValue[0] : dateValue;
+  const date = String(raw || '').trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const startMs = Date.parse(`${date}T00:00:00.000Z`);
+    if (Number.isFinite(startMs)) {
+      return {
+        start: Math.floor(startMs / 1000),
+        end: Math.floor(startMs / 1000) + 86400
+      };
+    }
+  }
+
+  const now = new Date();
+  const startMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return {
+    start: Math.floor(startMs / 1000),
+    end: Math.floor(startMs / 1000) + 86400
+  };
 };
 
 export const cppEndpoint = (req, res) => {
@@ -487,21 +540,58 @@ export const playerApi = async (req, res) => {
       const listings = [];
       // ⚡ Bolt: Iterate directly over the SQLite generator and use pre-formatted dates
       for (const p of programs) {
-          listings.push({
-              id: String(p.start), // Unique ID for program? usually random or timestamp
-              epg_id: epgId,
-              title: p.title ? Buffer.from(p.title).toString('base64') : '',
-              lang: p.lang || '',
-              start: p.start_fmt,
-              end: p.stop_fmt,
-              description: p.desc ? Buffer.from(p.desc).toString('base64') : '',
-              channel_id: epgId,
-              start_timestamp: String(p.start),
-              stop_timestamp: String(p.stop)
-          });
+          listings.push(formatXtreamEpgListing(p, epgId));
       }
 
       return res.json({epg_listings: listings});
+    }
+
+    if (action === 'get_epg_batch') {
+      let streamIds = parseBatchStreamIds(req.query.stream_ids || req.query.stream_id || req.query.ids);
+      if (shareScope.allowedSet) {
+        streamIds = streamIds.filter((id) => shareScope.allowedSet.has(id));
+      }
+      if (streamIds.length === 0) return res.json({});
+
+      const placeholders = streamIds.map(() => '?').join(',');
+      const channels = db.prepare(`
+        SELECT uc.id as user_channel_id, pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        WHERE uc.id IN (${placeholders}) AND cat.user_id = ? AND uc.is_hidden = 0
+      `).all(...streamIds, user.id);
+
+      const epgIds = new Set();
+      const channelsByStreamId = new Map();
+      for (const channel of channels) {
+        const epgId = channel.manual_epg_id || channel.epg_channel_id;
+        if (!epgId) continue;
+        channelsByStreamId.set(Number(channel.user_channel_id), epgId);
+        epgIds.add(epgId);
+      }
+
+      const response = {};
+      for (const streamId of streamIds) {
+        if (channelsByStreamId.has(streamId)) {
+          response[String(streamId)] = { epg_listings: [] };
+        }
+      }
+      if (epgIds.size === 0) return res.json(response);
+
+      const { start, end } = getBatchDateRange(req.query.date);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+      const programsByEpgId = getEpgProgramsForChannels(epgIds, start, end, limit);
+
+      for (const [streamId, epgId] of channelsByStreamId.entries()) {
+        const programs = programsByEpgId.get(epgId) || [];
+        response[String(streamId)] = {
+          epg_listings: programs.map((program) => formatXtreamEpgListing(program, epgId))
+        };
+      }
+
+      return res.json(response);
     }
 
     res.status(400).json([]);

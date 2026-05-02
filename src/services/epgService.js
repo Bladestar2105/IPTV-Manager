@@ -394,6 +394,47 @@ export function getEpgPrograms(channelId, limit = 1000) {
     `).iterate(channelId, now, limit);
 }
 
+export function getEpgProgramsForChannels(channelIds, start, end, limitPerChannel = 500) {
+    if (!channelIds || channelIds.size === 0 || channelIds.length === 0) {
+        return new Map();
+    }
+
+    const ids = Array.from(channelIds)
+        .filter(Boolean)
+        .map((id) => String(id));
+    if (ids.length === 0) return new Map();
+
+    const result = new Map();
+    const counts = new Map();
+    const BATCH_SIZE = 900;
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const placeholders = Array(batch.length).fill('?').join(',');
+        const stmt = db.prepare(`
+            SELECT
+                start, stop, title, desc, lang, channel_id,
+                datetime(start, 'unixepoch') as start_fmt,
+                datetime(stop, 'unixepoch') as stop_fmt
+            FROM epg_programs
+            WHERE channel_id IN (${placeholders}) AND stop > ? AND start < ?
+            ORDER BY channel_id ASC, start ASC
+        `);
+
+        for (const row of stmt.iterate(...batch, start, end)) {
+            const channelId = row.channel_id;
+            const count = counts.get(channelId) || 0;
+            if (count >= limitPerChannel) continue;
+
+            if (!result.has(channelId)) result.set(channelId, []);
+            result.get(channelId).push(row);
+            counts.set(channelId, count + 1);
+        }
+    }
+
+    return result;
+}
+
 export function getProgramsNow() {
     const now = Math.floor(Date.now() / 1000);
     // ⚡ Bolt: Offload grouping to SQLite for faster execution and lower memory usage

@@ -24,6 +24,7 @@ vi.mock('../../src/services/authService.js', () => ({
 
 vi.mock('../../src/services/epgService.js', () => ({
   getEpgPrograms: vi.fn(),
+  getEpgProgramsForChannels: vi.fn(),
   getEpgXmlForChannels: vi.fn(),
 }));
 

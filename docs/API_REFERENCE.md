@@ -134,6 +134,7 @@ needed. Pass `force: true` to force the underlying updater.
 
 - `GET /cpp`
 - `GET /player_api.php`
+- `GET /player_api.php?action=get_epg_batch&stream_ids=<ids>&date=<YYYY-MM-DD>`
 - `GET /get.php`
 - `GET /xmltv.php`
 - `GET /api/player/playlist`
