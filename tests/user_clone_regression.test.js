@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrepare, mockTransaction, insertChannelRun, insertProviderRun } = vi.hoisted(() => {
+const { mockPrepare, mockTransaction, insertChannelRun, insertProviderRun, providerChannelsAll, providerChannelsIterate } = vi.hoisted(() => {
   const insertChannelRun = vi.fn();
   const insertProviderRun = vi.fn().mockReturnValue({ lastInsertRowid: 20 });
+  const providerChannelsAll = vi.fn();
+  const providerChannelsIterate = vi.fn();
   return {
     insertChannelRun,
     insertProviderRun,
+    providerChannelsAll,
+    providerChannelsIterate,
     mockPrepare: vi.fn(),
     mockTransaction: vi.fn((fn) => fn),
   };
@@ -56,6 +60,22 @@ describe('User clone regression', () => {
       }
       return { lastInsertRowid: 30 };
     });
+    providerChannelsAll.mockReturnValue([{
+      id: 100,
+      provider_id: 10,
+      remote_stream_id: 123,
+      name: null,
+      original_category_id: 0,
+      logo: '',
+      stream_type: 'live',
+      epg_channel_id: '',
+      original_sort_order: 0,
+      tv_archive: 0,
+      tv_archive_duration: 0,
+    }]);
+    providerChannelsIterate.mockImplementation(function* () {
+      throw new Error('This database connection is busy executing a query');
+    });
 
     mockPrepare.mockImplementation((query) => {
       if (query.includes('FROM users WHERE username')) {
@@ -100,21 +120,8 @@ describe('User clone regression', () => {
       }
       if (query.includes('SELECT * FROM provider_channels')) {
         return {
-          iterate: vi.fn(function* () {
-            yield {
-              id: 100,
-              provider_id: 10,
-              remote_stream_id: 123,
-              name: null,
-              original_category_id: 0,
-              logo: '',
-              stream_type: 'live',
-              epg_channel_id: '',
-              original_sort_order: 0,
-              tv_archive: 0,
-              tv_archive_duration: 0,
-            };
-          }),
+          all: providerChannelsAll,
+          iterate: providerChannelsIterate,
         };
       }
       if (query.includes('INSERT INTO provider_channels')) {
@@ -174,6 +181,8 @@ describe('User clone regression', () => {
       id: 200,
       message: 'User created successfully',
     });
+    expect(providerChannelsAll).toHaveBeenCalledWith('10');
+    expect(providerChannelsIterate).not.toHaveBeenCalled();
     expect(insertChannelRun.mock.calls[0][2]).toBe('Channel 123');
     expect(insertProviderRun.mock.calls[0][12]).toBe(1);
   });

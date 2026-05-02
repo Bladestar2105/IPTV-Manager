@@ -212,14 +212,13 @@ export const createUser = async (req, res) => {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
 
-                // ⚡ Bolt: Replace N+1 sequential fetching with a single batched query using an IN clause and .iterate()
-                // 🎯 Why: Executing one query per provider is slow. Loading all channels into a large array with .all() can cause memory pressure.
-                // 📊 Impact: Significant reduction in query overhead and peak memory usage during user cloning.
                 if (oldProviderIdsForSync.length > 0) {
                     const placeholders = Array(oldProviderIdsForSync.length).fill('?').join(',');
-                    const channelsStmt = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${placeholders})`);
+                    // Materialize before inserting. better-sqlite3 cannot execute INSERTs
+                    // on the same connection while a SELECT iterator is still open.
+                    const sourceChannels = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${placeholders})`).all(...oldProviderIdsForSync);
 
-                    for (const ch of channelsStmt.iterate(...oldProviderIdsForSync)) {
+                    for (const ch of sourceChannels) {
                         const newProvId = providerMap[ch.provider_id];
                         if (!newProvId) continue;
                         if (ch.remote_stream_id === null || ch.remote_stream_id === undefined) {
