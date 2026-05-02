@@ -73,11 +73,16 @@ describe('repository smoke checks', () => {
     const agents = readRepoFile('AGENTS.md');
 
     expect(readme).toContain('docs/DEVELOPMENT.md');
+    expect(readme).toContain('docs/CONFIGURATION.md');
+    expect(readme).toContain('docs/API_REFERENCE.md');
     expect(development).toContain('Docker Startup');
     expect(development).toContain('DATA_DIR');
+    expect(development).toContain('docs/API_REFERENCE.md');
+    expect(development).toContain('docs/CONFIGURATION.md');
     expect(agents).toContain('Primary package manager: `npm`');
     expect(agents).toContain('Do not recursively `chown /app`');
     expect(agents).toContain('Migrations must be idempotent');
+    expect(agents).toContain('docs/API_REFERENCE.md');
   });
 
   it('does not keep an empty placeholder SQLite file in source', () => {

@@ -17,6 +17,9 @@ reliability, authentication behavior, and Docker upgrade compatibility.
 
 - Prefer small, focused fixes.
 - Read the relevant controller, route, service, and DB schema before editing.
+- When changing routes, environment variables, setup, Docker behavior, or
+  integration behavior, update `README.md`, `docs/API_REFERENCE.md`,
+  `docs/CONFIGURATION.md`, or `docs/DEVELOPMENT.md` as relevant.
 - Do not commit runtime data, databases, secrets, cache files, or temp upload
   data.
 - Do not introduce new dependencies unless clearly justified.
@@ -90,3 +93,9 @@ Run available checks relevant to the change:
 If full `npm test` fails because of existing unrelated tests or environment
 paths, report the exact failing suites and run targeted coverage for the change.
 
+Keep smoke coverage current for:
+
+- Express app route registration and security middleware
+- API and configuration documentation
+- Docker and runtime-data ignore rules
+- user clone/import/export/provider-sync regressions

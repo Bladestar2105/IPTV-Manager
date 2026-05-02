@@ -88,7 +88,7 @@ export const createProvider = async (req, res) => {
     if (!/^https?:\/\//i.test(url.trim())) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
-    if (!(isSafeUrl(url.trim()))) {
+    if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
     }
 
@@ -115,7 +115,7 @@ export const createProvider = async (req, res) => {
                 return res.status(400).json({error: 'invalid_url', message: `Backup URL must start with http:// or https://: ${trimmed}`});
             }
 
-            if (!(isSafeUrl(trimmed))) {
+            if (!(await isSafeUrl(trimmed))) {
                 return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe or invalid (blocked): ${trimmed}`});
             }
 
@@ -129,7 +129,7 @@ export const createProvider = async (req, res) => {
       if (!/^https?:\/\//i.test(finalEpgUrl)) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
       }
-      if (!(isSafeUrl(finalEpgUrl))) {
+      if (!(await isSafeUrl(finalEpgUrl))) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL is unsafe (blocked)'});
       }
     }
@@ -209,7 +209,7 @@ export const updateProvider = async (req, res) => {
     if (!/^https?:\/\//i.test(url.trim())) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL must start with http:// or https://'});
     }
-    if (!(isSafeUrl(url.trim()))) {
+    if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
     }
 
@@ -217,7 +217,7 @@ export const updateProvider = async (req, res) => {
       if (!/^https?:\/\//i.test(epg_url.trim())) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL must start with http:// or https://'});
       }
-      if (!(isSafeUrl(epg_url.trim()))) {
+      if (!(await isSafeUrl(epg_url.trim()))) {
         return res.status(400).json({error: 'invalid_epg_url', message: 'EPG URL is unsafe (blocked)'});
       }
     }
@@ -248,7 +248,7 @@ export const updateProvider = async (req, res) => {
                 return res.status(400).json({error: 'invalid_url', message: `Backup URL must start with http:// or https://: ${trimmed}`});
             }
 
-            if (!(isSafeUrl(trimmed))) {
+            if (!(await isSafeUrl(trimmed))) {
                 return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe or invalid (blocked): ${trimmed}`});
             }
 

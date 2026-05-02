@@ -2,20 +2,21 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
-// Hardcoded paths to avoid hoisting issues
-const TEST_EPG_DIR = '/app/tests/temp_epg_cat';
-const TEST_DB_DIR = '/app/tests/temp_db_cat';
+// Temp paths must be writable outside Docker too.
+const TEST_EPG_DIR = '/tmp/iptv-manager-temp_epg_cat';
+const TEST_DB_DIR = '/tmp/iptv-manager-temp_db_cat';
 
 // Ensure directories exist BEFORE imports
 if (!fs.existsSync(TEST_DB_DIR)) fs.mkdirSync(TEST_DB_DIR, { recursive: true });
 if (!fs.existsSync(TEST_EPG_DIR)) fs.mkdirSync(TEST_EPG_DIR, { recursive: true });
+process.env.DATA_DIR = TEST_DB_DIR;
 
 // Mock Constants
 vi.mock('../../src/config/constants.js', async () => {
     return {
-        EPG_CACHE_DIR: '/app/tests/temp_epg_cat',
-        DATA_DIR: '/app/tests/temp_db_cat',
-        EPG_DB_PATH: '/app/tests/temp_db_cat/epg.db',
+        EPG_CACHE_DIR: '/tmp/iptv-manager-temp_epg_cat',
+        DATA_DIR: '/tmp/iptv-manager-temp_db_cat',
+        EPG_DB_PATH: '/tmp/iptv-manager-temp_db_cat/epg.db',
         PORT: 3000,
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',

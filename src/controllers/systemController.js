@@ -396,10 +396,10 @@ export const importData = async (req, res) => {
 
     // Security validation for URLs
     for (const p of importData.providers || []) {
-        if (p.url && !(isSafeUrl(p.url))) {
+        if (p.url && !(await isSafeUrl(p.url))) {
             return res.status(400).json({error: 'invalid_url', message: `Provider URL is unsafe: ${p.url}`});
         }
-        if (p.epg_url && !(isSafeUrl(p.epg_url))) {
+        if (p.epg_url && !(await isSafeUrl(p.epg_url))) {
             return res.status(400).json({error: 'invalid_url', message: `EPG URL is unsafe: ${p.epg_url}`});
         }
         if (p.backup_urls) {
@@ -417,7 +417,7 @@ export const importData = async (req, res) => {
             if (Array.isArray(urls)) {
                 for (const u of urls) {
                     const trimmed = u.trim();
-                    if (trimmed && !(isSafeUrl(trimmed))) {
+                    if (trimmed && !(await isSafeUrl(trimmed))) {
                         return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe: ${trimmed}`});
                     }
                 }

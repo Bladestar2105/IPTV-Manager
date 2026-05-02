@@ -113,6 +113,8 @@ chmod +x proxmox.sh
 - **Linting**: `npm run lint`
 - **Testing**: `npm test`
 - **Developer notes**: `docs/DEVELOPMENT.md`
+- **Configuration reference**: `docs/CONFIGURATION.md`
+- **API reference**: `docs/API_REFERENCE.md`
 
 ### First Time Setup
 - **Default Username**: `admin`
@@ -174,13 +176,16 @@ For most deployments, keep the defaults unless you have a specific operational n
 
 ## 📚 API Overview
 
-### Main Endpoints
-- **Auth**: `/api/login`, `/api/change-password`
-- **Users**: `/api/users` (CRUD)
-- **Providers**: `/api/providers` (CRUD, Sync, Import)
-- **Categories**: `/api/user-categories` (Manage, Reorder)
-- **EPG**: `/api/epg-sources` (Manage, Update)
-- **Shares**: `/api/shares` (Create, Update, Delete)
+The full route inventory is maintained in `docs/API_REFERENCE.md`.
+
+### Main Endpoint Groups
+- **Auth**: login, token verification, OTP, password changes, player tokens
+- **Users**: user CRUD, clone/copy settings, user backups
+- **Providers**: provider CRUD, sync, channel/category import
+- **Categories**: category/channel assignment, reorder, bulk actions, mappings
+- **EPG**: source management, schedule browsing, mapping, auto matching
+- **System**: settings, security, import/export, sync config, statistics
+- **Shares**: authenticated share management and public short links
 
 ### Xtream Codes / Player API
 - `GET /player_api.php`: Auth & Metadata

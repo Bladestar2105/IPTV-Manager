@@ -13,7 +13,7 @@ export async function fetchSafe(url, options = {}, redirectCount = 0) {
   }
 
   // Ensure URL is valid and safe (pre-check)
-  if (!(isSafeUrl(url))) {
+  if (!(await isSafeUrl(url))) {
     throw new Error(`Unsafe URL: ${url}`);
   }
 

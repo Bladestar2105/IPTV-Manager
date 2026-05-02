@@ -13,6 +13,15 @@
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
+## Maintainer Documentation
+
+- API route inventory: `docs/API_REFERENCE.md`.
+- Runtime environment and Docker configuration: `docs/CONFIGURATION.md`.
+- Share companion integration details: `docs/SHARE_COMPANION_INTEGRATION.md`.
+
+Update these files when routes, environment variables, setup, Docker behavior,
+or integration behavior changes.
+
 ## Local Data
 
 By default the app stores runtime data in the repo root unless `DATA_DIR` is set.

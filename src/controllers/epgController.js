@@ -111,7 +111,7 @@ export const createEpgSource = async (req, res) => {
     const { name, url, enabled, update_interval, source_type } = req.body;
     if (!name || !url) return res.status(400).json({error: 'name and url required'});
 
-    if (!(isSafeUrl(url.trim()))) {
+    if (!(await isSafeUrl(url.trim()))) {
       return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
     }
 
@@ -146,7 +146,7 @@ export const updateEpgSourceEndpoint = async (req, res) => {
       params.push(name.trim());
     }
     if (url !== undefined) {
-      if (!(isSafeUrl(url.trim()))) {
+      if (!(await isSafeUrl(url.trim()))) {
         return res.status(400).json({error: 'invalid_url', message: 'URL is unsafe (blocked)'});
       }
       updates.push('url = ?');
