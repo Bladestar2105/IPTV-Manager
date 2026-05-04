@@ -1,7 +1,7 @@
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
-const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 0);
+const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 2 * 60 * 1000);
 const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 * 1000);
 
 class StreamManager {
@@ -27,6 +27,7 @@ class StreamManager {
           `);
           this.stmtRemove = this.db.prepare('DELETE FROM current_streams WHERE id = ?');
           this.stmtCleanup = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ?');
+          this.stmtFindSameSession = this.db.prepare('SELECT id FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? AND id != ?');
           this.stmtGetAll = this.db.prepare('SELECT * FROM current_streams');
           this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)');
           this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)');
@@ -54,6 +55,8 @@ class StreamManager {
       provider_id: providerId
     };
 
+    await this.cleanupSession(user.id, ip, channelName, providerId, id);
+
     if (this.redis) {
       try {
         const json = JSON.stringify(data);
@@ -75,6 +78,43 @@ class StreamManager {
 
     if (resource) {
       this.localStreams.set(id, resource);
+    }
+  }
+
+  async cleanupSession(userId, ip, channelName, providerId = 0, excludeId = null) {
+    if (!userId || !ip || !channelName) return;
+
+    if (this.redis) {
+      try {
+        const all = await this.getAll();
+        const sameSessionIds = all
+          .filter(stream =>
+            stream.user_id === userId &&
+            stream.ip === ip &&
+            stream.channel_name === channelName &&
+            stream.provider_id === providerId &&
+            stream.id !== excludeId
+          )
+          .map(stream => stream.id);
+
+        for (const sessionId of sameSessionIds) {
+          await this.remove(sessionId);
+        }
+      } catch (e) {
+        console.error('Redis Session Cleanup Error:', e);
+      }
+      return;
+    }
+
+    if (this.db) {
+      try {
+        const rows = this.stmtFindSameSession.all(userId, ip, channelName, providerId, excludeId || '');
+        for (const row of rows) {
+          await this.remove(row.id);
+        }
+      } catch (e) {
+        console.error('DB Session Cleanup Error:', e.message);
+      }
     }
   }
 
@@ -168,9 +208,21 @@ class StreamManager {
     }
   }
 
+  hasActiveLocalResource(streamId) {
+    if (!streamId) return false;
+    const resource = this.localStreams.get(streamId);
+    if (!resource) return false;
+
+    if (typeof resource.destroyed === 'boolean') return !resource.destroyed;
+    if (typeof resource.writableEnded === 'boolean') return !resource.writableEnded;
+    if (typeof resource.readableEnded === 'boolean') return !resource.readableEnded;
+    return true;
+  }
+
   isStale(stream, now = Date.now()) {
     if (!stream) return false;
     if (!this.isWorkerAlive(stream.worker_pid)) return true;
+    if (stream.worker_pid === this.pid && this.hasActiveLocalResource(stream.id)) return false;
 
     const startTime = Number(stream.start_time || 0);
     const lastActivity = Number(stream.last_activity || startTime || 0);
