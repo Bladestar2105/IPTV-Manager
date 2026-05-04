@@ -42,7 +42,8 @@ class StreamManager {
     }
   }
 
-  async add(id, user, channelName, ip, resource = null, providerId = 0) {
+  async add(id, user, channelName, ip, resource = null, providerId = 0, options = {}) {
+    const { dedupe = true } = options;
     const data = {
       id,
       user_id: user.id,
@@ -55,7 +56,9 @@ class StreamManager {
       provider_id: providerId
     };
 
-    await this.cleanupSession(user.id, ip, channelName, providerId, id);
+    if (dedupe) {
+      await this.cleanupSession(user.id, ip, channelName, providerId, id);
+    }
 
     if (this.redis) {
       try {
