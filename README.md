@@ -135,8 +135,8 @@ Optional tuning via environment variables:
 
 - `STREAM_MAX_AGE_MS` (default: `86400000` = 24h)  
   Hard safety cap for a single session age. Very old orphan sessions are removed before limit checks.
-- `STREAM_INACTIVITY_TIMEOUT_MS` (default: `0` = disabled)  
-  Optional inactivity expiry. Set this only if you explicitly want inactivity-based stream expiration.
+- `STREAM_INACTIVITY_TIMEOUT_MS` (default: `120000` = 2 minutes)  
+  Inactivity expiry for stalled streams to prevent orphan sessions from blocking new playback.
 
 For most deployments, keep the defaults unless you have a specific operational need.
 

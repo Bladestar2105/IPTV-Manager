@@ -33,8 +33,8 @@ tests. Keep it in sync when environment variables or startup behavior changes.
   workers or instances. Without Redis, in-memory tracking is used.
 - `STREAM_MAX_AGE_MS`: Hard safety cap for stale stream sessions. Defaults to
   `86400000` (24 hours).
-- `STREAM_INACTIVITY_TIMEOUT_MS`: Optional inactivity timeout for stream
-  sessions. Defaults to `0` (disabled).
+- `STREAM_INACTIVITY_TIMEOUT_MS`: Inactivity timeout for stream sessions.
+  Defaults to `120000` (2 minutes).
 
 ## Scheduled Jobs and GeoIP
 

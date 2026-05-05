@@ -745,7 +745,7 @@ export const proxySegment = async (req, res) => {
         // so we use the providerId passed in the payload (which was the one chosen by the playlist generator).
         // For segments, pooling might have already happened when generating the M3U8,
         // or we just track it against the original provider.
-        await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId);
+        await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId, { dedupe: false });
     }
 
     const contentType = upstream.headers.get('content-type');
