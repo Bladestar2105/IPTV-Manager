@@ -390,33 +390,32 @@ export const proxyLive = async (req, res) => {
 
     const wantsTranscode = (req.query.transcode === 'true');
 
-    // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
-    if (reqExt !== 'm3u8' || wantsTranscode) {
-        await streamManager.cleanupUser(user.id, req.ip);
+    await streamManager.cleanupUser(user.id, req.ip);
 
-        if (user.max_connections > 0) {
-            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
-            if (!isSessionActiveForUser) {
-                const active = await streamManager.getUserConnectionCount(user.id);
-                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-            }
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
+        if (!isSessionActiveForUser) {
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
-
-        const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
-        if (!availableProvider) {
-            return res.status(403).send('Provider max connections reached across all accounts');
-        }
-
-        channel.provider_id = availableProvider.id;
-        channel.provider_url = availableProvider.url;
-        channel.provider_user = availableProvider.username;
-        channel.provider_pass = availableProvider.password;
-        channel.backup_urls = availableProvider.backup_urls;
-        channel.user_agent = availableProvider.user_agent;
-
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id);
     }
+
+    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
+
+    channel.provider_id = availableProvider.id;
+    channel.provider_url = availableProvider.url;
+    channel.provider_user = availableProvider.username;
+    channel.provider_pass = availableProvider.password;
+    channel.backup_urls = availableProvider.backup_urls;
+    channel.user_agent = availableProvider.user_agent;
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id, {
+      dedupe: reqExt !== 'm3u8'
+    });
 
     try {
         const now = Math.floor(Date.now() / 1000);
@@ -740,11 +739,14 @@ export const proxySegment = async (req, res) => {
     }
 
     if (channelName && providerId) {
-        // Technically segment proxy is mostly stateless and shouldn't hit limits,
-        // but it registers as a stream. It's better not to change providerId mid-stream,
-        // so we use the providerId passed in the payload (which was the one chosen by the playlist generator).
-        // For segments, pooling might have already happened when generating the M3U8,
-        // or we just track it against the original provider.
+        if (user.max_connections > 0) {
+            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channelName, providerId);
+            if (!isSessionActiveForUser) {
+                const active = await streamManager.getUserConnectionCount(user.id);
+                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+            }
+        }
+
         await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId, { dedupe: false });
     }
 
