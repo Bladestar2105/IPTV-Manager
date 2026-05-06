@@ -101,14 +101,17 @@ describe('Segment Encryption Format', () => {
 
     it('should support OPTIMIZED format (url in "data", headers in "base")', async () => {
         const targetUrl = 'http://example.com/optimized.ts';
+        const bindingId = 'binding-id-1';
         const basePayload = {
             h: { 'X-Custom-Header': 'OptimizedHeader' },
-            s: true
+            s: true,
+            b: bindingId
         };
         const baseEncrypted = encrypt(JSON.stringify(basePayload));
 
         const dataPayload = {
-            u: targetUrl
+            u: targetUrl,
+            b: bindingId
         };
         const dataEncrypted = encrypt(JSON.stringify(dataPayload));
 
@@ -122,5 +125,25 @@ describe('Segment Encryption Format', () => {
         const lastCall = fetch.mock.calls[fetch.mock.calls.length - 1];
         expect(lastCall[0]).toBe(targetUrl);
         expect(lastCall[1].headers).toHaveProperty('X-Custom-Header', 'OptimizedHeader');
+    });
+
+
+    it('should reject OPTIMIZED format when base/data binding does not match', async () => {
+        const baseEncrypted = encrypt(JSON.stringify({
+            h: { 'X-Custom-Header': 'OptimizedHeader' },
+            s: true,
+            b: 'base-binding'
+        }));
+
+        const dataEncrypted = encrypt(JSON.stringify({
+            u: 'http://example.com/mismatch.ts',
+            b: 'different-binding'
+        }));
+
+        const res = await request(app)
+            .get(`/live/segment/${username}/password/seg.ts`)
+            .query({ token: userToken, data: dataEncrypted, base: baseEncrypted });
+
+        expect(res.status).toBe(400);
     });
 });
