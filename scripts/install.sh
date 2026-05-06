@@ -55,7 +55,12 @@ npm install
 if [ ! -f ".env" ]; then
     echo ">> Setting up .env file..."
     cp .env.example .env
-    echo ">> .env file created. Please configure it later if needed."
+
+    # Ensure JWT secret is unique for this installation
+    jwt_secret=$(openssl rand -hex 32)
+    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${jwt_secret}|" .env
+
+    echo ">> .env file created with a generated JWT secret."
 fi
 
 # Create a dedicated user for security
