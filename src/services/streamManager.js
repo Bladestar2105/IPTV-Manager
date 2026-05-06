@@ -228,11 +228,14 @@ class StreamManager {
     if (stream.worker_pid === this.pid && this.hasActiveLocalResource(stream.id)) return false;
 
     const startTime = Number(stream.start_time || 0);
-    const lastActivity = Number(stream.last_activity || startTime || 0);
-    if (!lastActivity) return false;
+    const lastActivity = Number(stream.last_activity || 0);
 
-    if (STREAM_INACTIVITY_TIMEOUT_MS > 0 && now - lastActivity > STREAM_INACTIVITY_TIMEOUT_MS) return true;
-    if (startTime && now - startTime > STREAM_MAX_AGE_MS) return true;
+    if (lastActivity > 0) {
+      if (STREAM_INACTIVITY_TIMEOUT_MS > 0 && now - lastActivity > STREAM_INACTIVITY_TIMEOUT_MS) return true;
+      return false;
+    }
+
+    if (startTime && STREAM_MAX_AGE_MS > 0 && now - startTime > STREAM_MAX_AGE_MS) return true;
     return false;
   }
 
