@@ -82,6 +82,7 @@ this endpoint for timeline data after rendering the channel list.
 - `GET /api/users/:userId/backups`
 - `POST /api/users/:userId/backups`
 - `POST /api/users/:userId/backups/:id/restore`
+  - Admin-only: non-admin users cannot restore backups.
 - `DELETE /api/users/:userId/backups/:id`
 
 ## System, Security, and Statistics

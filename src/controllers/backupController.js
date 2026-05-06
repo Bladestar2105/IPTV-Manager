@@ -62,7 +62,7 @@ export const restoreBackup = (req, res) => {
     const userId = Number(req.params.userId);
     const backupId = Number(req.params.id);
 
-    if (!req.user.is_admin && req.user.id !== userId) return res.status(403).json({ error: 'Access denied' });
+    if (!req.user.is_admin) return res.status(403).json({ error: 'Access denied' });
 
     const backup = db.prepare('SELECT * FROM user_backups WHERE id = ? AND user_id = ?').get(backupId, userId);
     if (!backup) return res.status(404).json({ error: 'Backup not found' });
