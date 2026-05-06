@@ -78,7 +78,7 @@ export const restoreBackup = (req, res) => {
           SELECT uc.provider_channel_id
           FROM user_channels uc
           JOIN user_categories cat ON cat.id = uc.user_category_id
-          WHERE cat.user_id = ?
+          WHERE cat.user_id = ? AND uc.is_hidden = 0
         `).all(userId);
         allowedProviderChannelIds = new Set(currentProviderChannels.map(row => row.provider_channel_id));
       }
