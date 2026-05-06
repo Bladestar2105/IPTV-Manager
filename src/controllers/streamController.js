@@ -232,6 +232,10 @@ export const proxyMpd = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
+
     let upstreamUrl = '';
     let backupStreamUrls = [];
 
@@ -298,7 +302,9 @@ export const proxyMpd = async (req, res) => {
         }
     }
 
-    headers['User-Agent'] = channel.user_agent || DEFAULT_USER_AGENT;
+    if (!hasMetadataUserAgentOverride) {
+        headers['User-Agent'] = channel.user_agent || DEFAULT_USER_AGENT;
+    }
 
     await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
     try {
@@ -881,6 +887,10 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
+
     const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
 
     if (shouldTranscode) {
@@ -1265,6 +1275,10 @@ export const proxyTimeshift = async (req, res) => {
     if (meta && meta.http_headers) {
         Object.assign(headers, meta.http_headers);
     }
+
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
 
     let upstream, successfulUrl;
     try {
