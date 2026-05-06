@@ -87,7 +87,7 @@ describe('StreamManager (SQLite)', () => {
         db.prepare(`
           INSERT INTO current_streams (id, user_id, username, channel_name, start_time, last_activity, ip, worker_pid, provider_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run('old-but-active', 2, 'activeuser', 'Live C', now - (26 * 60 * 60 * 1000), now - 1000, '127.0.0.8', 999999, 2);
+        `).run('old-but-active', 2, 'activeuser', 'Live C', now - (26 * 60 * 60 * 1000), now - 1000, '127.0.0.8', process.pid, 2);
 
         const count = await streamManager.getUserConnectionCount(2);
         expect(count).toBe(1);
