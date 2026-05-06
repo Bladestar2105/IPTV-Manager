@@ -63,6 +63,9 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 });
 
                 originalStream.pipe(gunzip).pipe(sizeChecker);
+                gunzip.on('error', (err) => {
+                    sizeChecker.destroy(err);
+                });
                 stream = sizeChecker;
             } else {
                 stream = originalStream;
