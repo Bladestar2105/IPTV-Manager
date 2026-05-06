@@ -91,21 +91,13 @@ function getProviderPool(userId, providerUrl) {
     return providers.filter(p => p.url.replace(/\/+$/, '') === base);
 }
 
-async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
+async function findAvailableProvider(userId, originalProvider) {
     const pool = getProviderPool(userId, originalProvider.provider_url || originalProvider.url);
 
     for (const p of pool) {
-        let isSessionActive = false;
-
         // Handle provider object structure differences (from getChannel vs getProvider)
         const pId = p.id;
         const pMaxConnections = p.max_connections;
-
-        // If the session is already active on this provider with this IP, it's free to use
-        isSessionActive = await streamManager.isSessionActive(userId, reqIp, sessionName, pId);
-        if (isSessionActive) {
-            return p;
-        }
 
         // Check if provider has reached max connections
         if (pMaxConnections > 0) {
@@ -275,15 +267,12 @@ export const proxyMpd = async (req, res) => {
 
     // Check User connection limit first
     if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
     }
 
     // Provider Pooling: Find an available provider account with the same URL
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    const availableProvider = await findAvailableProvider(user.id, channel);
     if (!availableProvider) {
         return res.status(403).send('Provider max connections reached across all accounts');
     }
@@ -393,16 +382,12 @@ export const proxyLive = async (req, res) => {
     // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
     if (reqExt !== 'm3u8' || wantsTranscode) {
         await streamManager.cleanupUser(user.id, req.ip);
-
         if (user.max_connections > 0) {
-            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
-            if (!isSessionActiveForUser) {
-                const active = await streamManager.getUserConnectionCount(user.id);
-                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-            }
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
 
-        const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
+        const availableProvider = await findAvailableProvider(user.id, channel);
         if (!availableProvider) {
             return res.status(403).send('Provider max connections reached across all accounts');
         }
@@ -804,16 +789,12 @@ export const proxyMovie = async (req, res) => {
     }
 
     const sessionName = `${channel.name} (VOD)`;
-
     if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
     }
 
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    const availableProvider = await findAvailableProvider(user.id, channel);
     if (!availableProvider) {
         return res.status(403).send('Provider max connections reached across all accounts');
     }
@@ -1024,16 +1005,12 @@ export const proxySeries = async (req, res) => {
 
     const cachedTitle = episodeNameCache.get(epIdRaw.toString());
     const sessionName = cachedTitle ? cachedTitle : `Series Episode ${remoteEpisodeId}`;
-
     if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, provider.id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
     }
 
-    const availableProvider = await findAvailableProvider(user.id, provider, req.ip, sessionName);
+    const availableProvider = await findAvailableProvider(user.id, provider);
     if (!availableProvider) {
         return res.status(403).send('Provider max connections reached across all accounts');
     }
@@ -1204,16 +1181,12 @@ export const proxyTimeshift = async (req, res) => {
     }
 
     const sessionName = `${channel.name} (Timeshift)`;
-
     if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
+        const active = await streamManager.getUserConnectionCount(user.id);
+        if (active >= user.max_connections) return res.status(403).send('Max connections reached');
     }
 
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    const availableProvider = await findAvailableProvider(user.id, channel);
     if (!availableProvider) {
         return res.status(403).send('Provider max connections reached across all accounts');
     }
