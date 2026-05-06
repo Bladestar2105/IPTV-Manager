@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as streamController from '../../src/controllers/streamController.js';
 import streamManager from '../../src/services/streamManager.js';
 import { getXtreamUser } from '../../src/services/authService.js';
+import fetch from 'node-fetch';
 
 // --- Mocks ---
 
@@ -63,6 +64,18 @@ vi.mock('../../src/database/db.js', () => ({
                         if (streamId === 101 || streamId === '101') {
                             return { ...base, provider_id: 101, provider_max_connections: 1 };
                         }
+                        if (streamId === 202 || streamId === '202') {
+                            return {
+                                ...base,
+                                provider_id: 201,
+                                provider_url: 'http://example.com',
+                                provider_user: 'acctA',
+                                provider_pass: 'passA',
+                                remote_stream_id: '555',
+                                backup_urls: '["http://backup.example.com"]',
+                                user_agent: 'UA-A'
+                            };
+                        }
                         return base;
                     })
                 };
@@ -70,6 +83,12 @@ vi.mock('../../src/database/db.js', () => ({
             if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
                 return {
                     all: vi.fn().mockImplementation((userId, urlPattern) => {
+                        if (global._testMode === 'mpdPool') {
+                            return [
+                                { id: 201, url: 'http://example.com', username: 'acctA', password: 'passA', max_connections: 1, backup_urls: '["http://backup-a.example.com"]', user_agent: 'UA-A' },
+                                { id: 202, url: 'http://example.com', username: 'acctB', password: 'passB', max_connections: 2, backup_urls: '["http://backup-b.example.com"]', user_agent: 'UA-B' }
+                            ];
+                        }
                         // Return mock providers based on the pool request
                         if (urlPattern.includes('example.com')) {
                             // If we set global._testMode = 'block', make all providers limited
@@ -199,5 +218,34 @@ describe('Provider Connection Limit', () => {
 
         expect(streamManager.getProviderConnectionCount).toHaveBeenCalledWith(101);
         expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), 101);
+    });
+
+    it('should build MPD upstream URL using pooled provider credentials', async () => {
+        global._testMode = 'mpdPool';
+        getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 0 });
+        streamManager.getProviderConnectionCount.mockImplementation(async (providerId) => providerId === 201 ? 1 : 0);
+
+        const req = {
+            params: { stream_id: '202', username: 'u', password: 'p', 0: 'manifest.mpd' },
+            ip: '127.0.0.1',
+            headers: {},
+            on: vi.fn()
+        };
+        const res = {
+            sendStatus: vi.fn(),
+            setHeader: vi.fn(),
+            send: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await streamController.proxyMpd(req, res);
+
+        expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), 202);
+        expect(fetch).toHaveBeenCalledWith(
+            'http://example.com/live/acctB/passB/555.mpd',
+            expect.objectContaining({
+                headers: expect.objectContaining({ 'User-Agent': 'UA-B' })
+            })
+        );
     });
 });

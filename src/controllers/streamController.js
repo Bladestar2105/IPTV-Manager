@@ -223,6 +223,37 @@ export const proxyMpd = async (req, res) => {
         console.warn('Failed to parse metadata (MPD):', e.message);
     }
 
+    if (user.is_share_guest) {
+        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
+        const nowSec = Date.now() / 1000;
+        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
+    }
+
+    const sessionName = `${channel.name} (DASH)`;
+
+    // Check User connection limit first
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
+        if (!isSessionActiveForUser) {
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+        }
+    }
+
+    // Provider Pooling: Find an available provider account with the same URL
+    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
+
+    // Override channel provider credentials with the available pool account
+    channel.provider_id = availableProvider.id;
+    channel.provider_url = availableProvider.url;
+    channel.provider_user = availableProvider.username;
+    channel.provider_pass = availableProvider.password; // Encrypted password
+    channel.backup_urls = availableProvider.backup_urls;
+    channel.user_agent = availableProvider.user_agent;
+
     const headers = {
       'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
@@ -264,37 +295,6 @@ export const proxyMpd = async (req, res) => {
             console.warn('Failed to parse backup_urls (MPD):', e.message);
         }
     }
-
-    if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
-        const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
-    }
-
-    const sessionName = `${channel.name} (DASH)`;
-
-    // Check User connection limit first
-    if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
-    }
-
-    // Provider Pooling: Find an available provider account with the same URL
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
-    if (!availableProvider) {
-        return res.status(403).send('Provider max connections reached across all accounts');
-    }
-
-    // Override channel provider credentials with the available pool account
-    channel.provider_id = availableProvider.id;
-    channel.provider_url = availableProvider.url;
-    channel.provider_user = availableProvider.username;
-    channel.provider_pass = availableProvider.password; // Encrypted password
-    channel.backup_urls = availableProvider.backup_urls;
-    channel.user_agent = availableProvider.user_agent;
 
     await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
     try {
