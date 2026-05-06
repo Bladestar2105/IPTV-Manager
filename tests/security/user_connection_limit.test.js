@@ -223,4 +223,55 @@ describe('User Connection Limit', () => {
         // Verify count check passed
         expect(streamManager.add).toHaveBeenCalled();
     });
+
+    it('should block HLS playlist when max_connections reached', async () => {
+        getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 1 });
+        streamManager.getUserConnectionCount.mockResolvedValue(1);
+
+        const req = {
+            params: { stream_id: '1', username: 'u', password: 'p' },
+            ip: '127.0.0.1',
+            query: {},
+            path: '/live/u/p/1.m3u8',
+            on: vi.fn()
+        };
+        const res = {
+            sendStatus: vi.fn(),
+            setHeader: vi.fn(),
+            send: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await streamController.proxyLive(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Max connections'));
+        expect(streamManager.add).not.toHaveBeenCalled();
+    });
+
+    it('should block HLS segment when max_connections reached', async () => {
+        getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 1 });
+        streamManager.getUserConnectionCount.mockResolvedValue(1);
+
+        const req = {
+            params: { username: 'u', password: 'p' },
+            ip: '127.0.0.1',
+            query: {
+                data: JSON.stringify({ u: 'http://example.com/seg.ts', c: 'Test Channel', p: 100 })
+            },
+            on: vi.fn()
+        };
+        const res = {
+            sendStatus: vi.fn(),
+            setHeader: vi.fn(),
+            send: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await streamController.proxySegment(req, res);
+
+        expect(streamManager.getUserConnectionCount).toHaveBeenCalledWith(1);
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Max connections'));
+    });
 });
