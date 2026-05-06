@@ -249,6 +249,37 @@ describe('User Connection Limit', () => {
         expect(streamManager.add).not.toHaveBeenCalled();
     });
 
+    it('should register HLS playlist session without dedupe cleanup', async () => {
+        getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 2 });
+        streamManager.getUserConnectionCount.mockResolvedValue(0);
+
+        const req = {
+            params: { stream_id: '1', username: 'u', password: 'p' },
+            ip: '127.0.0.1',
+            query: {},
+            path: '/live/u/p/1.m3u8',
+            on: vi.fn()
+        };
+        const res = {
+            sendStatus: vi.fn(),
+            setHeader: vi.fn(),
+            send: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await streamController.proxyLive(req, res);
+
+        expect(streamManager.add).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({ id: 1 }),
+            'Test Channel',
+            '127.0.0.1',
+            res,
+            100,
+            { dedupe: false }
+        );
+    });
+
     it('should block HLS segment when max_connections reached', async () => {
         getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 1 });
         streamManager.getUserConnectionCount.mockResolvedValue(1);

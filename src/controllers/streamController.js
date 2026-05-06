@@ -413,7 +413,9 @@ export const proxyLive = async (req, res) => {
     channel.user_agent = availableProvider.user_agent;
 
     await new Promise(resolve => setTimeout(resolve, 100));
-    await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id);
+    await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id, {
+      dedupe: reqExt !== 'm3u8'
+    });
 
     try {
         const now = Math.floor(Date.now() / 1000);
