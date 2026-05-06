@@ -70,6 +70,19 @@ export const restoreBackup = (req, res) => {
     const data = JSON.parse(backup.data);
 
     db.transaction(() => {
+      // Snapshot currently authorized provider channels for non-admin self-service restores.
+      // This prevents restoring stale/revoked channel access from backup data.
+      let allowedProviderChannelIds = null;
+      if (!req.user.is_admin) {
+        const currentProviderChannels = db.prepare(`
+          SELECT uc.provider_channel_id
+          FROM user_channels uc
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE cat.user_id = ? AND uc.is_hidden = 0
+        `).all(userId);
+        allowedProviderChannelIds = new Set(currentProviderChannels.map(row => row.provider_channel_id));
+      }
+
       // Get current category ids for user
       const currentCategories = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(userId);
       const currentCategoryIds = currentCategories.map(c => c.id);
@@ -91,7 +104,11 @@ export const restoreBackup = (req, res) => {
         insertCategory.run(cat.id, cat.user_id, cat.name, cat.sort_order, cat.is_adult, cat.type);
       }
 
-      for (const chan of data.userChannels) {
+      const restorableChannels = allowedProviderChannelIds
+        ? data.userChannels.filter(chan => allowedProviderChannelIds.has(chan.provider_channel_id))
+        : data.userChannels;
+
+      for (const chan of restorableChannels) {
         insertChannel.run(chan.id, chan.user_category_id, chan.provider_channel_id, chan.sort_order);
       }
 
