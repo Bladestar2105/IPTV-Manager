@@ -107,9 +107,21 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let currentText = '';
 
         await new Promise((resolve, reject) => {
+            let settled = false;
+            const safeReject = (err) => {
+                if (settled) return;
+                settled = true;
+                reject(err);
+            };
+            const safeResolve = (value) => {
+                if (settled) return;
+                settled = true;
+                resolve(value);
+            };
+
             parser.on('error', function (e) {
                 console.error("XML Parse Error", e);
-                reject(e);
+                safeReject(e);
             });
 
             parser.on('opentag', function (name, attrs) {
@@ -120,9 +132,15 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 }
 
                 if (name === 'channel') {
+                    const channelId = typeof attrs.id === 'string' ? attrs.id.trim() : '';
+                    if (!channelId) {
+                        currentChannel = null;
+                        return;
+                    }
+
                     currentChannel = {
-                        id: attrs.id,
-                        name: attrs.id,
+                        id: channelId,
+                        name: channelId,
                         logo: null,
                         sourceType,
                         sourceId,
@@ -194,16 +212,20 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 }
 
                 if (channelBatch.length >= BATCH_SIZE || programBatch.length >= BATCH_SIZE) {
-                    processBatches();
+                    try {
+                        processBatches();
+                    } catch (err) {
+                        safeReject(err);
+                    }
                 }
             });
 
             parser.on('finish', function () {
                 try {
                     processBatches();
-                    resolve({ success: true });
+                    safeResolve({ success: true });
                 } catch (err) {
-                    reject(err);
+                    safeReject(err);
                 }
             });
 
@@ -214,12 +236,12 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                     console.warn(`⚠️ Ignoring unexpected end of file in GZIP stream for ${sourceType} ${sourceId}, saving parsed data...`);
                     try {
                         processBatches();
-                        resolve({ success: true });
+                        safeResolve({ success: true });
                     } catch (e) {
-                        reject(e);
+                        safeReject(e);
                     }
                 } else {
-                    reject(err);
+                    safeReject(err);
                 }
             });
         });
