@@ -82,6 +82,7 @@ this endpoint for timeline data after rendering the channel list.
 - `GET /api/users/:userId/backups`
 - `POST /api/users/:userId/backups`
 - `POST /api/users/:userId/backups/:id/restore`
+  - Self-service for own user is allowed, but restore cannot re-grant revoked channels.
 - `DELETE /api/users/:userId/backups/:id`
 
 ## System, Security, and Statistics
