@@ -232,6 +232,10 @@ export const proxyMpd = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
+
     let upstreamUrl = '';
     let backupStreamUrls = [];
 
@@ -246,22 +250,6 @@ export const proxyMpd = async (req, res) => {
             } catch(e) {
               return res.sendStatus(400);
             }
-        }
-    } else {
-        channel.provider_pass = decrypt(channel.provider_pass);
-        const base = channel.provider_url.replace(/\/+$/, '');
-        upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
-
-        try {
-            if (channel.backup_urls) {
-                const backups = JSON.parse(channel.backup_urls);
-                backupStreamUrls = backups.map(bUrl => {
-                    const bBase = bUrl.replace(/\/+$/, '');
-                    return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
-                });
-            }
-        } catch (e) {
-            console.warn('Failed to parse backup_urls (MPD):', e.message);
         }
     }
 
@@ -295,6 +283,28 @@ export const proxyMpd = async (req, res) => {
     channel.provider_pass = availableProvider.password; // Encrypted password
     channel.backup_urls = availableProvider.backup_urls;
     channel.user_agent = availableProvider.user_agent;
+
+    if (!meta?.original_url) {
+        channel.provider_pass = decrypt(channel.provider_pass);
+        const base = channel.provider_url.replace(/\/+$/, '');
+        upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
+
+        try {
+            if (channel.backup_urls) {
+                const backups = JSON.parse(channel.backup_urls);
+                backupStreamUrls = backups.map(bUrl => {
+                    const bBase = bUrl.replace(/\/+$/, '');
+                    return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
+                });
+            }
+        } catch (e) {
+            console.warn('Failed to parse backup_urls (MPD):', e.message);
+        }
+    }
+
+    if (!hasMetadataUserAgentOverride) {
+        headers['User-Agent'] = channel.user_agent || DEFAULT_USER_AGENT;
+    }
 
     await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
     try {
@@ -879,6 +889,10 @@ export const proxyMovie = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
+
     const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
 
     if (shouldTranscode) {
@@ -1263,6 +1277,10 @@ export const proxyTimeshift = async (req, res) => {
     if (meta && meta.http_headers) {
         Object.assign(headers, meta.http_headers);
     }
+
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
 
     let upstream, successfulUrl;
     try {
