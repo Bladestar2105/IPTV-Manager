@@ -103,6 +103,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
         // Implement node-xml-stream for robust streaming XML parsing
         const parser = new XmlStream();
+        const MAX_XML_TEXT_NODE_LENGTH = 50 * 1024; // 50KB safeguard against unbounded text growth
 
         let currentTag = null;
         let currentChannel = null;
@@ -163,7 +164,14 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             });
 
             const appendText = (text) => {
-                 if (currentChannel && currentTag === 'display-name') {
+                if (currentText.length + text.length > MAX_XML_TEXT_NODE_LENGTH) {
+                    reject(new Error(`EPG XML text node exceeds ${MAX_XML_TEXT_NODE_LENGTH} bytes limit`));
+                    stream.destroy();
+                    parser.end();
+                    return;
+                }
+
+                if (currentChannel && currentTag === 'display-name') {
                     currentText += text;
                 } else if (currentProgram && (currentTag === 'title' || currentTag === 'desc')) {
                     currentText += text;
