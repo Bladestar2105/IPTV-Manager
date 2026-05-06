@@ -20,7 +20,7 @@ echo ">> Updating system packages..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
-apt-get install -y curl git build-essential ufw systemd
+apt-get install -y curl git build-essential ufw systemd openssl
 
 # Install Node.js (v20 as required by IPTV-Manager)
 echo ">> Installing Node.js 20.x..."
