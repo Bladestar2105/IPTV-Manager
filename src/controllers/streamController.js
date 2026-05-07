@@ -571,7 +571,8 @@ export const proxyLive = async (req, res) => {
       if (cookies) headersToForward['Cookie'] = cookies;
 
       // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const bindingId = crypto.randomUUID();
+      const basePayload = { h: headersToForward, s: isProviderSafe, b: bindingId };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
@@ -581,7 +582,7 @@ export const proxyLive = async (req, res) => {
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, b: bindingId };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
@@ -591,7 +592,7 @@ export const proxyLive = async (req, res) => {
         try {
           const absoluteUrl = new URL(p1, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, b: bindingId };
           const encrypted = encrypt(JSON.stringify(payload));
           return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
         } catch (e) {
@@ -678,6 +679,8 @@ export const proxySegment = async (req, res) => {
 
     let isOriginSafe = true;
 
+    let baseBindingId = null;
+
     // Handle 'base' param for optimized static headers/settings
     if (req.query.base) {
         try {
@@ -686,6 +689,7 @@ export const proxySegment = async (req, res) => {
                 const basePayload = JSON.parse(decryptedBase);
                 if (basePayload.h) Object.assign(headers, basePayload.h);
                 if (basePayload.s === false) isOriginSafe = false;
+                if (basePayload.b) baseBindingId = basePayload.b;
             }
         } catch(e) {}
     }
@@ -699,6 +703,9 @@ export const proxySegment = async (req, res) => {
             if (payload.u) targetUrl = payload.u;
             if (payload.c) channelName = payload.c;
             if (payload.p) providerId = payload.p;
+            if (req.query.base) {
+                if (!payload.b || !baseBindingId || payload.b !== baseBindingId) return res.sendStatus(400);
+            }
             // Merge per-segment overrides (if any, legacy support)
             if (payload.h) Object.assign(headers, payload.h);
             if (payload.s !== undefined) {
@@ -1309,7 +1316,8 @@ export const proxyTimeshift = async (req, res) => {
       if (cookies) headersToForward['Cookie'] = cookies;
 
       // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const bindingId = crypto.randomUUID();
+      const basePayload = { h: headersToForward, s: isProviderSafe, b: bindingId };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
@@ -1319,7 +1327,7 @@ export const proxyTimeshift = async (req, res) => {
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, b: bindingId };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
