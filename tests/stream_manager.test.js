@@ -81,6 +81,21 @@ describe('StreamManager (SQLite)', () => {
          expect(streams).toHaveLength(2);
     });
 
+
+    it('should keep active sessions countable even when start_time is old', async () => {
+        const now = Date.now();
+        db.prepare(`
+          INSERT INTO current_streams (id, user_id, username, channel_name, start_time, last_activity, ip, worker_pid, provider_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run('old-but-active', 2, 'activeuser', 'Live C', now - (26 * 60 * 60 * 1000), now - 1000, '127.0.0.8', process.pid, 2);
+
+        const count = await streamManager.getUserConnectionCount(2);
+        expect(count).toBe(1);
+
+        const streams = await streamManager.getAll();
+        expect(streams.map(s => s.id)).toContain('old-but-active');
+    });
+
     it('should cleanup streams from dead workers before counting limits', async () => {
         const user = { id: 1, username: 'testuser' };
         await streamManager.add('active-stream', user, 'C1', '127.0.0.1', null, 1);

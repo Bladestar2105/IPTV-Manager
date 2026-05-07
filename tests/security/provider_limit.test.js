@@ -217,7 +217,15 @@ describe('Provider Connection Limit', () => {
         await streamController.proxyLive(req, res);
 
         expect(streamManager.getProviderConnectionCount).toHaveBeenCalledWith(101);
-        expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), 101);
+        expect(streamManager.add).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            101,
+            expect.objectContaining({ dedupe: true })
+        );
     });
 
     it('should build MPD upstream URL using pooled provider credentials', async () => {

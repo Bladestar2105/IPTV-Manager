@@ -37,10 +37,10 @@ export const updateUserCategory = (req, res) => {
   try {
     const id = Number(req.params.id);
     const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-    if (!cat) return res.status(404).json({error: 'Category not found'});
-    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!cat || cat.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!cat) return res.status(404).json({error: 'Category not found'});
 
     const { name } = req.body;
     if (!name) return res.status(400).json({error: 'name required'});
@@ -61,10 +61,10 @@ export const deleteUserCategory = (req, res) => {
   try {
     const id = Number(req.params.id);
     const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-    if (!cat) return res.status(404).json({error: 'Category not found'});
-    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!cat || cat.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!cat) return res.status(404).json({error: 'Category not found'});
 
     db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(id);
     db.prepare('UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id = ?').run(id);
@@ -142,10 +142,10 @@ export const updateUserCategoryAdult = (req, res) => {
   try {
     const id = Number(req.params.id);
     const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(id);
-    if (!cat) return res.status(404).json({error: 'Category not found'});
-    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!cat || cat.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!cat) return res.status(404).json({error: 'Category not found'});
 
     const { is_adult } = req.body;
     db.prepare('UPDATE user_categories SET is_adult = ? WHERE id = ?').run(is_adult ? 1 : 0, id);
@@ -219,10 +219,10 @@ export const addUserChannel = (req, res) => {
   try {
     const catId = Number(req.params.catId);
     const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
-    if (!cat) return res.status(404).json({error: 'Category not found'});
-    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!cat || cat.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!cat) return res.status(404).json({error: 'Category not found'});
 
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
@@ -250,10 +250,10 @@ export const reorderUserChannels = (req, res) => {
   try {
     const catId = Number(req.params.catId);
     const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
-    if (!cat) return res.status(404).json({error: 'Category not found'});
-    if (!req.user.is_admin && cat.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!cat || cat.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!cat) return res.status(404).json({error: 'Category not found'});
 
     const { channel_ids } = req.body;
     if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
@@ -284,11 +284,10 @@ export const deleteUserChannel = (req, res) => {
         WHERE uc.id = ?
     `).get(id);
 
-    if (!channel) return res.status(404).json({error: 'Channel not found'});
-
-    if (!req.user.is_admin && channel.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!channel || channel.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!channel) return res.status(404).json({error: 'Channel not found'});
 
     db.prepare('UPDATE user_channels SET is_hidden = 1 WHERE id = ?').run(id);
     clearChannelsCache(channel.user_id);
@@ -360,11 +359,10 @@ export const updateCategoryMapping = (req, res) => {
     const { user_category_id } = req.body;
 
     const mapping = db.prepare('SELECT user_id FROM category_mappings WHERE id = ?').get(id);
-    if (!mapping) return res.status(404).json({error: 'Mapping not found'});
-
-    if (!req.user.is_admin && mapping.user_id !== req.user.id) {
+    if (!req.user.is_admin && (!mapping || mapping.user_id !== req.user.id)) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!mapping) return res.status(404).json({error: 'Mapping not found'});
 
     db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
       .run(user_category_id ? Number(user_category_id) : null, id);

@@ -263,6 +263,10 @@ export const proxyMpd = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
+
     let upstreamUrl = '';
     let backupStreamUrls = [];
 
@@ -278,7 +282,9 @@ export const proxyMpd = async (req, res) => {
               return res.sendStatus(400);
             }
         }
-    } else {
+    }
+
+    if (!meta?.original_url) {
         channel.provider_pass = decrypt(channel.provider_pass);
         const base = channel.provider_url.replace(/\/+$/, '');
         upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
@@ -294,6 +300,10 @@ export const proxyMpd = async (req, res) => {
         } catch (e) {
             console.warn('Failed to parse backup_urls (MPD):', e.message);
         }
+    }
+
+    if (!hasMetadataUserAgentOverride) {
+        headers['User-Agent'] = channel.user_agent || DEFAULT_USER_AGENT;
     }
 
     await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
@@ -390,33 +400,32 @@ export const proxyLive = async (req, res) => {
 
     const wantsTranscode = (req.query.transcode === 'true');
 
-    // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
-    if (reqExt !== 'm3u8' || wantsTranscode) {
-        await streamManager.cleanupUser(user.id, req.ip);
+    await streamManager.cleanupUser(user.id, req.ip);
 
-        if (user.max_connections > 0) {
-            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
-            if (!isSessionActiveForUser) {
-                const active = await streamManager.getUserConnectionCount(user.id);
-                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-            }
+    if (user.max_connections > 0) {
+        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
+        if (!isSessionActiveForUser) {
+            const active = await streamManager.getUserConnectionCount(user.id);
+            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
         }
-
-        const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
-        if (!availableProvider) {
-            return res.status(403).send('Provider max connections reached across all accounts');
-        }
-
-        channel.provider_id = availableProvider.id;
-        channel.provider_url = availableProvider.url;
-        channel.provider_user = availableProvider.username;
-        channel.provider_pass = availableProvider.password;
-        channel.backup_urls = availableProvider.backup_urls;
-        channel.user_agent = availableProvider.user_agent;
-
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id);
     }
+
+    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
+    if (!availableProvider) {
+        return res.status(403).send('Provider max connections reached across all accounts');
+    }
+
+    channel.provider_id = availableProvider.id;
+    channel.provider_url = availableProvider.url;
+    channel.provider_user = availableProvider.username;
+    channel.provider_pass = availableProvider.password;
+    channel.backup_urls = availableProvider.backup_urls;
+    channel.user_agent = availableProvider.user_agent;
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id, {
+      dedupe: reqExt !== 'm3u8'
+    });
 
     try {
         const now = Math.floor(Date.now() / 1000);
@@ -562,7 +571,8 @@ export const proxyLive = async (req, res) => {
       if (cookies) headersToForward['Cookie'] = cookies;
 
       // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const bindingId = crypto.randomUUID();
+      const basePayload = { h: headersToForward, s: isProviderSafe, b: bindingId };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
@@ -572,7 +582,7 @@ export const proxyLive = async (req, res) => {
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, b: bindingId };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
@@ -582,7 +592,7 @@ export const proxyLive = async (req, res) => {
         try {
           const absoluteUrl = new URL(p1, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, b: bindingId };
           const encrypted = encrypt(JSON.stringify(payload));
           return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
         } catch (e) {
@@ -669,6 +679,8 @@ export const proxySegment = async (req, res) => {
 
     let isOriginSafe = true;
 
+    let baseBindingId = null;
+
     // Handle 'base' param for optimized static headers/settings
     if (req.query.base) {
         try {
@@ -677,6 +689,7 @@ export const proxySegment = async (req, res) => {
                 const basePayload = JSON.parse(decryptedBase);
                 if (basePayload.h) Object.assign(headers, basePayload.h);
                 if (basePayload.s === false) isOriginSafe = false;
+                if (basePayload.b) baseBindingId = basePayload.b;
             }
         } catch(e) {}
     }
@@ -690,6 +703,9 @@ export const proxySegment = async (req, res) => {
             if (payload.u) targetUrl = payload.u;
             if (payload.c) channelName = payload.c;
             if (payload.p) providerId = payload.p;
+            if (req.query.base) {
+                if (!payload.b || !baseBindingId || payload.b !== baseBindingId) return res.sendStatus(400);
+            }
             // Merge per-segment overrides (if any, legacy support)
             if (payload.h) Object.assign(headers, payload.h);
             if (payload.s !== undefined) {
@@ -740,11 +756,14 @@ export const proxySegment = async (req, res) => {
     }
 
     if (channelName && providerId) {
-        // Technically segment proxy is mostly stateless and shouldn't hit limits,
-        // but it registers as a stream. It's better not to change providerId mid-stream,
-        // so we use the providerId passed in the payload (which was the one chosen by the playlist generator).
-        // For segments, pooling might have already happened when generating the M3U8,
-        // or we just track it against the original provider.
+        if (user.max_connections > 0) {
+            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channelName, providerId);
+            if (!isSessionActiveForUser) {
+                const active = await streamManager.getUserConnectionCount(user.id);
+                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
+            }
+        }
+
         await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId, { dedupe: false });
     }
 
@@ -876,6 +895,10 @@ export const proxyMovie = async (req, res) => {
     if (meta && meta.http_headers) {
         Object.assign(headers, meta.http_headers);
     }
+
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
 
     const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
 
@@ -1262,6 +1285,10 @@ export const proxyTimeshift = async (req, res) => {
         Object.assign(headers, meta.http_headers);
     }
 
+    const hasMetadataUserAgentOverride = Boolean(
+        meta?.http_headers && Object.keys(meta.http_headers).some(key => key.toLowerCase() === 'user-agent')
+    );
+
     let upstream, successfulUrl;
     try {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
@@ -1289,7 +1316,8 @@ export const proxyTimeshift = async (req, res) => {
       if (cookies) headersToForward['Cookie'] = cookies;
 
       // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const bindingId = crypto.randomUUID();
+      const basePayload = { h: headersToForward, s: isProviderSafe, b: bindingId };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
@@ -1299,7 +1327,7 @@ export const proxyTimeshift = async (req, res) => {
         try {
           const absoluteUrl = new URL(line, baseUrl).toString();
           // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
+          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, b: bindingId };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
         } catch (e) {
