@@ -40,8 +40,10 @@ describe('Channel Controller - createUserCategory', () => {
     beforeEach(() => {
         // Clear DB
         initDb(true);
-        const tables = ['users', 'user_categories', 'user_channels', 'admin_users'];
+        const tables = ['user_channels', 'user_categories', 'users', 'admin_users'];
+        db.pragma('foreign_keys = OFF');
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
+        db.pragma('foreign_keys = ON');
 
         // Setup initial users
         // Note: is_admin is not in users table, it's separate admin_users or managed by webui_access
