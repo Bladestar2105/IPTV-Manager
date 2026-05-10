@@ -37,6 +37,8 @@ A share should work without regular user credentials while still providing:
   - `...&action=get_vod_info&vod_id=<id>`
   - `...&action=get_series_info&series_id=<id>`
   - `...&action=get_short_epg&stream_id=<id>&limit=<n>`
+  - `...&action=get_simple_date_table&stream_id=<id>`
+  - `...&action=get_simple_data_table&stream_id=<id>` (compatibility alias)
   - `...&action=get_epg_batch&stream_ids=<id,id>&date=<YYYY-MM-DD>`
 
 When calling `GET /player_api.php?token=<share_token>` the `user_info` object includes share validity metadata for share guests:
@@ -52,10 +54,24 @@ batch response is keyed by stream ID and each value contains the standard
 `epg_listings` array. `date` selects a UTC day and only channels visible to the
 authenticated user or share token are returned.
 
+Mobile clients should prefer incremental startup loading:
+
+1. Authenticate with `GET /player_api.php`.
+2. Load category lists first.
+3. Load streams per selected category with `category_id`.
+4. Load EPG on demand with `get_short_epg`, `get_simple_date_table`, or
+   `get_epg_batch`.
+
+Avoid fetching `get.php?type=m3u_plus` or full `xmltv.php` during normal app
+startup unless the client explicitly needs a complete export.
+
 ### M3U + EPG
 
 - Playlist: `GET /get.php?token=<share_token>&type=m3u_plus`
 - XMLTV: `GET /xmltv.php?token=<share_token>`
+- XMLTV with HTTP compression: send `Accept-Encoding: gzip`.
+- XMLTV gzip extension for capable custom clients:
+  `GET /xmltv.php?token=<share_token>&gzip=1`
 
 > Share playlists emit token-auth stream URLs  
 > (`/live/token/auth/...?...token=<share_token>`).

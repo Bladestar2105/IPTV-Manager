@@ -189,11 +189,20 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
 
 ### Xtream Codes / Player API
 - `GET /player_api.php`: Auth & Metadata
+- `GET /player_api.php?action=get_live_categories`
+- `GET /player_api.php?action=get_live_streams&category_id=<id>`: Category-scoped live streams
+- `GET /player_api.php?action=get_vod_categories`
+- `GET /player_api.php?action=get_vod_streams&category_id=<id>`: Category-scoped VOD
+- `GET /player_api.php?action=get_series_categories`
+- `GET /player_api.php?action=get_series&category_id=<id>`: Category-scoped series
+- `GET /player_api.php?action=get_short_epg&stream_id=<id>&limit=<n>`: Short stream EPG
+- `GET /player_api.php?action=get_simple_date_table&stream_id=<id>`: Full stream EPG
+- `GET /player_api.php?action=get_simple_data_table&stream_id=<id>`: Full stream EPG compatibility alias
 - `GET /player_api.php?action=get_epg_batch&stream_ids=<ids>&date=<YYYY-MM-DD>`: Batched Xtream EPG listings
 - `GET /live/:user/:pass/:id.ts`: Live Stream
 - `GET /movie/:user/:pass/:id.ext`: Movie Stream
 - `GET /series/:user/:pass/:id.ext`: Series Stream
-- `GET /xmltv.php`: XMLTV EPG
+- `GET /xmltv.php`: XMLTV EPG, gzip-compressed when requested with `Accept-Encoding: gzip`
 
 ### Share + Companion App Integration
 - Share companion integration guide (Xtream/M3U/EPG): `docs/SHARE_COMPANION_INTEGRATION.md`

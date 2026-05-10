@@ -380,7 +380,22 @@ export function loadEpgChannelLogosMap() {
     return logoMap;
 }
 
-export function getEpgPrograms(channelId, limit = 1000) {
+export function getEpgPrograms(channelId, limit = 1000, options = {}) {
+    const rowLimit = Math.min(Math.max(Number(limit) || 1000, 1), 10000);
+
+    if (options.includePast) {
+        return db.prepare(`
+            SELECT
+                start, stop, title, desc, lang, channel_id,
+                datetime(start, 'unixepoch') as start_fmt,
+                datetime(stop, 'unixepoch') as stop_fmt
+            FROM epg_programs
+            WHERE channel_id = ?
+            ORDER BY start ASC
+            LIMIT ?
+        `).iterate(channelId, rowLimit);
+    }
+
     const now = Math.floor(Date.now() / 1000);
     // ⚡ Bolt: Offload date formatting to SQLite using datetime() and use .iterate() to reduce V8 memory pressure.
     // 🎯 Why: Creating Date objects and manipulating strings in JS for every program row causes CPU and GC overhead. Loading large lists of program objects into V8 memory at once can cause memory spikes.
@@ -394,7 +409,7 @@ export function getEpgPrograms(channelId, limit = 1000) {
         WHERE channel_id = ? AND stop > ?
         ORDER BY start ASC
         LIMIT ?
-    `).iterate(channelId, now, limit);
+    `).iterate(channelId, now, rowLimit);
 }
 
 export function getEpgProgramsForChannels(channelIds, start, end, limitPerChannel = 500) {

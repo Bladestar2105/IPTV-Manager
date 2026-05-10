@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Writable } from 'stream';
+import zlib from 'zlib';
 
 const { mockDb } = vi.hoisted(() => ({
   mockDb: {
@@ -196,6 +198,44 @@ describe('xtreamController share compatibility', () => {
 
     expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('uc.id IN (?,?)'));
     const xml = res.write.mock.calls.map(call => call[0]).join('');
+    expect(xml).toContain('<channel id="news.epg">');
+  });
+
+  it('serves XMLTV as streamed gzip when explicitly requested', async () => {
+    req.query = { token: 'share-token', gzip: '1' };
+    getXtreamUser.mockResolvedValue({
+      id: 1,
+      is_share_guest: true,
+      allowed_channels: [100],
+      share_start: null,
+      share_end: null
+    });
+
+    mockDb.prepare.mockReturnValue({
+      iterate: vi.fn().mockReturnValue([{ epg_id: 'news.epg' }])
+    });
+
+    getEpgXmlForChannels.mockImplementation(async function* () {
+      yield '<channel id="news.epg"></channel>\n';
+    });
+
+    const chunks = [];
+    res = new Writable({
+      write(chunk, encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      }
+    });
+    res.setHeader = vi.fn();
+    res.status = vi.fn().mockReturnThis();
+    res.end = Writable.prototype.end.bind(res);
+
+    await xmltv(req, res);
+    await new Promise(resolve => res.on('finish', resolve));
+
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Encoding', 'gzip');
+    expect(res.setHeader).toHaveBeenCalledWith('Vary', 'Accept-Encoding');
+    const xml = zlib.gunzipSync(Buffer.concat(chunks)).toString('utf8');
     expect(xml).toContain('<channel id="news.epg">');
   });
 });

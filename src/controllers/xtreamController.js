@@ -1,3 +1,4 @@
+import zlib from 'zlib';
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels, getEpgXmlForChannels } from '../services/epgService.js';
@@ -88,6 +89,21 @@ const getBatchDateRange = (dateValue) => {
     start: Math.floor(startMs / 1000),
     end: Math.floor(startMs / 1000) + 86400
   };
+};
+
+const getFirstQueryValue = (value) => Array.isArray(value) ? value[0] : value;
+
+const queryFlagEnabled = (value) => {
+  const raw = getFirstQueryValue(value);
+  if (raw === undefined || raw === null) return false;
+  return ['1', 'true', 'yes', 'on', 'gzip', 'gz'].includes(String(raw).trim().toLowerCase());
+};
+
+const wantsGzipResponse = (req) => {
+  if (queryFlagEnabled(req.query.gzip) || queryFlagEnabled(req.query.gz)) return true;
+  const format = String(getFirstQueryValue(req.query.format || req.query.output) || '').trim().toLowerCase();
+  if (format === 'gz' || format === 'gzip') return true;
+  return /\bgzip\b/i.test(String(req.headers?.['accept-encoding'] || ''));
 };
 
 export const cppEndpoint = (req, res) => {
@@ -546,6 +562,38 @@ export const playerApi = async (req, res) => {
       return res.json({epg_listings: listings});
     }
 
+    if (action === 'get_simple_date_table' || action === 'get_simple_data_table') {
+      const streamId = Number(req.query.stream_id);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 5000, 1), 10000);
+
+      if (!streamId) return res.json({epg_listings: []});
+
+      const channel = db.prepare(`
+        SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+        FROM user_channels uc
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
+      `).get(streamId, user.id);
+
+      if (!channel) return res.json({epg_listings: []});
+      if (shareScope.allowedSet && !shareScope.allowedSet.has(Number(streamId))) {
+        return res.json({epg_listings: []});
+      }
+
+      const epgId = channel.manual_epg_id || channel.epg_channel_id;
+      if (!epgId) return res.json({epg_listings: []});
+
+      const programs = getEpgPrograms(epgId, limit, { includePast: true });
+      const listings = [];
+      for (const p of programs) {
+        listings.push(formatXtreamEpgListing(p, epgId));
+      }
+
+      return res.json({epg_listings: listings});
+    }
+
     if (action === 'get_epg_batch') {
       let streamIds = parseBatchStreamIds(req.query.stream_ids || req.query.stream_id || req.query.ids);
       if (shareScope.allowedSet) {
@@ -748,16 +796,25 @@ export const xmltv = async (req, res) => {
         if (r.epg_id) allowedIds.add(r.epg_id);
     }
 
+    const useGzip = wantsGzipResponse(req);
+    let output = res;
+
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
+    if (useGzip) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Vary', 'Accept-Encoding');
+      output = zlib.createGzip();
+      output.pipe(res);
+    }
+
+    output.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
     // Use the generator to stream content
     for await (const chunk of getEpgXmlForChannels(allowedIds)) {
-        res.write(chunk);
+        output.write(chunk);
     }
 
-    res.write('</tv>');
-    res.end();
+    output.end('</tv>');
 
   } catch (e) {
     console.error('xmltv error:', e.message);

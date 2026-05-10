@@ -42,7 +42,7 @@ vi.mock('../../src/config/constants.js', () => ({
 }));
 
 import { getXtreamUser } from '../../src/services/authService.js';
-import { getEpgProgramsForChannels } from '../../src/services/epgService.js';
+import { getEpgPrograms, getEpgProgramsForChannels } from '../../src/services/epgService.js';
 import { playerApi } from '../../src/controllers/xtreamController.js';
 
 describe('xtreamController get_epg_batch', () => {
@@ -149,6 +149,45 @@ describe('xtreamController get_epg_batch', () => {
     expect(all).toHaveBeenCalledWith(100, 3);
     expect(res.json).toHaveBeenCalledWith({
       100: { epg_listings: [] },
+    });
+  });
+
+  it.each(['get_simple_date_table', 'get_simple_data_table'])('returns full stream EPG for %s', async (action) => {
+    req.query = {
+      username: 'alice',
+      password: 'secret',
+      action,
+      stream_id: '101',
+    };
+
+    getXtreamUser.mockResolvedValue({ id: 7, is_share_guest: false });
+    mockDb.prepare.mockReturnValue({
+      get: vi.fn().mockReturnValue({
+        epg_channel_id: 'news.epg',
+        manual_epg_id: null,
+      }),
+    });
+    getEpgPrograms.mockReturnValue([{
+      start: 1777705200,
+      stop: 1777708800,
+      start_fmt: '2026-05-02 07:00:00',
+      stop_fmt: '2026-05-02 08:00:00',
+      title: 'Morning News',
+      desc: 'Headlines',
+      lang: 'en',
+      channel_id: 'news.epg',
+    }]);
+
+    await playerApi(req, res);
+
+    expect(getEpgPrograms).toHaveBeenCalledWith('news.epg', 5000, { includePast: true });
+    expect(res.json).toHaveBeenCalledWith({
+      epg_listings: [expect.objectContaining({
+        epg_id: 'news.epg',
+        channel_id: 'news.epg',
+        title: Buffer.from('Morning News').toString('base64'),
+        description: Buffer.from('Headlines').toString('base64'),
+      })],
     });
   });
 });

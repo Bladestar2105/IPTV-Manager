@@ -134,11 +134,24 @@ needed. Pass `force: true` to force the underlying updater.
 
 - `GET /cpp`
 - `GET /player_api.php`
+- `GET /player_api.php?action=get_live_categories`
+- `GET /player_api.php?action=get_live_streams&category_id=<id>`
+- `GET /player_api.php?action=get_vod_categories`
+- `GET /player_api.php?action=get_vod_streams&category_id=<id>`
+- `GET /player_api.php?action=get_series_categories`
+- `GET /player_api.php?action=get_series&category_id=<id>`
+- `GET /player_api.php?action=get_short_epg&stream_id=<id>&limit=<n>`
+- `GET /player_api.php?action=get_simple_date_table&stream_id=<id>`
+- `GET /player_api.php?action=get_simple_data_table&stream_id=<id>`
 - `GET /player_api.php?action=get_epg_batch&stream_ids=<ids>&date=<YYYY-MM-DD>`
 - `GET /get.php`
 - `GET /xmltv.php`
 - `GET /api/player/playlist`
 - `GET /api/player/channels.json`
+
+`xmltv.php` supports streaming HTTP gzip compression when the client sends
+`Accept-Encoding: gzip`. Custom clients can also request the IPTV-Manager
+extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 
 ## Stream Proxy
 
