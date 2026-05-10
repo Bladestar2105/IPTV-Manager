@@ -34,7 +34,7 @@
 
 ### Security
 - **🛡️ SSRF Protection**: Robust validation of upstream URLs (preventing access to private IPs, localhost, cloud metadata).
-- **🔐 Rate Limiting**: Protection against brute force (Login) and DoS attacks (Client Logs).
+- **🔐 Rate Limiting**: Tunable protection for general API traffic, brute force (Login), and DoS attacks (Client Logs).
 - **🎫 Secure Authentication**: JWT-based auth with session management and Bcrypt password hashing.
 - **🚫 IP Blocking**: Configurable IP blocking and whitelisting.
 - **🔒 Security Headers**: Comprehensive Helmet.js security headers.
@@ -127,6 +127,18 @@ The application blocks Cross-Origin Resource Sharing (CORS) by default for secur
 - **Default**: Cross-origin requests are blocked (`false`).
 - **Setup**: Add `ALLOWED_ORIGINS=https://your-web-player.com,https://another-site.com` to your `.env` file.
 - **Allow All**: Set `ALLOWED_ORIGINS=*` to allow all domains (⚠️ Not recommended for production).
+
+### Rate Limit Tuning
+Defaults are intentionally high enough for IPTV clients that make bursty
+playlist, XMLTV, and Xtream API requests. They can still be tuned via
+environment variables:
+
+- `API_RATE_LIMIT_MAX` (default: `1000` per `60000` ms)
+- `AUTH_RATE_LIMIT_MAX` (default: `100` per `900000` ms)
+- `CLIENT_LOG_RATE_LIMIT_MAX` (default: `120` per `3600000` ms)
+
+Each limit also has a matching `*_WINDOW_MS` variable documented in
+`docs/CONFIGURATION.md`.
 
 ### Stream Session Cleanup (Live / VOD / Series)
 To prevent stale sessions from blocking new playback with false `Max connections reached` / `HTTP 403` responses, stream session cleanup is applied across **Live TV, Movies, and Series**.

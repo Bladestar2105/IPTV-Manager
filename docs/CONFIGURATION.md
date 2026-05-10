@@ -26,6 +26,20 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 - `ALLOWED_ORIGINS`: Comma-separated CORS allowlist. By default cross-origin
   browser requests are blocked. `*` allows all origins and is not recommended
   for production.
+- `API_RATE_LIMIT_MAX`: Maximum requests per IP for general `/api`,
+  Xtream API, XMLTV, and playlist endpoints within
+  `API_RATE_LIMIT_WINDOW_MS`. Defaults to `1000`.
+- `API_RATE_LIMIT_WINDOW_MS`: General API rate limit window in milliseconds.
+  Defaults to `60000` (1 minute).
+- `AUTH_RATE_LIMIT_MAX`: Maximum requests per IP for login, password changes,
+  user creation/update, and backup restore/create endpoints within
+  `AUTH_RATE_LIMIT_WINDOW_MS`. Defaults to `100`.
+- `AUTH_RATE_LIMIT_WINDOW_MS`: Authentication-sensitive rate limit window in
+  milliseconds. Defaults to `900000` (15 minutes).
+- `CLIENT_LOG_RATE_LIMIT_MAX`: Maximum unauthenticated client log submissions
+  per IP within `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`. Defaults to `120`.
+- `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`: Client log rate limit window in
+  milliseconds. Defaults to `3600000` (1 hour).
 
 ## Stream Tracking
 
