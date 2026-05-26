@@ -118,7 +118,7 @@ chmod +x proxmox.sh
 
 ### First Time Setup
 - **Default Username**: `admin`
-- **Default Password**: Automatically generated (check your console output).
+- **Default Password**: Set by `scripts/install.sh` and printed at the end of the install (also saved as `INITIAL_ADMIN_PASSWORD` in `/opt/iptv-manager/.env`).
 - **Important**: Change password immediately after login.
 
 ### CORS Configuration
