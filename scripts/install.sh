@@ -51,11 +51,20 @@ cd "$INSTALL_DIR"
 echo ">> Installing application dependencies..."
 npm install
 
-# Setup environment variables
+# Create an initial admin password so it is always visible in non-interactive installs
 if [ ! -f ".env" ]; then
     echo ">> Setting up .env file..."
     cp .env.example .env
     echo ">> .env file created. Please configure it later if needed."
+fi
+
+if ! grep -q '^INITIAL_ADMIN_PASSWORD=' .env || [ -z "$(grep '^INITIAL_ADMIN_PASSWORD=' .env | cut -d'=' -f2-)" ]; then
+    INITIAL_ADMIN_PASSWORD_GENERATED=$(openssl rand -hex 8)
+    sed -i "s|^INITIAL_ADMIN_PASSWORD=.*|INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_GENERATED}|" .env
+    echo ">> Generated initial admin password and saved it to .env"
+else
+    INITIAL_ADMIN_PASSWORD_GENERATED=$(grep '^INITIAL_ADMIN_PASSWORD=' .env | cut -d'=' -f2-)
+    echo ">> Reusing existing INITIAL_ADMIN_PASSWORD from .env"
 fi
 
 # Create a dedicated user for security
@@ -106,6 +115,11 @@ echo ">> IPTV-Manager is now running as a background service."
 echo ">> You can access the application at: http://$(hostname -I | awk '{print $1}'):3000"
 echo ">> To check the logs, run: sudo journalctl -u iptv-manager -f"
 echo ">> To update in the future, run: sudo ./scripts/update.sh from the $INSTALL_DIR directory."
+echo ""
+echo ">> Initial WebUI admin credentials:"
+echo "   Username: admin"
+echo "   Password: ${INITIAL_ADMIN_PASSWORD_GENERATED}"
+echo "   (Stored in $INSTALL_DIR/.env as INITIAL_ADMIN_PASSWORD)"
 echo ""
 echo "Note: The default port is 3000. Ensure it is open in your firewall."
 if command -v ufw > /dev/null; then
