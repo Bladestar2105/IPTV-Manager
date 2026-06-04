@@ -339,6 +339,7 @@ export const deleteProvider = (req, res) => {
       db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(id);
+      db.prepare('DELETE FROM provider_icon_cache WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM providers WHERE id = ?').run(id);
     })();
 

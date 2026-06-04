@@ -88,7 +88,7 @@ async function fetchJSON(url, options = {}) {
     // Try to parse error response
     try {
       const errorData = await res.json();
-      const error = new Error(errorData.message || 'HTTP ' + res.status);
+      const error = new Error(errorData.message || errorData.error || 'HTTP ' + res.status);
       error.response = errorData;
       throw error;
     } catch (e) {

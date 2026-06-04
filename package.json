@@ -12,7 +12,7 @@
   "dependencies": {
     "@iptv/xtream-api": "^1.2.1",
     "bcrypt": "^6.0.0",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.10.0",
     "body-parser": "^1.20.3",
     "bootstrap": "^5.3.0",
     "cors": "^2.8.5",

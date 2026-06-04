@@ -13,6 +13,11 @@
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
+`better-sqlite3` is a native dependency. Use the supported Node.js versions from
+its package metadata when running locally; if Node is upgraded, reinstall
+dependencies with `npm install` so the native binding matches the active Node
+ABI. The Docker image builds against its pinned Node runtime with `npm ci`.
+
 ## Maintainer Documentation
 
 - API route inventory: `docs/API_REFERENCE.md`.

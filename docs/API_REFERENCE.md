@@ -23,6 +23,11 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `PUT /api/users/:id`
 - `DELETE /api/users/:id`
 
+Deleting a user removes user-owned providers and dependent runtime/configuration
+rows first, including provider icon cache entries, share links, temporary
+tokens, user backups, sync data, categories, channels, and mappings. This keeps
+SQLite foreign-key enforcement enabled while preventing orphaned user data.
+
 ## Providers
 
 - `GET /api/providers`
@@ -34,6 +39,10 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `GET /api/providers/:id/categories`
 - `POST /api/providers/:providerId/import-category`
 - `POST /api/providers/:providerId/import-categories`
+
+Deleting a provider removes dependent channel assignments, EPG mappings, stream
+stats, sync data, category mappings, and provider icon cache entries before the
+provider row is deleted.
 
 ## Categories and Channels
 

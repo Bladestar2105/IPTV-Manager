@@ -498,6 +498,7 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM sync_configs WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
       db.prepare('DELETE FROM sync_logs WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
       db.prepare('DELETE FROM category_mappings WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
+      db.prepare('DELETE FROM provider_icon_cache WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
       db.prepare('DELETE FROM providers WHERE user_id = ?').run(id);
 
       // 2. Delete user data
@@ -514,6 +515,8 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM category_mappings WHERE user_id = ?').run(id);
 
       db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM shared_links WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM user_backups WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
 
