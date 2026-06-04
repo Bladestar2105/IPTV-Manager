@@ -190,4 +190,23 @@ describe('fetchSafe', () => {
 
     expect(agentForHttp).not.toBe(agentForHttps);
   });
+
+  it('should disable HTTPS certificate verification only when self-signed certificates are allowed', async () => {
+    const httpsUrl = 'https://example.com';
+
+    helpers.isSafeUrl.mockResolvedValue(true);
+    fetch.mockResolvedValue({ ok: true, status: 200, headers: { get: () => null } });
+
+    await fetchSafe(httpsUrl);
+    const defaultAgent = fetch.mock.calls[0][1].agent(new URL(httpsUrl));
+
+    fetch.mockClear();
+    await fetchSafe(httpsUrl, { allowSelfSigned: true });
+    const selfSignedAgent = fetch.mock.calls[0][1].agent(new URL(httpsUrl));
+    const fetchOptions = fetch.mock.calls[0][1];
+
+    expect(defaultAgent.options.rejectUnauthorized).not.toBe(false);
+    expect(selfSignedAgent.options.rejectUnauthorized).toBe(false);
+    expect(fetchOptions).not.toHaveProperty('allowSelfSigned');
+  });
 });

@@ -17,7 +17,7 @@ function decodeXmlIfNeeded(value) {
 export async function importEpgFromUrl(url, sourceType, sourceId) {
     console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
     // fetchSafe performs isSafeUrl check
-    const response = await fetchSafe(url);
+    const response = await fetchSafe(url, { allowSelfSigned: true });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     // Update status in main DB

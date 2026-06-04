@@ -6,6 +6,10 @@ import { isSafeUrl, safeLookup } from './helpers.js';
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
 const httpsAgent = new https.Agent({ lookup: safeLookup });
+const httpsSelfSignedAgent = new https.Agent({
+  lookup: safeLookup,
+  rejectUnauthorized: false,
+});
 
 export async function fetchSafe(url, options = {}, redirectCount = 0) {
   if (redirectCount > 5) {
@@ -17,25 +21,31 @@ export async function fetchSafe(url, options = {}, redirectCount = 0) {
     throw new Error(`Unsafe URL: ${url}`);
   }
 
+  const {
+    timeout: requestTimeout = 15000,
+    allowSelfSigned = false,
+    ...fetchOptionOverrides
+  } = options;
+
   const controller = new AbortController();
-  const timeout = options.timeout || 15000; // Default 15s timeout
+  const timeout = requestTimeout || 15000; // Default 15s timeout
 
   // Use existing signal if provided, else use our own
-  const signal = options.signal || controller.signal;
+  const signal = fetchOptionOverrides.signal || controller.signal;
 
   const timeoutId = setTimeout(() => {
     controller.abort();
   }, timeout);
 
   const fetchOptions = {
-    ...options,
+    ...fetchOptionOverrides,
     signal,
     redirect: 'manual', // Handle redirects manually to re-verify new URL
-    agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent),
+    agent: (_parsedUrl) => {
+      if (_parsedUrl.protocol !== 'https:') return httpAgent;
+      return allowSelfSigned ? httpsSelfSignedAgent : httpsAgent;
+    },
   };
-
-  // Clean up custom timeout option so node-fetch doesn't complain
-  delete fetchOptions.timeout;
 
   try {
     const response = await fetch(url, fetchOptions);

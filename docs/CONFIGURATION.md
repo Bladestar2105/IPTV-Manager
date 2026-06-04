@@ -59,6 +59,13 @@ tests. Keep it in sync when environment variables or startup behavior changes.
   MaxMind checksum files first and skips the heavy `geoip-lite` updater when
   the local GeoIP database is already current.
 
+## EPG Downloads
+
+EPG imports still validate URLs with the SSRF-safe fetch path, including
+redirect re-checks and DNS rebinding protection. HTTPS EPG sources may use
+self-signed certificates; this exception is scoped to EPG downloads and does
+not disable TLS certificate validation globally or for stream proxy requests.
+
 ## Docker Notes
 
 The Docker image uses `/data` for mutable runtime files and `/app` for

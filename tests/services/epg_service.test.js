@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Readable } from 'stream';
 
 // Mock the databases before importing the service
 vi.mock('../../src/database/epgDb.js', () => ({
@@ -13,13 +14,31 @@ vi.mock('../../src/database/db.js', () => ({
     }
 }));
 
+vi.mock('better-sqlite3', () => ({
+    default: vi.fn(function MockDatabase() {
+        return {
+            pragma: vi.fn(),
+            prepare: vi.fn(() => ({
+                run: vi.fn(),
+                get: vi.fn(),
+                all: vi.fn(),
+                iterate: vi.fn()
+            })),
+            transaction: vi.fn((fn) => (...args) => fn(...args)),
+            close: vi.fn()
+        };
+    })
+}));
+
 // Mock other dependencies if necessary
 vi.mock('../../src/utils/network.js', () => ({
     fetchSafe: vi.fn()
 }));
 
-import { getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels } from '../../src/services/epgService.js';
+import { getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels, importEpgFromUrl } from '../../src/services/epgService.js';
 import db from '../../src/database/epgDb.js';
+import mainDb from '../../src/database/db.js';
+import { fetchSafe } from '../../src/utils/network.js';
 
 describe('epgService - getLastEpgUpdate', () => {
     beforeEach(() => {
@@ -119,5 +138,20 @@ describe('epgService - getLastEpgUpdate', () => {
         const result = getEpgProgramsForChannels(['ch1'], 1, 100, 1);
 
         expect(result.get('ch1')).toEqual([rows[0]]);
+    });
+
+    it('should allow self-signed HTTPS certificates for EPG imports', async () => {
+        const stream = Readable.from(['<?xml version="1.0" encoding="UTF-8"?><tv></tv>']);
+        fetchSafe.mockResolvedValue({
+            ok: true,
+            body: stream
+        });
+        mainDb.prepare.mockReturnValue({ run: vi.fn() });
+
+        await importEpgFromUrl('https://mock.url/self-signed.xml', 'custom', 3);
+
+        expect(fetchSafe).toHaveBeenCalledWith('https://mock.url/self-signed.xml', {
+            allowSelfSigned: true
+        });
     });
 });
