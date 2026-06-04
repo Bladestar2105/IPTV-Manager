@@ -86,7 +86,9 @@ export const securityHeaders = helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
       scriptSrcAttr: ["'none'"],
-      styleSrc: ["'self'"],
+      // The Web UI uses inline style attributes and runtime element.style updates.
+      // Keep script CSP strict while allowing existing style behavior to render.
+      styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "http:", "https:"],
       connectSrc: ["'self'", "http:", "https:"],
       mediaSrc: ["'self'", "blob:", "http:", "https:"],

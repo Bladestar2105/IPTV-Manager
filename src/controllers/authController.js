@@ -1,4 +1,4 @@
-import { authenticator } from 'otplib';
+import { createGuardrails, generateSecret, generateURI, verifySync } from 'otplib';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
@@ -9,8 +9,24 @@ import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS } from '../config/constants.js';
 
-// Configure authenticator with window=1 to allow ±30s drift
-authenticator.options = { window: 1 };
+// Allow one 30-second TOTP step of clock drift, matching the previous otplib window=1 behavior.
+const OTP_EPOCH_TOLERANCE_SECONDS = 30;
+// otplib v12 generated 16-character Base32 authenticator secrets (10 decoded bytes).
+// Keep those existing user secrets valid after upgrading to v13; new secrets use the v13 default length.
+const OTP_VERIFY_GUARDRAILS = createGuardrails({ MIN_SECRET_BYTES: 10 });
+
+const verifyTotpToken = ({ token, secret }) => {
+    try {
+        return verifySync({
+            token: String(token),
+            secret,
+            epochTolerance: OTP_EPOCH_TOLERANCE_SECONDS,
+            guardrails: OTP_VERIFY_GUARDRAILS
+        }).valid === true;
+    } catch {
+        return false;
+    }
+};
 
 export const login = async (req, res) => {
   const ip = req.ip;
@@ -81,7 +97,7 @@ export const login = async (req, res) => {
             }
             // Verify OTP
             const secret = decrypt(user.otp_secret);
-            const isValidOtp = authenticator.verify({ token: String(otp_code), secret: secret });
+            const isValidOtp = verifyTotpToken({ token: otp_code, secret });
             if (!isValidOtp) {
                 return res.status(401).json({ error: 'invalid_otp' });
             }
@@ -158,11 +174,11 @@ export const verifyToken = (req, res) => {
 
 export const generateOtp = async (req, res) => {
     try {
-        const secret = authenticator.generateSecret();
+        const secret = generateSecret();
         const user = req.user;
         const serviceName = 'IPTV-Manager';
 
-        const otpauth = authenticator.keyuri(user.username, serviceName, secret);
+        const otpauth = generateURI({ issuer: serviceName, label: user.username, secret });
 
         const qrCodeUrl = await QRCode.toDataURL(otpauth);
 
@@ -176,7 +192,7 @@ export const generateOtp = async (req, res) => {
 export const verifyOtp = (req, res) => {
     try {
         const { token, secret } = req.body;
-        const isValid = authenticator.verify({ token: String(token), secret: secret });
+        const isValid = verifyTotpToken({ token, secret });
 
         if (!isValid) return res.status(400).json({error: 'invalid_otp'});
 

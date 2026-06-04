@@ -69,4 +69,17 @@ describe('rate limit configuration', () => {
     expect(limited.status).toBe(429);
     expect(limited.body).toEqual({ error: 'Too many requests, please try again later' });
   });
+
+  it('keeps script CSP strict while allowing the existing inline-style UI', async () => {
+    const { securityHeaders } = await loadSecurityMiddleware();
+    const app = appWith(securityHeaders);
+
+    const response = await request(app).get('/limited');
+    const csp = response.headers['content-security-policy'];
+
+    expect(response.status).toBe(200);
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("script-src-attr 'none'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  });
 });

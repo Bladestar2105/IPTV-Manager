@@ -20,7 +20,7 @@ vi.mock('bcrypt', () => ({
 
 import db from '../src/database/db.js';
 import bcrypt from 'bcrypt';
-import { authenticator } from 'otplib';
+import { verifySync } from 'otplib';
 
 vi.mock('../src/utils/crypto.js', () => ({
   decrypt: vi.fn((val) => val), // Simple pass-through for test
@@ -34,14 +34,13 @@ vi.mock('../src/services/authService.js', () => ({
 }));
 
 vi.mock('otplib', () => ({
-  authenticator: {
-    verify: vi.fn(({ token }) => {
-      // simulate otplib behavior: fails if token is not a string
-      return typeof token === 'string';
-    }),
-    generateSecret: vi.fn(),
-    keyuri: vi.fn()
-  }
+  createGuardrails: vi.fn((options) => ({ legacyGuardrails: options })),
+  verifySync: vi.fn(({ token }) => {
+    // simulate otplib behavior: fails if token is not a string
+    return { valid: typeof token === 'string' };
+  }),
+  generateSecret: vi.fn(),
+  generateURI: vi.fn()
 }));
 
 describe('Auth Controller - OTP Login', () => {
@@ -89,10 +88,16 @@ describe('Auth Controller - OTP Login', () => {
         // Expectations
         expect(bcrypt.compare).toHaveBeenCalled();
 
-        // This is the key expectation: authenticator.verify should have been called
+        // This is the key expectation: verifySync should have been called
         // And if the code handles it correctly, it returns success.
-        // Since we mocked authenticator.verify to return true ONLY if token is string,
+        // Since we mocked verifySync to return valid ONLY if token is string,
         // success means the controller converted it.
+        expect(verifySync).toHaveBeenCalledWith(expect.objectContaining({
+            token: '123456',
+            guardrails: {
+                legacyGuardrails: { MIN_SECRET_BYTES: 10 }
+            }
+        }));
 
         if (res.json.mock.calls.length > 0) {
              expect(res.json).toHaveBeenCalledWith(expect.objectContaining({

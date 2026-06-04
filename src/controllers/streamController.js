@@ -205,7 +205,8 @@ export const proxyMpd = async (req, res) => {
   const connectionId = crypto.randomUUID();
   try {
     const streamId = Number(req.params.stream_id || 0);
-    const relativePath = req.params[0];
+    const mpdPath = req.params.mpdPath ?? req.params[0];
+    const relativePath = Array.isArray(mpdPath) ? mpdPath.join('/') : (mpdPath || '');
 
     if (!streamId) return res.sendStatus(404);
 

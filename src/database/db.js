@@ -7,13 +7,13 @@ import * as migrations from './migrations.js';
 // Ensure Data Directory exists
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'db.sqlite'));
+const db = new Database(path.join(DATA_DIR, 'db.sqlite'), { timeout: 5000 });
 // Enable foreign keys
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 // Performance tuning
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
-db.pragma('busy_timeout = 5000');
 
 export function initDb(isPrimary) {
     if (isPrimary) {

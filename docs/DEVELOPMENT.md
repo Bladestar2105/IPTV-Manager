@@ -56,6 +56,11 @@ For local tests that should not touch the repo root, run with a temp data dir:
 DATA_DIR="$(mktemp -d)" npm test
 ```
 
+The npm test scripts disable Vitest file parallelism because several integration
+tests import the Express app and real SQLite databases from the same `DATA_DIR`.
+Keep this behavior unless those tests are changed to create isolated databases
+per test file.
+
 ## Docker Startup
 
 Docker runs as the non-root `app` user. The entrypoint may fix `/data`
