@@ -13,10 +13,11 @@
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
-`better-sqlite3` is a native dependency. Use the supported Node.js versions from
-its package metadata when running locally; if Node is upgraded, reinstall
-dependencies with `npm install` so the native binding matches the active Node
-ABI. The Docker image builds against its pinned Node runtime with `npm ci`.
+Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
+dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
+`npm install` after changing Node versions to keep native bindings aligned with
+the active Node ABI. The Docker image and release workflow build against Node.js
+24 with `npm ci`.
 
 ## Maintainer Documentation
 

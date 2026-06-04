@@ -47,8 +47,8 @@
 - **⚡ Optimized Database Schema**: Optimized indices for faster streaming performance and EPG updates.
 
 ## 📋 Requirements
-- **Node.js**: 20.x+
-- **npm**: 9.x+
+- **Node.js**: 24.x+
+- **npm**: 10.x+
 - **SQLite**: 3.x (included)
 - **MaxMind GeoLite2 License Key**: While basic region locking functions work out of the box with the included database, updating the internal GeoIP database requires a free MaxMind License Key. You can get one at [maxmind.com](https://support.maxmind.com/hc/en-us/articles/4407111582235-Generate-a-License-Key) and enter it in the WebUI Security Settings. On startup, IPTV-Manager checks MaxMind checksums first and only downloads/rebuilds GeoIP data when an update is available.
 

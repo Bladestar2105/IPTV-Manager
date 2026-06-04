@@ -22,9 +22,9 @@ apt-get update -y
 apt-get upgrade -y
 apt-get install -y curl git build-essential ufw systemd
 
-# Install Node.js (v20 as required by IPTV-Manager)
-echo ">> Installing Node.js 20.x..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+# Install Node.js (v24 as required by IPTV-Manager)
+echo ">> Installing Node.js 24.x..."
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 
 # Verify Node.js installation

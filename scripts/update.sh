@@ -18,6 +18,24 @@ echo "========================================="
 INSTALL_DIR="/opt/iptv-manager"
 SERVICE_NAME="iptv-manager"
 
+ensure_node_24() {
+    local current_major=0
+
+    if command -v node >/dev/null 2>&1; then
+        current_major=$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)
+    fi
+
+    if [ "$current_major" -lt 24 ]; then
+        echo ">> Installing/upgrading Node.js 24.x..."
+        curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+        apt-get install -y nodejs
+    else
+        echo ">> Node.js $(node -v) already satisfies the minimum version."
+    fi
+
+    echo ">> npm installed: $(npm -v)"
+}
+
 if [ ! -d "$INSTALL_DIR" ]; then
     echo ">> Error: IPTV-Manager installation directory not found at $INSTALL_DIR."
     echo ">> Please ensure you installed the application using the install.sh script."
@@ -25,6 +43,8 @@ if [ ! -d "$INSTALL_DIR" ]; then
 fi
 
 cd "$INSTALL_DIR"
+
+ensure_node_24
 
 echo ">> Stopping the service..."
 systemctl stop "$SERVICE_NAME"

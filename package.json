@@ -1,6 +1,9 @@
 {
   "name": "iptv-manager",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node src/server.js",
     "build": "node -e \"console.log('No build step required for IPTV-Manager')\"",
@@ -36,7 +39,6 @@
     "redis": "^6.0.0",
     "sax": "^1.6.0",
     "sortablejs": "^1.15.0",
-    "string-similarity": "^4.0.4",
     "systeminformation": "^5.31.7"
   },
   "devDependencies": {

@@ -68,13 +68,13 @@ not disable TLS certificate validation globally or for stream proxy requests.
 
 ## Docker Notes
 
-The Docker image uses `/data` for mutable runtime files and `/app` for
-application code and dependencies. The entrypoint may recursively fix ownership
-of `/data` for older root-owned volumes, but it must not recursively chown
-`/app` because `/app/node_modules` can be large and make startup slow.
-GeoIP updates are persisted under `/data/geoip` by symlinking
-`/app/node_modules/geoip-lite/data` there at container start, so updated
-MaxMind data survives container recreation.
+The Docker image builds on Node.js 24 Alpine and uses `/data` for mutable
+runtime files and `/app` for application code and dependencies. The entrypoint
+may recursively fix ownership of `/data` for older root-owned volumes, but it
+must not recursively chown `/app` because `/app/node_modules` can be large and
+make startup slow. GeoIP updates are persisted under `/data/geoip` by symlinking
+`/app/node_modules/geoip-lite/data` there at container start, so updated MaxMind
+data survives container recreation.
 
 Keep runtime files out of Git and Docker build context:
 
