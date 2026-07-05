@@ -194,8 +194,10 @@ extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 - `GET /live/token/auth/:stream_id.mp4`
 - `GET /movie/token/auth/:stream_id.:ext`
 - `GET /series/token/auth/:episode_id.:ext`
-- `GET /movie/token/auth/:stream_id.:ext?audio_track=<index>&subtitle_track=<index>`
-- `GET /series/token/auth/:episode_id.:ext?audio_track=<index>&subtitle_track=<index>`
+- `GET /movie/token/auth/:stream_id.:ext?audio_track=<index>`
+- `GET /series/token/auth/:episode_id.:ext?audio_track=<index>`
+- `GET /movie/token/auth/:stream_id.:ext?subtitle_track=<index>&subtitle_format=vtt`
+- `GET /series/token/auth/:episode_id.:ext?subtitle_track=<index>&subtitle_format=vtt`
 - `GET /timeshift/token/auth/:duration/:start/:stream_id.ts`
 - `GET /timeshift/token/auth/:duration/:start/:stream_id.m3u8`
 

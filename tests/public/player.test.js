@@ -85,7 +85,11 @@ test('browser player loads server-side VOD tracks when browser exposes none', ()
   expect(playerJs).toContain('serverTracks.audio');
   expect(playerJs).toContain('serverTracks.subtitles');
   expect(playerJs).toContain("withQueryParam(url, 'audio_track', stream.selected_audio_track)");
-  expect(playerJs).toContain("withQueryParam(url, 'subtitle_track', stream.selected_subtitle_track)");
+  expect(playerJs).not.toContain("withQueryParam(url, 'subtitle_track', stream.selected_subtitle_track)");
+  expect(playerJs).toContain('function loadServerSubtitleTrack(url, track)');
+  expect(playerJs).toContain("withQueryParam(subtitleUrl, 'subtitle_format', 'vtt')");
+  expect(playerJs).toContain("document.createElement('track')");
+  expect(playerJs).not.toContain('stream.selected_subtitle_track = subtitleTracks[selected].index;');
 });
 
 test('browser player keeps server-side VOD tracks visible after native metadata events', () => {

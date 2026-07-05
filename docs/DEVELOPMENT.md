@@ -41,9 +41,11 @@ Automatic codec fallback is scoped per stream in `player_auto_transcode_streams`
 so one incompatible channel does not force all later streams through FFmpeg.
 
 For VOD movie and series playback the Web Player can request server-side track
-metadata with `tracks=true`. Selecting an audio or subtitle track reloads the
-same VOD URL with `audio_track=<ffmpeg_stream_index>` and/or
-`subtitle_track=<ffmpeg_stream_index>`, which uses the FFmpeg MP4 output path.
+metadata with `tracks=true`. Selecting a server-side subtitle track adds an
+external WebVTT `<track>` via `subtitle_track=<ffmpeg_stream_index>` and
+`subtitle_format=vtt`, so the video URL remains seekable. Selecting a
+server-side audio track still uses the FFmpeg MP4 output path with
+`audio_track=<ffmpeg_stream_index>`.
 
 ## Local Data
 

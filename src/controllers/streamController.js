@@ -277,9 +277,7 @@ function parseFfmpegTracks(output) {
 function probeTracksWithFfmpeg(url, headers) {
   return new Promise((resolve, reject) => {
     const binary = ffmpegPath || 'ffmpeg';
-    const headerStr = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
-    const args = ['-hide_banner'];
-    if (headerStr.trim()) args.push('-headers', headerStr);
+    const args = ['-hide_banner', ...buildFfmpegHeaderArgs(headers)];
     args.push('-i', url, '-t', '0.1', '-f', 'null', '-');
 
     const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -309,11 +307,57 @@ function probeTracksWithFfmpeg(url, headers) {
   });
 }
 
+function buildFfmpegHeaderArgs(headers) {
+  const headerStr = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+  return headerStr.trim() ? ['-headers', headerStr] : [];
+}
+
 async function sendTrackInfo(res, remoteUrl, backupStreamUrls, headers) {
   const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' });
   try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
   const tracks = await probeTracksWithFfmpeg(result.successfulUrl || remoteUrl, headers);
   res.json(tracks);
+}
+
+async function sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req) {
+  const subtitleTrack = selectedTrackIndex(req.query.subtitle_track);
+  if (subtitleTrack === null) {
+    res.sendStatus(400);
+    return;
+  }
+
+  const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' });
+  try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
+
+  await new Promise((resolve, reject) => {
+    const binary = ffmpegPath || 'ffmpeg';
+    const args = ['-hide_banner', ...buildFfmpegHeaderArgs(headers), '-i', result.successfulUrl || remoteUrl, '-map', `0:${subtitleTrack}`, '-f', 'webvtt', '-'];
+    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+
+    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+
+    child.stdout.on('data', (chunk) => res.write(chunk));
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 32000) stderr = stderr.slice(-32000);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr || 'ffmpeg subtitle extraction failed'));
+        return;
+      }
+      res.end();
+      resolve();
+    });
+    if (typeof res.on === 'function') {
+      res.on('close', () => {
+        try { child.kill('SIGKILL'); } catch {}
+      });
+    }
+  });
 }
 
 function selectedTrackIndex(value) {
@@ -905,6 +949,11 @@ export const proxyMovie = async (req, res) => {
 
     const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
 
+    if (req.query.subtitle_format === 'vtt') {
+      await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
+      return;
+    }
+
     if (req.query.tracks === 'true') {
       await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
       return;
@@ -1067,6 +1116,11 @@ export const proxySeries = async (req, res) => {
       'User-Agent': sourceProvider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
+
+    if (req.query.subtitle_format === 'vtt') {
+      await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
+      return;
+    }
 
     if (req.query.tracks === 'true') {
       await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);

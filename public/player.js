@@ -75,6 +75,7 @@
   const mpdInfoContent = document.getElementById('mpd-info-content');
   const tooltip = document.getElementById('program-tooltip');
   let mpdInfoToken = 0;
+  let serverSubtitleTrackEl = null;
 
   // ─── Platform Detection ───
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -383,8 +384,16 @@ function escapeHtml(unsafe) {
     select.value = String(selectedIndex >= 0 ? selectedIndex : (includeOff ? -1 : 0));
   }
 
+  function clearServerSubtitleTrack() {
+    if (serverSubtitleTrackEl && serverSubtitleTrackEl.parentNode) {
+      serverSubtitleTrackEl.parentNode.removeChild(serverSubtitleTrackEl);
+    }
+    serverSubtitleTrackEl = null;
+  }
+
   function resetTrackControls() {
     serverTrackControlsActive = false;
+    clearServerSubtitleTrack();
     setTrackOptions(audioTrackSelect, [], -1, false, 'audioTrack');
     setTrackOptions(subtitleTrackSelect, [], -1, true, 'subtitleTrack');
   }
@@ -495,6 +504,25 @@ function escapeHtml(unsafe) {
     return tracks.findIndex(function(track) { return Number(track.index) === selected; });
   }
 
+  function loadServerSubtitleTrack(url, track) {
+    clearServerSubtitleTrack();
+    if (!track) return;
+    var subtitleUrl = withQueryParam(url, 'subtitle_track', track.index);
+    subtitleUrl = withQueryParam(subtitleUrl, 'subtitle_format', 'vtt');
+    var el = document.createElement('track');
+    el.kind = 'subtitles';
+    el.label = getTrackLabel(track, 0, 'subtitleTrack');
+    el.srclang = getTrackLanguage(track) || 'und';
+    el.src = subtitleUrl;
+    el.default = true;
+    el.onload = function() {
+      if (el.track) el.track.mode = 'showing';
+    };
+    video.appendChild(el);
+    serverSubtitleTrackEl = el;
+    if (el.track) el.track.mode = 'showing';
+  }
+
   async function loadServerTrackControls(stream, url) {
     if (!stream || (stream.type !== 'movie' && stream.type !== 'series')) return;
     try {
@@ -520,11 +548,10 @@ function escapeHtml(unsafe) {
         subtitleTrackSelect.onchange = function() {
           var selected = Number(subtitleTrackSelect.value);
           if (selected < 0) {
-            delete stream.selected_subtitle_track;
+            clearServerSubtitleTrack();
           } else if (subtitleTracks[selected]) {
-            stream.selected_subtitle_track = subtitleTracks[selected].index;
+            loadServerSubtitleTrack(url, subtitleTracks[selected]);
           }
-          playStream(stream);
         };
       }
     } catch (e) {
@@ -1294,9 +1321,6 @@ function escapeHtml(unsafe) {
   function applyServerTrackParams(stream, url) {
     if (stream.selected_audio_track !== undefined) {
       url = withQueryParam(url, 'audio_track', stream.selected_audio_track);
-    }
-    if (stream.selected_subtitle_track !== undefined) {
-      url = withQueryParam(url, 'subtitle_track', stream.selected_subtitle_track);
     }
     return url;
   }

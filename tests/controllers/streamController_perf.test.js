@@ -143,6 +143,8 @@ describe('Stream Controller Performance (proxyLive)', () => {
       setHeader: vi.fn(),
       send: vi.fn(),
       json: vi.fn(),
+      write: vi.fn(),
+      end: vi.fn(),
       status: vi.fn(),
     };
 
@@ -323,6 +325,45 @@ Input #0, matroska,webm, from 'movie.mkv':
         { index: 3, language: 'deu', codec: 'subrip', label: 'deu - subrip' },
       ],
     });
+  });
+
+  it('should return selected VOD subtitles as WebVTT without opening a stream session', async () => {
+    req.params.ext = 'mkv';
+    req.query.subtitle_track = '3';
+    req.query.subtitle_format = 'vtt';
+    req.path = '/movie/user/pass/1.mkv';
+
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      url: 'http://upstream.com/movie/puser/ppass/remote1.mkv',
+      headers: { get: vi.fn() },
+      body: { destroy: vi.fn(), pipe: vi.fn(), on: vi.fn() },
+    });
+
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = vi.fn();
+    spawn.mockImplementationOnce(() => {
+      process.nextTick(() => {
+        child.stdout.emit('data', Buffer.from('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHallo\n'));
+        child.emit('close', 0);
+      });
+      return child;
+    });
+
+    await streamController.proxyMovie(req, res);
+
+    expect(streamManager.add).not.toHaveBeenCalled();
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/vtt; charset=utf-8');
+    expect(spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining(['-map', '0:3', '-f', 'webvtt', '-']),
+      expect.any(Object)
+    );
+    expect(res.write).toHaveBeenCalledWith(Buffer.from('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHallo\n'));
+    expect(res.end).toHaveBeenCalled();
   });
 
   it('should map selected VOD audio and subtitle tracks through ffmpeg', () => {
