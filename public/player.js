@@ -24,6 +24,7 @@
   let dashPlayer = null;
   let isRetrying = false;
   let retryCount = 0;
+  let serverTrackControlsActive = false;
   const MAX_RETRIES = 3;
   const MANUAL_TRANSCODE_KEY = 'transcode_enabled';
   const AUTO_TRANSCODE_KEY = 'player_auto_transcode_streams';
@@ -383,6 +384,7 @@ function escapeHtml(unsafe) {
   }
 
   function resetTrackControls() {
+    serverTrackControlsActive = false;
     setTrackOptions(audioTrackSelect, [], -1, false, 'audioTrack');
     setTrackOptions(subtitleTrackSelect, [], -1, true, 'subtitleTrack');
   }
@@ -447,6 +449,7 @@ function escapeHtml(unsafe) {
   }
 
   function updateNativeTrackControls() {
+    if (serverTrackControlsActive) return;
     var audioTracks = trackListToArray(video.audioTracks);
     var audioIndex = audioTracks.findIndex(function(track) { return track.enabled; });
     setTrackOptions(audioTrackSelect, audioTracks, audioIndex, false, 'audioTrack');
@@ -500,6 +503,7 @@ function escapeHtml(unsafe) {
       var serverTracks = await res.json();
       var audioTracks = serverTracks.audio || [];
       var subtitleTracks = serverTracks.subtitles || [];
+      serverTrackControlsActive = audioTracks.length > 1 || subtitleTracks.length > 0;
 
       setTrackOptions(audioTrackSelect, audioTracks, selectedServerTrackIndex(audioTracks, stream.selected_audio_track), false, 'audioTrack');
       if (audioTrackSelect && audioTracks.length > 1) {
