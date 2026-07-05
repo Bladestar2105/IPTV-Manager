@@ -56,6 +56,27 @@ test('browser player routes Firefox live audio fix through mpegts transcode', ()
   expect(playerJs).toContain('initMpegtsPlayer(transcodedUrl, streamType)');
 });
 
+test('browser player exposes audio and subtitle track selection when tracks exist', () => {
+  const playerHtml = fs.readFileSync(path.join(process.cwd(), 'public/player.html'), 'utf8');
+  const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
+
+  expect(playerHtml).toContain('id="audio-track-select"');
+  expect(playerHtml).toContain('id="subtitle-track-select"');
+  expect(playerJs).toContain('function resetTrackControls()');
+  expect(playerJs).toContain('function updateHlsTrackControls()');
+  expect(playerJs).toContain('function updateDashTrackControls()');
+  expect(playerJs).toContain('function updateNativeTrackControls()');
+  expect(playerJs).toContain('Hls.Events.AUDIO_TRACKS_UPDATED');
+  expect(playerJs).toContain('Hls.Events.SUBTITLE_TRACKS_UPDATED');
+  expect(playerJs).toContain("dashPlayer.getTracksFor('audio')");
+  expect(playerJs).toContain("dashPlayer.getTracksFor('text')");
+  expect(playerJs).toContain('dashPlayer.setCurrentTrack');
+  expect(playerJs).toContain('dashPlayer.setTextTrack');
+  expect(playerJs).toContain('video.audioTracks');
+  expect(playerJs).toContain('video.textTracks');
+  expect(playerJs).toContain('video.onloadedmetadata = updateNativeTrackControls');
+});
+
 test('browser player renders channel lists before background EPG load completes', () => {
   const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
 
