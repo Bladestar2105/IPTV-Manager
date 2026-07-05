@@ -123,6 +123,128 @@ async function findAvailableProvider(userId, originalProvider, reqIp, sessionNam
     return null;
 }
 
+function shareGuestAllowed(user, channel) {
+  if (!user.is_share_guest) return true;
+  if (!user.allowed_channels.includes(channel.user_channel_id)) return false;
+
+  const nowSec = Date.now() / 1000;
+  return !((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end));
+}
+
+async function ensureUserConnectionAvailable(user, reqIp, sessionName, providerId) {
+  if (!(user.max_connections > 0)) return true;
+
+  const isSessionActiveForUser = await streamManager.isSessionActive(user.id, reqIp, sessionName, providerId);
+  if (isSessionActiveForUser) return true;
+
+  const active = await streamManager.getUserConnectionCount(user.id);
+  return active < user.max_connections;
+}
+
+function applyProviderToChannel(channel, provider) {
+  channel.provider_id = provider.id;
+  channel.provider_url = provider.url;
+  channel.provider_user = provider.username;
+  channel.provider_pass = provider.password;
+  channel.backup_urls = provider.backup_urls;
+  channel.user_agent = provider.user_agent;
+}
+
+async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
+  if (options.cleanupUser) {
+    await streamManager.cleanupUser(user.id, req.ip);
+  }
+
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, channel.provider_id)) {
+    res.status(403).send('Max connections reached');
+    return false;
+  }
+
+  const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+  if (!availableProvider) {
+    res.status(403).send('Provider max connections reached across all accounts');
+    return false;
+  }
+
+  applyProviderToChannel(channel, availableProvider);
+
+  if (options.delayMs) {
+    await new Promise(resolve => setTimeout(resolve, options.delayMs));
+  }
+
+  await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
+  return true;
+}
+
+async function reserveProviderSession(connectionId, user, provider, req, res, sessionName) {
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, provider.id)) {
+    res.status(403).send('Max connections reached');
+    return null;
+  }
+
+  const availableProvider = await findAvailableProvider(user.id, provider, req.ip, sessionName);
+  if (!availableProvider) {
+    res.status(403).send('Provider max connections reached across all accounts');
+    return null;
+  }
+
+  await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
+  return availableProvider;
+}
+
+function recordStreamStat(channelId, label) {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const existingStat = getStat(channelId);
+    if (existingStat) {
+      if (now - existingStat.last_viewed > 60) {
+        updateStat(now, existingStat.id);
+      } else {
+        updateStatTimeOnly(now, existingStat.id);
+      }
+    } else {
+      insertStat(channelId, now);
+    }
+  } catch (e) {
+    console.error(`Error updating stream stats (${label}):`, e.message);
+  }
+}
+
+function parseMetadata(metadata, label) {
+  try {
+    return typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+  } catch(e) {
+    console.warn(`Failed to parse metadata (${label}):`, e.message);
+    return {};
+  }
+}
+
+function buildStreamHeaders(userAgent, metadata, label) {
+  const headers = {
+    'User-Agent': userAgent || DEFAULT_USER_AGENT,
+    'Connection': 'keep-alive'
+  };
+
+  const meta = parseMetadata(metadata, label);
+  if (meta && meta.http_headers) {
+    Object.assign(headers, meta.http_headers);
+  }
+
+  return { headers, meta };
+}
+
+function buildBackupUrls(backupUrls, buildUrl, label) {
+  if (!backupUrls) return [];
+
+  try {
+    const backups = JSON.parse(backupUrls);
+    return backups.map(bUrl => buildUrl(bUrl.replace(/\/+$/, '')));
+  } catch(e) {
+    console.warn(`Failed to parse backup_urls (${label}):`, e.message);
+    return [];
+  }
+}
+
 function createSafeCleanup(connectionId) {
   let cleanedUp = false;
   return () => {
@@ -217,24 +339,15 @@ export const proxyMpd = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    let meta = {};
-    try {
-        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {
-        console.warn('Failed to parse metadata (MPD):', e.message);
-    }
-
-    const headers = {
-      'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
-      'Connection': 'keep-alive'
-    };
-
-    if (meta && meta.http_headers) {
-        Object.assign(headers, meta.http_headers);
-    }
+    let { headers, meta } = buildStreamHeaders(channel.user_agent, channel.metadata, 'MPD');
 
     let upstreamUrl = '';
     let backupStreamUrls = [];
+
+    if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
+
+    const sessionName = `${channel.name} (DASH)`;
+    const usesOriginalUrl = meta && meta.original_url;
 
     if (meta && meta.original_url) {
         if (relativePath === 'manifest.mpd' || relativePath === '') {
@@ -249,70 +362,21 @@ export const proxyMpd = async (req, res) => {
             }
         }
     } else {
+        if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+
+        ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'MPD'));
         channel.provider_pass = decrypt(channel.provider_pass);
         const base = channel.provider_url.replace(/\/+$/, '');
         upstreamUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
 
-        try {
-            if (channel.backup_urls) {
-                const backups = JSON.parse(channel.backup_urls);
-                backupStreamUrls = backups.map(bUrl => {
-                    const bBase = bUrl.replace(/\/+$/, '');
-                    return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
-                });
-            }
-        } catch (e) {
-            console.warn('Failed to parse backup_urls (MPD):', e.message);
-        }
+        backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+            return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.mpd`;
+        }, 'MPD');
     }
 
-    if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
-        const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
-    }
+    if (usesOriginalUrl && !await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
 
-    const sessionName = `${channel.name} (DASH)`;
-
-    // Check User connection limit first
-    if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
-    }
-
-    // Provider Pooling: Find an available provider account with the same URL
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
-    if (!availableProvider) {
-        return res.status(403).send('Provider max connections reached across all accounts');
-    }
-
-    // Override channel provider credentials with the available pool account
-    channel.provider_id = availableProvider.id;
-    channel.provider_url = availableProvider.url;
-    channel.provider_user = availableProvider.username;
-    channel.provider_pass = availableProvider.password; // Encrypted password
-    channel.backup_urls = availableProvider.backup_urls;
-    channel.user_agent = availableProvider.user_agent;
-
-    await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
-    try {
-        const now = Math.floor(Date.now() / 1000);
-        const existingStat = getStat(channel.provider_channel_id);
-        if (existingStat) {
-            if (now - existingStat.last_viewed > 60) {
-                updateStat(now, existingStat.id);
-            } else {
-                updateStatTimeOnly(now, existingStat.id);
-            }
-        } else {
-            insertStat(channel.provider_channel_id, now);
-        }
-    } catch (e) {
-        console.error('Error updating stream stats (MPD):', e.message);
-    }
+    recordStreamStat(channel.provider_channel_id, 'MPD');
 
     let upstream, successfulUrl;
     try {
@@ -379,11 +443,7 @@ export const proxyLive = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
-        const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
-    }
+    if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
 
     let reqExt = 'ts';
     if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
@@ -393,47 +453,13 @@ export const proxyLive = async (req, res) => {
 
     // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
     if (reqExt !== 'm3u8' || wantsTranscode) {
-        await streamManager.cleanupUser(user.id, req.ip);
-
-        if (user.max_connections > 0) {
-            const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, channel.name, channel.provider_id);
-            if (!isSessionActiveForUser) {
-                const active = await streamManager.getUserConnectionCount(user.id);
-                if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-            }
-        }
-
-        const availableProvider = await findAvailableProvider(user.id, channel, req.ip, channel.name);
-        if (!availableProvider) {
-            return res.status(403).send('Provider max connections reached across all accounts');
-        }
-
-        channel.provider_id = availableProvider.id;
-        channel.provider_url = availableProvider.url;
-        channel.provider_user = availableProvider.username;
-        channel.provider_pass = availableProvider.password;
-        channel.backup_urls = availableProvider.backup_urls;
-        channel.user_agent = availableProvider.user_agent;
-
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await streamManager.add(connectionId, user, channel.name, req.ip, res, channel.provider_id);
+        if (!await reserveChannelSession(connectionId, user, channel, req, res, channel.name, {
+          cleanupUser: true,
+          delayMs: 100
+        })) return;
     }
 
-    try {
-        const now = Math.floor(Date.now() / 1000);
-        const existingStat = getStat(channel.provider_channel_id);
-        if (existingStat) {
-            if (now - existingStat.last_viewed > 60) {
-                updateStat(now, existingStat.id);
-            } else {
-                updateStatTimeOnly(now, existingStat.id);
-            }
-        } else {
-            insertStat(channel.provider_channel_id, now);
-        }
-    } catch (e) {
-        console.error('Error updating stream stats (Live):', e.message);
-    }
+    recordStreamStat(channel.provider_channel_id, 'Live');
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
@@ -442,34 +468,11 @@ export const proxyLive = async (req, res) => {
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
 
-    let backupStreamUrls = [];
-    try {
-        if (channel.backup_urls) {
-            const backups = JSON.parse(channel.backup_urls);
-            backupStreamUrls = backups.map(bUrl => {
-                const bBase = bUrl.replace(/\/+$/, '');
-                return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
-            });
-        }
-    } catch(e) {
-        console.warn('Failed to parse backup_urls (Live):', e.message);
-    }
+    const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
+    }, 'Live');
 
-    let meta = {};
-    try {
-        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {
-        console.warn('Failed to parse metadata (Live):', e.message);
-    }
-
-    const fetchHeaders = {
-        'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
-        'Connection': 'keep-alive'
-    };
-
-    if (meta && meta.http_headers) {
-        Object.assign(fetchHeaders, meta.http_headers);
-    }
+    const { headers: fetchHeaders } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Live');
 
     const shouldTranscode = (req.query.transcode === 'true') || (reqExt === 'mp4');
 
@@ -798,85 +801,24 @@ export const proxyMovie = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
-        const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
-    }
+    if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
 
     const sessionName = `${channel.name} (VOD)`;
 
-    if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
-    }
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
 
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
-    if (!availableProvider) {
-        return res.status(403).send('Provider max connections reached across all accounts');
-    }
-
-    channel.provider_id = availableProvider.id;
-    channel.provider_url = availableProvider.url;
-    channel.provider_user = availableProvider.username;
-    channel.provider_pass = availableProvider.password;
-    channel.backup_urls = availableProvider.backup_urls;
-    channel.user_agent = availableProvider.user_agent;
-
-    await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
-
-    try {
-        const now = Math.floor(Date.now() / 1000);
-        const existingStat = getStat(channel.provider_channel_id);
-        if (existingStat) {
-            if (now - existingStat.last_viewed > 60) {
-                updateStat(now, existingStat.id);
-            } else {
-                updateStatTimeOnly(now, existingStat.id);
-            }
-        } else {
-            insertStat(channel.provider_channel_id, now);
-        }
-    } catch (e) {
-        console.error('Error updating stream stats (Movie):', e.message);
-    }
+    recordStreamStat(channel.provider_channel_id, 'Movie');
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
 
-    let backupStreamUrls = [];
-    try {
-        if (channel.backup_urls) {
-            const backups = JSON.parse(channel.backup_urls);
-            backupStreamUrls = backups.map(bUrl => {
-                const bBase = bUrl.replace(/\/+$/, '');
-                return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
-            });
-        }
-    } catch(e) {
-        console.warn('Failed to parse backup_urls (Movie):', e.message);
-    }
+    const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    }, 'Movie');
 
-    let meta = {};
-    try {
-        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {
-        console.warn('Failed to parse metadata (Movie):', e.message);
-    }
-
-    const headers = {
-        'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
-        'Connection': 'keep-alive'
-    };
-
-    if (meta && meta.http_headers) {
-        Object.assign(headers, meta.http_headers);
-    }
+    const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
 
     const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
 
@@ -1026,36 +968,17 @@ export const proxySeries = async (req, res) => {
     const cachedTitle = episodeNameCache.get(epIdRaw.toString());
     const sessionName = cachedTitle ? cachedTitle : `Series Episode ${remoteEpisodeId}`;
 
-    if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, provider.id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
-    }
-
-    const availableProvider = await findAvailableProvider(user.id, provider, req.ip, sessionName);
-    if (!availableProvider) {
-        return res.status(403).send('Provider max connections reached across all accounts');
-    }
-
-    await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
+    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName);
+    if (!availableProvider) return;
 
     availableProvider.password = decrypt(availableProvider.password);
 
     const base = availableProvider.url.replace(/\/+$/, '');
     const remoteUrl = `${base}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
 
-    let backupStreamUrls = [];
-    try {
-        if (availableProvider.backup_urls) {
-            const backups = JSON.parse(availableProvider.backup_urls);
-            backupStreamUrls = backups.map(bUrl => {
-                const bBase = bUrl.replace(/\/+$/, '');
-                return `${bBase}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
-            });
-        }
-    } catch(e) {}
+    const backupStreamUrls = buildBackupUrls(availableProvider.backup_urls, (bBase) => {
+        return `${bBase}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
+    }, 'Series');
 
     const headers = {
       'User-Agent': availableProvider.user_agent || DEFAULT_USER_AGENT,
@@ -1198,35 +1121,11 @@ export const proxyTimeshift = async (req, res) => {
 
     if (!channel) return res.sendStatus(404);
 
-    if (user.is_share_guest) {
-        if (!user.allowed_channels.includes(channel.user_channel_id)) return res.sendStatus(403);
-        const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) return res.sendStatus(403);
-    }
+    if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
 
     const sessionName = `${channel.name} (Timeshift)`;
 
-    if (user.max_connections > 0) {
-        const isSessionActiveForUser = await streamManager.isSessionActive(user.id, req.ip, sessionName, channel.provider_id);
-        if (!isSessionActiveForUser) {
-            const active = await streamManager.getUserConnectionCount(user.id);
-            if (active >= user.max_connections) return res.status(403).send('Max connections reached');
-        }
-    }
-
-    const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
-    if (!availableProvider) {
-        return res.status(403).send('Provider max connections reached across all accounts');
-    }
-
-    channel.provider_id = availableProvider.id;
-    channel.provider_url = availableProvider.url;
-    channel.provider_user = availableProvider.username;
-    channel.provider_pass = availableProvider.password;
-    channel.backup_urls = availableProvider.backup_urls;
-    channel.user_agent = availableProvider.user_agent;
-
-    await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
@@ -1234,34 +1133,11 @@ export const proxyTimeshift = async (req, res) => {
     const reqExt = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
     const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
 
-    let backupStreamUrls = [];
-    try {
-        if (channel.backup_urls) {
-            const backups = JSON.parse(channel.backup_urls);
-            backupStreamUrls = backups.map(bUrl => {
-                const bBase = bUrl.replace(/\/+$/, '');
-                return `${bBase}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
-            });
-        }
-    } catch(e) {
-        console.warn('Failed to parse backup_urls (Timeshift):', e.message);
-    }
+    const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
+    }, 'Timeshift');
 
-    let meta = {};
-    try {
-        meta = typeof channel.metadata === 'string' ? JSON.parse(channel.metadata) : channel.metadata;
-    } catch(e) {
-        console.warn('Failed to parse metadata (Timeshift):', e.message);
-    }
-
-    const headers = {
-        'User-Agent': channel.user_agent || DEFAULT_USER_AGENT,
-        'Connection': 'keep-alive'
-    };
-
-    if (meta && meta.http_headers) {
-        Object.assign(headers, meta.http_headers);
-    }
+    const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Timeshift');
 
     let upstream, successfulUrl;
     try {

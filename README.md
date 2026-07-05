@@ -88,9 +88,11 @@ sudo ./install.sh
 ```
 
 ### Automated Updates
-To update an existing automated installation, simply navigate to the installation directory and run the update script:
+To update an existing automated installation, refresh the updater first, then run it:
 ```bash
 cd /opt/iptv-manager
+sudo curl -fsSL https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main/scripts/update.sh -o scripts/update.sh
+sudo chmod +x scripts/update.sh
 sudo ./scripts/update.sh
 ```
 

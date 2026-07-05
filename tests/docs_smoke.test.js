@@ -18,6 +18,13 @@ describe('documentation smoke checks', () => {
     expect(readme).toContain('docs/SHARE_COMPANION_INTEGRATION.md');
   });
 
+  it('documents bootstrapping the latest updater before bare-metal updates', () => {
+    const readme = readRepoFile('README.md');
+
+    expect(readme).toContain('raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main/scripts/update.sh');
+    expect(readme).toContain('sudo ./scripts/update.sh');
+  });
+
   it('documents runtime environment variables used by the server', () => {
     const configuration = readRepoFile('docs/CONFIGURATION.md');
 

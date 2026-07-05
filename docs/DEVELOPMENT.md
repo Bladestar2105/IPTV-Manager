@@ -19,6 +19,10 @@ dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
 the active Node ABI. The Docker image and release workflow build against Node.js
 24 with `npm ci`.
 
+For bare-metal major Node upgrades, update `/opt/iptv-manager/scripts/update.sh`
+from `main` before running it so the updater can install the required runtime
+before `npm install`.
+
 ## Maintainer Documentation
 
 - API route inventory: `docs/API_REFERENCE.md`.
