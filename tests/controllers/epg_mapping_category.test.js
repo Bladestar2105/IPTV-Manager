@@ -62,11 +62,14 @@ describe('EPG Mapping Category Mode', () => {
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (2, 'user', 'user', 1)").run();
 
         db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url) VALUES (1, 'TestProvider', 'http://test.com', 'user', 'pass', 'http://epg.com')").run();
+        db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url) VALUES (2, 'SecondProvider', 'http://test2.com', 'user', 'pass', 'http://epg2.com')").run();
 
         // Channel 1: Provider 1
         db.prepare("INSERT INTO provider_channels (id, provider_id, remote_stream_id, name, stream_type) VALUES (1, 1, 100, 'Test Channel 1', 'live')").run();
         // Channel 2: Provider 1
         db.prepare("INSERT INTO provider_channels (id, provider_id, remote_stream_id, name, stream_type) VALUES (2, 1, 101, 'Test Channel 2', 'live')").run();
+        // Channel 3: Provider 2
+        db.prepare("INSERT INTO provider_channels (id, provider_id, remote_stream_id, name, stream_type) VALUES (3, 2, 102, 'Second Provider Channel', 'live')").run();
 
         // User 2 (non-admin) Category 1
         db.prepare("INSERT INTO user_categories (id, user_id, name) VALUES (1, 2, 'User Category')").run();
@@ -88,6 +91,31 @@ describe('EPG Mapping Category Mode', () => {
 
             const mappings = db.prepare("SELECT * FROM epg_channel_mappings").all();
             expect(mappings.length).toBe(0);
+        });
+
+        it('should allow admin to reset mappings across all providers', async () => {
+            db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'EPG1'), (2, 'EPG2'), (3, 'EPG3')").run();
+
+            const req = { body: { all_providers: true }, user: { id: 1, is_admin: true, username: 'admin' }, ip: '127.0.0.1' };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+            await epgController.resetMapping(req, res);
+
+            const mappings = db.prepare("SELECT * FROM epg_channel_mappings").all();
+            expect(mappings.length).toBe(0);
+            expect(res.json).toHaveBeenCalledWith({success: true, reset: 3});
+        });
+
+        it('should reject non-admin reset across all providers', async () => {
+            db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'EPG1')").run();
+
+            const req = { body: { all_providers: true }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+            await epgController.resetMapping(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(403);
+            expect(db.prepare("SELECT COUNT(*) as count FROM epg_channel_mappings").get().count).toBe(1);
         });
 
         it('should allow non-admin to reset by category', async () => {
@@ -134,6 +162,54 @@ describe('EPG Mapping Category Mode', () => {
             expect(mappings.length).toBe(1);
             expect(mappings[0].provider_channel_id).toBe(1);
             expect(mappings[0].epg_channel_id).toBe('TEST_EPG_ID_1');
+        });
+
+        it('should allow admin to auto-map unmapped channels across all providers', async () => {
+            epgDb.prepare("INSERT INTO epg_channels (id, name, source_id, source_type) VALUES ('TEST_EPG_ID_3', 'Second Provider Channel', 1, 'provider')").run();
+
+            const req = { body: { all_providers: true }, user: { id: 1, is_admin: true, username: 'admin' }, ip: '127.0.0.1' };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+            await epgController.autoMapping(req, res);
+
+            const mappings = db.prepare("SELECT * FROM epg_channel_mappings ORDER BY provider_channel_id").all();
+            expect(mappings.map(m => m.provider_channel_id)).toEqual([1, 3]);
+            expect(mappings.map(m => m.epg_channel_id)).toEqual(['TEST_EPG_ID_1', 'TEST_EPG_ID_3']);
+        });
+
+        it('should reject non-admin auto-map across all providers', async () => {
+            const req = { body: { all_providers: true }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+            await epgController.autoMapping(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(403);
+            expect(db.prepare("SELECT COUNT(*) as count FROM epg_channel_mappings").get().count).toBe(0);
+        });
+
+        it('should run auto-map in background and expose progress', async () => {
+            const req = { body: { category_id: 1, background: true }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+            await epgController.autoMapping(req, res);
+
+            const startResponse = res.json.mock.calls[0][0];
+            expect(startResponse.success).toBe(true);
+            expect(startResponse.job_id).toBeTruthy();
+
+            let job;
+            for (let i = 0; i < 40; i++) {
+                const statusRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+                await epgController.getMappingJob({ params: { id: startResponse.job_id }, user: req.user }, statusRes);
+                job = statusRes.json.mock.calls[0][0];
+                if (job.status === 'completed') break;
+                await new Promise(resolve => setTimeout(resolve, 25));
+            }
+
+            expect(job.status).toBe('completed');
+            expect(job.progress).toBe(100);
+            expect(job.matched).toBe(1);
+            expect(db.prepare("SELECT COUNT(*) as count FROM epg_channel_mappings").get().count).toBe(1);
         });
 
         it('should NOT auto-map channels outside the category for non-admin', async () => {

@@ -847,7 +847,7 @@ async function loadProviders(filterUserId = null) {
   const section = document.getElementById('provider-section');
   const userSection = document.getElementById('user-section');
   if (section) {
-      if (targetUserId) {
+      if (targetUserId || (currentUser && currentUser.is_admin)) {
           section.classList.remove('d-none');
           if (userSection) {
               userSection.classList.remove('col-md-12');
@@ -866,6 +866,11 @@ async function loadProviders(filterUserId = null) {
   const addProviderBtn = document.getElementById('add-provider-btn');
   if (addProviderBtn) {
       addProviderBtn.style.display = (currentUser && currentUser.is_admin) ? 'block' : 'none';
+  }
+
+  const bulkUrlForm = document.getElementById('provider-bulk-url-form');
+  if (bulkUrlForm) {
+      bulkUrlForm.classList.toggle('d-none', !(currentUser && currentUser.is_admin));
   }
 
   // Filter for display
@@ -1058,6 +1063,35 @@ function resetProviderForm() {
 
   const expiryInput = document.getElementById('provider-expiry-date');
   if (expiryInput) expiryInput.value = '';
+}
+
+async function handleProviderBulkUrlUpdate(e) {
+  e.preventDefault();
+  const fromInput = document.getElementById('provider-bulk-url-from');
+  const toInput = document.getElementById('provider-bulk-url-to');
+  const btn = document.getElementById('provider-bulk-url-btn');
+  const fromUrl = fromInput.value.trim();
+  const toUrl = toInput.value.trim();
+
+  if (!fromUrl || !toUrl) return;
+  if (!confirm(t('bulkProviderUrlConfirm', { from: fromUrl, to: toUrl }))) return;
+
+  setLoadingState(btn, true, 'updating');
+  try {
+    const result = await fetchJSON('/api/providers/bulk-url', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ from_url: fromUrl, to_url: toUrl })
+    });
+    showToast(t('bulkProviderUrlSuccess', {count: result.updated}), 'success');
+    fromInput.value = '';
+    toInput.value = '';
+    await loadProviders(selectedUserId);
+  } catch (err) {
+    showToast(err.message, 'danger');
+  } finally {
+    setLoadingState(btn, false);
+  }
 }
 
 // === Category Management ===
@@ -1935,6 +1969,11 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
   }
 });
 
+const providerBulkUrlForm = document.getElementById('provider-bulk-url-form');
+if (providerBulkUrlForm) {
+  providerBulkUrlForm.addEventListener('submit', handleProviderBulkUrlUpdate);
+}
+
 document.getElementById('category-form').addEventListener('submit', async e => {
   e.preventDefault();
   if (!selectedUserId) {
@@ -2723,6 +2762,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const epgMappingProviderSelect = document.getElementById('epg-mapping-provider-select');
   if (epgMappingProviderSelect) {
     epgMappingProviderSelect.addEventListener('change', loadEpgMappingChannels);
+  }
+
+  const epgAllProviders = document.getElementById('epg-all-providers');
+  if (epgAllProviders) {
+    epgAllProviders.addEventListener('change', loadEpgMappingChannels);
   }
 
   const epgMappingCategorySelect = document.getElementById('epg-mapping-category-select');
@@ -3549,11 +3593,52 @@ let availableEpgChannels = [];
 let isLoadingEpgChannels = false;
 let epgMappingMode = 'provider'; // 'provider' or 'category'
 
+function isAllProviderMappingSelected() {
+    const checkbox = document.getElementById('epg-all-providers');
+    return epgMappingMode === 'provider' && currentUser && currentUser.is_admin && checkbox && checkbox.checked;
+}
+
+function setEpgMappingJobProgress(progress, visible = true) {
+    const container = document.getElementById('epg-mapping-job-container');
+    const bar = document.getElementById('epg-mapping-job-bar');
+    if (!container || !bar) return;
+
+    const safeProgress = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+    container.classList.toggle('d-none', !visible);
+    container.setAttribute('aria-valuenow', String(safeProgress));
+    bar.style.width = `${safeProgress}%`;
+    bar.textContent = `${safeProgress}%`;
+}
+
+function showAllProvidersMappingState() {
+    const tbody = document.getElementById('epg-mapping-tbody');
+    const autoMapBtn = document.getElementById('auto-map-btn');
+    const resetMapBtn = document.getElementById('reset-map-btn');
+    const providerSelect = document.getElementById('epg-mapping-provider-select');
+
+    if (providerSelect) providerSelect.disabled = true;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('allProvidersSelected')}</td></tr>`;
+    epgMappingChannels = [];
+    updateMappingStats();
+
+    if (autoMapBtn) {
+        autoMapBtn.disabled = false;
+        autoMapBtn.classList.remove('d-none');
+    }
+    if (resetMapBtn) {
+        resetMapBtn.disabled = false;
+        resetMapBtn.classList.remove('d-none');
+    }
+}
+
 function renderEpgMappingControls() {
     const isAdmin = currentUser && currentUser.is_admin;
     const providerContainer = document.getElementById('epg-mapping-provider-container');
     const categoryContainer = document.getElementById('epg-mapping-category-container');
     const switcher = document.getElementById('epg-mode-switcher');
+    const allProvidersContainer = document.getElementById('all-providers-container');
+    const allProvidersCheckbox = document.getElementById('epg-all-providers');
+    const providerSelect = document.getElementById('epg-mapping-provider-select');
 
     // Switcher Visibility
     if (switcher) {
@@ -3568,10 +3653,15 @@ function renderEpgMappingControls() {
     if (epgMappingMode === 'provider') {
         if (providerContainer) providerContainer.classList.remove('d-none');
         if (categoryContainer) categoryContainer.classList.add('d-none');
+        if (allProvidersContainer) allProvidersContainer.classList.toggle('d-none', !isAdmin);
+        if (providerSelect) providerSelect.disabled = isAllProviderMappingSelected();
         loadEpgMappingProviders();
     } else {
         if (providerContainer) providerContainer.classList.add('d-none');
         if (categoryContainer) categoryContainer.classList.remove('d-none');
+        if (allProvidersContainer) allProvidersContainer.classList.add('d-none');
+        if (allProvidersCheckbox) allProvidersCheckbox.checked = false;
+        if (providerSelect) providerSelect.disabled = false;
 
         // User Select Visibility (Admin only)
         const userSelectContainer = document.getElementById('epg-category-user-select-container');
@@ -3584,6 +3674,9 @@ function renderEpgMappingControls() {
     document.getElementById('epg-mapping-tbody').innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('select_options_to_load')}</td></tr>`;
     epgMappingChannels = [];
     updateMappingStats();
+    setEpgMappingJobProgress(0, false);
+
+    if (isAllProviderMappingSelected()) showAllProvidersMappingState();
 }
 
 async function loadEpgMappingProviders() {
@@ -3664,6 +3757,13 @@ async function loadEpgMappingChannels() {
 
   // Determine source based on mode
   if (epgMappingMode === 'provider') {
+      if (isAllProviderMappingSelected()) {
+          showAllProvidersMappingState();
+          return;
+      }
+
+      const providerSelect = document.getElementById('epg-mapping-provider-select');
+      if (providerSelect) providerSelect.disabled = false;
       const providerId = document.getElementById('epg-mapping-provider-select').value;
       if (!providerId) return; // Wait for selection
 
@@ -3824,6 +3924,20 @@ function updateMappingStats() {
   }
 }
 
+async function pollMappingJob(jobId) {
+  setEpgMappingJobProgress(1, true);
+
+  while (true) {
+    const job = await fetchJSON(`/api/mapping/jobs/${encodeURIComponent(jobId)}`);
+    setEpgMappingJobProgress(job.progress || 0, true);
+
+    if (job.status === 'completed') return job;
+    if (job.status === 'failed') throw new Error(job.error || t('mappingJobFailed'));
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+}
+
 async function loadAvailableEpgChannels() {
   if (isLoadingEpgChannels) return;
   isLoadingEpgChannels = true;
@@ -3845,15 +3959,16 @@ async function loadAvailableEpgChannels() {
 // === Auto Mapping ===
 async function handleAutoMap() {
   let providerId, categoryId;
-  if (epgMappingMode === 'provider') {
+  const allProviders = isAllProviderMappingSelected();
+  if (epgMappingMode === 'provider' && !allProviders) {
       providerId = document.getElementById('epg-mapping-provider-select').value;
       if (!providerId) return;
-  } else {
+  } else if (epgMappingMode === 'category') {
       categoryId = document.getElementById('epg-mapping-category-select').value;
       if (!categoryId) return;
   }
 
-  if (!confirm(t('autoMapConfirm'))) return;
+  if (!confirm(t(allProviders ? 'autoMapAllConfirm' : 'autoMapConfirm'))) return;
 
   const btn = document.getElementById('auto-map-btn');
   setLoadingState(btn, true, 'autoMap');
@@ -3867,14 +3982,17 @@ async function handleAutoMap() {
       body: JSON.stringify({
           provider_id: providerId,
           category_id: categoryId,
-          only_used: onlyUsed
+          only_used: onlyUsed,
+          all_providers: allProviders,
+          background: true
       })
     });
 
-    alert(t('autoMapSuccess', {count: res.matched}));
-    loadEpgMappingChannels();
+    const job = res.job_id ? await pollMappingJob(res.job_id) : res;
+    showToast(t('autoMapSuccess', {count: job.matched || 0}), 'success');
+    await loadEpgMappingChannels();
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(t('errorPrefix') + ' ' + e.message, 'danger');
   } finally {
     setLoadingState(btn, false);
   }
@@ -3882,15 +4000,16 @@ async function handleAutoMap() {
 
 async function handleResetMapping() {
   let providerId, categoryId;
-  if (epgMappingMode === 'provider') {
+  const allProviders = isAllProviderMappingSelected();
+  if (epgMappingMode === 'provider' && !allProviders) {
       providerId = document.getElementById('epg-mapping-provider-select').value;
       if (!providerId) return;
-  } else {
+  } else if (epgMappingMode === 'category') {
       categoryId = document.getElementById('epg-mapping-category-select').value;
       if (!categoryId) return;
   }
 
-  if (!confirm(t('resetMappingConfirm'))) return;
+  if (!confirm(t(allProviders ? 'resetAllMappingsConfirm' : 'resetMappingConfirm'))) return;
 
   const btn = document.getElementById('reset-map-btn');
   setLoadingState(btn, true, 'resetMapping');
@@ -3901,14 +4020,15 @@ async function handleResetMapping() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
           provider_id: providerId,
-          category_id: categoryId
+          category_id: categoryId,
+          all_providers: allProviders
       })
     });
 
-    alert(t('resetMappingSuccess'));
+    showToast(t('resetMappingSuccess'), 'success');
     await loadEpgMappingChannels();
   } catch (e) {
-    alert(t('errorPrefix') + ' ' + e.message);
+    showToast(t('errorPrefix') + ' ' + e.message, 'danger');
   } finally {
     setLoadingState(btn, false);
   }
@@ -4138,6 +4258,12 @@ function applyPermissions() {
     if (onlyUsedContainer) {
         if (isAdmin) onlyUsedContainer.classList.remove('d-none');
         else onlyUsedContainer.classList.add('d-none');
+    }
+
+    const allProvidersContainer = document.getElementById('all-providers-container');
+    if (allProvidersContainer) {
+        if (isAdmin) allProvidersContainer.classList.remove('d-none');
+        else allProvidersContainer.classList.add('d-none');
     }
 
     // Hide Add User form

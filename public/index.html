@@ -159,6 +159,20 @@
                    <p class="text-muted small" data-i18n="selectUserHint">Providers for selected user:</p>
                    <ul id="provider-list" class="list-group list-group-flush mb-3"></ul>
                    <button id="add-provider-btn" class="btn btn-sm btn-outline-primary w-100" data-action="action-add-provider" data-i18n="addProvider">Add Provider</button>
+                   <form id="provider-bulk-url-form" class="mt-3 d-none">
+                     <div class="small fw-semibold mb-2" data-i18n="bulkProviderUrlUpdate">Bulk Provider URL Update</div>
+                     <div class="row g-2">
+                       <div class="col-12 col-lg-5">
+                         <input id="provider-bulk-url-from" class="form-control form-control-sm" type="url" placeholder="http://provider1.com" data-i18n-label="bulkProviderUrlFrom" aria-label="Old provider URL" required>
+                       </div>
+                       <div class="col-12 col-lg-5">
+                         <input id="provider-bulk-url-to" class="form-control form-control-sm" type="url" placeholder="http://provider2.com" data-i18n-label="bulkProviderUrlTo" aria-label="New provider URL" required>
+                       </div>
+                       <div class="col-12 col-lg-2">
+                         <button id="provider-bulk-url-btn" class="btn btn-sm btn-outline-warning w-100" type="submit" data-i18n="bulkProviderUrlRun">Update</button>
+                       </div>
+                     </div>
+                   </form>
                 </div>
              </div>
           </div>
@@ -730,6 +744,10 @@
                    <input class="form-check-input" type="checkbox" id="epg-only-used">
                    <label class="form-check-label" for="epg-only-used" data-i18n="only_used_channels">Only used channels</label>
                </div>
+               <div class="form-check d-inline-block d-none" id="all-providers-container">
+                   <input class="form-check-input" type="checkbox" id="epg-all-providers">
+                   <label class="form-check-label" for="epg-all-providers" data-i18n="allProviders">All providers</label>
+               </div>
             </div>
           </div>
       </div>
@@ -738,6 +756,9 @@
       <div class="d-flex justify-content-end align-items-center gap-3 mb-4" id="epg-mapping-actions">
          <button id="auto-map-btn" class="btn btn-warning" disabled><i class="bi bi-lightning-fill" aria-hidden="true"></i> <span data-i18n="autoMap">Auto Map</span></button>
          <button id="reset-map-btn" class="btn btn-danger d-none" data-i18n="resetMapping">Reset Mapping</button>
+      </div>
+      <div id="epg-mapping-job-container" class="progress mb-4 d-none" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="epg-mapping-job-bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">0%</div>
       </div>
 
       <!-- Category Controls -->

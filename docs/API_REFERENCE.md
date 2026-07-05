@@ -32,6 +32,7 @@ SQLite foreign-key enforcement enabled while preventing orphaned user data.
 
 - `GET /api/providers`
 - `POST /api/providers`
+- `POST /api/providers/bulk-url`
 - `PUT /api/providers/:id`
 - `DELETE /api/providers/:id`
 - `POST /api/providers/:id/sync`
@@ -43,6 +44,11 @@ SQLite foreign-key enforcement enabled while preventing orphaned user data.
 Deleting a provider removes dependent channel assignments, EPG mappings, stream
 stats, sync data, category mappings, and provider icon cache entries before the
 provider row is deleted.
+
+`POST /api/providers/bulk-url` is admin-only. It replaces matching provider
+base URLs across all users, for example `from_url: "http://provider1.com"` to
+`to_url: "http://provider2.com"`. Default provider EPG URLs under
+`/xmltv.php` are moved to the new base URL; custom EPG URLs stay unchanged.
 
 ## Categories and Channels
 
@@ -78,6 +84,7 @@ provider row is deleted.
 - `POST /api/mapping/manual`
 - `DELETE /api/mapping/:id`
 - `GET /api/mapping/:providerId`
+- `GET /api/mapping/jobs/:id`
 - `POST /api/mapping/reset`
 - `POST /api/mapping/suggest`
 - `POST /api/mapping/auto`
@@ -85,6 +92,11 @@ provider row is deleted.
 `GET /api/epg/schedule` is scoped to the authenticated user's visible channels
 and, for share guests, to the share's allowed channel list. The web player uses
 this endpoint for timeline data after rendering the channel list.
+
+`POST /api/mapping/auto` accepts `background: true` and returns a `job_id`.
+Poll `GET /api/mapping/jobs/:id` for `status`, `progress`, and `matched`.
+Admins may pass `all_providers: true` to auto-map or reset EPG mappings across
+all providers.
 
 ## User Backups
 

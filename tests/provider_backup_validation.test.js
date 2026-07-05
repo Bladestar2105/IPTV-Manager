@@ -43,7 +43,8 @@ vi.mock('../src/utils/helpers.js', async () => {
         }),
         checkProviderExpiry: vi.fn(),
         isAdultCategory: vi.fn().mockReturnValue(false),
-        safeLookup: vi.fn()
+        safeLookup: vi.fn(),
+        redactUrl: vi.fn((url) => url)
     };
 });
 
@@ -224,6 +225,79 @@ describe('Provider Controller - Backup URLs', () => {
         expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
             message: expect.stringContaining('Backup URL is unsafe or invalid')
         }));
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('bulkUpdateProviderUrls should update matching provider URLs across users', async () => {
+        mockAll.mockReturnValue([
+            { id: 1, url: 'http://provider1.com', epg_url: 'http://provider1.com/xmltv.php?username=a&password=b' },
+            { id: 2, url: 'http://provider1.com/', epg_url: 'http://custom-epg.com/xmltv.xml' },
+            { id: 3, url: 'http://other.com', epg_url: 'http://other.com/xmltv.php' }
+        ]);
+
+        const req = {
+            user: { is_admin: true, username: 'admin' },
+            body: {
+                from_url: 'http://provider1.com',
+                to_url: 'http://provider2.com'
+            },
+            ip: '127.0.0.1'
+        };
+        const res = {
+            json: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await providerController.bulkUpdateProviderUrls(req, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true, updated: 2 });
+        expect(mockRun).toHaveBeenCalledWith(
+            'http://provider2.com',
+            'http://provider2.com/xmltv.php?username=a&password=b',
+            1
+        );
+        expect(mockRun).toHaveBeenCalledWith(
+            'http://provider2.com',
+            'http://custom-epg.com/xmltv.xml',
+            2
+        );
+    });
+
+    it('bulkUpdateProviderUrls should reject non-admin users', async () => {
+        const req = {
+            user: { is_admin: false },
+            body: {
+                from_url: 'http://provider1.com',
+                to_url: 'http://provider2.com'
+            }
+        };
+        const res = {
+            json: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await providerController.bulkUpdateProviderUrls(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(mockRun).not.toHaveBeenCalled();
+    });
+
+    it('bulkUpdateProviderUrls should reject unsafe destination URLs', async () => {
+        const req = {
+            user: { is_admin: true },
+            body: {
+                from_url: 'http://provider1.com',
+                to_url: 'http://unsafe.com'
+            }
+        };
+        const res = {
+            json: vi.fn(),
+            status: vi.fn().mockReturnThis()
+        };
+
+        await providerController.bulkUpdateProviderUrls(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
         expect(mockRun).not.toHaveBeenCalled();
     });
 });

@@ -1,9 +1,22 @@
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
-import { isSafeUrl, isAdultCategory } from '../utils/helpers.js';
+import { isSafeUrl, isAdultCategory, redactUrl } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { updateProviderEpg } from '../services/epgService.js';
+import { clearChannelsCache } from '../services/cacheService.js';
+
+const normalizeProviderBaseUrl = (url) => String(url || '').trim().replace(/\/+$/, '');
+const isHttpUrl = (url) => /^https?:\/\//i.test(url);
+
+const replaceDefaultEpgProviderUrl = (epgUrl, fromBase, toBase) => {
+  const trimmed = String(epgUrl || '').trim();
+  const defaultPath = `${fromBase}/xmltv.php`;
+  if (trimmed === defaultPath || trimmed.startsWith(`${defaultPath}?`)) {
+    return `${toBase}${trimmed.slice(fromBase.length)}`;
+  }
+  return trimmed;
+};
 
 const fetchProviderDetails = async (url, username, password) => {
   try {
@@ -320,6 +333,46 @@ export const updateProvider = async (req, res) => {
     }
 
     res.json({success: true});
+  } catch (e) {
+    res.status(500).json({error: e.message});
+  }
+};
+
+export const bulkUpdateProviderUrls = async (req, res) => {
+  try {
+    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+
+    const fromBase = normalizeProviderBaseUrl(req.body.from_url || req.body.old_url);
+    const toBase = normalizeProviderBaseUrl(req.body.to_url || req.body.new_url);
+
+    if (!fromBase || !toBase) return res.status(400).json({error: 'missing fields'});
+    if (!isHttpUrl(fromBase) || !isHttpUrl(toBase)) {
+      return res.status(400).json({error: 'invalid_url', message: 'Provider URLs must start with http:// or https://'});
+    }
+    if (fromBase === toBase) return res.status(400).json({error: 'same_url'});
+    if (!(await isSafeUrl(toBase))) {
+      return res.status(400).json({error: 'invalid_url', message: 'Provider URL is unsafe (blocked)'});
+    }
+
+    const providers = db.prepare('SELECT id, url, epg_url FROM providers').all();
+    const matches = providers.filter(p => normalizeProviderBaseUrl(p.url) === fromBase);
+    const update = db.prepare('UPDATE providers SET url = ?, epg_url = ? WHERE id = ?');
+
+    db.transaction(() => {
+      for (const provider of matches) {
+        update.run(toBase, replaceDefaultEpgProviderUrl(provider.epg_url, fromBase, toBase), provider.id);
+      }
+    })();
+
+    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+      req.ip,
+      'provider_url_bulk_update',
+      `User ${req.user.username} changed provider URLs from ${redactUrl(fromBase)} to ${redactUrl(toBase)} (${matches.length})`,
+      Math.floor(Date.now() / 1000)
+    );
+    clearChannelsCache();
+
+    res.json({ success: true, updated: matches.length });
   } catch (e) {
     res.status(500).json({error: e.message});
   }

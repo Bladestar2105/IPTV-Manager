@@ -19,6 +19,7 @@ router.get('/epg-sources/available', authenticateToken, epgController.getAvailab
 
 router.post('/mapping/manual', authenticateToken, epgController.manualMapping);
 router.delete('/mapping/:id', authenticateToken, epgController.deleteMapping);
+router.get('/mapping/jobs/:id', authenticateToken, epgController.getMappingJob);
 router.get('/mapping/:providerId', authenticateToken, epgController.getMappings);
 router.post('/mapping/reset', authenticateToken, epgController.resetMapping);
 router.post('/mapping/suggest', authenticateToken, epgController.suggestMapping);
