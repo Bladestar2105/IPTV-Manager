@@ -51,7 +51,7 @@ describe('EPG Mapping Category Mode', () => {
         // Clear DB
         initDb(true);
         initEpgDb();
-        const tables = ['epg_channel_mappings', 'provider_channels', 'providers', 'users', 'user_categories', 'user_channels', 'epg_sources'];
+        const tables = ['epg_mapping_jobs', 'epg_channel_mappings', 'provider_channels', 'providers', 'users', 'user_categories', 'user_channels', 'epg_sources'];
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
 
         const epgTables = ['epg_channels', 'epg_programs'];
@@ -210,6 +210,33 @@ describe('EPG Mapping Category Mode', () => {
             expect(job.progress).toBe(100);
             expect(job.matched).toBe(1);
             expect(db.prepare("SELECT COUNT(*) as count FROM epg_channel_mappings").get().count).toBe(1);
+        });
+
+        it('should persist background jobs for cluster-safe polling', async () => {
+            const req = { body: { category_id: 1, background: true }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+            await epgController.autoMapping(req, res);
+
+            const startResponse = res.json.mock.calls[0][0];
+            const row = db.prepare("SELECT id, status, progress, user_id FROM epg_mapping_jobs WHERE id = ?").get(startResponse.job_id);
+
+            expect(row).toMatchObject({
+                id: startResponse.job_id,
+                status: 'running',
+                user_id: 2
+            });
+            expect(row.progress).toBeLessThan(10);
+
+            const now = Date.now();
+            db.prepare(`
+                INSERT INTO epg_mapping_jobs (id, status, progress, matched, user_id, created_at, updated_at)
+                VALUES ('cluster-safe-job', 'running', 42, 0, 2, ?, ?)
+            `).run(now, now);
+            const statusRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+            await epgController.getMappingJob({ params: { id: 'cluster-safe-job' }, user: req.user }, statusRes);
+
+            expect(statusRes.json.mock.calls[0][0].progress).toBe(42);
         });
 
         it('should NOT auto-map channels outside the category for non-admin', async () => {

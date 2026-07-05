@@ -67,11 +67,16 @@
   const nowPlayingChannel = document.getElementById('now-playing-channel');
   const nowPlayingProgram = document.getElementById('now-playing-program');
   const playerStatus = document.getElementById('player-status');
+  const mpdInfoPanel = document.getElementById('mpd-info-panel');
+  const mpdInfoToggle = document.getElementById('mpd-info-toggle');
+  const mpdInfoContent = document.getElementById('mpd-info-content');
   const tooltip = document.getElementById('program-tooltip');
+  let mpdInfoToken = 0;
 
   // ─── Platform Detection ───
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isFirefox = /Firefox\/|FxiOS\//.test(navigator.userAgent);
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   const hasNativeHLS = video.canPlayType('application/vnd.apple.mpegurl') !== '';
   const hasMSE = typeof MediaSource !== 'undefined';
@@ -219,6 +224,116 @@ function escapeHtml(unsafe) {
   function setPlayerStatus(text, color) {
     if (!text) { playerStatus.innerHTML = ''; return; }
     playerStatus.innerHTML = '<span class="badge bg-' + color + '">' + text + '</span>';
+  }
+
+  function clearMpdInfoContent() {
+    if (!mpdInfoContent) return;
+    while (mpdInfoContent.firstChild) mpdInfoContent.removeChild(mpdInfoContent.firstChild);
+  }
+
+  function setMpdInfoExpanded(expanded) {
+    if (!mpdInfoToggle || !mpdInfoContent) return;
+    mpdInfoToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    mpdInfoContent.classList.toggle('d-none', !expanded);
+  }
+
+  function showMpdInfoLoading() {
+    mpdInfoToken += 1;
+    if (!mpdInfoPanel || !mpdInfoContent) return mpdInfoToken;
+    mpdInfoPanel.classList.remove('d-none');
+    setMpdInfoExpanded(true);
+    clearMpdInfoContent();
+    var status = document.createElement('div');
+    status.className = 'mpd-info-status';
+    status.textContent = t('mpdInfoLoading');
+    mpdInfoContent.appendChild(status);
+    return mpdInfoToken;
+  }
+
+  function showMpdInfoStatus(key) {
+    if (!mpdInfoPanel || !mpdInfoContent) return;
+    mpdInfoPanel.classList.remove('d-none');
+    clearMpdInfoContent();
+    var status = document.createElement('div');
+    status.className = 'mpd-info-status';
+    status.textContent = t(key);
+    mpdInfoContent.appendChild(status);
+  }
+
+  function hideMpdInfo() {
+    mpdInfoToken += 1;
+    if (!mpdInfoPanel) return;
+    mpdInfoPanel.classList.add('d-none');
+    clearMpdInfoContent();
+  }
+
+  function appendMpdMetric(parent, labelKey, value) {
+    if (!value && value !== 0) return;
+    var label = document.createElement('div');
+    label.className = 'mpd-info-label';
+    label.textContent = t(labelKey);
+
+    var val = document.createElement('div');
+    val.className = 'mpd-info-value';
+    val.textContent = String(value);
+
+    parent.appendChild(label);
+    parent.appendChild(val);
+  }
+
+  function appendMpdTrackSection(parent, titleKey, tracks, fields) {
+    if (!tracks || tracks.length === 0) return;
+    var section = document.createElement('div');
+    section.className = 'mpd-info-section';
+
+    var title = document.createElement('div');
+    title.className = 'mpd-info-section-title';
+    title.textContent = t(titleKey);
+    section.appendChild(title);
+
+    tracks.forEach(function(track) {
+      var parts = fields.map(function(field) {
+        return track[field] || '';
+      }).filter(Boolean);
+      if (parts.length === 0) return;
+      var line = document.createElement('div');
+      line.className = 'mpd-info-track';
+      line.textContent = parts.join(' | ');
+      section.appendChild(line);
+    });
+
+    parent.appendChild(section);
+  }
+
+  function renderMpdInfo(info) {
+    if (!mpdInfoPanel || !mpdInfoContent) return;
+    mpdInfoPanel.classList.remove('d-none');
+    clearMpdInfoContent();
+
+    var title = document.createElement('div');
+    title.className = 'mpd-info-title';
+    title.textContent = t('mpdInfoManifest');
+    mpdInfoContent.appendChild(title);
+
+    var grid = document.createElement('div');
+    grid.className = 'mpd-info-grid';
+    appendMpdMetric(grid, 'mpdInfoType', info.type);
+    appendMpdMetric(grid, 'mpdInfoDuration', info.duration);
+    appendMpdMetric(grid, 'mpdInfoBuffer', info.minBufferTime);
+    appendMpdMetric(grid, 'mpdInfoPeriods', info.periods);
+    appendMpdMetric(grid, 'mpdInfoAdaptationSets', info.adaptationSets);
+    appendMpdMetric(grid, 'mpdInfoRepresentations', info.representations);
+    mpdInfoContent.appendChild(grid);
+
+    appendMpdTrackSection(mpdInfoContent, 'mpdInfoVideo', info.video, ['resolution', 'codec', 'bandwidth']);
+    appendMpdTrackSection(mpdInfoContent, 'mpdInfoAudio', info.audio, ['language', 'codec', 'bandwidth']);
+  }
+
+  if (mpdInfoToggle) {
+    mpdInfoToggle.addEventListener('click', function() {
+      if (!mpdInfoContent) return;
+      setMpdInfoExpanded(mpdInfoContent.classList.contains('d-none'));
+    });
   }
 
   // ─── Init ───
@@ -907,6 +1022,32 @@ function escapeHtml(unsafe) {
     return withQueryParam(targetUrl, 'transcode', 'true');
   }
 
+  function buildMpegtsTranscodeUrl(url) {
+    var targetUrl = url;
+    if (targetUrl.includes('/live/') && targetUrl.includes('.m3u8')) {
+      targetUrl = targetUrl.replace(/\.m3u8($|\?)/, '.ts$1');
+    }
+    return withQueryParam(targetUrl, 'transcode', 'true');
+  }
+
+  function shouldUseMpegtsTranscode(url, streamType) {
+    return streamType === 'live' &&
+      url.includes('/live/') &&
+      isFirefox &&
+      !isIOS &&
+      typeof mpegts !== 'undefined' &&
+      mpegts.isSupported();
+  }
+
+  function initTranscodedPlayer(url, streamType) {
+    if (shouldUseMpegtsTranscode(url, streamType)) {
+      var transcodedUrl = buildMpegtsTranscodeUrl(url);
+      initMpegtsPlayer(transcodedUrl, streamType);
+      return;
+    }
+    initNativePlayer(buildTranscodeUrl(url), streamType);
+  }
+
   function rememberAutoTranscode(stream) {
     var key = getStreamTranscodeKey(stream);
     if (!key) return;
@@ -956,6 +1097,7 @@ function escapeHtml(unsafe) {
     updateNowPlayingInfo();
     document.getElementById('player-container').classList.add('show-info');
     setTimeout(function() { document.getElementById('player-container').classList.remove('show-info'); }, 3000);
+    hideMpdInfo();
 
     if (castSession) {
       loadRemoteMedia(stream);
@@ -983,7 +1125,7 @@ function escapeHtml(unsafe) {
       initDashPlayer(url);
     } else if (url.includes('.ts')) {
       if (wantTranscode) {
-        initNativePlayer(buildTranscodeUrl(url), streamType);
+        initTranscodedPlayer(url, streamType);
       } else if (isIOS) {
         var hlsUrl2 = url.replace(/\.ts($|\?)/, '.m3u8$1');
         initNativePlayer(hlsUrl2, streamType);
@@ -997,7 +1139,7 @@ function escapeHtml(unsafe) {
       }
     } else if (url.includes('.m3u8')) {
       if (wantTranscode) {
-        initNativePlayer(buildTranscodeUrl(url), streamType);
+        initTranscodedPlayer(url, streamType);
       } else if (isIOS) {
         initNativePlayer(url, streamType);
       } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
@@ -1007,7 +1149,7 @@ function escapeHtml(unsafe) {
       }
     } else if (url.match(/\.(mkv|avi|mp4|mov|wmv)($|\?)/i)) {
       if (wantTranscode) {
-        initNativePlayer(buildTranscodeUrl(url), streamType);
+        initTranscodedPlayer(url, streamType);
       } else {
         initNativePlayer(url, streamType);
       }
@@ -1152,7 +1294,11 @@ function escapeHtml(unsafe) {
           if (isUnsupportedAudioCodec(audioCodec)) {
             console.warn('Unsupported audio codec: ' + audioCodec);
             errorHandled = true;
-            enableTranscodeAndRetry(type);
+            if (transcodeSwitch.checked) {
+              handlePlaybackFailure(type);
+            } else {
+              enableTranscodeAndRetry(type);
+            }
           }
         }
       });
@@ -1163,7 +1309,11 @@ function escapeHtml(unsafe) {
       if (errorHandled) return;
       if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
         errorHandled = true;
-        enableTranscodeAndRetry(type);
+        if (transcodeSwitch.checked) {
+          handlePlaybackFailure(type);
+        } else {
+          enableTranscodeAndRetry(type);
+        }
       }
     });
 
@@ -1183,6 +1333,27 @@ function escapeHtml(unsafe) {
     }
 
     dashPlayer = dashjs.MediaPlayer().create();
+    var infoToken = showMpdInfoLoading();
+    var manifestEvent = (dashjs.MediaPlayer && dashjs.MediaPlayer.events && dashjs.MediaPlayer.events.MANIFEST_LOADED) || 'manifestLoaded';
+    if (manifestEvent && typeof dashPlayer.on === 'function') {
+      dashPlayer.on(manifestEvent, function(event) {
+        if (infoToken !== mpdInfoToken) return;
+        try {
+          var helper = window.IPTVPlayerMpdInfo;
+          if (!helper || typeof helper.fromDashManifest !== 'function') {
+            showMpdInfoStatus('mpdInfoUnavailable');
+            return;
+          }
+          var manifest = event && (event.data || event.manifest || event);
+          renderMpdInfo(helper.fromDashManifest(manifest));
+        } catch (e) {
+          console.warn('MPD info parse failed:', e.message);
+          showMpdInfoStatus('mpdInfoUnavailable');
+        }
+      });
+    } else {
+      showMpdInfoStatus('mpdInfoUnavailable');
+    }
     dashPlayer.initialize(video, url, true);
 
     if (video.dataset.drm) {
@@ -1271,11 +1442,7 @@ function escapeHtml(unsafe) {
         url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
       }
 
-      if (url.includes('.ts')) {
-        initNativePlayer(buildTranscodeUrl(url), type);
-      } else {
-        initNativePlayer(buildTranscodeUrl(url), type);
-      }
+      initTranscodedPlayer(url, type);
     }, 500);
   }
 

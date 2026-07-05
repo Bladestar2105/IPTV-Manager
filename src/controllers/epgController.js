@@ -29,9 +29,38 @@ const httpError = (message, statusCode = 500) => {
 };
 
 const updateMappingJob = (id, patch) => {
-  const job = mappingJobs.get(id);
+  const job = mappingJobs.get(id) || db.prepare('SELECT * FROM epg_mapping_jobs WHERE id = ?').get(id);
   if (!job) return;
   Object.assign(job, patch, { updated_at: Date.now() });
+  saveMappingJob(job);
+};
+
+const saveMappingJob = (job) => {
+  db.prepare(`
+    INSERT INTO epg_mapping_jobs (id, status, progress, matched, message, error, status_code, user_id, created_at, updated_at)
+    VALUES (@id, @status, @progress, @matched, @message, @error, @status_code, @user_id, @created_at, @updated_at)
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      progress = excluded.progress,
+      matched = excluded.matched,
+      message = excluded.message,
+      error = excluded.error,
+      status_code = excluded.status_code,
+      user_id = excluded.user_id,
+      updated_at = excluded.updated_at
+  `).run({
+    id: job.id,
+    status: job.status,
+    progress: job.progress || 0,
+    matched: job.matched || 0,
+    message: job.message || null,
+    error: job.error || null,
+    status_code: job.status_code || null,
+    user_id: job.user_id || null,
+    created_at: job.created_at,
+    updated_at: job.updated_at
+  });
+  mappingJobs.set(job.id, job);
 };
 
 const pruneMappingJobs = () => {
@@ -39,6 +68,7 @@ const pruneMappingJobs = () => {
   for (const [id, job] of mappingJobs.entries()) {
     if (job.updated_at < expiresBefore) mappingJobs.delete(id);
   }
+  db.prepare('DELETE FROM epg_mapping_jobs WHERE updated_at < ?').run(expiresBefore);
 };
 
 const getUserEpgChannelIds = (user) => {
@@ -517,9 +547,9 @@ const runAutoMapping = async ({ body, user, ip, onProgress }) => {
   const { provider_id, category_id, only_used, all_providers } = body;
   validateAutoMappingRequest(body, user);
 
-  onProgress?.(10);
+  onProgress?.(2);
   const channels = selectAutoMappingChannels({ provider_id, category_id, only_used, all_providers }, user);
-  onProgress?.(25);
+  onProgress?.(5);
 
   if (channels.length === 0) {
     onProgress?.(100);
@@ -533,13 +563,19 @@ const runAutoMapping = async ({ body, user, ip, onProgress }) => {
   });
 
   const result = await new Promise((resolve, reject) => {
-    worker.on('message', resolve);
+    worker.on('message', (message) => {
+      if (message && message.type === 'progress') {
+        onProgress?.(message.progress);
+        return;
+      }
+      resolve(message);
+    });
     worker.on('error', reject);
     worker.on('exit', (code) => {
       if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
     });
   });
-  onProgress?.(80);
+  onProgress?.(85);
 
   if (!result.success) throw new Error(result.error || 'Worker failed');
   if (result.epgEmpty) throw httpError('EPG data empty. Please update EPG sources.', 503);
@@ -559,7 +595,7 @@ const runAutoMapping = async ({ body, user, ip, onProgress }) => {
       }
     })();
   }
-  onProgress?.(95);
+  onProgress?.(90);
 
   if (matched > 0) {
     const action = all_providers ? 'epg_auto_mapped_all' : 'epg_auto_mapped';
@@ -577,13 +613,13 @@ const startAutoMappingJob = ({ body, user, ip }) => {
   const job = {
     id,
     status: 'running',
-    progress: 1,
+    progress: 0,
     matched: 0,
     user_id: user.id,
     created_at: Date.now(),
     updated_at: Date.now()
   };
-  mappingJobs.set(id, job);
+  saveMappingJob(job);
 
   runAutoMapping({
     body,
@@ -610,7 +646,7 @@ const startAutoMappingJob = ({ body, user, ip }) => {
 
 export const getMappingJob = (req, res) => {
   pruneMappingJobs();
-  const job = mappingJobs.get(req.params.id);
+  const job = db.prepare('SELECT * FROM epg_mapping_jobs WHERE id = ?').get(req.params.id);
   if (!job) return res.status(404).json({error: 'job not found'});
   if (!req.user.is_admin && job.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
 

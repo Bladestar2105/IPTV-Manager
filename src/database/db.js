@@ -186,6 +186,19 @@ export function initDb(isPrimary) {
       FOREIGN KEY (provider_channel_id) REFERENCES provider_channels(id)
     );
 
+    CREATE TABLE IF NOT EXISTS epg_mapping_jobs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      progress INTEGER DEFAULT 0,
+      matched INTEGER DEFAULT 0,
+      message TEXT,
+      error TEXT,
+      status_code INTEGER,
+      user_id INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     -- Security Tables
     CREATE TABLE IF NOT EXISTS security_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,6 +304,9 @@ export function initDb(isPrimary) {
             }
             if (typeof migrations.migrateProviderIconCache === 'function') {
                 migrations.migrateProviderIconCache(db);
+            }
+            if (typeof migrations.migrateEpgMappingJobs === 'function') {
+                migrations.migrateEpgMappingJobs(db);
             }
 
             // Clear ephemeral streams

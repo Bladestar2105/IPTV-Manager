@@ -44,6 +44,18 @@ test('browser player treats common TV-only audio codecs as requiring audio fix',
   });
 });
 
+test('browser player routes Firefox live audio fix through mpegts transcode', () => {
+  const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
+
+  expect(playerJs).toContain('const isFirefox =');
+  expect(playerJs).toContain('function buildMpegtsTranscodeUrl(url)');
+  expect(playerJs).toContain('function shouldUseMpegtsTranscode(url, streamType)');
+  expect(playerJs).toContain('function initTranscodedPlayer(url, streamType)');
+  expect(playerJs).toContain("streamType === 'live'");
+  expect(playerJs).toContain('buildMpegtsTranscodeUrl(url)');
+  expect(playerJs).toContain('initMpegtsPlayer(transcodedUrl, streamType)');
+});
+
 test('browser player renders channel lists before background EPG load completes', () => {
   const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
 

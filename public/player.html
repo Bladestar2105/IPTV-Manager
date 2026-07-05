@@ -20,6 +20,10 @@
     <div id="now-playing-program"></div>
   </div>
   <div id="player-status"></div>
+  <div id="mpd-info-panel" class="mpd-info-panel d-none" aria-live="polite">
+    <button id="mpd-info-toggle" class="mpd-info-toggle" type="button" data-i18n-label="mpdInfoToggle" data-i18n-title="mpdInfoToggle" aria-expanded="true">MPD</button>
+    <div id="mpd-info-content" class="mpd-info-content"></div>
+  </div>
 </div>
 
 <!-- Controls Bar -->
@@ -91,6 +95,7 @@
 <script src="vendor/mpegts.min.js"></script>
 <script src="vendor/dash.all.min.js"></script>
 <script src="i18n.js"></script>
+<script src="player_mpd_info.js"></script>
 <script src="player.js"></script>
 <script src="vendor/cast/cast_sender.js?loadCastFramework=1"></script>
 </body>

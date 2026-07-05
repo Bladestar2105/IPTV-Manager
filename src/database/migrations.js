@@ -823,3 +823,25 @@ export function migrateProviderIconCache(db) {
     console.error('Provider Icon Cache migration error:', e);
   }
 }
+
+export function migrateEpgMappingJobs(db) {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS epg_mapping_jobs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        progress INTEGER DEFAULT 0,
+        matched INTEGER DEFAULT 0,
+        message TEXT,
+        error TEXT,
+        status_code INTEGER,
+        user_id INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_epg_mapping_jobs_updated ON epg_mapping_jobs(updated_at)');
+  } catch (e) {
+    console.error('EPG mapping jobs migration error:', e);
+  }
+}
