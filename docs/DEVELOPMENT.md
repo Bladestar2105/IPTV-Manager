@@ -40,6 +40,11 @@ Manual audio fix remains a global user preference in `transcode_enabled`.
 Automatic codec fallback is scoped per stream in `player_auto_transcode_streams`
 so one incompatible channel does not force all later streams through FFmpeg.
 
+For VOD movie and series playback the Web Player can request server-side track
+metadata with `tracks=true`. Selecting an audio or subtitle track reloads the
+same VOD URL with `audio_track=<ffmpeg_stream_index>` and/or
+`subtitle_track=<ffmpeg_stream_index>`, which uses the FFmpeg MP4 output path.
+
 ## Local Data
 
 By default the app stores runtime data in the repo root unless `DATA_DIR` is set.

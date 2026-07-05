@@ -184,6 +184,8 @@ extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 - `GET /live/segment/:username/:password/seg.key`
 - `GET /movie/:username/:password/:stream_id.:ext`
 - `GET /series/:username/:password/:episode_id.:ext`
+- `GET /movie/:username/:password/:stream_id.:ext?tracks=true`
+- `GET /series/:username/:password/:episode_id.:ext?tracks=true`
 - `GET /timeshift/:username/:password/:duration/:start/:stream_id.ts`
 - `GET /timeshift/:username/:password/:duration/:start/:stream_id.m3u8`
 - `GET /live/mpd/token/auth/:stream_id/*`
@@ -192,6 +194,8 @@ extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 - `GET /live/token/auth/:stream_id.mp4`
 - `GET /movie/token/auth/:stream_id.:ext`
 - `GET /series/token/auth/:episode_id.:ext`
+- `GET /movie/token/auth/:stream_id.:ext?audio_track=<index>&subtitle_track=<index>`
+- `GET /series/token/auth/:episode_id.:ext?audio_track=<index>&subtitle_track=<index>`
 - `GET /timeshift/token/auth/:duration/:start/:stream_id.ts`
 - `GET /timeshift/token/auth/:duration/:start/:stream_id.m3u8`
 

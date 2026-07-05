@@ -486,6 +486,48 @@ function escapeHtml(unsafe) {
     });
   }
 
+  function selectedServerTrackIndex(tracks, selectedTrack) {
+    var selected = Number(selectedTrack);
+    if (!Number.isInteger(selected)) return -1;
+    return tracks.findIndex(function(track) { return Number(track.index) === selected; });
+  }
+
+  async function loadServerTrackControls(stream, url) {
+    if (!stream || (stream.type !== 'movie' && stream.type !== 'series')) return;
+    try {
+      var res = await fetch(withQueryParam(url, 'tracks', 'true'));
+      if (!res.ok || activeStream !== stream) return;
+      var serverTracks = await res.json();
+      var audioTracks = serverTracks.audio || [];
+      var subtitleTracks = serverTracks.subtitles || [];
+
+      setTrackOptions(audioTrackSelect, audioTracks, selectedServerTrackIndex(audioTracks, stream.selected_audio_track), false, 'audioTrack');
+      if (audioTrackSelect && audioTracks.length > 1) {
+        audioTrackSelect.onchange = function() {
+          var track = audioTracks[Number(audioTrackSelect.value)];
+          if (!track) return;
+          stream.selected_audio_track = track.index;
+          playStream(stream);
+        };
+      }
+
+      setTrackOptions(subtitleTrackSelect, subtitleTracks, selectedServerTrackIndex(subtitleTracks, stream.selected_subtitle_track), true, 'subtitleTrack');
+      if (subtitleTrackSelect && subtitleTracks.length > 0) {
+        subtitleTrackSelect.onchange = function() {
+          var selected = Number(subtitleTrackSelect.value);
+          if (selected < 0) {
+            delete stream.selected_subtitle_track;
+          } else if (subtitleTracks[selected]) {
+            stream.selected_subtitle_track = subtitleTracks[selected].index;
+          }
+          playStream(stream);
+        };
+      }
+    } catch (e) {
+      console.warn('Track probe failed:', e.message);
+    }
+  }
+
   // ─── Init ───
   async function init() {
     loadingEl.style.display = 'flex';
@@ -1245,6 +1287,16 @@ function escapeHtml(unsafe) {
       url.indexOf('/live/mpd/') !== -1;
   }
 
+  function applyServerTrackParams(stream, url) {
+    if (stream.selected_audio_track !== undefined) {
+      url = withQueryParam(url, 'audio_track', stream.selected_audio_track);
+    }
+    if (stream.selected_subtitle_track !== undefined) {
+      url = withQueryParam(url, 'subtitle_track', stream.selected_subtitle_track);
+    }
+    return url;
+  }
+
   function playStream(stream) {
     activeStream = stream;
     retryCount = 0;
@@ -1266,6 +1318,7 @@ function escapeHtml(unsafe) {
     if (token && !url.includes('token=')) {
       url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
     }
+    url = applyServerTrackParams(stream, url);
 
     var wantTranscode = shouldTranscodeStream(stream);
     transcodeSwitch.checked = wantTranscode;
@@ -1313,6 +1366,9 @@ function escapeHtml(unsafe) {
       }
     } else {
       initNativePlayer(url, streamType);
+    }
+    if ((streamType === 'movie' || streamType === 'series') && !isMpdStream(stream, url) && !url.includes('.m3u8')) {
+      loadServerTrackControls(stream, url);
     }
   }
 

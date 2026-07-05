@@ -216,6 +216,8 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
 - `GET /live/:user/:pass/:id.ts`: Live Stream
 - `GET /movie/:user/:pass/:id.ext`: Movie Stream
 - `GET /series/:user/:pass/:id.ext`: Series Stream
+- VOD track metadata: append `tracks=true`; VOD track selection: append
+  `audio_track=<index>` and/or `subtitle_track=<index>`.
 - `GET /xmltv.php`: XMLTV EPG, gzip-compressed when requested with `Accept-Encoding: gzip`
 
 ### Share + Companion App Integration

@@ -77,6 +77,17 @@ test('browser player exposes audio and subtitle track selection when tracks exis
   expect(playerJs).toContain('video.onloadedmetadata = updateNativeTrackControls');
 });
 
+test('browser player loads server-side VOD tracks when browser exposes none', () => {
+  const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
+
+  expect(playerJs).toContain('function loadServerTrackControls(stream, url)');
+  expect(playerJs).toContain("withQueryParam(url, 'tracks', 'true')");
+  expect(playerJs).toContain('serverTracks.audio');
+  expect(playerJs).toContain('serverTracks.subtitles');
+  expect(playerJs).toContain("withQueryParam(url, 'audio_track', stream.selected_audio_track)");
+  expect(playerJs).toContain("withQueryParam(url, 'subtitle_track', stream.selected_subtitle_track)");
+});
+
 test('browser player detects DASH streams from URL and channel metadata', () => {
   const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
 

@@ -2,7 +2,9 @@ import fetch from 'node-fetch';
 import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
+import { spawn } from 'child_process';
 import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -245,6 +247,101 @@ function buildBackupUrls(backupUrls, buildUrl, label) {
   }
 }
 
+function formatTrackLabel(language, codec, fallback) {
+  const parts = [language, codec].filter(Boolean);
+  return parts.length ? parts.join(' - ') : fallback;
+}
+
+function parseFfmpegTracks(output) {
+  const tracks = { audio: [], subtitles: [] };
+  const re = /Stream #0:(\d+)(?:\(([^)]+)\))?:\s*(Audio|Subtitle):\s*([^,\n]+)/ig;
+  let match;
+
+  while ((match = re.exec(output)) !== null) {
+    const index = Number(match[1]);
+    const language = match[2] || '';
+    const kind = match[3].toLowerCase();
+    const codec = (match[4] || '').trim();
+    const list = kind === 'audio' ? tracks.audio : tracks.subtitles;
+    list.push({
+      index,
+      language,
+      codec,
+      label: formatTrackLabel(language, codec, `${kind} ${index}`)
+    });
+  }
+
+  return tracks;
+}
+
+function probeTracksWithFfmpeg(url, headers) {
+  return new Promise((resolve, reject) => {
+    const binary = ffmpegPath || 'ffmpeg';
+    const headerStr = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+    const args = ['-hide_banner'];
+    if (headerStr.trim()) args.push('-headers', headerStr);
+    args.push('-i', url, '-t', '0.1', '-f', 'null', '-');
+
+    const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+      reject(new Error('ffmpeg probe timeout'));
+    }, 15000);
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      if (stderr.length > 128000) stderr = stderr.slice(-128000);
+    });
+    child.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      const tracks = parseFfmpegTracks(stderr);
+      if (code !== 0 && tracks.audio.length === 0 && tracks.subtitles.length === 0) {
+        reject(new Error('ffmpeg probe failed'));
+        return;
+      }
+      resolve(tracks);
+    });
+  });
+}
+
+async function sendTrackInfo(res, remoteUrl, backupStreamUrls, headers) {
+  const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' });
+  try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
+  const tracks = await probeTracksWithFfmpeg(result.successfulUrl || remoteUrl, headers);
+  res.json(tracks);
+}
+
+function selectedTrackIndex(value) {
+  const index = Number(value);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function hasSelectedVodTracks(req) {
+  return selectedTrackIndex(req.query.audio_track) !== null || selectedTrackIndex(req.query.subtitle_track) !== null;
+}
+
+function buildVodOutputOptions(req) {
+  const audioTrack = selectedTrackIndex(req.query.audio_track);
+  const subtitleTrack = selectedTrackIndex(req.query.subtitle_track);
+  const options = ['-map 0:v:0?'];
+
+  if (audioTrack !== null) options.push('-map 0:' + audioTrack);
+  else options.push('-map 0:a:0?');
+  if (subtitleTrack !== null) options.push('-map 0:' + subtitleTrack);
+
+  options.push('-c:v copy');
+  options.push('-c:a aac');
+  if (subtitleTrack !== null) options.push('-c:s mov_text');
+  options.push('-f mp4');
+  options.push('-movflags frag_keyframe+empty_moov');
+  return options;
+}
+
 function createSafeCleanup(connectionId) {
   let cleanedUp = false;
   return () => {
@@ -371,14 +468,13 @@ export const proxyMpd = async (req, res) => {
 
     recordStreamStat(channel.provider_channel_id, 'MPD');
 
-    let upstream, successfulUrl;
+    let upstream;
     try {
         const result = await fetchWithBackups(upstreamUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
         });
         upstream = result.response;
-        successfulUrl = result.successfulUrl;
     } catch (e) {
         console.error(`MPD proxy failed: ${e.message}`);
         streamManager.localStreams.delete(connectionId);
@@ -798,10 +894,6 @@ export const proxyMovie = async (req, res) => {
 
     const sessionName = `${channel.name} (VOD)`;
 
-    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
-
-    recordStreamStat(channel.provider_channel_id, 'Movie');
-
     channel.provider_pass = decrypt(channel.provider_pass);
 
     const base = channel.provider_url.replace(/\/+$/, '');
@@ -813,7 +905,16 @@ export const proxyMovie = async (req, res) => {
 
     const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
 
-    const shouldTranscode = req.query.transcode === 'true';
+    if (req.query.tracks === 'true') {
+      await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
+      return;
+    }
+
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+
+    recordStreamStat(channel.provider_channel_id, 'Movie');
+
+    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -840,12 +941,7 @@ export const proxyMovie = async (req, res) => {
               .inputOptions([
                 '-headers', headerStr
               ])
-              .outputOptions([
-                '-c:v copy',
-                '-c:a aac',
-                '-f mp4',
-                '-movflags frag_keyframe+empty_moov'
-              ])
+              .outputOptions(buildVodOutputOptions(req))
               .on('error', (err) => {
                 if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                    console.error('FFmpeg VOD error:', err.message);
@@ -961,24 +1057,38 @@ export const proxySeries = async (req, res) => {
     const cachedTitle = episodeNameCache.get(epIdRaw.toString());
     const sessionName = cachedTitle ? cachedTitle : `Series Episode ${remoteEpisodeId}`;
 
+    const sourceProvider = { ...provider, password: decrypt(provider.password) };
+    let base = sourceProvider.url.replace(/\/+$/, '');
+    let remoteUrl = `${base}/series/${encodeURIComponent(sourceProvider.username)}/${encodeURIComponent(sourceProvider.password)}/${remoteEpisodeId}.${ext}`;
+    let backupStreamUrls = buildBackupUrls(sourceProvider.backup_urls, (bBase) => {
+        return `${bBase}/series/${encodeURIComponent(sourceProvider.username)}/${encodeURIComponent(sourceProvider.password)}/${remoteEpisodeId}.${ext}`;
+    }, 'Series');
+    let headers = {
+      'User-Agent': sourceProvider.user_agent || DEFAULT_USER_AGENT,
+      'Connection': 'keep-alive'
+    };
+
+    if (req.query.tracks === 'true') {
+      await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
+      return;
+    }
+
     const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName);
     if (!availableProvider) return;
 
     availableProvider.password = decrypt(availableProvider.password);
 
-    const base = availableProvider.url.replace(/\/+$/, '');
-    const remoteUrl = `${base}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
-
-    const backupStreamUrls = buildBackupUrls(availableProvider.backup_urls, (bBase) => {
+    base = availableProvider.url.replace(/\/+$/, '');
+    remoteUrl = `${base}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
+    backupStreamUrls = buildBackupUrls(availableProvider.backup_urls, (bBase) => {
         return `${bBase}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
     }, 'Series');
-
-    const headers = {
+    headers = {
       'User-Agent': availableProvider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
 
-    const shouldTranscode = req.query.transcode === 'true';
+    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -1004,12 +1114,7 @@ export const proxySeries = async (req, res) => {
               .inputOptions([
                 '-headers', headerStr
               ])
-              .outputOptions([
-                '-c:v copy',
-                '-c:a aac',
-                '-f mp4',
-                '-movflags frag_keyframe+empty_moov'
-              ])
+              .outputOptions(buildVodOutputOptions(req))
               .on('error', (err) => {
                 if (err.message && !err.message.includes('Output stream closed') && !err.message.includes('SIGKILL')) {
                    console.error('FFmpeg Series error:', err.message);

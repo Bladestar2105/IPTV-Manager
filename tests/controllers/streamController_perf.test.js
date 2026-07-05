@@ -1,12 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+import fs from 'fs';
+import path from 'path';
 import * as streamController from '../../src/controllers/streamController.js';
 import streamManager from '../../src/services/streamManager.js';
 import db from '../../src/database/db.js';
 import * as authService from '../../src/services/authService.js';
 import fetch from 'node-fetch';
+import { spawn } from 'child_process';
 
 // Mock dependencies
 vi.mock('node-fetch');
+vi.mock('child_process', () => ({
+  spawn: vi.fn()
+}));
 vi.mock('../../src/services/streamManager.js', () => ({
   default: {
     add: vi.fn(),
@@ -105,6 +112,16 @@ vi.mock('fluent-ffmpeg', () => {
     };
 });
 
+function mockFfmpegProbe(stderrText) {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = vi.fn();
+  spawn.mockReturnValueOnce(child);
+  process.nextTick(() => {
+    child.stderr.emit('data', Buffer.from(stderrText));
+    child.emit('close', 0);
+  });
+}
 
 describe('Stream Controller Performance (proxyLive)', () => {
   let req, res;
@@ -125,6 +142,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
       sendStatus: vi.fn(),
       setHeader: vi.fn(),
       send: vi.fn(),
+      json: vi.fn(),
       status: vi.fn(),
     };
 
@@ -270,5 +288,51 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 300-400/1000');
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+  });
+
+  it('should return probed VOD tracks without opening a stream session', async () => {
+    req.params.ext = 'mkv';
+    req.query.tracks = 'true';
+    req.path = '/movie/user/pass/1.mkv';
+
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      url: 'http://upstream.com/movie/puser/ppass/remote1.mkv',
+      headers: { get: vi.fn() },
+      body: { destroy: vi.fn(), pipe: vi.fn(), on: vi.fn() },
+    });
+    mockFfmpegProbe(`
+Input #0, matroska,webm, from 'movie.mkv':
+  Stream #0:0: Video: h264
+  Stream #0:1(deu): Audio: ac3, 48000 Hz, 5.1
+  Stream #0:2(eng): Audio: aac, 48000 Hz, stereo
+  Stream #0:3(deu): Subtitle: subrip
+`);
+
+    await streamController.proxyMovie(req, res);
+
+    expect(streamManager.add).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({
+      audio: [
+        { index: 1, language: 'deu', codec: 'ac3', label: 'deu - ac3' },
+        { index: 2, language: 'eng', codec: 'aac', label: 'eng - aac' },
+      ],
+      subtitles: [
+        { index: 3, language: 'deu', codec: 'subrip', label: 'deu - subrip' },
+      ],
+    });
+  });
+
+  it('should map selected VOD audio and subtitle tracks through ffmpeg', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'src/controllers/streamController.js'), 'utf8');
+
+    expect(source).toContain('function buildVodOutputOptions(req)');
+    expect(source).toContain('req.query.audio_track');
+    expect(source).toContain('req.query.subtitle_track');
+    expect(source).toContain("options.push('-map 0:' + audioTrack)");
+    expect(source).toContain("options.push('-map 0:' + subtitleTrack)");
+    expect(source).toContain("options.push('-c:s mov_text')");
   });
 });
