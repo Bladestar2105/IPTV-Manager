@@ -77,6 +77,17 @@ test('browser player exposes audio and subtitle track selection when tracks exis
   expect(playerJs).toContain('video.onloadedmetadata = updateNativeTrackControls');
 });
 
+test('browser player detects DASH streams from URL and channel metadata', () => {
+  const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
+
+  expect(playerJs).toContain('function isMpdStream(stream, url)');
+  expect(playerJs).toContain('stream.container_extension');
+  expect(playerJs).toContain('stream.mime_type');
+  expect(playerJs).toContain("ext === 'mpd' || ext === 'dash'");
+  expect(playerJs).toContain("url.indexOf('/live/mpd/') !== -1");
+  expect(playerJs).toContain('if (isMpdStream(stream, url))');
+});
+
 test('browser player renders channel lists before background EPG load completes', () => {
   const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
 

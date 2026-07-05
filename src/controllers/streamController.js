@@ -278,13 +278,6 @@ function attachStreamHeartbeat(upstreamBody, connectionId) {
   });
 }
 
-
-function isBrowser(req) {
-  const ua = (req.headers['user-agent'] || '');
-  if (!/Mozilla\//i.test(ua)) return false;
-  return /Chrome|Firefox|Safari|Edge|OPR|Opera|Vivaldi|Brave|SamsungBrowser|UCBrowser|MSIE|Trident/i.test(ua);
-}
-
 // Helper for failover fetching
 async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const urls = [primaryUrl, ...(backupUrls || [])];
@@ -820,7 +813,7 @@ export const proxyMovie = async (req, res) => {
 
     const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
 
-    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
+    const shouldTranscode = req.query.transcode === 'true';
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -985,7 +978,7 @@ export const proxySeries = async (req, res) => {
       'Connection': 'keep-alive'
     };
 
-    const shouldTranscode = (req.query.transcode === 'true') || (isBrowser(req) && /^(avi|mkv)$/i.test(ext));
+    const shouldTranscode = req.query.transcode === 'true';
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };

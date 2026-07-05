@@ -51,6 +51,20 @@ vi.mock('../../src/database/db.js', () => {
                 }])
             };
         }
+        if (query.includes('SELECT * FROM providers WHERE id = ?')) {
+            return {
+                get: vi.fn().mockReturnValue({
+                    id: 1,
+                    user_id: 1,
+                    url: 'http://upstream.com',
+                    username: 'puser',
+                    password: 'ppass',
+                    max_connections: 10,
+                    backup_urls: null,
+                    user_agent: 'TestAgent',
+                })
+            };
+        }
         if (query.includes('SELECT id FROM stream_stats')) {
            return { get: vi.fn().mockReturnValue({ id: 50 }), run: vi.fn() };
         }
@@ -176,5 +190,85 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(streamManager.add).toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+
+  it('should proxy MKV VOD range requests without browser auto-transcode', async () => {
+    req.params.ext = 'mkv';
+    req.path = '/movie/user/pass/1.mkv';
+    req.headers = {
+      range: 'bytes=100-200',
+      'user-agent': 'Mozilla/5.0 Firefox/140',
+    };
+    res.headersSent = false;
+
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 206,
+      url: 'http://upstream.com/movie/puser/ppass/remote1.mkv',
+      headers: {
+        get: vi.fn((name) => {
+          const values = {
+            'content-type': 'video/x-matroska',
+            'content-length': '101',
+            'content-range': 'bytes 100-200/1000',
+            'accept-ranges': 'bytes',
+          };
+          return values[String(name).toLowerCase()] || null;
+        }),
+      },
+      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
+    });
+
+    await streamController.proxyMovie(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/movie/puser/ppass/remote1.mkv'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Range: 'bytes=100-200' }),
+      })
+    );
+    expect(res.status).toHaveBeenCalledWith(206);
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 100-200/1000');
+    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+  });
+
+  it('should proxy MKV series range requests without browser auto-transcode', async () => {
+    req.params = { episode_id: '1000000001', ext: 'mkv' };
+    req.path = '/series/user/pass/1000000001.mkv';
+    req.headers = {
+      range: 'bytes=300-400',
+      'user-agent': 'Mozilla/5.0 Firefox/140',
+    };
+    res.headersSent = false;
+
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 206,
+      url: 'http://upstream.com/series/puser/ppass/1.mkv',
+      headers: {
+        get: vi.fn((name) => {
+          const values = {
+            'content-type': 'video/x-matroska',
+            'content-length': '101',
+            'content-range': 'bytes 300-400/1000',
+            'accept-ranges': 'bytes',
+          };
+          return values[String(name).toLowerCase()] || null;
+        }),
+      },
+      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
+    });
+
+    await streamController.proxySeries(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/series/puser/ppass/1.mkv'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Range: 'bytes=300-400' }),
+      })
+    );
+    expect(res.status).toHaveBeenCalledWith(206);
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 300-400/1000');
+    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
   });
 });

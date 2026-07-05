@@ -104,4 +104,32 @@ describe('xtreamController - playerChannelsJson', () => {
     expect(output[0].type).toBe('movie');
     expect(output[0].url).toContain('/movie/token/auth/100.mp4');
   });
+
+  it('should expose DASH live streams as MPD manifest URLs', async () => {
+    req.query.token = 'dash-test';
+    const user = { id: 1, is_share_guest: false };
+    getXtreamUser.mockResolvedValue(user);
+
+    const dashChannel = {
+      user_channel_id: 101,
+      name: 'Dash Channel',
+      logo: '',
+      epg_channel_id: 'dash1',
+      manual_epg_id: null,
+      stream_type: 'live',
+      mime_type: 'DASH',
+      category_name: 'Live',
+      tv_archive: 0,
+      tv_archive_duration: 0,
+    };
+
+    mockDb.prepare.mockReturnValue({ iterate: vi.fn().mockReturnValue([dashChannel]) });
+
+    await playerChannelsJson(req, res);
+
+    const output = JSON.parse(res.send.mock.calls[0][0]);
+
+    expect(output[0].url).toBe('http://localhost/live/mpd/token/auth/101/manifest.mpd?token=dash-test');
+    expect(output[0].container_extension).toBe('dash');
+  });
 });

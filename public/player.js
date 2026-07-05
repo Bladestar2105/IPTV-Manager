@@ -1237,6 +1237,14 @@ function escapeHtml(unsafe) {
     return unsupportedAudio.some(function(c) { return codecLower.includes(c); });
   }
 
+  function isMpdStream(stream, url) {
+    var ext = String((stream && (stream.container_extension || stream.mime_type)) || '').trim().toLowerCase();
+    url = String(url || '');
+    return ext === 'mpd' || ext === 'dash' || ext === 'application/dash+xml' ||
+      /\.mpd($|\?)/i.test(url) ||
+      url.indexOf('/live/mpd/') !== -1;
+  }
+
   function playStream(stream) {
     activeStream = stream;
     retryCount = 0;
@@ -1271,7 +1279,7 @@ function escapeHtml(unsafe) {
     }
 
     // ─── Playback Strategy ───
-    if (url.includes('.mpd')) {
+    if (isMpdStream(stream, url)) {
       initDashPlayer(url);
     } else if (url.includes('.ts')) {
       if (wantTranscode) {

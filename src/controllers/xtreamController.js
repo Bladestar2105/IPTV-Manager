@@ -910,17 +910,19 @@ export const playerChannelsJson = async (req, res) => {
           }
           name = name.trim();
 
+          const containerExtension = String(ch.mime_type || '').trim().toLowerCase();
+          const isDashStream = containerExtension === 'mpd' || containerExtension === 'dash' || containerExtension === 'application/dash+xml';
           let streamUrl;
           let type = 'live';
 
           if (ch.stream_type === 'movie') {
              type = 'movie';
-             streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
+             streamUrl = moviePrefix + ch.user_channel_id + '.' + (containerExtension || 'mp4') + tokenParam;
           } else if (ch.stream_type === 'series') {
              type = 'series';
-             streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
+             streamUrl = seriesPrefix + ch.user_channel_id + '.' + (containerExtension || 'mp4') + tokenParam;
           } else {
-             if (ch.mime_type === 'mpd') {
+             if (isDashStream) {
                  streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
              } else {
                  streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;
@@ -934,6 +936,7 @@ export const playerChannelsJson = async (req, res) => {
             epg_id: epgId,
             url: streamUrl,
             type,
+            container_extension: containerExtension || (type === 'live' ? 'ts' : 'mp4'),
             tv_archive: ch.tv_archive || 0,
             tv_archive_duration: ch.tv_archive_duration || 0
           };
