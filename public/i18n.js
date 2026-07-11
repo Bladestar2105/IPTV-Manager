@@ -390,6 +390,7 @@ const translations = {
     weekly: 'Weekly',
     autoAddNewCategories: 'Auto-add new categories',
     autoAddChannelsToCategories: 'Auto-add channels to categories',
+    syncSeriesEpisodes: 'Sync series episodes (for M3U playlists)',
     saveConfiguration: 'Save Configuration',
 
     // Import/Export
@@ -925,6 +926,7 @@ const translations = {
     weekly: 'Wöchentlich',
     autoAddNewCategories: 'Neue Kategorien automatisch hinzufügen',
     autoAddChannelsToCategories: 'Kanäle automatisch hinzufügen',
+    syncSeriesEpisodes: 'Serien-Episoden synchronisieren (für M3U-Listen)',
     saveConfiguration: 'Konfiguration speichern',
 
     // Import/Export
@@ -1460,6 +1462,7 @@ const translations = {
     weekly: 'Hebdomadaire',
     autoAddNewCategories: 'Ajouter auto. nouvelles catégories',
     autoAddChannelsToCategories: 'Ajouter auto. chaînes aux catégories',
+    syncSeriesEpisodes: 'Synchroniser les épisodes de séries (pour listes M3U)',
     saveConfiguration: 'Enregistrer la configuration',
 
     // Import/Export
@@ -1995,6 +1998,7 @@ const translations = {
     weekly: 'Εβδομαδιαία',
     autoAddNewCategories: 'Αυτόματη προσθήκη νέων κατηγοριών',
     autoAddChannelsToCategories: 'Αυτόματη προσθήκη καναλιών',
+    syncSeriesEpisodes: 'Συγχρονισμός επεισοδίων σειρών (για λίστες M3U)',
     saveConfiguration: 'Αποθήκευση διαμόρφωσης',
 
     // Import/Export

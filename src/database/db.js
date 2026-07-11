@@ -308,6 +308,9 @@ export function initDb(isPrimary) {
             if (typeof migrations.migrateEpgMappingJobs === 'function') {
                 migrations.migrateEpgMappingJobs(db);
             }
+            if (typeof migrations.migrateSeriesEpisodes === 'function') {
+                migrations.migrateSeriesEpisodes(db);
+            }
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

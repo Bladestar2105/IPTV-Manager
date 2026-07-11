@@ -6,6 +6,7 @@ import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
+import { providerSourceKey } from '../utils/helpers.js';
 
 const getClonedProviderChannelName = (channel) => {
   if (typeof channel.name === 'string' && channel.name.trim()) return channel.name;
@@ -487,6 +488,7 @@ export const deleteUser = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
+    const ownedProviderUrls = db.prepare('SELECT url FROM providers WHERE user_id = ?').all(id).map(p => p.url);
 
     db.transaction(() => {
       // 1. Delete owned providers and their dependencies (optimized bulk deletes)
@@ -500,6 +502,20 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM category_mappings WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
       db.prepare('DELETE FROM provider_icon_cache WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)').run(id);
       db.prepare('DELETE FROM providers WHERE user_id = ?').run(id);
+
+      // Episode data is shared per upstream panel; drop it only for panels
+      // that no remaining provider row points at.
+      if (ownedProviderUrls.length > 0) {
+        const remainingKeys = new Set(db.prepare('SELECT url FROM providers').all().map(p => providerSourceKey(p.url)));
+        const deleteEpisodesBySource = db.prepare('DELETE FROM provider_series_episodes WHERE source_key = ?');
+        const deleteStateBySource = db.prepare('DELETE FROM provider_series_state WHERE source_key = ?');
+        for (const key of new Set(ownedProviderUrls.map(u => providerSourceKey(u)))) {
+          if (!remainingKeys.has(key)) {
+            deleteEpisodesBySource.run(key);
+            deleteStateBySource.run(key);
+          }
+        }
+      }
 
       // 2. Delete user data
       db.prepare('DELETE FROM user_channels WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)').run(id);

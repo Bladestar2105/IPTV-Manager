@@ -1,7 +1,7 @@
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
-import { isSafeUrl, isAdultCategory, redactUrl } from '../utils/helpers.js';
+import { isSafeUrl, isAdultCategory, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
@@ -382,6 +382,7 @@ export const deleteProvider = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
+    const providerRow = db.prepare('SELECT url FROM providers WHERE id = ?').get(id);
 
     db.transaction(() => {
       db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
@@ -394,6 +395,18 @@ export const deleteProvider = (req, res) => {
       db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM provider_icon_cache WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM providers WHERE id = ?').run(id);
+
+      // Episode data is shared per upstream panel; drop it only when no other
+      // provider row points at the same panel anymore.
+      if (providerRow) {
+        const sourceKey = providerSourceKey(providerRow.url);
+        const stillUsed = db.prepare('SELECT id, url FROM providers').all()
+          .some(p => providerSourceKey(p.url) === sourceKey);
+        if (!stillUsed) {
+          db.prepare('DELETE FROM provider_series_episodes WHERE source_key = ?').run(sourceKey);
+          db.prepare('DELETE FROM provider_series_state WHERE source_key = ?').run(sourceKey);
+        }
+      }
     })();
 
     res.json({success: true});

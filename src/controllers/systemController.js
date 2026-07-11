@@ -656,7 +656,7 @@ export const getSyncConfig = (req, res) => {
 export const createSyncConfig = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
+    const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes } = req.body;
 
     if (!provider_id || !user_id) {
       return res.status(400).json({error: 'provider_id and user_id required'});
@@ -665,8 +665,8 @@ export const createSyncConfig = (req, res) => {
     const nextSync = calculateNextSync(sync_interval || 'daily');
 
     const info = db.prepare(`
-      INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, next_sync, auto_add_categories, auto_add_channels)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, next_sync, auto_add_categories, auto_add_channels, sync_series_episodes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       provider_id,
       user_id,
@@ -674,7 +674,8 @@ export const createSyncConfig = (req, res) => {
       sync_interval || 'daily',
       nextSync,
       auto_add_categories ? 1 : 0,
-      auto_add_channels ? 1 : 0
+      auto_add_channels ? 1 : 0,
+      sync_series_episodes === undefined ? 1 : (sync_series_episodes ? 1 : 0)
     );
 
     res.json({id: info.lastInsertRowid});
@@ -687,7 +688,7 @@ export const updateSyncConfig = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { enabled, sync_interval, auto_add_categories, auto_add_channels } = req.body;
+    const { enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes } = req.body;
 
     const config = db.prepare('SELECT * FROM sync_configs WHERE id = ?').get(id);
     if (!config) return res.status(404).json({error: 'not found'});
@@ -696,7 +697,7 @@ export const updateSyncConfig = (req, res) => {
 
     db.prepare(`
       UPDATE sync_configs
-      SET enabled = ?, sync_interval = ?, next_sync = ?, auto_add_categories = ?, auto_add_channels = ?
+      SET enabled = ?, sync_interval = ?, next_sync = ?, auto_add_categories = ?, auto_add_channels = ?, sync_series_episodes = ?
       WHERE id = ?
     `).run(
       enabled !== undefined ? (enabled ? 1 : 0) : config.enabled,
@@ -704,6 +705,7 @@ export const updateSyncConfig = (req, res) => {
       nextSync,
       auto_add_categories !== undefined ? (auto_add_categories ? 1 : 0) : config.auto_add_categories,
       auto_add_channels !== undefined ? (auto_add_channels ? 1 : 0) : config.auto_add_channels,
+      sync_series_episodes !== undefined ? (sync_series_episodes ? 1 : 0) : (config.sync_series_episodes === undefined || config.sync_series_episodes === null ? 1 : config.sync_series_episodes),
       id
     );
 

@@ -2048,6 +2048,7 @@ async function showSyncConfigModal(providerId) {
   document.getElementById('sync-interval').value = config ? config.sync_interval : 'daily';
   document.getElementById('sync-auto-categories').checked = config ? config.auto_add_categories : true;
   document.getElementById('sync-auto-channels').checked = config ? config.auto_add_channels : true;
+  document.getElementById('sync-series-episodes').checked = config ? (config.sync_series_episodes === undefined || config.sync_series_episodes === null ? true : !!config.sync_series_episodes) : true;
   
   // Show last sync info if available
   const lastSyncInfo = document.getElementById('last-sync-info');
@@ -2073,10 +2074,11 @@ async function saveSyncConfig(e) {
   const syncInterval = form['sync-interval'].value;
   const autoCategories = form['sync-auto-categories'].checked;
   const autoChannels = form['sync-auto-channels'].checked;
-  
+  const syncSeriesEpisodes = form['sync-series-episodes'].checked;
+
   try {
     const config = await loadSyncConfig(providerId, userId);
-    
+
     if (config) {
       // Update existing
       await fetchJSON(`/api/sync-configs/${config.id}`, {
@@ -2086,7 +2088,8 @@ async function saveSyncConfig(e) {
           enabled,
           sync_interval: syncInterval,
           auto_add_categories: autoCategories,
-          auto_add_channels: autoChannels
+          auto_add_channels: autoChannels,
+          sync_series_episodes: syncSeriesEpisodes
         })
       });
     } else {
@@ -2100,7 +2103,8 @@ async function saveSyncConfig(e) {
           enabled,
           sync_interval: syncInterval,
           auto_add_categories: autoCategories,
-          auto_add_channels: autoChannels
+          auto_add_channels: autoChannels,
+          sync_series_episodes: syncSeriesEpisodes
         })
       });
     }

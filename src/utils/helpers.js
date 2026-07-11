@@ -150,6 +150,23 @@ export function isAdultCategory(name) {
   return wordPattern.test(name) || specialPattern.test(name);
 }
 
+// Canonical identity of an upstream panel. Providers added by different users
+// with their own credentials but the same URL share one source key so
+// panel-wide data (series episodes) is stored and fetched only once.
+export function providerSourceKey(url) {
+  let raw = String(url || '').trim();
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) raw = 'http://' + raw;
+  try {
+    const parsed = new URL(raw);
+    const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}:${port}${path}`;
+  } catch {
+    return raw.replace(/\/+$/, '').toLowerCase();
+  }
+}
+
 let settingsCache = new Map();
 
 export function clearSettingsCache() {

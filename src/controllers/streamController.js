@@ -8,7 +8,7 @@ import ffmpegPath from 'ffmpeg-static';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
+import { getBaseUrl, isSafeUrl, safeLookup, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { fetchSafe } from '../utils/network.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
@@ -1103,8 +1103,23 @@ export const proxySeries = async (req, res) => {
 
     if (user.is_share_guest) return res.sendStatus(403);
 
-    const cachedTitle = episodeNameCache.get(epIdRaw.toString());
-    const sessionName = cachedTitle ? cachedTitle : `Series Episode ${remoteEpisodeId}`;
+    let sessionName = episodeNameCache.get(epIdRaw.toString());
+    if (!sessionName) {
+      // Fallback to synced episode data (M3U playback skips get_series_info)
+      try {
+        const epRow = db.prepare(`
+          SELECT e.season, e.episode_num, e.title, pc.name as series_name
+          FROM provider_series_episodes e
+          LEFT JOIN provider_channels pc ON pc.provider_id = ? AND pc.remote_stream_id = e.series_remote_id AND pc.stream_type = 'series'
+          WHERE e.source_key = ? AND e.remote_episode_id = ?
+        `).get(providerId, providerSourceKey(provider.url), remoteEpisodeId);
+        if (epRow) {
+          const epCode = `S${String(epRow.season || 0).padStart(2, '0')} E${String(epRow.episode_num || 0).padStart(2, '0')}`;
+          sessionName = `${epRow.series_name || 'Series'} ${epCode}${epRow.title ? ` - ${epRow.title}` : ''}`;
+        }
+      } catch { /* name lookup is cosmetic only */ }
+    }
+    if (!sessionName) sessionName = `Series Episode ${remoteEpisodeId}`;
 
     const sourceProvider = { ...provider, password: decrypt(provider.password) };
     let base = sourceProvider.url.replace(/\/+$/, '');

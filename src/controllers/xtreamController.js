@@ -4,7 +4,7 @@ import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels, getEpgXmlForChannels } from '../services/epgService.js';
 import { channelsJsonCache } from '../services/cacheService.js';
 import { decrypt } from '../utils/crypto.js';
-import { getBaseUrl } from '../utils/helpers.js';
+import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
 import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
@@ -665,6 +665,7 @@ export const getPlaylist = async (req, res) => {
       SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.epg_channel_id, pc.stream_type, pc.mime_type,
         pc.tv_archive,
         pc.tv_archive_duration,
+        pc.provider_id, pc.remote_stream_id,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_categories cat
       JOIN user_channels uc ON cat.id = uc.user_category_id
@@ -710,6 +711,21 @@ export const getPlaylist = async (req, res) => {
     const moviePrefix = useTokenAuth ? `${baseUrl}/movie/token/auth/` : `${baseUrl}/movie/${encUser}/${encPass}/`;
     const seriesPrefix = useTokenAuth ? `${baseUrl}/series/token/auth/` : `${baseUrl}/series/${encUser}/${encPass}/`;
 
+    // Episodes synced from the provider (see syncSeriesEpisodes). Series are
+    // expanded into one entry per episode like a native Xtream panel does.
+    // Episodes are stored per upstream panel (source_key), shared between
+    // provider rows that point at the same panel with different credentials.
+    const episodesStmt = db.prepare(`
+      SELECT remote_episode_id, season, episode_num, container_extension, logo
+      FROM provider_series_episodes
+      WHERE source_key = ? AND series_remote_id = ?
+      ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
+    `);
+    const sourceKeyByProviderId = new Map(
+      db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, providerSourceKey(p.url)])
+    );
+    const EPISODE_ID_OFFSET = 1000000000; // must match proxySeries decoding
+
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
@@ -719,6 +735,46 @@ export const getPlaylist = async (req, res) => {
       const group = ch.category_name || '';
       const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
       const streamId = ch.user_channel_id;
+
+      const safeName = sanitizeM3uName(name);
+      const safeLogo = sanitizeM3uTag(logo);
+      const safeGroup = sanitizeM3uTag(group);
+      const groupId = ch.user_category_id || '';
+
+      let finalName = String(name);
+      if (finalName.indexOf('\n') !== -1 || finalName.indexOf('\r') !== -1) {
+          finalName = finalName.replace(/[\r\n]+/g, ' ');
+      }
+      finalName = finalName.trim();
+
+      if (ch.stream_type === 'series') {
+        const episodes = episodesStmt.all(sourceKeyByProviderId.get(ch.provider_id) || '', ch.remote_stream_id);
+        if (episodes.length > 0) {
+          for (const ep of episodes) {
+            const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
+            const epName = `${finalName} ${epCode}`;
+            const epLogo = ep.logo ? sanitizeM3uTag(ep.logo) : safeLogo;
+            let episodeUrl = seriesPrefix + (ch.provider_id * EPISODE_ID_OFFSET + ep.remote_episode_id) + '.' + (ep.container_extension || 'mp4');
+            if (useTokenAuth) {
+              episodeUrl += tokenParam;
+            }
+
+            if (type === 'm3u_plus') {
+              buffer += `#EXTINF:-1 tvg-id="" tvg-name="${sanitizeM3uName(epName)}" tvg-logo="${epLogo}" group-id="${groupId}" group-title="${safeGroup}",${epName}\n`;
+            } else {
+              buffer += `#EXTINF:-1,${epName}\n`;
+            }
+            buffer += episodeUrl + '\n';
+
+            if (buffer.length >= FLUSH_LIMIT) {
+                res.write(buffer);
+                buffer = '';
+            }
+          }
+          continue;
+        }
+        // Episodes not synced (yet): fall through to the legacy series entry.
+      }
 
       let streamUrl;
       if (ch.stream_type === 'movie') {
@@ -731,17 +787,6 @@ export const getPlaylist = async (req, res) => {
       if (useTokenAuth) {
         streamUrl += tokenParam;
       }
-
-      const safeName = sanitizeM3uName(name);
-      const safeLogo = sanitizeM3uTag(logo);
-      const safeGroup = sanitizeM3uTag(group);
-      const groupId = ch.user_category_id || '';
-
-      let finalName = String(name);
-      if (finalName.indexOf('\n') !== -1 || finalName.indexOf('\r') !== -1) {
-          finalName = finalName.replace(/[\r\n]+/g, ' ');
-      }
-      finalName = finalName.trim();
 
       if (type === 'm3u_plus') {
         buffer += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}",${finalName}\n`;

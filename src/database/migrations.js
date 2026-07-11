@@ -845,3 +845,60 @@ export function migrateEpgMappingJobs(db) {
     console.error('EPG mapping jobs migration error:', e);
   }
 }
+
+export function migrateSeriesEpisodes(db) {
+  try {
+    // Episode data is keyed by the upstream panel (source_key = normalized
+    // provider URL), not by provider row: users sharing the same panel with
+    // their own credentials share one copy of the episode catalog.
+    // An early uncommitted schema keyed these tables by provider_id; since the
+    // tables are a rebuildable cache, drop and recreate them in that case.
+    for (const table of ['provider_series_episodes', 'provider_series_state']) {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+      if (cols.length > 0 && !cols.includes('source_key')) {
+        db.exec(`DROP TABLE ${table}`);
+        console.log(`✅ DB Migration: ${table} rebuilt with source_key schema`);
+      }
+    }
+
+    // Episodes per upstream series, populated by the episode sync so that
+    // get.php can expand series into playable per-episode entries.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_series_episodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_key TEXT NOT NULL,
+        series_remote_id INTEGER NOT NULL,
+        remote_episode_id INTEGER NOT NULL,
+        season INTEGER DEFAULT 0,
+        episode_num INTEGER DEFAULT 0,
+        title TEXT DEFAULT '',
+        container_extension TEXT DEFAULT 'mp4',
+        logo TEXT DEFAULT '',
+        added TEXT DEFAULT '',
+        UNIQUE(source_key, remote_episode_id)
+      )
+    `);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_pse_series ON provider_series_episodes(source_key, series_remote_id, season, episode_num)');
+
+    // Per-series sync state (last_modified from get_series) so unchanged
+    // series are skipped on subsequent episode syncs.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_series_state (
+        source_key TEXT NOT NULL,
+        series_remote_id INTEGER NOT NULL,
+        last_modified TEXT DEFAULT '',
+        synced_at INTEGER DEFAULT 0,
+        PRIMARY KEY (source_key, series_remote_id)
+      )
+    `);
+
+    const tableInfo = db.prepare("PRAGMA table_info(sync_configs)").all();
+    const columns = tableInfo.map(c => c.name);
+    if (!columns.includes('sync_series_episodes')) {
+      db.exec('ALTER TABLE sync_configs ADD COLUMN sync_series_episodes INTEGER DEFAULT 1');
+      console.log('✅ DB Migration: sync_series_episodes column added to sync_configs');
+    }
+  } catch (e) {
+    console.error('Series episodes migration error:', e);
+  }
+}

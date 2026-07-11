@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl } from '../src/utils/helpers.js';
+import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey } from '../src/utils/helpers.js';
 
 describe('isAdultCategory', () => {
   const adultKeywords = [
@@ -315,5 +315,30 @@ describe('getBaseUrl', () => {
       app: { get: vi.fn().mockReturnValue(false) }
     };
     expect(getBaseUrl(req)).toBe('https://direct.com');
+  });
+});
+
+describe('providerSourceKey', () => {
+  it('normalizes equivalent URLs of the same panel to one key', () => {
+    expect(providerSourceKey('http://panel.example:8080')).toBe('http://panel.example:8080');
+    expect(providerSourceKey('http://PANEL.example:8080/')).toBe('http://panel.example:8080');
+    expect(providerSourceKey('panel.example:8080')).toBe('http://panel.example:8080');
+  });
+
+  it('applies default ports', () => {
+    expect(providerSourceKey('http://panel.example')).toBe('http://panel.example:80');
+    expect(providerSourceKey('https://panel.example')).toBe('https://panel.example:443');
+  });
+
+  it('keeps different panels apart', () => {
+    expect(providerSourceKey('http://panel.example:8080')).not.toBe(providerSourceKey('http://panel.example:8081'));
+    expect(providerSourceKey('http://a.example')).not.toBe(providerSourceKey('http://b.example'));
+    expect(providerSourceKey('http://panel.example/sub')).not.toBe(providerSourceKey('http://panel.example'));
+  });
+
+  it('handles empty input', () => {
+    expect(providerSourceKey('')).toBe('');
+    expect(providerSourceKey(null)).toBe('');
+    expect(providerSourceKey(undefined)).toBe('');
   });
 });

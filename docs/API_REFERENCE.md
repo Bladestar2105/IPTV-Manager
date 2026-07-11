@@ -127,6 +127,14 @@ all providers.
 - `POST /api/sync-configs`
 - `PUT /api/sync-configs/:id`
 - `DELETE /api/sync-configs/:id`
+
+Sync configs accept an optional `sync_series_episodes` flag (default `1`).
+When enabled, each provider sync also fetches series episodes via
+`get_series_info` in the background (incremental, gated by each series'
+`last_modified`) so `get.php` playlists can list every episode. Episode data
+is stored once per upstream panel (keyed by the normalized provider URL):
+provider entries that point at the same panel with different credentials
+share the episode catalog instead of fetching and storing it per account.
 - `GET /api/sync-logs`
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`
@@ -173,6 +181,12 @@ needed. Pass `force: true` to force the underlying updater.
 `xmltv.php` supports streaming HTTP gzip compression when the client sends
 `Accept-Encoding: gzip`. Custom clients can also request the IPTV-Manager
 extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
+
+`get.php` expands each series into one playlist entry per episode
+(`<Series Name> SXX EXX`) like a native Xtream panel, using episodes cached by
+the provider episode sync (see `sync_series_episodes` on sync configs). Series
+whose episodes have not been synced yet fall back to a single series-level
+entry.
 
 ## Stream Proxy
 

@@ -40,6 +40,7 @@ vi.mock('../../src/utils/crypto.js', () => ({
 vi.mock('../../src/utils/helpers.js', () => ({
   getBaseUrl: vi.fn().mockReturnValue('http://localhost'),
   safeLookup: vi.fn((hostname, options, callback) => callback(null, '127.0.0.1', 4)),
+  providerSourceKey: vi.fn((url) => String(url || '')),
 }));
 
 vi.mock('../../src/config/constants.js', () => ({
@@ -85,6 +86,7 @@ describe('xtreamController share compatibility', () => {
     });
 
     mockDb.prepare.mockReturnValue({
+      all: vi.fn().mockReturnValue([]),
       iterate: vi.fn().mockReturnValue([
         {
           user_channel_id: 100,

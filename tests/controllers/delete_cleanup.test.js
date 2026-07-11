@@ -39,7 +39,8 @@ vi.mock('../../src/utils/network.js', () => ({
 
 vi.mock('../../src/utils/helpers.js', () => ({
   isSafeUrl: vi.fn(),
-  isAdultCategory: vi.fn()
+  isAdultCategory: vi.fn(),
+  providerSourceKey: vi.fn((url) => String(url || ''))
 }));
 
 vi.mock('../../src/services/syncService.js', () => ({
@@ -79,7 +80,7 @@ describe('delete cleanup regressions', () => {
         return { changes: 1 };
       }),
       get: vi.fn(),
-      all: vi.fn(),
+      all: vi.fn(() => []),
       iterate: vi.fn()
     }));
   });
@@ -96,6 +97,38 @@ describe('delete cleanup regressions', () => {
     expect(iconCacheIndex).toBeGreaterThanOrEqual(0);
     expect(providerIndex).toBeGreaterThan(iconCacheIndex);
     expect(res.json).toHaveBeenCalledWith({ success: true });
+  });
+
+  it('drops shared episode data only when the last provider of a panel is deleted', async () => {
+    const { deleteProvider } = await import('../../src/controllers/providerController.js');
+
+    // Another provider row still points at the same panel URL -> keep episodes
+    mocks.db.prepare.mockImplementation((sql) => ({
+      run: vi.fn((...params) => {
+        mocks.dbCalls.push({ sql, params });
+        return { changes: 1 };
+      }),
+      get: vi.fn(() => ({ url: 'http://panel.a' })),
+      all: vi.fn(() => [{ id: 99, url: 'http://panel.a' }]),
+      iterate: vi.fn()
+    }));
+    deleteProvider({ user: { is_admin: true }, params: { id: '42' } }, makeRes());
+    expect(sqlIndex('DELETE FROM provider_series_episodes WHERE source_key = ?')).toBe(-1);
+
+    // No provider row left for the panel -> episodes and state are removed
+    mocks.dbCalls.length = 0;
+    mocks.db.prepare.mockImplementation((sql) => ({
+      run: vi.fn((...params) => {
+        mocks.dbCalls.push({ sql, params });
+        return { changes: 1 };
+      }),
+      get: vi.fn(() => ({ url: 'http://panel.a' })),
+      all: vi.fn(() => []),
+      iterate: vi.fn()
+    }));
+    deleteProvider({ user: { is_admin: true }, params: { id: '42' } }, makeRes());
+    expect(sqlIndex('DELETE FROM provider_series_episodes WHERE source_key = ?')).toBeGreaterThanOrEqual(0);
+    expect(sqlIndex('DELETE FROM provider_series_state WHERE source_key = ?')).toBeGreaterThanOrEqual(0);
   });
 
   it('removes user-owned FK rows before deleting a user', async () => {
