@@ -203,7 +203,7 @@ export function getCookie(req, name) {
 /**
  * Redacts sensitive information from URLs for logging purposes.
  * This includes Xtream passwords in path segments, HDHomeRun tokens,
- * and password query parameters.
+ * and sensitive query parameters.
  * @param {string} url The URL to redact
  * @returns {string} The redacted URL
  */
@@ -222,15 +222,33 @@ export function redactUrl(url) {
       }
     );
 
-    // 2. Redact HDHomeRun token: /hdhr/TOKEN/...
+    // 2. Redact share-management tokens while preserving any query string.
+    redacted = redacted.replace(/(\/api\/shares\/)[^/?#]+/gi, '$1********');
+
+    // Public share slugs are bearer credentials too.
+    redacted = redacted.replace(/^((?:https?:\/\/[^/?#]+)?\/share\/)[^/?#]+/i, '$1********');
+
+    // 3. Redact HDHomeRun token: /hdhr/TOKEN/...
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
-    // 3. Redact password in query strings: ?password=... or &password=...
-    // Preserves the case of the 'password' key
-    redacted = redacted.replace(/([?&])(password)=[^&]*/gi, '$1$2=********');
+    // 4. Redact credentials in query strings while preserving key casing
+    redacted = redacted.replace(/([?&])(password|token)=[^&]*/gi, '$1$2=********');
 
     return redacted;
   } catch (e) {
     return '[redacted]';
   }
+}
+
+export function resolveAssignmentGrant({
+  categoryOwnerId,
+  providerOwnerId,
+  isAdmin = false,
+  allowExplicitAdminGrant = false
+}) {
+  if (categoryOwnerId !== null && categoryOwnerId !== undefined &&
+      providerOwnerId !== null && providerOwnerId !== undefined &&
+      Number(categoryOwnerId) === Number(providerOwnerId)) return 0;
+
+  return isAdmin && allowExplicitAdminGrant ? 1 : null;
 }

@@ -5,9 +5,8 @@ import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
 import { calculateNextSync } from '../services/syncService.js';
-import { clearSettingsCache } from '../utils/helpers.js';
 import { isIP } from 'net';
-import { isSafeUrl, cleanIp } from '../utils/helpers.js';
+import { clearSettingsCache, isSafeUrl, cleanIp, resolveAssignmentGrant } from '../utils/helpers.js';
 import si from 'systeminformation';
 import geoip from 'geoip-lite';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
@@ -439,6 +438,9 @@ export const importData = async (req, res) => {
       const providerIdMap = new Map();
       const categoryIdMap = new Map();
       const providerChannelIdMap = new Map();
+      const providerOwnerMap = new Map();
+      const categoryOwnerMap = new Map();
+      const providerChannelOwnerMap = new Map();
 
       // Pre-fetch existing users to avoid N+1 query
       const existingUsers = db.prepare('SELECT id, username FROM users').all();
@@ -515,6 +517,7 @@ export const importData = async (req, res) => {
         );
 
         providerIdMap.set(p.id, info.lastInsertRowid);
+        providerOwnerMap.set(info.lastInsertRowid, newUserId);
         stats.providers++;
       }
 
@@ -556,6 +559,7 @@ export const importData = async (req, res) => {
           ch.episode_run_time || null
         );
         providerChannelIdMap.set(ch.id, info.lastInsertRowid);
+        providerChannelOwnerMap.set(info.lastInsertRowid, providerOwnerMap.get(newProvId));
       }
 
       const insertCategoryStmt = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
@@ -567,6 +571,7 @@ export const importData = async (req, res) => {
         const catType = cat.type || 'live';
         const info = insertCategoryStmt.run(newUserId, cat.name, cat.is_adult, cat.sort_order, catType);
         categoryIdMap.set(cat.id, info.lastInsertRowid);
+        categoryOwnerMap.set(info.lastInsertRowid, newUserId);
         stats.categories++;
       }
 
@@ -586,8 +591,8 @@ export const importData = async (req, res) => {
       }
 
       const insertSyncConfigStmt = db.prepare(`
-        INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, last_sync, next_sync, auto_add_categories, auto_add_channels)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, last_sync, next_sync, auto_add_categories, auto_add_channels, sync_series_episodes, granted_by_admin)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const s of importData.sync_configs) {
@@ -595,19 +600,53 @@ export const importData = async (req, res) => {
         const newUserId = userIdMap.get(s.user_id);
 
         if (newProvId && newUserId) {
-          insertSyncConfigStmt.run(newProvId, newUserId, s.enabled, s.sync_interval, 0, 0, s.auto_add_categories, s.auto_add_channels);
+          const grant = resolveAssignmentGrant({
+            categoryOwnerId: newUserId,
+            providerOwnerId: providerOwnerMap.get(newProvId),
+            isAdmin: true,
+            allowExplicitAdminGrant: Number(s.granted_by_admin) === 1
+          });
+          insertSyncConfigStmt.run(
+            newProvId,
+            newUserId,
+            grant === null ? 0 : (s.enabled ? 1 : 0),
+            s.sync_interval,
+            0,
+            0,
+            s.auto_add_categories,
+            s.auto_add_channels,
+            s.sync_series_episodes === undefined ? 1 : (s.sync_series_episodes ? 1 : 0),
+            grant === 1 ? 1 : 0
+          );
         }
       }
 
       const userAssignments = importData.channels.filter(c => c.type === 'user_assignment');
-      const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name) VALUES (?, ?, ?, ?)');
+      const insertUserChannel = db.prepare(`
+        INSERT INTO user_channels
+          (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
 
       for (const ua of userAssignments) {
         const newUserCatId = categoryIdMap.get(ua.user_category_id);
         const newProvChannelId = providerChannelIdMap.get(ua.provider_channel_id);
 
         if (newUserCatId && newProvChannelId) {
-          insertUserChannel.run(newUserCatId, newProvChannelId, ua.sort_order, ua.custom_name || '');
+          const grant = resolveAssignmentGrant({
+            categoryOwnerId: categoryOwnerMap.get(newUserCatId),
+            providerOwnerId: providerChannelOwnerMap.get(newProvChannelId),
+            isAdmin: true,
+            allowExplicitAdminGrant: Number(ua.granted_by_admin) === 1
+          });
+          insertUserChannel.run(
+            newUserCatId,
+            newProvChannelId,
+            ua.sort_order,
+            ua.custom_name || '',
+            Number(ua.is_hidden) === 1 || grant === null ? 1 : 0,
+            grant === 1 ? 1 : 0
+          );
           stats.channels++;
         }
       }
@@ -656,26 +695,42 @@ export const getSyncConfig = (req, res) => {
 export const createSyncConfig = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes } = req.body;
+    const { provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes, allow_cross_owner } = req.body;
 
     if (!provider_id || !user_id) {
       return res.status(400).json({error: 'provider_id and user_id required'});
     }
 
+    const providerId = Number(provider_id);
+    const userId = Number(user_id);
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+    if (!provider) return res.status(404).json({error: 'Provider not found'});
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(userId)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: userId,
+      providerOwnerId: provider.user_id,
+      isAdmin: true,
+      allowExplicitAdminGrant: allow_cross_owner !== false
+    });
+
     const nextSync = calculateNextSync(sync_interval || 'daily');
 
     const info = db.prepare(`
-      INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, next_sync, auto_add_categories, auto_add_channels, sync_series_episodes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sync_configs (provider_id, user_id, enabled, sync_interval, next_sync, auto_add_categories, auto_add_channels, sync_series_episodes, granted_by_admin)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      provider_id,
-      user_id,
-      enabled ? 1 : 0,
+      providerId,
+      userId,
+      grantedByAdmin === null ? 0 : (enabled ? 1 : 0),
       sync_interval || 'daily',
       nextSync,
       auto_add_categories ? 1 : 0,
       auto_add_channels ? 1 : 0,
-      sync_series_episodes === undefined ? 1 : (sync_series_episodes ? 1 : 0)
+      sync_series_episodes === undefined ? 1 : (sync_series_episodes ? 1 : 0),
+      grantedByAdmin === 1 ? 1 : 0
     );
 
     res.json({id: info.lastInsertRowid});
@@ -688,24 +743,49 @@ export const updateSyncConfig = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes } = req.body;
+    const { enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes, allow_cross_owner } = req.body;
 
-    const config = db.prepare('SELECT * FROM sync_configs WHERE id = ?').get(id);
+    const config = db.prepare(`
+      SELECT sc.*, p.user_id AS provider_owner_id
+      FROM sync_configs sc
+      JOIN providers p ON p.id = sc.provider_id
+      WHERE sc.id = ?
+    `).get(id);
     if (!config) return res.status(404).json({error: 'not found'});
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(config.user_id)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+
+    let allowExplicitAdminGrant = Number(config.granted_by_admin) === 1;
+    if (allow_cross_owner === true) allowExplicitAdminGrant = true;
+    if (allow_cross_owner === false) allowExplicitAdminGrant = false;
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: config.user_id,
+      providerOwnerId: config.provider_owner_id,
+      isAdmin: true,
+      allowExplicitAdminGrant
+    });
+
+    let nextEnabled = enabled !== undefined ? (enabled ? 1 : 0) : config.enabled;
+    if (allow_cross_owner === false && grantedByAdmin === null) nextEnabled = 0;
+    if (grantedByAdmin === null && nextEnabled === 1) {
+      return res.status(400).json({error: 'Cross-owner sync requires explicit admin approval'});
+    }
 
     const nextSync = calculateNextSync(sync_interval || config.sync_interval);
 
     db.prepare(`
       UPDATE sync_configs
-      SET enabled = ?, sync_interval = ?, next_sync = ?, auto_add_categories = ?, auto_add_channels = ?, sync_series_episodes = ?
+      SET enabled = ?, sync_interval = ?, next_sync = ?, auto_add_categories = ?, auto_add_channels = ?, sync_series_episodes = ?, granted_by_admin = ?
       WHERE id = ?
     `).run(
-      enabled !== undefined ? (enabled ? 1 : 0) : config.enabled,
+      nextEnabled,
       sync_interval || config.sync_interval,
       nextSync,
       auto_add_categories !== undefined ? (auto_add_categories ? 1 : 0) : config.auto_add_categories,
       auto_add_channels !== undefined ? (auto_add_channels ? 1 : 0) : config.auto_add_channels,
       sync_series_episodes !== undefined ? (sync_series_episodes ? 1 : 0) : (config.sync_series_episodes === undefined || config.sync_series_episodes === null ? 1 : config.sync_series_episodes),
+      grantedByAdmin === 1 ? 1 : 0,
       id
     );
 

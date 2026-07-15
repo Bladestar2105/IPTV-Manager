@@ -59,7 +59,7 @@ export function calculateNextSync(interval) {
   }
 }
 
-export async function performSync(providerId, userId, isManual = false) {
+export async function performSync(providerId, userId, options = {}) {
   const startTime = Math.floor(Date.now() / 1000);
   let channelsAdded = 0;
   let channelsUpdated = 0;
@@ -69,10 +69,33 @@ export async function performSync(providerId, userId, isManual = false) {
 
   try {
     config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
-    if (!config && !isManual) return;
+    const isManual = options?.mode === 'manual';
+    if ((!config || Number(config.enabled) !== 1) && !isManual) {
+      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+    }
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
+    const crossOwner = Number(provider.user_id) !== Number(userId);
+    const hasPersistedGrant = Number(config?.granted_by_admin) === 1;
+    const hasManualGrant = isManual && options?.allowCrossOwner === true;
+
+    if (crossOwner && !hasPersistedGrant && !hasManualGrant) {
+      const disabled = config
+        ? db.prepare('UPDATE sync_configs SET enabled = 0 WHERE id = ? AND enabled = 1').run(config.id).changes
+        : 0;
+      db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+        'scheduler',
+        'cross_owner_sync_blocked',
+        `Blocked unapproved cross-owner sync for provider ${providerId}; disabled ${disabled} config(s)`,
+        startTime
+      );
+      console.warn(`Blocked unapproved cross-owner sync for provider ${providerId}; disabled ${disabled} config(s)`);
+      errorMessage = 'Cross-owner sync requires explicit administrator approval';
+      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+    }
+
+    const assignmentGrant = crossOwner ? 1 : 0;
 
     // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
     await checkProviderExpiry(providerId);
@@ -287,7 +310,7 @@ export async function performSync(providerId, userId, isManual = false) {
     const maxSortMap = new Map();
 
     // Prepare statement unconditionally to avoid potential undefined issues
-    const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+    const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
     const deleteUserChannel = db.prepare('DELETE FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?');
 
     if (config && config.auto_add_channels) {
@@ -324,7 +347,7 @@ export async function performSync(providerId, userId, isManual = false) {
     db.transaction(() => {
       // Pre-calculate max sort order for optimization
       const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-      let currentSortOrder = maxSortRow?.max_sort || -1;
+      let currentSortOrder = maxSortRow?.max_sort ?? -1;
 
       // 1. Process Categories
       for (const provCat of allCategories) {
@@ -587,7 +610,7 @@ export async function performSync(providerId, userId, isManual = false) {
                 if (currentMax === undefined) currentMax = -1;
                 const newSortOrder = currentMax + 1;
 
-                insertUserChannel.run(userCatId, provChannelId, newSortOrder);
+                insertUserChannel.run(userCatId, provChannelId, newSortOrder, assignmentGrant);
 
                 // Update in-memory state
                 existingAssignments.add(assignmentKey);

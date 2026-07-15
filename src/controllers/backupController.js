@@ -1,4 +1,6 @@
 import db from '../database/db.js';
+import { clearChannelsCache } from '../services/cacheService.js';
+import { resolveAssignmentGrant } from '../utils/helpers.js';
 
 export const getBackups = (req, res) => {
   try {
@@ -68,6 +70,15 @@ export const restoreBackup = (req, res) => {
     if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
     const data = JSON.parse(backup.data);
+    if (!Array.isArray(data.userCategories) || !Array.isArray(data.userChannels) || !Array.isArray(data.categoryMappings)) {
+      return res.status(400).json({ error: 'Invalid backup data' });
+    }
+    const restoredCategoryIds = new Set(data.userCategories.map(cat => Number(cat.id)));
+    if ([...restoredCategoryIds].some(id => !Number.isInteger(id) || id <= 0)) {
+      return res.status(400).json({ error: 'Invalid backup data' });
+    }
+
+    const stats = { channels_restored: 0, channels_hidden: 0, channels_skipped: 0 };
 
     db.transaction(() => {
       // Get current category ids for user
@@ -84,30 +95,71 @@ export const restoreBackup = (req, res) => {
 
       // Insert backup data
       const insertCategory = db.prepare('INSERT INTO user_categories (id, user_id, name, sort_order, is_adult, type) VALUES (?, ?, ?, ?, ?, ?)');
-      const insertChannel = db.prepare('INSERT INTO user_channels (id, user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?, ?)');
-      const updateMapping = db.prepare('UPDATE category_mappings SET user_category_id = ?, auto_created = ? WHERE id = ?');
+      const insertChannel = db.prepare(`
+        INSERT INTO user_channels
+          (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const getProviderOwner = db.prepare(`
+        SELECT p.user_id AS provider_owner_id
+        FROM provider_channels pc
+        JOIN providers p ON p.id = pc.provider_id
+        WHERE pc.id = ?
+      `);
+      const updateMapping = db.prepare('UPDATE category_mappings SET user_category_id = ?, auto_created = ? WHERE id = ? AND user_id = ?');
 
       for (const cat of data.userCategories) {
-        insertCategory.run(cat.id, cat.user_id, cat.name, cat.sort_order, cat.is_adult, cat.type);
+        insertCategory.run(cat.id, userId, cat.name, cat.sort_order, cat.is_adult, cat.type);
       }
 
       for (const chan of data.userChannels) {
-        insertChannel.run(chan.id, chan.user_category_id, chan.provider_channel_id, chan.sort_order);
+        const categoryId = Number(chan.user_category_id);
+        const providerChannelId = Number(chan.provider_channel_id);
+        if (!restoredCategoryIds.has(categoryId) || !Number.isInteger(providerChannelId) || providerChannelId <= 0) {
+          stats.channels_skipped++;
+          continue;
+        }
+
+        const provider = getProviderOwner.get(providerChannelId);
+        if (!provider) {
+          stats.channels_skipped++;
+          continue;
+        }
+
+        const grant = resolveAssignmentGrant({
+          categoryOwnerId: userId,
+          providerOwnerId: provider.provider_owner_id,
+          isAdmin: req.user.is_admin,
+          allowExplicitAdminGrant: true
+        });
+        const isHidden = Number(chan.is_hidden) === 1 || grant === null ? 1 : 0;
+
+        insertChannel.run(
+          chan.id,
+          categoryId,
+          providerChannelId,
+          chan.sort_order,
+          chan.custom_name || '',
+          isHidden,
+          grant === 1 ? 1 : 0
+        );
+        if (isHidden) stats.channels_hidden++;
+        else stats.channels_restored++;
       }
 
       for (const map of data.categoryMappings) {
-        updateMapping.run(map.user_category_id, map.auto_created, map.id);
+        const categoryId = Number(map.user_category_id);
+        if (restoredCategoryIds.has(categoryId)) {
+          updateMapping.run(categoryId, map.auto_created ? 1 : 0, map.id, userId);
+        }
       }
     })();
 
-    // Need to clear cache after modifying channels
-    import('../services/cacheService.js').then(({ clearChannelsCache }) => {
-        clearChannelsCache(userId);
-    }).catch(console.error);
-
-    res.json({ success: true });
+    clearChannelsCache(userId);
+    res.json({ success: true, ...stats });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Restore backup error:', error);
+    res.status(500).json({ error: 'Restore failed' });
   }
 };
 

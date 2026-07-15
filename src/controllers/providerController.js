@@ -1,7 +1,7 @@
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
-import { isSafeUrl, isAdultCategory, redactUrl, providerSourceKey } from '../utils/helpers.js';
+import { isSafeUrl, isAdultCategory, redactUrl, providerSourceKey, resolveAssignmentGrant } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
@@ -238,6 +238,15 @@ export const updateProvider = async (req, res) => {
     const existing = db.prepare('SELECT * FROM providers WHERE id = ?').get(id);
     if (!existing) return res.status(404).json({error: 'provider not found'});
 
+    const nextUserId = user_id !== undefined ? (user_id ? Number(user_id) : null) : existing.user_id;
+    if (nextUserId !== null && !Number.isInteger(nextUserId)) {
+      return res.status(400).json({error: 'invalid user_id'});
+    }
+    if (user_id !== undefined && nextUserId !== null && !db.prepare('SELECT id FROM users WHERE id = ?').get(nextUserId)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+    const ownerChanged = nextUserId !== existing.user_id;
+
     // Process backup URLs
     let processedBackupUrls = existing.backup_urls || '[]';
     if (backup_urls !== undefined) {
@@ -302,25 +311,81 @@ export const updateProvider = async (req, res) => {
         }
     }
 
-    db.prepare(`
-      UPDATE providers
-      SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?, user_agent = ?, max_connections = ?, use_mapped_epg_icon = ?
-      WHERE id = ?
-    `).run(
-      name.trim(),
-      url.trim(),
-      username.trim(),
-      finalPassword,
-      finalEpgUrl,
-      user_id !== undefined ? (user_id ? Number(user_id) : null) : existing.user_id,
-      epg_update_interval ? Number(epg_update_interval) : existing.epg_update_interval,
-      epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
-      processedBackupUrls,
-      user_agent ? user_agent.trim() : null,
-      finalMaxConnections,
-      use_mapped_epg_icon !== undefined ? (use_mapped_epg_icon ? 1 : 0) : existing.use_mapped_epg_icon,
-      id
-    );
+    let revokedAssignments = 0;
+    let disabledSyncConfigs = 0;
+    let retainedSyncGrants = 0;
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE providers
+        SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?, user_agent = ?, max_connections = ?, use_mapped_epg_icon = ?
+        WHERE id = ?
+      `).run(
+        name.trim(),
+        url.trim(),
+        username.trim(),
+        finalPassword,
+        finalEpgUrl,
+        nextUserId,
+        epg_update_interval ? Number(epg_update_interval) : existing.epg_update_interval,
+        epg_enabled !== undefined ? (epg_enabled ? 1 : 0) : existing.epg_enabled,
+        processedBackupUrls,
+        user_agent ? user_agent.trim() : null,
+        finalMaxConnections,
+        use_mapped_epg_icon !== undefined ? (use_mapped_epg_icon ? 1 : 0) : existing.use_mapped_epg_icon,
+        id
+      );
+
+      if (ownerChanged) {
+        revokedAssignments = db.prepare(`
+          UPDATE user_channels
+          SET is_hidden = 1
+          WHERE is_hidden = 0
+            AND granted_by_admin = 0
+            AND provider_channel_id IN (
+              SELECT id FROM provider_channels WHERE provider_id = ?
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM user_categories cat
+              WHERE cat.id = user_channels.user_category_id
+                AND cat.user_id IS ?
+            )
+        `).run(id, nextUserId).changes;
+
+        db.prepare(`
+          UPDATE sync_configs
+          SET granted_by_admin = 0
+          WHERE provider_id = ? AND user_id IS ?
+        `).run(id, nextUserId);
+
+        disabledSyncConfigs = db.prepare(`
+          UPDATE sync_configs
+          SET enabled = 0
+          WHERE provider_id = ?
+            AND user_id IS NOT ?
+            AND granted_by_admin = 0
+            AND enabled = 1
+        `).run(id, nextUserId).changes;
+
+        retainedSyncGrants = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sync_configs
+          WHERE provider_id = ?
+            AND user_id IS NOT ?
+            AND granted_by_admin = 1
+            AND enabled = 1
+        `).get(id, nextUserId).count;
+
+        db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
+          req.ip || 'unknown',
+          'provider_owner_changed',
+          `Provider ${id} owner changed; revoked ${revokedAssignments} ungranted assignment(s); disabled ${disabledSyncConfigs} ungranted sync config(s); retained ${retainedSyncGrants} explicit sync grant(s)`,
+          Math.floor(Date.now() / 1000)
+        );
+      }
+    })();
+
+    if (ownerChanged) clearChannelsCache();
 
     // Check expiry
     await checkProviderExpiry(id);
@@ -428,7 +493,7 @@ export const syncProvider = async (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    const result = await performSync(id, user_id, true);
+    const result = await performSync(id, user_id, { mode: 'manual', allowCrossOwner: true });
 
     // Also trigger EPG update
     updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
@@ -599,18 +664,30 @@ export const importCategory = async (req, res) => {
       return res.status(400).json({error: 'Missing required fields'});
     }
 
-    if (!req.user.is_admin) {
-        if (Number(user_id) !== req.user.id) return res.status(403).json({error: 'Access denied'});
-        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
-        if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const targetUserId = Number(user_id);
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return res.status(400).json({error: 'Invalid user_id'});
     }
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+    if (!provider) return res.status(404).json({error: 'Provider not found'});
+    if (!req.user.is_admin && targetUserId !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: targetUserId,
+      providerOwnerId: provider.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
     const isAdult = isAdultCategory(category_name) ? 1 : 0;
 
-    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(user_id);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(targetUserId);
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
-    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder, catType);
+    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(targetUserId, category_name, isAdult, newSortOrder, catType);
     const newCategoryId = catInfo.lastInsertRowid;
 
     db.prepare(`
@@ -618,7 +695,7 @@ export const importCategory = async (req, res) => {
       VALUES (?, ?, ?, ?, ?, 0, ?)
       ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
       DO UPDATE SET user_category_id = excluded.user_category_id
-    `).run(providerId, user_id, Number(category_id), category_name, newCategoryId, catType);
+    `).run(providerId, targetUserId, Number(category_id), category_name, newCategoryId, catType);
 
     if (import_channels) {
       let streamType = 'live';
@@ -631,12 +708,12 @@ export const importCategory = async (req, res) => {
         ORDER BY original_sort_order ASC, name ASC
       `);
 
-      const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+      const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
       const channels = stmt.all(providerId, Number(category_id), streamType);
       const importedCount = channels.length;
       db.transaction(() => {
         channels.forEach((ch, idx) => {
-          insertChannel.run(newCategoryId, ch.id, idx);
+          insertChannel.run(newCategoryId, ch.id, idx, grantedByAdmin);
         });
       })();
 
@@ -669,18 +746,30 @@ export const importCategories = async (req, res) => {
       return res.status(400).json({error: 'Missing required fields or invalid categories'});
     }
 
-    if (!req.user.is_admin) {
-        if (Number(user_id) !== req.user.id) return res.status(403).json({error: 'Access denied'});
-        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
-        if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const targetUserId = Number(user_id);
+    if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+      return res.status(400).json({error: 'Invalid user_id'});
     }
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+    const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+    if (!provider) return res.status(404).json({error: 'Provider not found'});
+    if (!req.user.is_admin && targetUserId !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: targetUserId,
+      providerOwnerId: provider.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
     const results = [];
     let totalChannels = 0;
     let totalCategories = 0;
 
     const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
-    const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+    const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 
     // Pre-fetch channels for all categories being imported to avoid N+1 queries
@@ -707,7 +796,7 @@ export const importCategories = async (req, res) => {
     }
 
     db.transaction(() => {
-      let maxSort = getMaxSort.get(user_id).max_sort;
+      let maxSort = getMaxSort.get(targetUserId).max_sort;
 
       // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
       const insertCategoryMapping = db.prepare(`
@@ -724,11 +813,11 @@ export const importCategories = async (req, res) => {
         const isAdult = isAdultCategory(cat.name) ? 1 : 0;
         maxSort++;
 
-        const catInfo = insertUserCategory.run(user_id, cat.name, isAdult, maxSort, catType);
+        const catInfo = insertUserCategory.run(targetUserId, cat.name, isAdult, maxSort, catType);
         const newCategoryId = catInfo.lastInsertRowid;
         totalCategories++;
 
-        insertCategoryMapping.run(providerId, user_id, Number(cat.id), cat.name, newCategoryId, catType);
+        insertCategoryMapping.run(providerId, targetUserId, Number(cat.id), cat.name, newCategoryId, catType);
 
         let channelsImported = 0;
         if (cat.import_channels) {
@@ -739,7 +828,7 @@ export const importCategories = async (req, res) => {
           const channels = channelsMap.get(`${Number(cat.id)}_${streamType}`) || [];
 
           channels.forEach((ch, idx) => {
-            insertChannel.run(newCategoryId, ch.id, idx);
+            insertChannel.run(newCategoryId, ch.id, idx, grantedByAdmin);
           });
           channelsImported = channels.length;
           totalChannels += channelsImported;

@@ -105,6 +105,13 @@ all providers.
 - `POST /api/users/:userId/backups/:id/restore`
 - `DELETE /api/users/:userId/backups/:id`
 
+Restore recalculates channel authorization from current category and provider
+ownership. A normal user's backup cannot recreate a historical administrator
+grant: valid cross-owner rows are restored hidden and ungranted, while missing
+references are skipped. An authenticated admin restore may deliberately create
+a current cross-owner grant. The restore response includes non-sensitive
+`channels_restored`, `channels_hidden`, and `channels_skipped` counters.
+
 ## System, Security, and Statistics
 
 - `GET /api/settings`
@@ -135,6 +142,13 @@ When enabled, each provider sync also fetches series episodes via
 is stored once per upstream panel (keyed by the normalized provider URL):
 provider entries that point at the same panel with different credentials
 share the episode catalog instead of fetching and storing it per account.
+
+Cross-owner sync configs require an explicit administrator approval. Send
+`allow_cross_owner: true` when an admin intentionally creates or updates such a
+config; the server persists this as `granted_by_admin = 1`. Unapproved
+cross-owner configs remain disabled, and scheduled syncs never infer approval
+from an owner mismatch. Same-owner configs are always normalized to
+`granted_by_admin = 0`.
 - `GET /api/sync-logs`
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`
@@ -153,6 +167,11 @@ needed. Pass `force: true` to force the underlying updater.
 - `GET /api/shares`
 - `DELETE /api/shares/:token`
 - `GET /share/:slug`
+
+New short-link slugs keep a readable name prefix and add a cryptographically
+random suffix. Existing stored slugs remain valid. Public slugs and share
+management tokens are treated as bearer credentials and redacted from request
+logs.
 
 ## Proxy
 
@@ -187,6 +206,12 @@ extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 the provider episode sync (see `sync_series_episodes` on sync configs). Series
 whose episodes have not been synced yet fall back to a single series-level
 entry.
+
+Expanded episode IDs bind the upstream episode to the exact authorized
+`user_channel_id`. `get_series_info`, generated M3U entries, normal credentials,
+and token-authenticated share routes use the same format. Provider-based legacy
+episode IDs are rejected fail-closed; clients should refresh series metadata or
+their playlist after upgrading. Live and movie stream IDs are unchanged.
 
 ## Stream Proxy
 

@@ -111,7 +111,8 @@ export function initDb(isPrimary) {
       provider_channel_id INTEGER NOT NULL,
       sort_order INTEGER DEFAULT 0,
       custom_name TEXT DEFAULT '',
-      is_hidden INTEGER DEFAULT 0
+      is_hidden INTEGER DEFAULT 0,
+      granted_by_admin INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS user_backups (
@@ -135,6 +136,7 @@ export function initDb(isPrimary) {
       next_sync INTEGER DEFAULT 0,
       auto_add_categories INTEGER DEFAULT 1,
       auto_add_channels INTEGER DEFAULT 1,
+      granted_by_admin INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (provider_id) REFERENCES providers(id),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
@@ -298,6 +300,8 @@ export function initDb(isPrimary) {
             migrations.migrateUserAllowedCountries(db);
             migrations.migrateUserChannelsCustomName(db);
             migrations.migrateUserChannelsIsHidden(db);
+            migrations.migrateUserChannelAdminGrants(db);
+            migrations.migrateSyncConfigAdminGrants(db);
             migrations.migrateUserNotes(db);
             if (typeof migrations.migrateProviderUseMappedEpgIcon === 'function') {
                 migrations.migrateProviderUseMappedEpgIcon(db);

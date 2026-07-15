@@ -14,6 +14,7 @@ describe('Export/Import Regression Tests', () => {
     let encrypt;
     let decrypt;
     let decryptWithPassword;
+    let encryptWithPassword;
     let testDataDir;
     let tempFilePath;
 
@@ -30,6 +31,7 @@ describe('Export/Import Regression Tests', () => {
         encrypt = cryptoModule.encrypt;
         decrypt = cryptoModule.decrypt;
         decryptWithPassword = cryptoModule.decryptWithPassword;
+        encryptWithPassword = cryptoModule.encryptWithPassword;
 
         const { initDb } = dbModule;
         initDb(true);
@@ -168,5 +170,94 @@ describe('Export/Import Regression Tests', () => {
 
         // Should contain plaintext because decrypt(plaintext) returns null, so it falls back to original
         expect(exportedProvider.password).toBe(TEST_PROVIDER_PLAINTEXT);
+    });
+
+    it('normalizes imported grants against the rebuilt ownership relationships', async () => {
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+
+        const ownerId = db.prepare("INSERT INTO users (username, password) VALUES ('import_owner', 'pass')").run().lastInsertRowid;
+        const targetId = db.prepare("INSERT INTO users (username, password) VALUES ('import_target', 'pass')").run().lastInsertRowid;
+        const providerId = db.prepare(`
+            INSERT INTO providers (name, url, username, password, user_id)
+            VALUES ('Shared Provider', 'http://shared.example', 'u', ?, ?)
+        `).run(encrypt('provider-pass'), ownerId).lastInsertRowid;
+        const sameOwnerProviderId = db.prepare(`
+            INSERT INTO providers (name, url, username, password, user_id)
+            VALUES ('Owner Provider', 'http://owner.example', 'u', ?, ?)
+        `).run(encrypt('provider-pass'), ownerId).lastInsertRowid;
+        const channelA = db.prepare(`
+            INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type)
+            VALUES (?, 101, 'Series A', 'series')
+        `).run(providerId).lastInsertRowid;
+        const channelB = db.prepare(`
+            INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type)
+            VALUES (?, 102, 'Series B', 'series')
+        `).run(providerId).lastInsertRowid;
+        const sameCategory = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (?, 'Same owner', 'series')").run(ownerId).lastInsertRowid;
+        const grantedCategory = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (?, 'Cross granted', 'series')").run(targetId).lastInsertRowid;
+        const ungrantedCategory = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (?, 'Cross ungranted', 'series')").run(targetId).lastInsertRowid;
+
+        db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, granted_by_admin) VALUES (?, ?, 1)').run(sameCategory, channelA);
+        db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, granted_by_admin) VALUES (?, ?, 1)').run(grantedCategory, channelA);
+        db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, granted_by_admin) VALUES (?, ?, 0)').run(ungrantedCategory, channelB);
+        db.prepare("INSERT INTO sync_configs (provider_id, user_id, enabled, granted_by_admin) VALUES (?, ?, 1, 1)").run(providerId, targetId);
+        db.prepare("INSERT INTO sync_configs (provider_id, user_id, enabled, granted_by_admin) VALUES (?, ?, 1, 1)").run(sameOwnerProviderId, ownerId);
+
+        let exportedBuffer;
+        systemController.exportData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD, user_id: 'all' }, query: {} },
+            { setHeader: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn(), send: vi.fn(buffer => { exportedBuffer = buffer; }) }
+        );
+
+        const exportedData = JSON.parse(zlib.gunzipSync(decryptWithPassword(exportedBuffer, TEST_EXPORT_PASSWORD)).toString('utf8'));
+        exportedData.channels.push({
+            id: 999999,
+            type: 'user_assignment',
+            user_category_id: grantedCategory,
+            provider_channel_id: 999999,
+            granted_by_admin: 1,
+            is_hidden: 0,
+        });
+        exportedBuffer = encryptWithPassword(zlib.gzipSync(JSON.stringify(exportedData)), TEST_EXPORT_PASSWORD);
+        fs.writeFileSync(tempFilePath, exportedBuffer);
+
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+
+        const resImport = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+        await systemController.importData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD }, file: { path: tempFilePath } },
+            resImport
+        );
+
+        expect(resImport.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+        const assignments = db.prepare(`
+            SELECT cat.name, uc.is_hidden, uc.granted_by_admin
+            FROM user_channels uc
+            JOIN user_categories cat ON cat.id = uc.user_category_id
+            ORDER BY cat.name
+        `).all();
+        expect(assignments).toEqual([
+            { name: 'Cross granted', is_hidden: 0, granted_by_admin: 1 },
+            { name: 'Cross ungranted', is_hidden: 1, granted_by_admin: 0 },
+            { name: 'Same owner', is_hidden: 0, granted_by_admin: 0 },
+        ]);
+
+        const configs = db.prepare(`
+            SELECT p.name, sc.enabled, sc.granted_by_admin
+            FROM sync_configs sc JOIN providers p ON p.id = sc.provider_id
+            ORDER BY p.name
+        `).all();
+        expect(configs).toEqual([
+            { name: 'Owner Provider', enabled: 1, granted_by_admin: 0 },
+            { name: 'Shared Provider', enabled: 1, granted_by_admin: 1 },
+        ]);
     });
 });

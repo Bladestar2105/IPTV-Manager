@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey } from '../src/utils/helpers.js';
+import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey, resolveAssignmentGrant } from '../src/utils/helpers.js';
 
 describe('isAdultCategory', () => {
   const adultKeywords = [
@@ -224,11 +224,29 @@ describe('redactUrl', () => {
     expect(redactUrl('http://myserver/hdhr/SECRET_TOKEN')).toBe('http://myserver/hdhr/********');
   });
 
-  it('should redact password query parameters', () => {
+  it('should redact share tokens in path segments and preserve the query', () => {
+    expect(redactUrl('/api/shares/550e8400-e29b-41d4-a716-446655440000')).toBe('/api/shares/********');
+    expect(redactUrl('/api/shares/secret-token?foo=bar')).toBe('/api/shares/********?foo=bar');
+  });
+
+  it('should redact public share slugs and preserve the query', () => {
+    expect(redactUrl('/share/family-tv-a8f31c92')).toBe('/share/********');
+    expect(redactUrl('/share/family-tv-a8f31c92?foo=bar')).toBe('/share/********?foo=bar');
+    expect(redactUrl('https://example.test/share/family-tv-a8f31c92?foo=bar')).toBe('https://example.test/share/********?foo=bar');
+  });
+
+  it('should not redact unrelated routes containing share', () => {
+    expect(redactUrl('/api/share/settings')).toBe('/api/share/settings');
+    expect(redactUrl('/shareholder/report')).toBe('/shareholder/report');
+  });
+
+  it('should redact credential query parameters', () => {
     expect(redactUrl('/api/test?password=secret')).toBe('/api/test?password=********');
     expect(redactUrl('/api/test?foo=bar&password=secret')).toBe('/api/test?foo=bar&password=********');
     expect(redactUrl('/api/test?password=secret&foo=bar')).toBe('/api/test?password=********&foo=bar');
     expect(redactUrl('/api/test?PASSWORD=secret')).toBe('/api/test?PASSWORD=********');
+    expect(redactUrl('/api/test?token=jwt-secret')).toBe('/api/test?token=********');
+    expect(redactUrl('/api/test?TOKEN=jwt-secret')).toBe('/api/test?TOKEN=********');
   });
 
   it('should return non-string inputs as-is', () => {
@@ -240,11 +258,25 @@ describe('redactUrl', () => {
   it('should return original URL if no sensitive info found', () => {
     const safeUrl = '/api/status?id=123';
     expect(redactUrl(safeUrl)).toBe(safeUrl);
+    expect(redactUrl('/api/users/550e8400-e29b-41d4-a716-446655440000')).toBe('/api/users/550e8400-e29b-41d4-a716-446655440000');
+    expect(redactUrl('/%E0%A4%A')).toBe('/%E0%A4%A');
   });
 
   it('should handle multiple redactions in one URL', () => {
     const mixedUrl = '/live/user/pass/1.ts?password=secret&token=123';
-    expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=123');
+    expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=********');
+  });
+});
+
+describe('resolveAssignmentGrant', () => {
+  it('normalizes same-owner assignments to a normal grant', () => {
+    expect(resolveAssignmentGrant({ categoryOwnerId: 7, providerOwnerId: '7', isAdmin: true, allowExplicitAdminGrant: true })).toBe(0);
+  });
+
+  it('requires an explicit administrator grant for cross-owner assignments', () => {
+    expect(resolveAssignmentGrant({ categoryOwnerId: 7, providerOwnerId: 8 })).toBe(null);
+    expect(resolveAssignmentGrant({ categoryOwnerId: 7, providerOwnerId: 8, isAdmin: true })).toBe(null);
+    expect(resolveAssignmentGrant({ categoryOwnerId: 7, providerOwnerId: 8, isAdmin: true, allowExplicitAdminGrant: true })).toBe(1);
   });
 });
 

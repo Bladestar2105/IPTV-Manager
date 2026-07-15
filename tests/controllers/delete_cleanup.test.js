@@ -40,7 +40,10 @@ vi.mock('../../src/utils/network.js', () => ({
 vi.mock('../../src/utils/helpers.js', () => ({
   isSafeUrl: vi.fn(),
   isAdultCategory: vi.fn(),
-  providerSourceKey: vi.fn((url) => String(url || ''))
+  redactUrl: vi.fn((url) => url),
+  providerSourceKey: vi.fn((url) => String(url || '')),
+  resolveAssignmentGrant: vi.fn(({ categoryOwnerId, providerOwnerId, isAdmin }) =>
+    Number(categoryOwnerId) === Number(providerOwnerId) ? 0 : (isAdmin ? 1 : null))
 }));
 
 vi.mock('../../src/services/syncService.js', () => ({

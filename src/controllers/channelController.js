@@ -1,6 +1,6 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
-import { isAdultCategory } from '../utils/helpers.js';
+import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 
 export const getUserCategories = (req, res) => {
@@ -22,7 +22,7 @@ export const createUserCategory = (req, res) => {
     const catType = type || 'live';
 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
     const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
 
@@ -192,7 +192,7 @@ export const getCategoryChannels = (req, res) => {
 
     const rows = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
@@ -227,17 +227,32 @@ export const addUserChannel = (req, res) => {
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
 
+    const providerChannel = db.prepare(`
+      SELECT pc.id, p.user_id
+      FROM provider_channels pc
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE pc.id = ?
+    `).get(Number(provider_channel_id));
+    if (!providerChannel) return res.status(404).json({error: 'Channel not found'});
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: cat.user_id,
+      providerOwnerId: providerChannel.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
+
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
     const existingHidden = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ? AND is_hidden = 1').get(catId, Number(provider_channel_id));
 
     let insertId;
     if (existingHidden) {
-        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ? WHERE id = ?').run(newSortOrder, existingHidden.id);
+        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ?, granted_by_admin = ? WHERE id = ?').run(newSortOrder, grantedByAdmin, existingHidden.id);
         insertId = existingHidden.id;
     } else {
-        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
+        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
         insertId = info.lastInsertRowid;
     }
 

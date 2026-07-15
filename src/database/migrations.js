@@ -768,6 +768,79 @@ export function migrateUserChannelsIsHidden(db) {
   }
 }
 
+export function migrateUserChannelAdminGrants(db) {
+  const migrate = db.transaction(() => {
+    const columns = db.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name);
+    const needsLegacyRevocation = !columns.includes('granted_by_admin');
+    if (needsLegacyRevocation) {
+      db.exec('ALTER TABLE user_channels ADD COLUMN granted_by_admin INTEGER NOT NULL DEFAULT 0');
+    }
+
+    db.exec(`
+      CREATE VIEW IF NOT EXISTS authorized_user_channels AS
+      SELECT uc.*
+      FROM user_channels uc
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE uc.is_hidden = 0
+        AND (p.user_id = cat.user_id OR uc.granted_by_admin = 1)
+    `);
+
+    if (!needsLegacyRevocation) return 0;
+
+    return db.prepare(`
+      UPDATE user_channels
+      SET is_hidden = 1
+      WHERE is_hidden = 0
+        AND granted_by_admin = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM user_categories cat
+          JOIN provider_channels pc ON pc.id = user_channels.provider_channel_id
+          JOIN providers p ON p.id = pc.provider_id
+          WHERE cat.id = user_channels.user_category_id
+            AND p.user_id = cat.user_id
+        )
+    `).run().changes;
+  });
+
+  try {
+    const revoked = migrate();
+    console.info(`✅ DB Migration: user channel grants ready; revoked ${revoked} unauthorized assignment(s)`);
+    return revoked;
+  } catch (e) {
+    console.error('User channel admin grants migration error:', e.message);
+    throw e;
+  }
+}
+
+export function migrateSyncConfigAdminGrants(db) {
+  const migrate = db.transaction(() => {
+    const columns = db.prepare('PRAGMA table_info(sync_configs)').all().map(column => column.name);
+    if (columns.includes('granted_by_admin')) return 0;
+
+    db.exec('ALTER TABLE sync_configs ADD COLUMN granted_by_admin INTEGER NOT NULL DEFAULT 0');
+    return db.prepare(`
+      UPDATE sync_configs
+      SET enabled = 0
+      WHERE enabled = 1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM providers p
+          WHERE p.id = sync_configs.provider_id
+            AND p.user_id IS sync_configs.user_id
+        )
+    `).run().changes;
+  });
+
+  const disabled = migrate();
+  if (disabled > 0) {
+    console.info(`Sync grant migration disabled ${disabled} unapproved cross-owner config(s)`);
+  }
+  return disabled;
+}
+
 export function migrateUserNotes(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(users)").all();

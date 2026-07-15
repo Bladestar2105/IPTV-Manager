@@ -191,8 +191,8 @@ export const createUser = async (req, res) => {
                     const placeholders = Array(oldProviderIdsForSync.length).fill('?').join(',');
                     const sourceSyncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${placeholders})`).all(...oldProviderIdsForSync);
                     const insertSync = db.prepare(`
-                        INSERT OR IGNORE INTO sync_configs (provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT OR IGNORE INTO sync_configs (provider_id, user_id, enabled, sync_interval, auto_add_categories, auto_add_channels, sync_series_episodes, granted_by_admin)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                     `);
                     for (const sync of sourceSyncs) {
                         insertSync.run(
@@ -201,7 +201,8 @@ export const createUser = async (req, res) => {
                             sync.enabled,
                             sync.sync_interval,
                             sync.auto_add_categories,
-                            sync.auto_add_channels
+                            sync.auto_add_channels,
+                            sync.sync_series_episodes === undefined ? 1 : sync.sync_series_episodes
                         );
                     }
                 }
@@ -324,8 +325,8 @@ export const createUser = async (req, res) => {
                 // We need to iterate over source user's categories to find channels
                 // Or simply select all user_channels linked to source user's categories
                 const insertUserChan = db.prepare(`
-                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
+                    VALUES (?, ?, ?, ?, ?, 0)
                 `);
 
                 // Fetch all user channels for source user categories

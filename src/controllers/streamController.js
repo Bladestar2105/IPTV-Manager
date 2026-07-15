@@ -13,6 +13,7 @@ import { fetchSafe } from '../utils/network.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
+import { decodeSeriesEpisodeId } from '../utils/seriesEpisodeId.js';
 
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
@@ -26,7 +27,8 @@ const stmts = {
     updateStat: null,
     updateStatTimeOnly: null,
     insertStat: null,
-    getProvider: null,
+    getSeriesAssignment: null,
+    getSeriesEpisode: null,
     getProviderPool: null
 };
 
@@ -46,7 +48,7 @@ function getChannel(streamId, userId) {
         p.backup_urls,
         p.user_agent,
         p.max_connections as provider_max_connections
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -76,9 +78,39 @@ function insertStat(channelId, lastViewed) {
     return stmts.insertStat.run(channelId, lastViewed);
 }
 
-function getProvider(id) {
-    if (!stmts.getProvider) stmts.getProvider = db.prepare('SELECT * FROM providers WHERE id = ?');
-    return stmts.getProvider.get(id);
+function getSeriesEpisode(encodedId, userId) {
+    const decoded = decodeSeriesEpisodeId(encodedId);
+    if (!decoded) return null;
+
+    if (!stmts.getSeriesAssignment) {
+        stmts.getSeriesAssignment = db.prepare(`
+          SELECT p.*, uc.id AS user_channel_id,
+                 pc.remote_stream_id AS series_remote_id,
+                 COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
+          FROM authorized_user_channels uc
+          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+          JOIN providers p ON p.id = pc.provider_id
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE uc.id = ? AND cat.user_id = ? AND pc.stream_type = 'series'
+        `);
+    }
+    if (!stmts.getSeriesEpisode) {
+        stmts.getSeriesEpisode = db.prepare(`
+          SELECT season, episode_num, title, container_extension, logo
+          FROM provider_series_episodes
+          WHERE source_key = ? AND series_remote_id = ? AND remote_episode_id = ?
+        `);
+    }
+
+    const assignment = stmts.getSeriesAssignment.get(decoded.assignmentId, userId);
+    if (!assignment) return null;
+
+    const episode = stmts.getSeriesEpisode.get(
+      providerSourceKey(assignment.url),
+      assignment.series_remote_id,
+      decoded.remoteEpisodeId
+    );
+    return episode ? { ...assignment, ...episode, remote_episode_id: decoded.remoteEpisodeId } : null;
 }
 
 function getProviderPool(userId, providerUrl) {
@@ -95,6 +127,22 @@ function getProviderPool(userId, providerUrl) {
 
 async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
     const pool = getProviderPool(userId, originalProvider.provider_url || originalProvider.url);
+    const normalizedOriginal = originalProvider.id ? originalProvider : {
+        id: originalProvider.provider_id,
+        url: originalProvider.provider_url,
+        username: originalProvider.provider_user,
+        password: originalProvider.provider_pass,
+        backup_urls: originalProvider.backup_urls,
+        user_agent: originalProvider.user_agent,
+        max_connections: originalProvider.provider_max_connections
+    };
+
+    // Cross-user assignments reach this point only through the authorized
+    // assignment view. Keep the explicitly granted source provider available
+    // even though it is intentionally absent from the user's provider pool.
+    if (!pool.some(provider => provider.id === normalizedOriginal.id)) {
+        pool.push(normalizedOriginal);
+    }
 
     for (const p of pool) {
         let isSessionActive = false;
@@ -435,6 +483,7 @@ async function fetchWithBackups(primaryUrl, backupUrls, options) {
             if (res.ok) {
                 return { response: res, successfulUrl: res.url || u };
             }
+            res.body?.destroy?.();
             // If 404/403/407/etc, we might want to try backup? Yes.
             console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
 
@@ -1084,42 +1133,26 @@ export const proxySeries = async (req, res) => {
   const cleanup = createSafeCleanup(connectionId);
 
   try {
-    const epIdRaw = Number(req.params.episode_id || 0);
+    const epIdRaw = req.params.episode_id;
     const ext = req.params.ext;
 
-    if (!epIdRaw) return res.sendStatus(404);
+    if (!decodeSeriesEpisodeId(epIdRaw)) return res.sendStatus(404);
 
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const OFFSET = 1000000000;
-    const providerId = Math.floor(epIdRaw / OFFSET);
-    const remoteEpisodeId = epIdRaw % OFFSET;
+    const seriesEpisode = getSeriesEpisode(epIdRaw, user.id);
+    if (!seriesEpisode) return res.sendStatus(404);
+    if (!shareGuestAllowed(user, seriesEpisode)) return res.sendStatus(403);
 
-    if (!providerId || !remoteEpisodeId) return res.sendStatus(404);
+    const provider = seriesEpisode;
+    const remoteEpisodeId = seriesEpisode.remote_episode_id;
 
-    const provider = getProvider(providerId);
-    if (!provider) return res.sendStatus(404);
-
-    if (user.is_share_guest) return res.sendStatus(403);
-
-    let sessionName = episodeNameCache.get(epIdRaw.toString());
+    let sessionName = episodeNameCache.get(String(epIdRaw));
     if (!sessionName) {
-      // Fallback to synced episode data (M3U playback skips get_series_info)
-      try {
-        const epRow = db.prepare(`
-          SELECT e.season, e.episode_num, e.title, pc.name as series_name
-          FROM provider_series_episodes e
-          LEFT JOIN provider_channels pc ON pc.provider_id = ? AND pc.remote_stream_id = e.series_remote_id AND pc.stream_type = 'series'
-          WHERE e.source_key = ? AND e.remote_episode_id = ?
-        `).get(providerId, providerSourceKey(provider.url), remoteEpisodeId);
-        if (epRow) {
-          const epCode = `S${String(epRow.season || 0).padStart(2, '0')} E${String(epRow.episode_num || 0).padStart(2, '0')}`;
-          sessionName = `${epRow.series_name || 'Series'} ${epCode}${epRow.title ? ` - ${epRow.title}` : ''}`;
-        }
-      } catch { /* name lookup is cosmetic only */ }
+      const epCode = `S${String(seriesEpisode.season || 0).padStart(2, '0')} E${String(seriesEpisode.episode_num || 0).padStart(2, '0')}`;
+      sessionName = `${seriesEpisode.series_name || 'Series'} ${epCode}${seriesEpisode.title ? ` - ${seriesEpisode.title}` : ''}`;
     }
-    if (!sessionName) sessionName = `Series Episode ${remoteEpisodeId}`;
 
     const sourceProvider = { ...provider, password: decrypt(provider.password) };
     let base = sourceProvider.url.replace(/\/+$/, '');

@@ -96,7 +96,7 @@ http://stream.url/1.ts
 
   it('Optimization Verification: Should NOT call updateChannel if data is identical', async () => {
     // 1. First Run
-    await performSync(1, 1, true);
+    await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
 
     expect(mockInsertRun).toHaveBeenCalled();
     const args = mockInsertRun.mock.calls[0];
@@ -135,7 +135,7 @@ http://stream.url/1.ts
     mockUpdateRun.mockClear();
 
     // 3. Second Run execution with Identical Data
-    const result = await performSync(1, 1, true);
+    const result = await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
 
     // Check behavior (Optimized)
     expect(mockUpdateRun).not.toHaveBeenCalled();
