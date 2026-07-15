@@ -225,6 +225,9 @@ export function redactUrl(url) {
     // 2. Redact share-management tokens while preserving any query string.
     redacted = redacted.replace(/(\/api\/shares\/)[^/?#]+/gi, '$1********');
 
+    // Public share slugs are bearer credentials too.
+    redacted = redacted.replace(/^((?:https?:\/\/[^/?#]+)?\/share\/)[^/?#]+/i, '$1********');
+
     // 3. Redact HDHomeRun token: /hdhr/TOKEN/...
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
@@ -235,4 +238,17 @@ export function redactUrl(url) {
   } catch (e) {
     return '[redacted]';
   }
+}
+
+export function resolveAssignmentGrant({
+  categoryOwnerId,
+  providerOwnerId,
+  isAdmin = false,
+  allowExplicitAdminGrant = false
+}) {
+  if (categoryOwnerId !== null && categoryOwnerId !== undefined &&
+      providerOwnerId !== null && providerOwnerId !== undefined &&
+      Number(categoryOwnerId) === Number(providerOwnerId)) return 0;
+
+  return isAdmin && allowExplicitAdminGrant ? 1 : null;
 }

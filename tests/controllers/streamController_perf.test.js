@@ -30,19 +30,30 @@ vi.mock('../../src/database/db.js', () => {
   return {
     default: {
       prepare: vi.fn((query) => {
-        if (query.includes('FROM providers p') && query.includes('authorized_user_channels')) {
-            return {
-                get: vi.fn().mockReturnValue({
-                    id: 1,
-                    user_id: 1,
-                    url: 'http://upstream.com',
-                    username: 'puser',
-                    password: 'ppass',
-                    max_connections: 10,
-                    backup_urls: null,
-                    user_agent: 'TestAgent',
-                })
-            };
+        if (query.includes("WHERE uc.id = ? AND cat.user_id = ? AND pc.stream_type = 'series'")) {
+          return {
+            get: vi.fn((assignmentId, userId) => assignmentId === 1 && userId === 1 ? {
+              id: 1,
+              user_id: 1,
+              url: 'http://upstream.com',
+              username: 'puser',
+              password: 'ppass',
+              max_connections: 10,
+              backup_urls: null,
+              user_agent: 'TestAgent',
+              user_channel_id: 1,
+              series_remote_id: 55,
+              series_name: 'Test Series',
+            } : undefined),
+          };
+        }
+        if (query.includes('FROM provider_series_episodes')) {
+          return {
+            get: vi.fn((sourceKey, seriesRemoteId, remoteEpisodeId) =>
+              sourceKey === 'http://upstream.com' && seriesRemoteId === 55 && remoteEpisodeId === 1
+                ? { season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', logo: '' }
+                : undefined),
+          };
         }
         if (query.includes('FROM authorized_user_channels')) {
           return {
@@ -282,8 +293,8 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
     await streamController.proxySeries(req, res);
 
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM providers p'));
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM authorized_user_channels uc'));
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("pc.stream_type = 'series'"));
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM provider_series_episodes'));
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining('/series/puser/ppass/1.mkv'),
       expect.objectContaining({
@@ -293,6 +304,67 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 300-400/1000');
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+  });
+
+  it.each([
+    ['track probing', { tracks: 'true' }],
+    ['subtitle extraction', { subtitle_format: 'vtt', subtitle_track: '1' }],
+    ['transcoding', { transcode: 'true' }],
+  ])('rejects an unknown series episode before %s', async (_label, query) => {
+    req.params = { episode_id: '1000000002', ext: 'mkv' };
+    req.query = query;
+
+    await streamController.proxySeries(req, res);
+
+    expect(res.sendStatus).toHaveBeenCalledWith(404);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(streamManager.add).not.toHaveBeenCalled();
+  });
+
+  it('rejects an episode identifier for another user assignment', async () => {
+    req.params = { episode_id: '2000000001', ext: 'mkv' };
+
+    await streamController.proxySeries(req, res);
+
+    expect(res.sendStatus).toHaveBeenCalledWith(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('allows a share guest only for the explicitly shared series', async () => {
+    req.params = { episode_id: '1000000001', ext: 'mkv' };
+    req.headers = { range: 'bytes=0-10' };
+    res.headersSent = false;
+    authService.getXtreamUser.mockResolvedValue({
+      id: 1,
+      is_share_guest: true,
+      allowed_channels: [1],
+      share_start: 0,
+      share_end: 0,
+    });
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 206,
+      headers: { get: vi.fn() },
+      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
+    });
+
+    await streamController.proxySeries(req, res);
+
+    expect(fetch).toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    authService.getXtreamUser.mockResolvedValue({
+      id: 1,
+      is_share_guest: true,
+      allowed_channels: [2],
+      share_start: 0,
+      share_end: 0,
+    });
+    await streamController.proxySeries(req, res);
+
+    expect(res.sendStatus).toHaveBeenCalledWith(403);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('should return probed VOD tracks without opening a stream session', async () => {

@@ -1,19 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'fs';
-import path from 'path';
 
-// Ensure directory exists BEFORE imports
-if (!fs.existsSync(path.join(process.cwd(), 'tests/temp_db_channel'))) fs.mkdirSync(path.join(process.cwd(), 'tests/temp_db_channel'), { recursive: true });
-
-const TEST_DB_DIR = path.join(process.cwd(), 'tests/temp_db_channel');
+const { TEST_DB_DIR } = vi.hoisted(() => {
+    const fsModule = require('fs');
+    const osModule = require('os');
+    const pathModule = require('path');
+    return { TEST_DB_DIR: fsModule.mkdtempSync(pathModule.join(osModule.tmpdir(), 'iptv-channel-controller-')) };
+});
 
 // Mock Constants
 vi.mock('../../src/config/constants.js', async () => {
     const path = require('path');
-    const testDir = path.join(process.cwd(), 'tests/temp_db_channel');
     return {
-        DATA_DIR: testDir,
-        EPG_DB_PATH: path.join(testDir, 'epg.db'),
+        DATA_DIR: TEST_DB_DIR,
+        EPG_DB_PATH: path.join(TEST_DB_DIR, 'epg.db'),
         PORT: 3000,
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',
@@ -37,6 +37,11 @@ import db, { initDb } from '../../src/database/db.js';
 import * as channelController from '../../src/controllers/channelController.js';
 
 describe('Channel Controller - createUserCategory', () => {
+    afterAll(() => {
+        db.close();
+        fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
+    });
+
     beforeEach(() => {
         // Clear DB
         initDb(true);

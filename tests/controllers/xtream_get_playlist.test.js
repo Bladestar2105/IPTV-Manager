@@ -147,9 +147,9 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).toContain(',My Show S01 E01\n');
     expect(output).toContain('tvg-name="My Show S01 E02"');
 
-    // Encoded episode URL: providerId * 1e9 + remote_episode_id, episode container
-    expect(output).toContain('http://localhost/series/u/p/7000000123.mkv');
-    expect(output).toContain('http://localhost/series/u/p/7000000124.mkv');
+    // Encoded episode URL: userChannelId * 1e9 + remote_episode_id
+    expect(output).toContain('http://localhost/series/u/p/42000000123.mkv');
+    expect(output).toContain('http://localhost/series/u/p/42000000124.mkv');
 
     // No series-level URL for the expanded series
     expect(output).not.toContain('/series/u/p/42.');
@@ -184,7 +184,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
     const output = collectOutput();
     expect(output).toContain('#EXTINF:-1,My Show S01 E01\n');
-    expect(output).toContain('http://localhost/series/u/p/7000000123.mkv');
+    expect(output).toContain('http://localhost/series/u/p/42000000123.mkv');
     expect(output).not.toContain('tvg-name="My Show S01 E01"');
   });
 });

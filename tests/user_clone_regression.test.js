@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPrepare, mockTransaction, insertChannelRun, insertProviderRun, providerChannelsAll, providerChannelsIterate } = vi.hoisted(() => {
+const { mockPrepare, mockTransaction, insertChannelRun, insertProviderRun, insertUserChannelRun, insertSyncRun, providerChannelsAll, providerChannelsIterate } = vi.hoisted(() => {
   const insertChannelRun = vi.fn();
   const insertProviderRun = vi.fn().mockReturnValue({ lastInsertRowid: 20 });
   const providerChannelsAll = vi.fn();
@@ -8,6 +8,8 @@ const { mockPrepare, mockTransaction, insertChannelRun, insertProviderRun, provi
   return {
     insertChannelRun,
     insertProviderRun,
+    insertUserChannelRun: vi.fn(),
+    insertSyncRun: vi.fn(),
     providerChannelsAll,
     providerChannelsIterate,
     mockPrepare: vi.fn(),
@@ -113,10 +115,18 @@ describe('User clone regression', () => {
         return { run: insertProviderRun };
       }
       if (query.includes('FROM sync_configs')) {
-        return { all: vi.fn().mockReturnValue([]) };
+        return { all: vi.fn().mockReturnValue([{
+          provider_id: 10,
+          enabled: 1,
+          sync_interval: 'daily',
+          auto_add_categories: 1,
+          auto_add_channels: 1,
+          sync_series_episodes: 1,
+          granted_by_admin: 1,
+        }]) };
       }
       if (query.includes('INSERT OR IGNORE INTO sync_configs')) {
-        return { run: vi.fn() };
+        return { run: insertSyncRun };
       }
       if (query.includes('SELECT * FROM provider_channels')) {
         return {
@@ -134,7 +144,14 @@ describe('User clone regression', () => {
         return { run: vi.fn() };
       }
       if (query.includes('SELECT * FROM user_categories')) {
-        return { all: vi.fn().mockReturnValue([]) };
+        return { all: vi.fn().mockReturnValue([{
+          id: 400,
+          user_id: 1,
+          name: 'Source category',
+          sort_order: 0,
+          is_adult: 0,
+          type: 'live',
+        }]) };
       }
       if (query.includes('INSERT INTO user_categories')) {
         return { run: vi.fn().mockReturnValue({ lastInsertRowid: 40 }) };
@@ -146,10 +163,17 @@ describe('User clone regression', () => {
         return { run: vi.fn() };
       }
       if (query.includes('FROM user_channels uc')) {
-        return { all: vi.fn().mockReturnValue([]) };
+        return { all: vi.fn().mockReturnValue([{
+          user_category_id: 400,
+          provider_channel_id: 100,
+          sort_order: 0,
+          custom_name: '',
+          is_hidden: 0,
+          granted_by_admin: 1,
+        }]) };
       }
       if (query.includes('INSERT INTO user_channels')) {
-        return { run: vi.fn() };
+        return { run: insertUserChannelRun };
       }
       return {
         get: vi.fn(),
@@ -185,5 +209,8 @@ describe('User clone regression', () => {
     expect(providerChannelsIterate).not.toHaveBeenCalled();
     expect(insertChannelRun.mock.calls[0][2]).toBe('Channel 123');
     expect(insertProviderRun.mock.calls[0][12]).toBe(1);
+    expect(insertSyncRun).toHaveBeenCalledWith(20, 200, 1, 'daily', 1, 1, 1);
+    expect(insertUserChannelRun).toHaveBeenCalledWith(40, 30, 0, '', 0);
+    expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('VALUES (?, ?, ?, ?, ?, 0)'));
   });
 });

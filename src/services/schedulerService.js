@@ -20,7 +20,7 @@ export function startSyncScheduler() {
         if (runningSyncs.has(config.id)) continue;
         runningSyncs.add(config.id);
 
-        performSync(config.provider_id, config.user_id, false)
+        performSync(config.provider_id, config.user_id, { mode: 'scheduled' })
           .catch(e => console.error(`Scheduled sync error for provider ${config.provider_id}:`, e))
           .finally(() => runningSyncs.delete(config.id));
       }

@@ -1,7 +1,7 @@
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
-import { isSafeUrl, isAdultCategory, redactUrl, providerSourceKey } from '../utils/helpers.js';
+import { isSafeUrl, isAdultCategory, redactUrl, providerSourceKey, resolveAssignmentGrant } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry } from '../services/syncService.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
@@ -312,6 +312,8 @@ export const updateProvider = async (req, res) => {
     }
 
     let revokedAssignments = 0;
+    let disabledSyncConfigs = 0;
+    let retainedSyncGrants = 0;
     db.transaction(() => {
       db.prepare(`
         UPDATE providers
@@ -350,10 +352,34 @@ export const updateProvider = async (req, res) => {
             )
         `).run(id, nextUserId).changes;
 
+        db.prepare(`
+          UPDATE sync_configs
+          SET granted_by_admin = 0
+          WHERE provider_id = ? AND user_id IS ?
+        `).run(id, nextUserId);
+
+        disabledSyncConfigs = db.prepare(`
+          UPDATE sync_configs
+          SET enabled = 0
+          WHERE provider_id = ?
+            AND user_id IS NOT ?
+            AND granted_by_admin = 0
+            AND enabled = 1
+        `).run(id, nextUserId).changes;
+
+        retainedSyncGrants = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sync_configs
+          WHERE provider_id = ?
+            AND user_id IS NOT ?
+            AND granted_by_admin = 1
+            AND enabled = 1
+        `).get(id, nextUserId).count;
+
         db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(
           req.ip || 'unknown',
           'provider_owner_changed',
-          `Provider ${id} owner changed; revoked ${revokedAssignments} ungranted assignment(s)`,
+          `Provider ${id} owner changed; revoked ${revokedAssignments} ungranted assignment(s); disabled ${disabledSyncConfigs} ungranted sync config(s); retained ${retainedSyncGrants} explicit sync grant(s)`,
           Math.floor(Date.now() / 1000)
         );
       }
@@ -467,7 +493,7 @@ export const syncProvider = async (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    const result = await performSync(id, user_id, true);
+    const result = await performSync(id, user_id, { mode: 'manual', allowCrossOwner: true });
 
     // Also trigger EPG update
     updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
@@ -647,10 +673,14 @@ export const importCategory = async (req, res) => {
     }
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
     if (!provider) return res.status(404).json({error: 'Provider not found'});
-    if (!req.user.is_admin && (targetUserId !== req.user.id || provider.user_id !== req.user.id)) {
-      return res.status(403).json({error: 'Access denied'});
-    }
-    const grantedByAdmin = provider.user_id === targetUserId ? 0 : 1;
+    if (!req.user.is_admin && targetUserId !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: targetUserId,
+      providerOwnerId: provider.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
     const isAdult = isAdultCategory(category_name) ? 1 : 0;
 
@@ -725,10 +755,14 @@ export const importCategories = async (req, res) => {
     }
     const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
     if (!provider) return res.status(404).json({error: 'Provider not found'});
-    if (!req.user.is_admin && (targetUserId !== req.user.id || provider.user_id !== req.user.id)) {
-      return res.status(403).json({error: 'Access denied'});
-    }
-    const grantedByAdmin = provider.user_id === targetUserId ? 0 : 1;
+    if (!req.user.is_admin && targetUserId !== req.user.id) return res.status(403).json({error: 'Access denied'});
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: targetUserId,
+      providerOwnerId: provider.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
     const results = [];
     let totalChannels = 0;

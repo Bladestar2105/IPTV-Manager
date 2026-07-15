@@ -43,7 +43,8 @@ vi.mock('../src/utils/helpers.js', () => ({
     redactUrl: vi.fn(url => url),
     getBaseUrl: vi.fn(() => 'http://localhost:3000'),
     isSafeUrl: vi.fn(async () => true),
-    safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4))
+    safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4)),
+    providerSourceKey: vi.fn((url) => String(url || ''))
 }));
 
 vi.mock('../src/utils/crypto.js', () => ({

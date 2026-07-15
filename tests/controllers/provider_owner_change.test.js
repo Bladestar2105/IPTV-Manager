@@ -1,15 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
-import path from 'path';
 
-const TEST_DB_DIR = path.join(process.cwd(), 'tests/temp_db_provider_owner');
-fs.mkdirSync(TEST_DB_DIR, { recursive: true });
+const { TEST_DB_DIR } = vi.hoisted(() => {
+  const fsModule = require('fs');
+  const osModule = require('os');
+  const pathModule = require('path');
+  return { TEST_DB_DIR: fsModule.mkdtempSync(pathModule.join(osModule.tmpdir(), 'iptv-provider-owner-')) };
+});
 
 vi.mock('../../src/config/constants.js', () => {
   const pathModule = require('path');
   return {
-    DATA_DIR: pathModule.join(process.cwd(), 'tests/temp_db_provider_owner'),
-    EPG_DB_PATH: pathModule.join(process.cwd(), 'tests/temp_db_provider_owner/epg.db'),
+    DATA_DIR: TEST_DB_DIR,
+    EPG_DB_PATH: pathModule.join(TEST_DB_DIR, 'epg.db'),
     BCRYPT_ROUNDS: 1,
     DEFAULT_USER_AGENT: 'TestAgent',
   };
@@ -37,11 +40,16 @@ import { updateProvider } from '../../src/controllers/providerController.js';
 import { clearChannelsCache } from '../../src/services/cacheService.js';
 
 describe('provider owner changes', () => {
+  afterAll(() => {
+    db.close();
+    fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     initDb(true);
     db.pragma('foreign_keys = OFF');
-    for (const table of ['security_logs', 'user_channels', 'user_categories', 'provider_channels', 'providers', 'users']) {
+    for (const table of ['security_logs', 'sync_configs', 'user_channels', 'user_categories', 'provider_channels', 'providers', 'users']) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
     db.pragma('foreign_keys = ON');
@@ -61,6 +69,7 @@ describe('provider owner changes', () => {
     const oldAssignmentId = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, granted_by_admin) VALUES (?, ?, 0)').run(oldCategoryId, providerChannelId).lastInsertRowid;
     const newAssignmentId = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, granted_by_admin) VALUES (?, ?, 0)').run(newCategoryId, providerChannelId).lastInsertRowid;
     const grantedAssignmentId = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, granted_by_admin) VALUES (?, ?, 1)').run(sharedCategoryId, providerChannelId).lastInsertRowid;
+    const syncConfigId = db.prepare("INSERT INTO sync_configs (provider_id, user_id, enabled, granted_by_admin) VALUES (?, 1, 1, 0)").run(providerId).lastInsertRowid;
 
     const req = {
       params: { id: String(providerId) },
@@ -90,7 +99,40 @@ describe('provider owner changes', () => {
       { id: newAssignmentId },
       { id: grantedAssignmentId },
     ]);
+    expect(db.prepare('SELECT enabled, granted_by_admin FROM sync_configs WHERE id = ?').get(syncConfigId)).toEqual({ enabled: 0, granted_by_admin: 0 });
     expect(db.prepare("SELECT details FROM security_logs WHERE action = 'provider_owner_changed'").get().details).toContain('revoked 1 ungranted assignment(s)');
+    expect(db.prepare("SELECT details FROM security_logs WHERE action = 'provider_owner_changed'").get().details).toContain('disabled 1 ungranted sync config(s)');
     expect(clearChannelsCache).toHaveBeenCalledWith();
+  });
+
+  it('preserves an explicitly granted cross-owner sync config', async () => {
+    db.prepare("INSERT INTO users (id, username, password) VALUES (1, 'old-owner', 'p'), (2, 'new-owner', 'p')").run();
+    const providerId = db.prepare(`
+      INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_enabled, max_connections)
+      VALUES ('Provider', 'http://provider.example', 'upstream', 'enc:secret', 'http://epg.example/xmltv', 1, 0, 5)
+    `).run().lastInsertRowid;
+    const syncConfigId = db.prepare("INSERT INTO sync_configs (provider_id, user_id, enabled, granted_by_admin) VALUES (?, 1, 1, 1)").run(providerId).lastInsertRowid;
+
+    const req = {
+      params: { id: String(providerId) },
+      body: {
+        name: 'Provider',
+        url: 'http://provider.example',
+        username: 'upstream',
+        password: '********',
+        epg_url: 'http://epg.example/xmltv',
+        user_id: 2,
+        epg_enabled: false,
+        max_connections: 5,
+      },
+      user: { id: 99, username: 'admin', is_admin: true },
+      ip: '127.0.0.1',
+    };
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+    await updateProvider(req, res);
+
+    expect(db.prepare('SELECT enabled, granted_by_admin FROM sync_configs WHERE id = ?').get(syncConfigId)).toEqual({ enabled: 1, granted_by_admin: 1 });
+    expect(db.prepare("SELECT details FROM security_logs WHERE action = 'provider_owner_changed'").get().details).toContain('retained 1 explicit sync grant(s)');
   });
 });

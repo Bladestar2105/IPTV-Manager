@@ -9,6 +9,7 @@ import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
+import { encodeSeriesEpisodeId } from '../utils/seriesEpisodeId.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -432,7 +433,7 @@ export const playerApi = async (req, res) => {
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0 AND pc.stream_type = 'series'
       `).get(seriesId, user.id);
 
       if (!channel) return res.json({});
@@ -448,29 +449,54 @@ export const playerApi = async (req, res) => {
 
         const data = await resp.json();
 
-        const OFFSET = 1000000000;
-        const providerId = channel.provider_id;
-
         if (data.info && channel.custom_name) {
             data.info.name = channel.custom_name;
         }
 
         if (data.episodes) {
-           for (const seasonKey in data.episodes) {
-              const episodes = data.episodes[seasonKey];
-              if (Array.isArray(episodes)) {
-                 episodes.forEach(ep => {
+           const sourceKey = providerSourceKey(channel.url);
+           const upsertEpisode = db.prepare(`
+             INSERT INTO provider_series_episodes
+               (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(source_key, remote_episode_id) DO UPDATE SET
+               series_remote_id = excluded.series_remote_id,
+               season = excluded.season,
+               episode_num = excluded.episode_num,
+               title = excluded.title,
+               container_extension = excluded.container_extension,
+               logo = excluded.logo,
+               added = excluded.added
+           `);
+           db.transaction(() => {
+             for (const seasonKey in data.episodes) {
+                const episodes = data.episodes[seasonKey];
+                if (!Array.isArray(episodes)) continue;
+                data.episodes[seasonKey] = episodes.filter(ep => {
                     const originalId = Number(ep.id);
-                    const newId = (providerId * OFFSET + originalId).toString();
+                    const newId = encodeSeriesEpisodeId(channel.user_channel_id, originalId);
+                    if (!newId) return false;
+                    upsertEpisode.run(
+                      sourceKey,
+                      remoteSeriesId,
+                      originalId,
+                      Number(ep.season ?? seasonKey) || 0,
+                      Number(ep.episode_num) || 0,
+                      ep.title || '',
+                      ep.container_extension || 'mp4',
+                      ep.info?.movie_image || ep.movie_image || ep.cover || '',
+                      ep.added || ''
+                    );
                     ep.id = newId;
 
                     // Cache the episode name for the active streams dashboard
                     const seriesName = data.info ? data.info.name : 'Unknown Series';
                     const epTitle = ep.title ? ep.title : `Episode ${originalId}`;
                     episodeNameCache.set(newId, `${seriesName} - ${epTitle}`);
-                 });
-              }
-           }
+                    return true;
+                });
+             }
+           })();
         }
 
         return res.json(data);
@@ -724,8 +750,6 @@ export const getPlaylist = async (req, res) => {
     const sourceKeyByProviderId = new Map(
       db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, providerSourceKey(p.url)])
     );
-    const EPISODE_ID_OFFSET = 1000000000; // must match proxySeries decoding
-
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
@@ -754,7 +778,9 @@ export const getPlaylist = async (req, res) => {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
             const epLogo = ep.logo ? sanitizeM3uTag(ep.logo) : safeLogo;
-            let episodeUrl = seriesPrefix + (ch.provider_id * EPISODE_ID_OFFSET + ep.remote_episode_id) + '.' + (ep.container_extension || 'mp4');
+            const episodeId = encodeSeriesEpisodeId(ch.user_channel_id, ep.remote_episode_id);
+            if (!episodeId) continue;
+            let episodeUrl = seriesPrefix + episodeId + '.' + (ep.container_extension || 'mp4');
             if (useTokenAuth) {
               episodeUrl += tokenParam;
             }

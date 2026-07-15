@@ -815,6 +815,32 @@ export function migrateUserChannelAdminGrants(db) {
   }
 }
 
+export function migrateSyncConfigAdminGrants(db) {
+  const migrate = db.transaction(() => {
+    const columns = db.prepare('PRAGMA table_info(sync_configs)').all().map(column => column.name);
+    if (columns.includes('granted_by_admin')) return 0;
+
+    db.exec('ALTER TABLE sync_configs ADD COLUMN granted_by_admin INTEGER NOT NULL DEFAULT 0');
+    return db.prepare(`
+      UPDATE sync_configs
+      SET enabled = 0
+      WHERE enabled = 1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM providers p
+          WHERE p.id = sync_configs.provider_id
+            AND p.user_id IS sync_configs.user_id
+        )
+    `).run().changes;
+  });
+
+  const disabled = migrate();
+  if (disabled > 0) {
+    console.info(`Sync grant migration disabled ${disabled} unapproved cross-owner config(s)`);
+  }
+  return disabled;
+}
+
 export function migrateUserNotes(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(users)").all();

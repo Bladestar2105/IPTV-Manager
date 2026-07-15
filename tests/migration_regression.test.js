@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Database from 'better-sqlite3';
 import db, { initDb } from '../src/database/db.js';
 import { encrypt, decrypt } from '../src/utils/crypto.js';
-import { migrateProviderPasswords, migrateOtpSecrets, migrateUserChannelAdminGrants } from '../src/database/migrations.js';
+import { migrateProviderPasswords, migrateOtpSecrets, migrateUserChannelAdminGrants, migrateSyncConfigAdminGrants } from '../src/database/migrations.js';
 
 describe('Migration Bug Regression', () => {
     beforeAll(() => {
@@ -85,6 +85,40 @@ describe('Migration Bug Regression', () => {
             legacyDb.prepare('UPDATE user_channels SET is_hidden = 0, granted_by_admin = 1 WHERE id = 41').run();
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(0);
             expect(legacyDb.prepare('SELECT id FROM authorized_user_channels ORDER BY id').all()).toEqual([{ id: 40 }, { id: 41 }]);
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('disables legacy cross-owner sync configs idempotently without changing IDs', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE providers (id INTEGER PRIMARY KEY, user_id INTEGER);
+              CREATE TABLE sync_configs (
+                id INTEGER PRIMARY KEY,
+                provider_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                enabled INTEGER DEFAULT 1
+              );
+              INSERT INTO providers (id, user_id) VALUES (10, 1), (11, 2);
+              INSERT INTO sync_configs (id, provider_id, user_id, enabled)
+                VALUES (20, 10, 1, 1), (21, 11, 1, 1);
+            `);
+
+            expect(migrateSyncConfigAdminGrants(legacyDb)).toBe(1);
+            expect(legacyDb.prepare('SELECT id, enabled, granted_by_admin FROM sync_configs ORDER BY id').all()).toEqual([
+                { id: 20, enabled: 1, granted_by_admin: 0 },
+                { id: 21, enabled: 0, granted_by_admin: 0 }
+            ]);
+
+            legacyDb.prepare('UPDATE sync_configs SET enabled = 1, granted_by_admin = 1 WHERE id = 21').run();
+            expect(migrateSyncConfigAdminGrants(legacyDb)).toBe(0);
+            expect(legacyDb.prepare('SELECT id, enabled, granted_by_admin FROM sync_configs WHERE id = 21').get()).toEqual({
+                id: 21,
+                enabled: 1,
+                granted_by_admin: 1
+            });
         } finally {
             legacyDb.close();
         }

@@ -36,13 +36,11 @@ export const createShare = (req, res) => {
     let baseSlug = generateSlug(normalizedName);
     if (!baseSlug) baseSlug = 'share';
 
-    let slug = baseSlug;
-    let counter = 1;
+    let slug;
     while (true) {
+        slug = `${baseSlug}-${crypto.randomBytes(8).toString('hex')}`;
         const existing = db.prepare('SELECT token FROM shared_links WHERE slug = ?').get(slug);
         if (!existing) break;
-        slug = `${baseSlug}-${counter}`;
-        counter++;
     }
 
     db.prepare(`

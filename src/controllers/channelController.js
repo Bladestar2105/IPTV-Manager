@@ -1,6 +1,6 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
-import { isAdultCategory } from '../utils/helpers.js';
+import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 
 export const getUserCategories = (req, res) => {
@@ -234,11 +234,13 @@ export const addUserChannel = (req, res) => {
       WHERE pc.id = ?
     `).get(Number(provider_channel_id));
     if (!providerChannel) return res.status(404).json({error: 'Channel not found'});
-    if (!req.user.is_admin && providerChannel.user_id !== cat.user_id) {
-      return res.status(403).json({error: 'Access denied'});
-    }
-
-    const grantedByAdmin = providerChannel.user_id === cat.user_id ? 0 : 1;
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: cat.user_id,
+      providerOwnerId: providerChannel.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
     const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
