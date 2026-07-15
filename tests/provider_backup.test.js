@@ -143,10 +143,12 @@ describe('Stream Controller - Backup Failover', () => {
     });
 
     it('should failover to first backup if primary fails', async () => {
+        const destroy = vi.fn();
         // First call fails
         mockFetch.mockResolvedValueOnce({
             ok: false,
-            status: 503
+            status: 503,
+            body: { destroy }
         });
         // Second call succeeds
         mockFetch.mockResolvedValueOnce({
@@ -162,6 +164,7 @@ describe('Stream Controller - Backup Failover', () => {
         expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('http://primary.com'), expect.any(Object));
         expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('http://backup1.com'), expect.any(Object));
         expect(mockRes.sendStatus).not.toHaveBeenCalled();
+        expect(destroy).toHaveBeenCalledOnce();
     });
 
     it('should failover to second backup if first backup also fails', async () => {

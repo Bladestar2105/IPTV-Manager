@@ -35,7 +35,7 @@ describe('application wiring smoke checks', () => {
     const appSource = readRepoFile('src/app.js');
 
     expect(appSource).toContain('app.use(securityHeaders)');
-    expect(appSource).toContain("bodyParser.json({ limit: '1mb' })");
+    expect(appSource).toContain("express.json({ limit: '1mb' })");
     expect(appSource).toContain('process.env.ALLOWED_ORIGINS');
     expect(appSource).toContain('redactUrl(req.originalUrl || req.url)');
     expect(appSource).toContain("app.use('/api', apiLimiter)");

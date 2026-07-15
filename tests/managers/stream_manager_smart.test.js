@@ -77,6 +77,7 @@ describe('StreamManager Smart Limits', () => {
       // 3. User 1, Channel B, 1.1.1.1 (from '4')
       // Total 3
       expect(count).toBe(3);
+      expect(mockRedis.hGetAll).toHaveBeenCalledOnce();
     });
 
     it('should identify active sessions correctly', async () => {

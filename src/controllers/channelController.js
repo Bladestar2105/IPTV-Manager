@@ -22,7 +22,7 @@ export const createUserCategory = (req, res) => {
     const catType = type || 'live';
 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
     const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
 
@@ -227,8 +227,18 @@ export const addUserChannel = (req, res) => {
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
 
+    const providerChannel = db.prepare(`
+      SELECT pc.id, p.user_id
+      FROM provider_channels pc
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE pc.id = ?
+    `).get(Number(provider_channel_id));
+    if (!providerChannel || (!req.user.is_admin && providerChannel.user_id !== cat.user_id)) {
+      return res.status(403).json({error: 'Access denied'});
+    }
+
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
     const existingHidden = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ? AND is_hidden = 1').get(catId, Number(provider_channel_id));
 

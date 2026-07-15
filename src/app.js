@@ -1,5 +1,4 @@
 import express from 'express';
-import bodyParser from 'body-parser';
 import cors from 'cors';
 import morgan from 'morgan';
 import path from 'path';
@@ -47,7 +46,7 @@ if (process.env.TRUST_PROXY) {
 app.use(securityHeaders);
 
 // Middleware
-app.use(bodyParser.json({ limit: '1mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : false,
   credentials: true

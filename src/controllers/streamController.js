@@ -435,6 +435,7 @@ async function fetchWithBackups(primaryUrl, backupUrls, options) {
             if (res.ok) {
                 return { response: res, successfulUrl: res.url || u };
             }
+            res.body?.destroy?.();
             // If 404/403/407/etc, we might want to try backup? Yes.
             console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
 

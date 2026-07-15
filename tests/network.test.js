@@ -47,12 +47,14 @@ describe('fetchSafe', () => {
   it('should follow redirects for safe URLs', async () => {
     const initialUrl = 'http://example.com';
     const redirectUrl = 'http://example.com/redirected';
+    const destroy = vi.fn();
 
     // First response: 301 Redirect
     const redirectResponse = {
       ok: false,
       status: 301,
       headers: { get: (name) => name === 'location' ? redirectUrl : null },
+      body: { destroy },
     };
 
     // Second response: 200 OK
@@ -77,6 +79,7 @@ describe('fetchSafe', () => {
     expect(fetch).toHaveBeenNthCalledWith(1, initialUrl, expect.any(Object));
     expect(fetch).toHaveBeenNthCalledWith(2, redirectUrl, expect.any(Object));
     expect(response).toBe(finalResponse);
+    expect(destroy).toHaveBeenCalledOnce();
   });
 
   it('should handle relative redirects', async () => {

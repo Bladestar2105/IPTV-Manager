@@ -318,7 +318,7 @@ class StreamManager {
   }
 
   async getUserConnectionCount(userId) {
-    await this.cleanupStaleStreams();
+    if (!this.redis) await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {
@@ -354,7 +354,7 @@ class StreamManager {
 
   async getProviderConnectionCount(providerId) {
     if (!providerId) return 0;
-    await this.cleanupStaleStreams();
+    if (!this.redis) await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {
@@ -383,7 +383,7 @@ class StreamManager {
   }
 
   async isSessionActive(userId, ip, channelName, providerId) {
-    await this.cleanupStaleStreams();
+    if (!this.redis) await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {

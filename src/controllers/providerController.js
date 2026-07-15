@@ -608,7 +608,7 @@ export const importCategory = async (req, res) => {
     const isAdult = isAdultCategory(category_name) ? 1 : 0;
 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(user_id);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
     const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(user_id, category_name, isAdult, newSortOrder, catType);
     const newCategoryId = catInfo.lastInsertRowid;

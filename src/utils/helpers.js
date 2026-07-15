@@ -203,7 +203,7 @@ export function getCookie(req, name) {
 /**
  * Redacts sensitive information from URLs for logging purposes.
  * This includes Xtream passwords in path segments, HDHomeRun tokens,
- * and password query parameters.
+ * and sensitive query parameters.
  * @param {string} url The URL to redact
  * @returns {string} The redacted URL
  */
@@ -225,9 +225,8 @@ export function redactUrl(url) {
     // 2. Redact HDHomeRun token: /hdhr/TOKEN/...
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
-    // 3. Redact password in query strings: ?password=... or &password=...
-    // Preserves the case of the 'password' key
-    redacted = redacted.replace(/([?&])(password)=[^&]*/gi, '$1$2=********');
+    // 3. Redact credentials in query strings while preserving key casing
+    redacted = redacted.replace(/([?&])(password|token)=[^&]*/gi, '$1$2=********');
 
     return redacted;
   } catch (e) {

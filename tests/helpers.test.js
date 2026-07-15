@@ -224,11 +224,13 @@ describe('redactUrl', () => {
     expect(redactUrl('http://myserver/hdhr/SECRET_TOKEN')).toBe('http://myserver/hdhr/********');
   });
 
-  it('should redact password query parameters', () => {
+  it('should redact credential query parameters', () => {
     expect(redactUrl('/api/test?password=secret')).toBe('/api/test?password=********');
     expect(redactUrl('/api/test?foo=bar&password=secret')).toBe('/api/test?foo=bar&password=********');
     expect(redactUrl('/api/test?password=secret&foo=bar')).toBe('/api/test?password=********&foo=bar');
     expect(redactUrl('/api/test?PASSWORD=secret')).toBe('/api/test?PASSWORD=********');
+    expect(redactUrl('/api/test?token=jwt-secret')).toBe('/api/test?token=********');
+    expect(redactUrl('/api/test?TOKEN=jwt-secret')).toBe('/api/test?TOKEN=********');
   });
 
   it('should return non-string inputs as-is', () => {
@@ -244,7 +246,7 @@ describe('redactUrl', () => {
 
   it('should handle multiple redactions in one URL', () => {
     const mixedUrl = '/live/user/pass/1.ts?password=secret&token=123';
-    expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=123');
+    expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=********');
   });
 });
 

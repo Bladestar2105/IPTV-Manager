@@ -324,7 +324,7 @@ export async function performSync(providerId, userId, isManual = false) {
     db.transaction(() => {
       // Pre-calculate max sort order for optimization
       const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-      let currentSortOrder = maxSortRow?.max_sort || -1;
+      let currentSortOrder = maxSortRow?.max_sort ?? -1;
 
       // 1. Process Categories
       for (const provCat of allCategories) {
