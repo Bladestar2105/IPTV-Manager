@@ -13,6 +13,15 @@
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
+## Pull Request Validation
+
+Pull requests to `main` must pass the Node.js 24 validation job before merge.
+It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
+full test suite with an isolated temporary `DATA_DIR`, runs the build command,
+and fails on high or critical production dependency vulnerabilities. The
+temporary test directory is removed even when a test fails. Pull-request Docker
+builds verify the image without logging in to the registry or publishing it.
+
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
 `npm install` after changing Node versions to keep native bindings aligned with

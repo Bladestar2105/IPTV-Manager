@@ -73,6 +73,7 @@ export async function performSync(providerId, userId, isManual = false) {
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
+    const assignmentGrant = provider.user_id === Number(userId) ? 0 : 1;
 
     // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
     await checkProviderExpiry(providerId);
@@ -287,7 +288,7 @@ export async function performSync(providerId, userId, isManual = false) {
     const maxSortMap = new Map();
 
     // Prepare statement unconditionally to avoid potential undefined issues
-    const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)');
+    const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
     const deleteUserChannel = db.prepare('DELETE FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?');
 
     if (config && config.auto_add_channels) {
@@ -587,7 +588,7 @@ export async function performSync(providerId, userId, isManual = false) {
                 if (currentMax === undefined) currentMax = -1;
                 const newSortOrder = currentMax + 1;
 
-                insertUserChannel.run(userCatId, provChannelId, newSortOrder);
+                insertUserChannel.run(userCatId, provChannelId, newSortOrder, assignmentGrant);
 
                 // Update in-memory state
                 existingAssignments.add(assignmentKey);

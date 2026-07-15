@@ -84,7 +84,11 @@ export const restoreBackup = (req, res) => {
 
       // Insert backup data
       const insertCategory = db.prepare('INSERT INTO user_categories (id, user_id, name, sort_order, is_adult, type) VALUES (?, ?, ?, ?, ?, ?)');
-      const insertChannel = db.prepare('INSERT INTO user_channels (id, user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?, ?)');
+      const insertChannel = db.prepare(`
+        INSERT INTO user_channels
+          (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
       const updateMapping = db.prepare('UPDATE category_mappings SET user_category_id = ?, auto_created = ? WHERE id = ?');
 
       for (const cat of data.userCategories) {
@@ -92,7 +96,15 @@ export const restoreBackup = (req, res) => {
       }
 
       for (const chan of data.userChannels) {
-        insertChannel.run(chan.id, chan.user_category_id, chan.provider_channel_id, chan.sort_order);
+        insertChannel.run(
+          chan.id,
+          chan.user_category_id,
+          chan.provider_channel_id,
+          chan.sort_order,
+          chan.custom_name || '',
+          Number(chan.is_hidden) === 1 ? 1 : 0,
+          Number(chan.granted_by_admin) === 1 ? 1 : 0
+        );
       }
 
       for (const map of data.categoryMappings) {

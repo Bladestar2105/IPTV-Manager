@@ -222,10 +222,13 @@ export function redactUrl(url) {
       }
     );
 
-    // 2. Redact HDHomeRun token: /hdhr/TOKEN/...
+    // 2. Redact share-management tokens while preserving any query string.
+    redacted = redacted.replace(/(\/api\/shares\/)[^/?#]+/gi, '$1********');
+
+    // 3. Redact HDHomeRun token: /hdhr/TOKEN/...
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
-    // 3. Redact credentials in query strings while preserving key casing
+    // 4. Redact credentials in query strings while preserving key casing
     redacted = redacted.replace(/([?&])(password|token)=[^&]*/gi, '$1$2=********');
 
     return redacted;

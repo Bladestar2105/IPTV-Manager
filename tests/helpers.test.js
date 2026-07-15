@@ -224,6 +224,11 @@ describe('redactUrl', () => {
     expect(redactUrl('http://myserver/hdhr/SECRET_TOKEN')).toBe('http://myserver/hdhr/********');
   });
 
+  it('should redact share tokens in path segments and preserve the query', () => {
+    expect(redactUrl('/api/shares/550e8400-e29b-41d4-a716-446655440000')).toBe('/api/shares/********');
+    expect(redactUrl('/api/shares/secret-token?foo=bar')).toBe('/api/shares/********?foo=bar');
+  });
+
   it('should redact credential query parameters', () => {
     expect(redactUrl('/api/test?password=secret')).toBe('/api/test?password=********');
     expect(redactUrl('/api/test?foo=bar&password=secret')).toBe('/api/test?foo=bar&password=********');
@@ -242,6 +247,8 @@ describe('redactUrl', () => {
   it('should return original URL if no sensitive info found', () => {
     const safeUrl = '/api/status?id=123';
     expect(redactUrl(safeUrl)).toBe(safeUrl);
+    expect(redactUrl('/api/users/550e8400-e29b-41d4-a716-446655440000')).toBe('/api/users/550e8400-e29b-41d4-a716-446655440000');
+    expect(redactUrl('/%E0%A4%A')).toBe('/%E0%A4%A');
   });
 
   it('should handle multiple redactions in one URL', () => {

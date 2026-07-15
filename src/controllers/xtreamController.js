@@ -237,7 +237,7 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT DISTINCT cat.*
         FROM user_categories cat
-        JOIN user_channels uc ON uc.user_category_id = cat.id
+        JOIN authorized_user_channels uc ON uc.user_category_id = cat.id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = ? AND uc.is_hidden = 0
       `;
@@ -276,7 +276,7 @@ export const playerApi = async (req, res) => {
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
                map.epg_channel_id as manual_epg_id
         FROM user_categories cat
-        JOIN user_channels uc ON cat.id = uc.user_category_id
+        JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
@@ -324,7 +324,7 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
         FROM user_categories cat
-        JOIN user_channels uc ON cat.id = uc.user_category_id
+        JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = 'movie' AND uc.is_hidden = 0`;
       let params = [user.id];
@@ -370,7 +370,7 @@ export const playerApi = async (req, res) => {
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
                cat.is_adult as category_is_adult
         FROM user_categories cat
-        JOIN user_channels uc ON cat.id = uc.user_category_id
+        JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = 'series' AND uc.is_hidden = 0`;
       let params = [user.id];
@@ -428,7 +428,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -487,7 +487,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -535,7 +535,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -570,7 +570,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -604,7 +604,7 @@ export const playerApi = async (req, res) => {
       const placeholders = streamIds.map(() => '?').join(',');
       const channels = db.prepare(`
         SELECT uc.id as user_channel_id, pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -668,7 +668,7 @@ export const getPlaylist = async (req, res) => {
         pc.provider_id, pc.remote_stream_id,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_categories cat
-      JOIN user_channels uc ON cat.id = uc.user_category_id
+      JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND uc.is_hidden = 0`;
@@ -823,7 +823,7 @@ export const xmltv = async (req, res) => {
     const allowedIds = new Set();
     let query = `
         SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -906,7 +906,7 @@ export const playerChannelsJson = async (req, res) => {
         map.epg_channel_id as manual_epg_id,
         p.use_mapped_epg_icon
       FROM user_categories cat
-      JOIN user_channels uc ON cat.id = uc.user_category_id
+      JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
@@ -1045,7 +1045,7 @@ export const playerPlaylist = async (req, res) => {
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
       FROM user_categories cat
-      JOIN user_channels uc ON cat.id = uc.user_category_id
+      JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0

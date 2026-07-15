@@ -30,7 +30,21 @@ vi.mock('../../src/database/db.js', () => {
   return {
     default: {
       prepare: vi.fn((query) => {
-        if (query.includes('FROM user_channels')) {
+        if (query.includes('FROM providers p') && query.includes('authorized_user_channels')) {
+            return {
+                get: vi.fn().mockReturnValue({
+                    id: 1,
+                    user_id: 1,
+                    url: 'http://upstream.com',
+                    username: 'puser',
+                    password: 'ppass',
+                    max_connections: 10,
+                    backup_urls: null,
+                    user_agent: 'TestAgent',
+                })
+            };
+        }
+        if (query.includes('FROM authorized_user_channels')) {
           return {
             get: vi.fn().mockReturnValue({
               user_channel_id: 1,
@@ -58,20 +72,6 @@ vi.mock('../../src/database/db.js', () => {
                 }])
             };
         }
-        if (query.includes('SELECT * FROM providers WHERE id = ?')) {
-            return {
-                get: vi.fn().mockReturnValue({
-                    id: 1,
-                    user_id: 1,
-                    url: 'http://upstream.com',
-                    username: 'puser',
-                    password: 'ppass',
-                    max_connections: 10,
-                    backup_urls: null,
-                    user_agent: 'TestAgent',
-                })
-            };
-        }
         if (query.includes('SELECT id FROM stream_stats')) {
            return { get: vi.fn().mockReturnValue({ id: 50 }), run: vi.fn() };
         }
@@ -95,6 +95,7 @@ vi.mock('../../src/utils/helpers.js', () => ({
   getBaseUrl: vi.fn(() => 'http://localhost'),
   isSafeUrl: vi.fn(() => Promise.resolve(true)),
   safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4)),
+  providerSourceKey: vi.fn((url) => String(url || '')),
 }));
 
 // We don't mock ffmpeg here because it's not strictly needed for m3u8 logic test,
@@ -281,6 +282,8 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
     await streamController.proxySeries(req, res);
 
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM providers p'));
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM authorized_user_channels uc'));
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining('/series/puser/ppass/1.mkv'),
       expect.objectContaining({

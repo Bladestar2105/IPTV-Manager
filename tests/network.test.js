@@ -17,11 +17,13 @@ describe('fetchSafe', () => {
 
   it('should fetch a safe URL successfully', async () => {
     const url = 'http://example.com';
+    const destroy = vi.fn();
     const mockResponse = {
       ok: true,
       status: 200,
       headers: { get: () => null },
       text: () => Promise.resolve('Success'),
+      body: { destroy },
     };
 
     helpers.isSafeUrl.mockResolvedValue(true);
@@ -34,6 +36,7 @@ describe('fetchSafe', () => {
       redirect: 'manual',
     }));
     expect(response).toBe(mockResponse);
+    expect(destroy).not.toHaveBeenCalled();
   });
 
   it('should throw an error for unsafe URLs', async () => {
@@ -87,10 +90,12 @@ describe('fetchSafe', () => {
     const relativeRedirect = '/new-path';
     const expectedNewUrl = 'http://example.com/new-path';
 
+    const destroy = vi.fn();
     const redirectResponse = {
         ok: false,
         status: 302,
         headers: { get: (name) => name === 'location' ? relativeRedirect : null },
+        body: { destroy },
     };
 
     const finalResponse = { ok: true, status: 200, headers: { get: () => null } };
@@ -102,16 +107,36 @@ describe('fetchSafe', () => {
     await fetchSafe(initialUrl);
 
     expect(fetch).toHaveBeenNthCalledWith(2, expectedNewUrl, expect.any(Object));
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('should destroy the redirect body when Location is invalid', async () => {
+    const initialUrl = 'http://example.com';
+    const destroy = vi.fn();
+    helpers.isSafeUrl.mockResolvedValue(true);
+    fetch.mockResolvedValue({
+      ok: false,
+      status: 302,
+      headers: { get: (name) => name === 'location' ? 'http://[invalid' : null },
+      body: { destroy },
+    });
+
+    await expect(fetchSafe(initialUrl)).rejects.toThrow();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalledOnce();
   });
 
   it('should throw error on unsafe redirect', async () => {
     const initialUrl = 'http://example.com';
     const unsafeRedirect = 'http://unsafe-redirect.com';
 
+    const destroy = vi.fn();
     const redirectResponse = {
       ok: false,
       status: 302,
       headers: { get: (name) => name === 'location' ? unsafeRedirect : null },
+      body: { destroy },
     };
 
     // isSafeUrl returns true for initial, false for redirect
@@ -123,14 +148,17 @@ describe('fetchSafe', () => {
 
     await expect(fetchSafe(initialUrl)).rejects.toThrow(`Unsafe URL: ${unsafeRedirect}`);
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalledOnce();
   });
 
   it('should throw error after too many redirects', async () => {
     const url = 'http://example.com';
+    const destroy = vi.fn();
     const redirectResponse = {
       ok: false,
       status: 302,
       headers: { get: (name) => name === 'location' ? url : null }, // Circular redirect
+      body: { destroy },
     };
 
     helpers.isSafeUrl.mockResolvedValue(true);
@@ -146,6 +174,7 @@ describe('fetchSafe', () => {
     // Call 6: redirectCount=6. if(6>5) true. throw.
     // So fetch is called 6 times (0,1,2,3,4,5).
     expect(fetch).toHaveBeenCalledTimes(6);
+    expect(destroy).toHaveBeenCalledTimes(6);
   });
 
   it('should use correct agent for protocol', async () => {

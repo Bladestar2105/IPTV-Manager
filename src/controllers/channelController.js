@@ -192,7 +192,7 @@ export const getCategoryChannels = (req, res) => {
 
     const rows = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
@@ -233,9 +233,12 @@ export const addUserChannel = (req, res) => {
       JOIN providers p ON p.id = pc.provider_id
       WHERE pc.id = ?
     `).get(Number(provider_channel_id));
-    if (!providerChannel || (!req.user.is_admin && providerChannel.user_id !== cat.user_id)) {
+    if (!providerChannel) return res.status(404).json({error: 'Channel not found'});
+    if (!req.user.is_admin && providerChannel.user_id !== cat.user_id) {
       return res.status(403).json({error: 'Access denied'});
     }
+
+    const grantedByAdmin = providerChannel.user_id === cat.user_id ? 0 : 1;
 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
     const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
@@ -244,10 +247,10 @@ export const addUserChannel = (req, res) => {
 
     let insertId;
     if (existingHidden) {
-        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ? WHERE id = ?').run(newSortOrder, existingHidden.id);
+        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ?, granted_by_admin = ? WHERE id = ?').run(newSortOrder, grantedByAdmin, existingHidden.id);
         insertId = existingHidden.id;
     } else {
-        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
+        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
         insertId = info.lastInsertRowid;
     }
 

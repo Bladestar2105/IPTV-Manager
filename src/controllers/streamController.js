@@ -46,7 +46,7 @@ function getChannel(streamId, userId) {
         p.backup_urls,
         p.user_agent,
         p.max_connections as provider_max_connections
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -76,9 +76,24 @@ function insertStat(channelId, lastViewed) {
     return stmts.insertStat.run(channelId, lastViewed);
 }
 
-function getProvider(id) {
-    if (!stmts.getProvider) stmts.getProvider = db.prepare('SELECT * FROM providers WHERE id = ?');
-    return stmts.getProvider.get(id);
+function getSeriesProvider(id, userId) {
+    if (!stmts.getProvider) {
+        stmts.getProvider = db.prepare(`
+          SELECT p.*
+          FROM providers p
+          WHERE p.id = ?
+            AND EXISTS (
+              SELECT 1
+              FROM authorized_user_channels uc
+              JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+              JOIN user_categories cat ON cat.id = uc.user_category_id
+              WHERE pc.provider_id = p.id
+                AND pc.stream_type = 'series'
+                AND cat.user_id = ?
+            )
+        `);
+    }
+    return stmts.getProvider.get(id, userId);
 }
 
 function getProviderPool(userId, providerUrl) {
@@ -95,6 +110,22 @@ function getProviderPool(userId, providerUrl) {
 
 async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
     const pool = getProviderPool(userId, originalProvider.provider_url || originalProvider.url);
+    const normalizedOriginal = originalProvider.id ? originalProvider : {
+        id: originalProvider.provider_id,
+        url: originalProvider.provider_url,
+        username: originalProvider.provider_user,
+        password: originalProvider.provider_pass,
+        backup_urls: originalProvider.backup_urls,
+        user_agent: originalProvider.user_agent,
+        max_connections: originalProvider.provider_max_connections
+    };
+
+    // Cross-user assignments reach this point only through the authorized
+    // assignment view. Keep the explicitly granted source provider available
+    // even though it is intentionally absent from the user's provider pool.
+    if (!pool.some(provider => provider.id === normalizedOriginal.id)) {
+        pool.push(normalizedOriginal);
+    }
 
     for (const p of pool) {
         let isSessionActive = false;
@@ -1099,7 +1130,7 @@ export const proxySeries = async (req, res) => {
 
     if (!providerId || !remoteEpisodeId) return res.sendStatus(404);
 
-    const provider = getProvider(providerId);
+    const provider = getSeriesProvider(providerId, user.id);
     if (!provider) return res.sendStatus(404);
 
     if (user.is_share_guest) return res.sendStatus(403);

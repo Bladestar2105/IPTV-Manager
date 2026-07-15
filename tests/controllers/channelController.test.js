@@ -237,7 +237,73 @@ describe('Channel Controller - createUserCategory', () => {
         channelController.addUserChannel(req, res);
 
         expect(res.status).not.toHaveBeenCalled();
-        expect(db.prepare('SELECT provider_channel_id FROM user_channels WHERE id = ?').get(res.json.mock.calls[0][0].id).provider_channel_id).toBe(channelId);
+        const created = db.prepare('SELECT * FROM user_channels WHERE id = ?').get(res.json.mock.calls[0][0].id);
+        expect(created.provider_channel_id).toBe(channelId);
+        expect(created.granted_by_admin).toBe(1);
+        expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = ?').get(created.id).id).toBe(created.id);
+    });
+
+    it('should mark same-owner assignments as normal and playable', () => {
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'My Category')").run().lastInsertRowid;
+        const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('My Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const channelId = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (?, 100, 'My Channel')").run(providerId).lastInsertRowid;
+        const req = {
+            params: { catId: String(categoryId) },
+            body: { provider_channel_id: channelId },
+            user: { id: 2, is_admin: false }
+        };
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.addUserChannel(req, res);
+
+        const created = db.prepare('SELECT * FROM user_channels WHERE id = ?').get(res.json.mock.calls[0][0].id);
+        expect(created.granted_by_admin).toBe(0);
+        expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = ?').get(created.id).id).toBe(created.id);
+    });
+
+    it('should return 404 for an unknown provider channel', () => {
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'My Category')").run().lastInsertRowid;
+        const req = {
+            params: { catId: String(categoryId) },
+            body: { provider_channel_id: 999999 },
+            user: { id: 2, is_admin: false }
+        };
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.addUserChannel(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(404);
+        expect(res.json).toHaveBeenCalledWith({ error: 'Channel not found' });
+    });
+
+    it('should only restore a hidden cross-owner row as an explicit admin grant', () => {
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'Managed Category')").run().lastInsertRowid;
+        const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Foreign Provider', 'http://provider.test', 'u', 'p', 1)").run().lastInsertRowid;
+        const channelId = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (?, 100, 'Foreign Channel')").run(providerId).lastInsertRowid;
+        const assignmentId = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, is_hidden) VALUES (?, ?, 0, 1)').run(categoryId, channelId).lastInsertRowid;
+        const body = { provider_channel_id: channelId };
+
+        const userRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+        channelController.addUserChannel({ params: { catId: String(categoryId) }, body, user: { id: 2, is_admin: false } }, userRes);
+        expect(userRes.status).toHaveBeenCalledWith(403);
+        expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = ?').get(assignmentId)).toEqual({ is_hidden: 1, granted_by_admin: 0 });
+
+        const adminRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+        channelController.addUserChannel({ params: { catId: String(categoryId) }, body, user: { id: 1, is_admin: true } }, adminRes);
+        expect(adminRes.json).toHaveBeenCalledWith({ id: assignmentId });
+        expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = ?').get(assignmentId)).toEqual({ is_hidden: 0, granted_by_admin: 1 });
+    });
+
+    it('should exclude an ungranted legacy mismatch from category lists', () => {
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'My Category')").run().lastInsertRowid;
+        const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Foreign Provider', 'http://provider.test', 'u', 'p', 1)").run().lastInsertRowid;
+        const channelId = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (?, 100, 'Foreign Channel')").run(providerId).lastInsertRowid;
+        db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, 0)').run(categoryId, channelId);
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.getCategoryChannels({ params: { catId: String(categoryId) }, user: { id: 1, is_admin: true } }, res);
+
+        expect(res.json).toHaveBeenCalledWith([]);
     });
 
     it('should add an owned channel after an existing zero sort order', () => {
@@ -258,6 +324,7 @@ describe('Channel Controller - createUserCategory', () => {
         expect(res.status).not.toHaveBeenCalled();
         const created = db.prepare('SELECT * FROM user_channels WHERE id = ?').get(res.json.mock.calls[0][0].id);
         expect(created.sort_order).toBe(1);
+        expect(created.granted_by_admin).toBe(0);
     });
 
     it('should handle database errors', async () => {

@@ -57,4 +57,20 @@ describe('application wiring smoke checks', () => {
     expect(hdhrRoutes).toContain("router.get(['/:token/discover.json'");
     expect(hdhrRoutes).toContain("router.get('/:token/auto/v:channelId'");
   });
+
+  it('ships the identified Web UI vendor assets in the Docker image', () => {
+    const bootstrapPath = path.join(root, 'public/vendor/bootstrap.bundle.min.js');
+    const sortablePath = path.join(root, 'public/vendor/sortable.min.js');
+    const indexHtml = readRepoFile('public/index.html');
+    const playerHtml = readRepoFile('public/player.html');
+
+    expect(fs.existsSync(bootstrapPath)).toBe(true);
+    expect(fs.existsSync(sortablePath)).toBe(true);
+    expect(fs.readFileSync(bootstrapPath, 'utf8')).toContain('Bootstrap v5.3.8');
+    expect(fs.readFileSync(sortablePath, 'utf8')).toContain('Sortable 1.15.6');
+    expect(indexHtml).toContain('vendor/bootstrap.bundle.min.js');
+    expect(indexHtml).toContain('vendor/sortable.min.js');
+    expect(playerHtml).toContain('vendor/bootstrap.bundle.min.js');
+    expect(readRepoFile('Dockerfile')).toContain('COPY public ./public');
+  });
 });

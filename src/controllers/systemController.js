@@ -600,14 +600,25 @@ export const importData = async (req, res) => {
       }
 
       const userAssignments = importData.channels.filter(c => c.type === 'user_assignment');
-      const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name) VALUES (?, ?, ?, ?)');
+      const insertUserChannel = db.prepare(`
+        INSERT INTO user_channels
+          (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
 
       for (const ua of userAssignments) {
         const newUserCatId = categoryIdMap.get(ua.user_category_id);
         const newProvChannelId = providerChannelIdMap.get(ua.provider_channel_id);
 
         if (newUserCatId && newProvChannelId) {
-          insertUserChannel.run(newUserCatId, newProvChannelId, ua.sort_order, ua.custom_name || '');
+          insertUserChannel.run(
+            newUserCatId,
+            newProvChannelId,
+            ua.sort_order,
+            ua.custom_name || '',
+            Number(ua.is_hidden) === 1 ? 1 : 0,
+            Number(ua.granted_by_admin) === 1 ? 1 : 0
+          );
           stats.channels++;
         }
       }

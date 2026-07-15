@@ -140,6 +140,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
+    expect(mockDb.prepare.mock.calls.some(([sql]) => sql.includes('JOIN authorized_user_channels uc'))).toBe(true);
 
     // Episode entries with SXX EXX naming
     expect(output).toContain('tvg-name="My Show S01 E01"');

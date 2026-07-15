@@ -104,6 +104,7 @@ describe('HDHomeRun Controller', () => {
 
             // Verify SQL filters for live streams
             expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("pc.stream_type = 'live'"));
+            expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM authorized_user_channels uc'));
 
             expect(res.json).toHaveBeenCalledWith([
                 {
@@ -135,6 +136,7 @@ describe('HDHomeRun Controller', () => {
 
             await hdhrController.auto(req, res);
 
+            expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM authorized_user_channels uc'));
             expect(res.redirect).toHaveBeenCalledWith('http://localhost:3000/hdhr/testtoken/stream/1.ts');
         });
 
