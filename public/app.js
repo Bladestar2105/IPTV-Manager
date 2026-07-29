@@ -440,6 +440,64 @@ function copyAllXtreamCredentials(btnElement) {
     copyToClipboard(text, btnElement);
 }
 
+async function loadStalkerDevices(userId) {
+    const list = document.getElementById('stalker-device-list');
+    if (!list || !userId) return;
+    list.innerHTML = '<li class="list-group-item text-muted">Loading...</li>';
+
+    try {
+        const devices = await fetchJSON(`/api/users/${userId}/stalker-devices`);
+        if (selectedUserId !== userId) return;
+        list.innerHTML = '';
+
+        if (devices.length === 0) {
+            list.innerHTML = '<li class="list-group-item text-muted">No devices registered.</li>';
+            return;
+        }
+
+        devices.forEach(device => {
+            const item = document.createElement('li');
+            item.className = 'list-group-item d-flex justify-content-between align-items-center gap-2';
+
+            const details = document.createElement('div');
+            const seen = device.last_seen ? new Date(device.last_seen * 1000).toLocaleString() : 'never';
+            details.innerHTML = `<strong>${escapeHtml(device.mac)}</strong><br><small class="text-muted">Last seen: ${escapeHtml(seen)}</small>`;
+
+            const actions = document.createElement('div');
+            actions.className = 'btn-group btn-group-sm';
+
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = device.enabled ? 'btn btn-outline-warning' : 'btn btn-outline-success';
+            toggle.textContent = device.enabled ? 'Disable' : 'Enable';
+            toggle.onclick = async () => {
+                await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ enabled: !device.enabled })
+                });
+                loadStalkerDevices(userId);
+            };
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-outline-danger';
+            remove.textContent = 'Delete';
+            remove.onclick = async () => {
+                if (!confirm(`Delete device ${device.mac}?`)) return;
+                await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, { method: 'DELETE' });
+                loadStalkerDevices(userId);
+            };
+
+            actions.append(toggle, remove);
+            item.append(details, actions);
+            list.appendChild(item);
+        });
+    } catch (error) {
+        list.innerHTML = `<li class="list-group-item text-danger">${escapeHtml(error.message)}</li>`;
+    }
+}
+
 function renderUserDetails(u) {
     if (selectedUserId !== u.id) {
         globalSelectedChannels.clear();
@@ -543,6 +601,13 @@ function renderUserDetails(u) {
         }
     }
 
+    const stalkerTab = document.getElementById('tab-stalker-item');
+    const canManageStalker = !!(currentUser && currentUser.is_admin);
+    if (stalkerTab) stalkerTab.classList.toggle('d-none', !canManageStalker);
+    const stalkerPortalUrl = document.getElementById('stalker-portal-url');
+    if (stalkerPortalUrl) stalkerPortalUrl.value = `${baseUrl}/c/`;
+    if (canManageStalker) loadStalkerDevices(u.id);
+
     loadUserCategories();
     loadProviders(u.id); // Refresh providers
     loadUserBackups();
@@ -553,6 +618,28 @@ function renderUserDetails(u) {
         if(provForm.user_id) provForm.user_id.value = u.id;
     }
 }
+
+document.getElementById('stalker-device-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!selectedUserId) return;
+
+    const input = document.getElementById('stalker-device-mac');
+    const button = event.target.querySelector('button[type="submit"]');
+    setLoadingState(button, true, 'saving');
+    try {
+        await fetchJSON(`/api/users/${selectedUserId}/stalker-devices`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ mac: input.value })
+        });
+        input.value = '';
+        loadStalkerDevices(selectedUserId);
+    } catch (error) {
+        alert(error.message);
+    } finally {
+        setLoadingState(button, false);
+    }
+});
 
 async function loadUsers() {
   if (!currentUser || !currentUser.is_admin) {

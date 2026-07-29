@@ -417,6 +417,7 @@ export const updateUser = async (req, res) => {
 
         // Security enhancement: Invalidate sessions and cached tokens
         db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
+        db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(id);
         invalidateUserTokens(id);
     }
 
@@ -445,6 +446,7 @@ export const updateUser = async (req, res) => {
     if (expiry_date !== undefined) {
         updates.push('expiry_date = ?');
         params.push(expiry_date || null);
+        db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(id);
     }
 
     if (allowed_countries !== undefined) {
@@ -535,6 +537,8 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM category_mappings WHERE user_id = ?').run(id);
 
       db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM stalker_devices WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM shared_links WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM user_backups WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);

@@ -69,6 +69,10 @@ describe('documentation smoke checks', () => {
       'POST /api/users',
       'PUT /api/users/:id',
       'DELETE /api/users/:id',
+      'GET /api/users/:userId/stalker-devices',
+      'POST /api/users/:userId/stalker-devices',
+      'PUT /api/users/:userId/stalker-devices/:deviceId',
+      'DELETE /api/users/:userId/stalker-devices/:deviceId',
       'GET /api/providers',
       'POST /api/providers/bulk-url',
       'POST /api/providers/:id/sync',
@@ -117,6 +121,8 @@ describe('documentation smoke checks', () => {
       'GET /hdhr/:token/lineup.json',
       'GET /hdhr/:token/auto/v:channelId',
       'GET /hdhr/:token/movie/:stream_id.:ext',
+      'GET|POST /portal.php',
+      'GET|POST /server/load.php',
     ].forEach((endpoint) => {
       expect(apiReference).toContain(`\`${endpoint}\``);
     });

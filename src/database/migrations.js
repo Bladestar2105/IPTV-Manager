@@ -1081,3 +1081,44 @@ export function migrateSeriesEpisodes(db) {
     throw e;
   }
 }
+
+export function migrateStalkerTables(db) {
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS stalker_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        mac TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        serial_number TEXT,
+        device_uid TEXT,
+        model TEXT,
+        last_ip TEXT,
+        last_seen INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_stalker_devices_user
+        ON stalker_devices(user_id);
+
+      CREATE TABLE IF NOT EXISTS stalker_sessions (
+        token TEXT PRIMARY KEY,
+        device_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES stalker_devices(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_stalker_sessions_user
+        ON stalker_sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_stalker_sessions_expiry
+        ON stalker_sessions(expires_at);
+    `);
+  });
+
+  migrate();
+}

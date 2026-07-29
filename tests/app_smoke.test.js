@@ -24,6 +24,7 @@ describe('application wiring smoke checks', () => {
       "app.use('/api/proxy', proxyRoutes)",
       "app.use('/', streamRoutes)",
       "app.use('/', xtreamRoutes)",
+      "app.use('/', stalkerRoutes)",
       "app.use('/hdhr', hdhrRoutes)",
       'app.use(errorHandler)',
     ].forEach((expected) => {
@@ -47,6 +48,7 @@ describe('application wiring smoke checks', () => {
     const xtreamRoutes = readRepoFile('src/routes/xtream.js');
     const streamRoutes = readRepoFile('src/routes/streams.js');
     const hdhrRoutes = readRepoFile('src/routes/hdhr.js');
+    const stalkerRoutes = readRepoFile('src/routes/stalker.js');
 
     expect(xtreamRoutes).toContain("router.get('/player_api.php'");
     expect(xtreamRoutes).toContain("router.get('/xmltv.php'");
@@ -56,6 +58,8 @@ describe('application wiring smoke checks', () => {
     expect(streamRoutes).toContain("'/live/token/auth/:stream_id.ts'");
     expect(hdhrRoutes).toContain("router.get(['/:token/discover.json'");
     expect(hdhrRoutes).toContain("router.get('/:token/auto/v:channelId'");
+    expect(stalkerRoutes).toContain("'/server/load.php'");
+    expect(stalkerRoutes).toContain("'/portal.php'");
   });
 
   it('ships the identified Web UI vendor assets in the Docker image', () => {

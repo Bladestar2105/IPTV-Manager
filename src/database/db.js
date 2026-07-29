@@ -322,6 +322,7 @@ export function initDb(isPrimary) {
             if (typeof migrations.migrateSeriesEpisodes === 'function') {
                 migrations.migrateSeriesEpisodes(db);
             }
+            migrations.migrateStalkerTables(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

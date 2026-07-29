@@ -197,6 +197,7 @@ export async function getXtreamUser(req) {
       const row = db.prepare('SELECT user_id, session_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
 
       let userToCache = null;
+      let stalkerRow = null;
 
       if (row) {
         const dbUser = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
@@ -214,17 +215,33 @@ export async function getXtreamUser(req) {
         userToCache = dbUser;
       }
 
-      // 2. Check HDHR tokens (if not found yet and token length matches hex string)
+      // 2. Check Stalker/MAG sessions
+      if (!user && !row) {
+          stalkerRow = db.prepare(`
+            SELECT ss.user_id
+            FROM stalker_sessions ss
+            JOIN stalker_devices sd ON sd.id = ss.device_id
+            JOIN users u ON u.id = ss.user_id
+            WHERE ss.token = ? AND ss.expires_at > ? AND sd.enabled = 1 AND u.is_active = 1
+          `).get(token, now);
+
+          if (stalkerRow) {
+              user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(stalkerRow.user_id);
+              userToCache = user;
+          }
+      }
+
+      // 3. Check HDHR tokens (if not found yet and token length matches hex string)
       if (!user && /^[0-9a-f]{32}$/i.test(token)) {
           // Verify we didn't fail a required session check above
-          if (!row) {
+          if (!row && !stalkerRow) {
             user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
             userToCache = user;
           }
       }
 
-      // 3. Check Shared Links
-      if (!user && !row) {
+      // 4. Check Shared Links
+      if (!user && !row && !stalkerRow) {
           const share = db.prepare('SELECT * FROM shared_links WHERE token = ?').get(token);
           if (share) {
               user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(share.user_id);
@@ -243,7 +260,7 @@ export async function getXtreamUser(req) {
       }
 
       // Cache the result
-      if (userToCache || row) {
+      if (userToCache || row || stalkerRow) {
           tokenCache.set(token, {
               user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
               requiredSessionId: requiredSessionId,

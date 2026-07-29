@@ -22,6 +22,10 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `POST /api/users`
 - `PUT /api/users/:id`
 - `DELETE /api/users/:id`
+- `GET /api/users/:userId/stalker-devices`
+- `POST /api/users/:userId/stalker-devices`
+- `PUT /api/users/:userId/stalker-devices/:deviceId`
+- `DELETE /api/users/:userId/stalker-devices/:deviceId`
 
 Deleting a user removes user-owned providers and dependent runtime/configuration
 rows first, including provider icon cache entries, share links, temporary
@@ -286,6 +290,25 @@ repopulates it with series-scoped keys.
 - `GET /series/token/auth/:episode_id.:ext?subtitle_track=<index>&subtitle_format=vtt`
 - `GET /timeshift/token/auth/:duration/:start/:stream_id.ts`
 - `GET /timeshift/token/auth/:duration/:start/:stream_id.m3u8`
+
+## Stalker/MAG (Experimental)
+
+- `GET|POST /portal.php`
+- `GET|POST /server/load.php`
+- `GET|POST /stalker_portal/server/load.php`
+- `GET|POST /c/server/load.php`
+- `GET /c/`
+
+The public compatibility endpoints implement MAC handshake/session
+authentication plus `get_profile`, `get_modules`, `get_main_info`,
+`get_genres`, `get_ordered_list`, `get_all_channels`, `get_short_epg`, and
+`create_link`. Generated links reuse the normal token-authenticated live stream
+proxy, so user channel grants, region locks, and connection limits remain in
+force. Device management is admin-only.
+
+This first version targets Stalker-compatible live-TV clients. It does not yet
+ship a full hardware-specific MAG portal UI or implement VOD, series, and
+catch-up.
 
 ## HDHomeRun Emulation
 

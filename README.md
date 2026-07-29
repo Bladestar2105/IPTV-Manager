@@ -24,6 +24,7 @@
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
 - **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.
+- **Stalker/MAG (Experimental)**: MAC-authenticated live TV with per-user categories, channels, short EPG, and tokenized playback links.
 - **Shared Links**: Create public share links with customizable slugs (short URLs) and expiration dates.
 - **Bulk Operations**: Optimized bulk category import and deletion for managing large playlists efficiently.
 - **VOD & Series Support**: Full proxy support for Movies and TV Series.
@@ -222,6 +223,12 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
 
 ### Share + Companion App Integration
 - Share companion integration guide (Xtream/M3U/EPG): `docs/SHARE_COMPANION_INTEGRATION.md`
+
+### Stalker/MAG (Experimental)
+- Register one or more MAC addresses in the selected user's **Stalker/MAG** tab.
+- Configure the client with `http(s)://your-server/c/`.
+- The current implementation covers live TV. VOD, series, catch-up, and a
+  hardware-specific MAG portal UI are not included yet.
 
 ### HDHomeRun Emulation
 - `GET /hdhr/:token/discover.json`
