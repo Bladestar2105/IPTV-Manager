@@ -1,6 +1,10 @@
 import db from '../database/db.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { resolveAssignmentGrant } from '../utils/helpers.js';
+import {
+  normalizeAssignmentOrigin,
+  upsertMergedUserChannelAssignment
+} from '../services/userChannelAssignmentService.js';
 
 export const getBackups = (req, res) => {
   try {
@@ -43,6 +47,8 @@ export const createBackup = (req, res) => {
     }
 
     const backupData = JSON.stringify({
+      format_version: 2,
+      assignment_provenance_version: 1,
       userCategories,
       userChannels,
       categoryMappings
@@ -80,8 +86,9 @@ export const restoreBackup = (req, res) => {
     const backupMappingTargets = new Map(
       data.categoryMappings
         .filter(map => Number.isInteger(Number(map.id)) && Number(map.id) > 0)
-        .map(map => [Number(map.id), Number(map.user_category_id)])
+        .map(map => [Number(map.id), map])
     );
+    const trustedFormat = Number(data.format_version) === 2 && Number(data.assignment_provenance_version) === 1;
 
     const stats = { channels_restored: 0, channels_hidden: 0, channels_skipped: 0 };
 
@@ -100,20 +107,20 @@ export const restoreBackup = (req, res) => {
 
       // Insert backup data
       const insertCategory = db.prepare('INSERT INTO user_categories (id, user_id, name, sort_order, is_adult, type) VALUES (?, ?, ?, ?, ?, ?)');
-      const insertChannel = db.prepare(`
-        INSERT INTO user_channels
-          (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
-           mapping_id, granted_by_admin, authorization_revoked)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING
+      const getMapping = db.prepare(`
+        SELECT id, provider_id, provider_category_id,
+               COALESCE(category_type, 'live') AS category_type
+        FROM category_mappings
+        WHERE id = ? AND user_id = ?
       `);
-      const getMapping = db.prepare('SELECT id FROM category_mappings WHERE id = ? AND user_id = ?');
       const getProviderOwner = db.prepare(`
-        SELECT p.user_id AS provider_owner_id
+        SELECT p.id AS provider_id, p.user_id AS provider_owner_id,
+               pc.original_category_id, COALESCE(pc.stream_type, 'live') AS stream_type
         FROM provider_channels pc
         JOIN providers p ON p.id = pc.provider_id
         WHERE pc.id = ?
       `);
+      const getCategoryType = db.prepare("SELECT COALESCE(type, 'live') AS type FROM user_categories WHERE id = ? AND user_id = ?");
       const updateMapping = db.prepare('UPDATE category_mappings SET user_category_id = ?, auto_created = ? WHERE id = ? AND user_id = ?');
 
       for (const cat of data.userCategories) {
@@ -141,26 +148,54 @@ export const restoreBackup = (req, res) => {
           allowExplicitAdminGrant: req.body?.allow_cross_owner === true
         });
         const isHidden = Number(chan.is_hidden) === 1 ? 1 : 0;
-        const authorizationRevoked = grant === null ? 1 : 0;
-        const mappingId = Number(chan.mapping_id);
-        const restoredMappingId = Number.isInteger(mappingId) && mappingId > 0 &&
-          backupMappingTargets.get(mappingId) === categoryId && getMapping.get(mappingId, userId)
-          ? mappingId
+        const authorizationRevoked = grant === null ||
+          (Number(chan.authorization_revoked) === 1 && grant !== 1) ? 1 : 0;
+        const sourceOrigin = trustedFormat
+          ? normalizeAssignmentOrigin(chan.assignment_origin, 'legacy')
+          : 'imported';
+        const sourceMappingId = Number(chan.mapping_id);
+        const sourceMapping = backupMappingTargets.get(sourceMappingId);
+        const restoredMappingId = sourceOrigin === 'mapping' && Number.isInteger(sourceMappingId) && sourceMappingId > 0 &&
+          sourceMapping && Number(sourceMapping.user_category_id) === categoryId && getMapping.get(sourceMappingId, userId)
+          ? sourceMappingId
           : null;
-
-        insertChannel.run(
-          chan.id,
-          categoryId,
-          providerChannelId,
-          chan.sort_order,
-          chan.custom_name || '',
-          isHidden,
-          restoredMappingId,
-          grant === 1 ? 1 : 0,
-          authorizationRevoked
-        );
-        if (isHidden || authorizationRevoked) stats.channels_hidden++;
-        else stats.channels_restored++;
+        const result = upsertMergedUserChannelAssignment(db, {
+          id: chan.id,
+          user_category_id: categoryId,
+          provider_channel_id: providerChannelId,
+          sort_order: chan.sort_order,
+          custom_name: chan.custom_name || '',
+          is_hidden: isHidden,
+          assignment_origin: sourceOrigin,
+          mapping_id: restoredMappingId,
+          granted_by_admin: grant === 1 ? 1 : 0,
+          authorization_revoked: authorizationRevoked,
+          grant_valid: grant === 1
+        }, {
+          preserveId: true,
+          mappingValidator: mappingId => {
+            const map = backupMappingTargets.get(Number(mappingId));
+            const current = getMapping.get(Number(mappingId), userId);
+            const category = getCategoryType.get(categoryId, userId);
+            const mapType = String(map?.category_type || 'live');
+            const categoryType = String(category?.type || 'live');
+            const streamType = String(provider.stream_type || 'live');
+            const providerCategoryId = Number(provider.original_category_id);
+            const mappingCategoryId = Number(current?.provider_category_id);
+            const sourceCategoryId = Number(sourceMapping?.provider_category_id);
+            const typeValid = mapType === categoryType &&
+              (streamType === mapType || (streamType === 'live' && mapType === 'radio'));
+            return Boolean(map && current && Number(map.user_category_id) === categoryId &&
+              Number(current.provider_id) === Number(provider.provider_id) &&
+              Number.isFinite(providerCategoryId) && providerCategoryId === mappingCategoryId &&
+              providerCategoryId === sourceCategoryId && typeValid);
+          }
+        });
+        if (result.skipped) {
+          stats.channels_skipped++;
+          continue;
+        }
+        if (result.merged) stats.channels_merged = (stats.channels_merged || 0) + result.merged;
       }
 
       for (const map of data.categoryMappings) {
@@ -169,9 +204,23 @@ export const restoreBackup = (req, res) => {
           updateMapping.run(categoryId, map.auto_created ? 1 : 0, map.id, userId);
         }
       }
+
+      const categoryPlaceholders = [...restoredCategoryIds].map(() => '?').join(',');
+      if (categoryPlaceholders) {
+        const finalCounts = db.prepare(`
+          SELECT
+            SUM(CASE WHEN is_hidden = 0 AND authorization_revoked = 0 THEN 1 ELSE 0 END) AS restored,
+            SUM(CASE WHEN is_hidden = 1 OR authorization_revoked = 1 THEN 1 ELSE 0 END) AS hidden
+          FROM user_channels
+          WHERE user_category_id IN (${categoryPlaceholders})
+        `).get(...restoredCategoryIds);
+        stats.channels_restored = Number(finalCounts?.restored || 0);
+        stats.channels_hidden = Number(finalCounts?.hidden || 0);
+      }
     })();
 
     clearChannelsCache(userId);
+    if (!stats.channels_merged) delete stats.channels_merged;
     res.json({ success: true, ...stats });
   } catch (error) {
     console.error('Restore backup error:', error);

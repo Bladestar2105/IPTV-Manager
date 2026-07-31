@@ -7,12 +7,15 @@ import {
     migrateOtpSecrets,
     migrateSeriesEpisodes,
     migrateUserChannelMappingId,
+    migrateUserChannelAssignmentOrigin,
+    migrateUserChannelAssignmentProvenanceV2,
     migrateProviderSyncState,
     migrateUserChannelMappingBackfillV1,
     migrateUserChannelDeduplicationV1,
     migrateUserChannelAdminGrants,
     migrateSyncConfigAdminGrants
 } from '../src/database/migrations.js';
+import { mergeAssignmentCandidates } from '../src/services/userChannelAssignmentService.js';
 
 describe('Migration Bug Regression', () => {
     beforeAll(() => {
@@ -88,7 +91,7 @@ describe('Migration Bug Regression', () => {
         }
     });
 
-    it('backfills only unambiguous legacy mapping ownership and records a marker', () => {
+    it('records the legacy V1 marker without inferring mapping ownership', () => {
         const legacyDb = new Database(':memory:');
         try {
             legacyDb.exec(`
@@ -125,17 +128,65 @@ describe('Migration Bug Regression', () => {
             `);
 
             const result = migrateUserChannelMappingBackfillV1(legacyDb);
-            expect(result).toEqual({ assigned: 3, ambiguous: 1, unmatched: 2, skipped: false });
+            expect(result).toEqual({ assigned: 0, ambiguous: 0, unmatched: 0, skipped: false });
             expect(legacyDb.prepare('SELECT id, mapping_id FROM user_channels ORDER BY id').all()).toEqual([
-              { id: 201, mapping_id: 100 },
-              { id: 202, mapping_id: 101 },
+              { id: 201, mapping_id: null },
+              { id: 202, mapping_id: null },
               { id: 203, mapping_id: null },
               { id: 204, mapping_id: null },
               { id: 205, mapping_id: null },
-              { id: 206, mapping_id: 106 }
+              { id: 206, mapping_id: null }
             ]);
             expect(legacyDb.prepare("SELECT value FROM settings WHERE key = 'user_channel_mapping_backfill_v1'").get()).toBeTruthy();
             expect(migrateUserChannelMappingBackfillV1(legacyDb)).toEqual({ assigned: 0, ambiguous: 0, unmatched: 0, skipped: true });
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('repairs uncertain V1 ownership conservatively and is idempotent', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+              CREATE TABLE user_channels (
+                id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
+                sort_order INTEGER DEFAULT 0, custom_name TEXT DEFAULT '', is_hidden INTEGER DEFAULT 0,
+                assignment_origin TEXT NOT NULL DEFAULT 'legacy',
+                mapping_id INTEGER, granted_by_admin INTEGER DEFAULT 0, authorization_revoked INTEGER DEFAULT 0
+              );
+              CREATE TABLE series_episode_aliases (
+                id INTEGER PRIMARY KEY, user_channel_id INTEGER, source_key TEXT,
+                series_remote_id INTEGER, remote_episode_id INTEGER
+              );
+              INSERT INTO user_channels
+                (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
+                 mapping_id, granted_by_admin, authorization_revoked)
+              VALUES (42, 7, 9, 3, 'Keep', 1, 100, 1, 1);
+              INSERT INTO series_episode_aliases VALUES (99, 42, 'source', 9, 1);
+            `);
+            migrateUserChannelMappingId(legacyDb);
+            migrateUserChannelAssignmentOrigin(legacyDb);
+            expect(migrateUserChannelAssignmentProvenanceV2(legacyDb)).toEqual({ repaired: 1, skipped: false });
+            expect(legacyDb.prepare(`
+              SELECT id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
+                     assignment_origin, mapping_id, granted_by_admin, authorization_revoked
+              FROM user_channels
+            `).get()).toEqual({
+              id: 42, user_category_id: 7, provider_channel_id: 9, sort_order: 3,
+              custom_name: 'Keep', is_hidden: 1, assignment_origin: 'legacy', mapping_id: null,
+              granted_by_admin: 1, authorization_revoked: 1
+            });
+            expect(legacyDb.prepare('SELECT id, user_channel_id FROM series_episode_aliases').get())
+              .toEqual({ id: 99, user_channel_id: 42 });
+            legacyDb.prepare(`
+              INSERT INTO user_channels
+                (id, user_category_id, provider_channel_id, assignment_origin, mapping_id)
+              VALUES (43, 7, 10, 'mapping', 101)
+            `).run();
+            expect(migrateUserChannelAssignmentProvenanceV2(legacyDb)).toEqual({ repaired: 0, skipped: true });
+            expect(legacyDb.prepare('SELECT assignment_origin, mapping_id FROM user_channels WHERE id = 43').get())
+              .toEqual({ assignment_origin: 'mapping', mapping_id: 101 });
         } finally {
             legacyDb.close();
         }
@@ -150,6 +201,7 @@ describe('Migration Bug Regression', () => {
               CREATE TABLE user_channels (
                 id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
                 sort_order INTEGER DEFAULT 0, custom_name TEXT DEFAULT '', is_hidden INTEGER DEFAULT 0,
+                assignment_origin TEXT NOT NULL DEFAULT 'legacy',
                 mapping_id INTEGER, granted_by_admin INTEGER DEFAULT 0, authorization_revoked INTEGER DEFAULT 0
               );
               CREATE TABLE series_episode_aliases (
@@ -162,10 +214,10 @@ describe('Migration Bug Regression', () => {
                 FOREIGN KEY (user_channel_id) REFERENCES user_channels(id) ON DELETE CASCADE
               );
               INSERT INTO user_channels VALUES
-                (1, 10, 20, 8, '', 0, 7, 1, 0),
-                (2, 10, 20, 2, 'Manual', 1, NULL, 0, 0),
-                (3, 11, 21, 9, 'Mapped', 0, 8, 0, 1),
-                (4, 11, 21, 3, '', 0, 9, 0, 0);
+                (1, 10, 20, 8, '', 0, 'mapping', 7, 1, 0),
+                (2, 10, 20, 2, 'Manual', 1, 'manual', NULL, 0, 0),
+                (3, 11, 21, 9, 'Mapped', 0, 'mapping', 8, 0, 1),
+                (4, 11, 21, 3, '', 0, 'mapping', 9, 0, 0);
               INSERT INTO series_episode_aliases (id, user_channel_id, source_key, series_remote_id, remote_episode_id) VALUES
                 (900000005, 2, 'source', 20, 1),
                 (900000006, 1, 'source', 20, 1),
@@ -174,9 +226,9 @@ describe('Migration Bug Regression', () => {
             `);
 
             expect(migrateUserChannelDeduplicationV1(legacyDb)).toEqual({ merged: 2, skipped: false });
-            expect(legacyDb.prepare('SELECT id, mapping_id, is_hidden, custom_name, sort_order FROM user_channels ORDER BY id').all()).toEqual([
-              { id: 2, mapping_id: null, is_hidden: 1, custom_name: 'Manual', sort_order: 2 },
-              { id: 3, mapping_id: 8, is_hidden: 0, custom_name: 'Mapped', sort_order: 3 }
+            expect(legacyDb.prepare('SELECT id, assignment_origin, mapping_id, is_hidden, custom_name, sort_order FROM user_channels ORDER BY id').all()).toEqual([
+              { id: 2, assignment_origin: 'manual', mapping_id: null, is_hidden: 1, custom_name: 'Manual', sort_order: 2 },
+              { id: 3, assignment_origin: 'mapping', mapping_id: 8, is_hidden: 0, custom_name: 'Mapped', sort_order: 3 }
             ]);
             expect(legacyDb.prepare('SELECT id, user_channel_id, remote_episode_id FROM series_episode_aliases ORDER BY id').all()).toEqual([
               { id: 900000005, user_channel_id: 2, remote_episode_id: 1 },
@@ -186,6 +238,40 @@ describe('Migration Bug Regression', () => {
             expect(legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'uq_user_channels_category_provider'").get())
               .toEqual({ name: 'uq_user_channels_category_provider' });
             expect(migrateUserChannelDeduplicationV1(legacyDb)).toEqual({ merged: 0, skipped: true });
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('keeps a valid mapping when a lower-id duplicate mapping is stale', () => {
+        const merged = mergeAssignmentCandidates([
+            { id: 10, user_category_id: 1, provider_channel_id: 2, assignment_origin: 'mapping', mapping_id: 900 },
+            { id: 11, user_category_id: 1, provider_channel_id: 2, assignment_origin: 'mapping', mapping_id: 901 }
+        ], { mappingValidator: mappingId => mappingId === 901 });
+
+        expect(merged).toMatchObject({
+            id: 11,
+            assignment_origin: 'mapping',
+            mapping_id: 901
+        });
+    });
+
+    it('does not infer mapping ownership while deduplicating a legacy schema', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+              CREATE TABLE user_channels (
+                id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
+                sort_order INTEGER DEFAULT 0, custom_name TEXT DEFAULT '', is_hidden INTEGER DEFAULT 0,
+                mapping_id INTEGER, granted_by_admin INTEGER DEFAULT 0, authorization_revoked INTEGER DEFAULT 0
+              );
+              INSERT INTO user_channels (id, user_category_id, provider_channel_id, mapping_id)
+              VALUES (1, 10, 20, 900), (2, 10, 20, NULL);
+            `);
+
+            expect(migrateUserChannelDeduplicationV1(legacyDb)).toEqual({ merged: 1, skipped: false });
+            expect(legacyDb.prepare('SELECT mapping_id FROM user_channels').get()).toEqual({ mapping_id: null });
         } finally {
             legacyDb.close();
         }

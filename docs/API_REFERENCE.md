@@ -94,13 +94,18 @@ Category mappings accept `null` for an explicit unmap, or a category owned by
 the mapping user with the same content type. Invalid, foreign, and mixed-type
 targets are rejected without changing the mapping.
 
-Assignments created by category synchronization are owned through
-`user_channels.mapping_id`. Retargeting a mapping moves or merges only those
-owned assignments into the validated target category; explicitly unmapping a
-mapping removes its owned assignments. Manual assignments (`mapping_id IS NULL`)
-remain unchanged. Each user category can contain at most one assignment for a
-given provider channel. Bulk category and channel requests accept at most 5,000
-IDs per request.
+Assignments carry an explicit `user_channels.assignment_origin` constrained to
+`manual`, `mapping`, `legacy`, or `imported`. Manual assignments are user-owned
+and are never moved or removed by category mapping reconciliation. Mapping
+assignments are owned by one `category_mappings.id` and may be moved, merged,
+or removed. Legacy and imported assignments remain unmanaged until explicitly
+adopted. A manual re-add of an existing assignment adopts it as `manual` and
+clears `mapping_id`.
+
+Mapping reconciliation requires both `assignment_origin = 'mapping'` and a
+matching `mapping_id`; a non-null ID alone is not trusted. Each user category
+can contain at most one assignment for a given provider channel. Bulk category
+and channel requests accept at most 5,000 IDs per request.
 
 ## EPG and Mapping
 
@@ -148,6 +153,16 @@ cross-owner grant only by sending `allow_cross_owner: true`; omitted or false
 values keep those rows revoked with grant `0`. The restore response
 includes non-sensitive `channels_restored`, `channels_hidden`, and
 `channels_skipped` counters.
+
+New backups use `format_version: 2` and
+`assignment_provenance_version: 1`. Only a mapping present in the backup,
+belonging to the restored user, and targeting the restored category/provider
+relationship may retain mapping ownership. Legacy or unversioned backups treat
+all assignments as imported and unowned. Duplicate assignments are merged by
+category/provider-channel identity: manual wins over legacy/imported, which
+wins over mapping; hidden state wins; custom names and lowest valid sort order
+are deterministic; authorization is recalculated fail-closed. The optional
+`channels_merged` counter reports merged rows without inflating restored rows.
 
 ## System, Security, and Statistics
 
@@ -200,6 +215,14 @@ rebuilt ownership relationships. Imported cross-owner administrator grants are
 restored only when the admin import request also includes
 `allow_cross_owner: true`; otherwise their sync configs remain disabled and
 their channel assignments remain authorization-revoked.
+
+New full-system exports use `version: 2` with
+`assignment_provenance_version: 1`. Modern mapping provenance is retained only
+when the mapping was recreated for the imported user/category/provider. Older
+or unversioned exports restore assignments as imported and unowned. Duplicate
+assignments are merged with the same deterministic policy as backup restore;
+`stats.channels` counts unique inserted assignments and `channels_merged` and
+`channels_skipped` report the corresponding outcomes.
 
 Radio categories are user-facing mappings of live provider channels. A live
 provider category may be mapped to both live and radio user categories, and

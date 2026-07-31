@@ -8,6 +8,10 @@ import crypto from 'crypto';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
 import { providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
+import {
+  normalizeAssignmentOrigin,
+  upsertMergedUserChannelAssignment
+} from '../services/userChannelAssignmentService.js';
 
 const getClonedProviderChannelName = (channel) => {
   if (typeof channel.name === 'string' && channel.name.trim()) return channel.name;
@@ -308,48 +312,87 @@ export const createUser = async (req, res) => {
                     INSERT OR IGNORE INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 `);
+                const findMapping = db.prepare(`
+                    SELECT id FROM category_mappings
+                    WHERE provider_id = ? AND user_id = ? AND provider_category_id = ?
+                      AND COALESCE(category_type, 'live') = ?
+                    ORDER BY id DESC LIMIT 1
+                `);
                 const mappingIdMap = new Map();
 
                 for (const m of sourceMappings) {
                     if (providerMap[m.provider_id]) {
-                        const mappingInfo = insertMapping.run(
+                        const categoryId = m.user_category_id ? categoryMap[m.user_category_id] : null;
+                        const categoryType = m.category_type || 'live';
+                        insertMapping.run(
                             providerMap[m.provider_id],
                             newUserId,
                             m.provider_category_id,
                             m.provider_category_name,
-                            m.user_category_id ? categoryMap[m.user_category_id] : null,
+                            categoryId,
                             m.auto_created,
-                            m.category_type || 'live'
+                            categoryType
                         );
-                        mappingIdMap.set(Number(m.id), Number(mappingInfo.lastInsertRowid));
+                        const mapping = findMapping.get(
+                            providerMap[m.provider_id], newUserId, m.provider_category_id, categoryType
+                        );
+                        if (mapping) mappingIdMap.set(Number(m.id), Number(mapping.id));
                     }
                 }
 
                 // 6. Copy User Channels
-                // We need to iterate over source user's categories to find channels
-                // Or simply select all user_channels linked to source user's categories
-                const insertUserChan = db.prepare(`
-                    INSERT INTO user_channels
-                      (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
-                       mapping_id, granted_by_admin, authorization_revoked)
-                    VALUES (?, ?, ?, ?, ?, ?, 0, 0)
-                    ON CONFLICT DO NOTHING
-                `);
-
                 // Fetch all user channels for source user categories
                 const sourceUserChans = db.prepare(`
-                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name, uc.is_hidden, uc.mapping_id
+                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name,
+                           uc.is_hidden, uc.mapping_id, uc.assignment_origin,
+                           uc.granted_by_admin, uc.authorization_revoked
                     FROM user_channels uc
                     JOIN user_categories cat ON uc.user_category_id = cat.id
                     WHERE cat.user_id = ?
                 `).all(sourceUserId);
+                const getClonedMapping = db.prepare(`
+                    SELECT id, provider_id, user_id, user_category_id, provider_category_id,
+                           COALESCE(category_type, 'live') AS category_type
+                    FROM category_mappings
+                    WHERE id = ? AND user_id = ?
+                `);
+                const getClonedProvider = db.prepare("SELECT provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type FROM provider_channels WHERE id = ?");
+                const getClonedCategory = db.prepare("SELECT COALESCE(type, 'live') AS type FROM user_categories WHERE id = ? AND user_id = ?");
 
                 for (const uc of sourceUserChans) {
                     const newCatId = categoryMap[uc.user_category_id];
                     const newProvChanId = channelMap[uc.provider_channel_id];
 
                     if (newCatId && newProvChanId) {
-                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order, uc.custom_name || '', uc.is_hidden || 0, mappingIdMap.get(Number(uc.mapping_id)) || null);
+                        const sourceOrigin = normalizeAssignmentOrigin(uc.assignment_origin, 'legacy');
+                        const remappedMappingId = sourceOrigin === 'mapping'
+                          ? mappingIdMap.get(Number(uc.mapping_id)) || null
+                          : null;
+                        const provider = getClonedProvider.get(newProvChanId);
+                        const providerId = provider?.provider_id;
+                        const categoryType = String(getClonedCategory.get(newCatId, newUserId)?.type || 'live');
+                        upsertMergedUserChannelAssignment(db, {
+                            user_category_id: Number(newCatId),
+                            provider_channel_id: Number(newProvChanId),
+                            sort_order: uc.sort_order,
+                            custom_name: uc.custom_name || '',
+                            is_hidden: Number(uc.is_hidden) === 1 ? 1 : 0,
+                            assignment_origin: remappedMappingId ? 'mapping' : (sourceOrigin === 'mapping' ? 'legacy' : sourceOrigin),
+                            mapping_id: remappedMappingId,
+                            granted_by_admin: 0,
+                            authorization_revoked: Number(uc.authorization_revoked) === 1 ? 1 : 0,
+                            grant_valid: false
+                        }, {
+                            mappingValidator: mappingId => {
+                                const mapping = getClonedMapping.get(Number(mappingId), newUserId);
+                                return Boolean(mapping && Number(mapping.user_category_id) === Number(newCatId) &&
+                                    Number(mapping.provider_id) === Number(providerId) &&
+                                    Number(mapping.provider_category_id) === Number(provider?.original_category_id) &&
+                                    String(mapping.category_type || 'live') === categoryType &&
+                                    (String(provider?.stream_type || 'live') === String(mapping.category_type || 'live') ||
+                                      String(provider?.stream_type || 'live') === 'live' && String(mapping.category_type || 'live') === 'radio'));
+                            }
+                        });
                     }
                 }
             }

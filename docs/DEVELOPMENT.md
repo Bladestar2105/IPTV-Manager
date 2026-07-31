@@ -131,20 +131,28 @@ their authorization revocation, while an administrator must explicitly restore
 a selected channel to clear its hidden state. Re-running the migration is
 idempotent and does not infer administrator grants.
 
-Automatic category synchronization records ownership of new assignments in the
-nullable `user_channels.mapping_id` column. Legacy or manually curated rows
-remain unowned (`NULL`) so a category move cannot delete them; only assignments
-created by an active mapping are reconciled. The migration adds the column and
-an index without changing public IDs.
+Automatic category synchronization records ownership of new assignments with
+`assignment_origin = 'mapping'` and the active `mapping_id`. Explicit channel
+adds and re-adds use `assignment_origin = 'manual'` and clear `mapping_id`.
+Rows created before trustworthy provenance, or by an old import, use
+`legacy`/`imported`; mapping lifecycle code never moves or deletes those rows.
+The origin column has a SQLite CHECK constraint and an origin/mapping index.
 
-The versioned `user_channel_mapping_backfill_v1` migration assigns ownership to
-legacy rows only when exactly one mapping matches the provider, source
-category, category owner, and content type (including the live-to-radio rule).
-Ambiguous, unmatched, and manual rows remain unowned. The
-`user_channel_deduplication_v1` migration deterministically merges duplicate
-category/provider-channel assignments, rebinds series aliases, and then creates
-the `uq_user_channels_category_provider` unique index. Both markers make the
-migrations idempotent.
+`user_channel_mapping_backfill_v1` is now a marker-only compatibility migration;
+it never infers ownership from matching provider/category fields. The versioned
+`user_channel_assignment_provenance_v2` migration runs after the origin column
+exists and before deduplication. It converts all uncertain pre-V2 rows to
+`legacy` with `mapping_id = NULL`, preserving IDs, visibility, names, grants,
+sort order, and series aliases. Its marker makes the repair idempotent.
+
+`user_channel_deduplication_v1`, backup restore, full-system import, cloning,
+category import, and mapping retargeting share one deterministic merge helper.
+The helper merges by category/provider-channel identity, prefers
+manual > legacy/imported > mapping, keeps hidden state, selects a deterministic
+custom name and lowest valid sort order, recalculates authorization, and
+rebinds/de-duplicates series aliases before removing losers. Modern backup and
+system formats may retain mapping ownership only after relationship validation;
+legacy formats are imported as unowned.
 
 Provider sync state is persisted per provider and stream type in
 `provider_sync_state`. A first complete empty snapshot with local rows is

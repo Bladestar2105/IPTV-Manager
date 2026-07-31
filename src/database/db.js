@@ -119,6 +119,8 @@ export function initDb(isPrimary) {
       sort_order INTEGER DEFAULT 0,
       custom_name TEXT DEFAULT '',
       is_hidden INTEGER DEFAULT 0,
+      assignment_origin TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (assignment_origin IN ('legacy', 'manual', 'mapping', 'imported')),
       granted_by_admin INTEGER NOT NULL DEFAULT 0,
       authorization_revoked INTEGER NOT NULL DEFAULT 0,
       mapping_id INTEGER
@@ -321,6 +323,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserChannelsCustomName(db);
             migrations.migrateUserChannelsIsHidden(db);
             migrations.migrateUserChannelMappingId(db);
+            migrations.migrateUserChannelAssignmentOrigin(db);
             migrations.migrateUserChannelAdminGrants(db);
             migrations.migrateSyncConfigAdminGrants(db);
             migrations.migrateUserNotes(db);
@@ -338,6 +341,9 @@ export function initDb(isPrimary) {
             }
             if (typeof migrations.migrateUserChannelMappingBackfillV1 === 'function') {
                 migrations.migrateUserChannelMappingBackfillV1(db);
+            }
+            if (typeof migrations.migrateUserChannelAssignmentProvenanceV2 === 'function') {
+                migrations.migrateUserChannelAssignmentProvenanceV2(db);
             }
             if (typeof migrations.migrateUserChannelDeduplicationV1 === 'function') {
                 migrations.migrateUserChannelDeduplicationV1(db);
