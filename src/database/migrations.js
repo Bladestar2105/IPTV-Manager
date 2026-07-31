@@ -912,7 +912,7 @@ export function migrateUserChannelDeduplicationV1(db) {
           custom_name = ?,
           granted_by_admin = ?,
           authorization_revoked = ?,
-          sort_order = ?${hasOrigin ? ', assignment_origin = ?, mapping_id = ?' : ''}
+          sort_order = ?${hasOrigin ? ', assignment_origin = ?, mapping_id = ?' : ', mapping_id = NULL'}
       WHERE id = ?
     `);
     const deleteAssignment = db.prepare('DELETE FROM user_channels WHERE id = ?');
@@ -922,9 +922,7 @@ export function migrateUserChannelDeduplicationV1(db) {
       const rows = selectRows.all(group.user_category_id, group.provider_channel_id);
       const normalized = rows.map(row => ({
         ...row,
-        assignment_origin: hasOrigin
-          ? row.assignment_origin
-          : (row.mapping_id === null || row.mapping_id === undefined ? 'legacy' : 'mapping')
+        assignment_origin: hasOrigin ? row.assignment_origin : 'legacy'
       }));
       const mergedRow = mergeAssignmentCandidates(normalized);
       const survivor = normalized.find(row => Number(row.id) === Number(mergedRow.id)) || normalized[0];

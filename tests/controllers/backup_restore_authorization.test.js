@@ -52,9 +52,9 @@ describe('user backup restore authorization', () => {
     fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
   });
 
-  const addProviderChannel = (ownerId) => {
+  const addProviderChannel = (ownerId, originalCategoryId = 0) => {
     const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('P', 'http://provider.example', 'u', 'p', ?)").run(ownerId).lastInsertRowid;
-    return db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 10, 'Show', 'series')").run(providerId).lastInsertRowid;
+    return db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, original_category_id, stream_type) VALUES (?, 10, 'Show', ?, 'series')").run(providerId, originalCategoryId).lastInsertRowid;
   };
 
   const addBackup = (data) => db.prepare(`
@@ -119,6 +119,22 @@ describe('user backup restore authorization', () => {
     });
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toBeUndefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ channels_hidden: 1 }));
+  });
+
+  it('keeps a source revocation for a same-owner restore without a valid admin grant', () => {
+    const providerChannelId = addProviderChannel(1);
+    const backupId = addBackup(backupData(1, {
+      provider_channel_id: providerChannelId,
+      granted_by_admin: 0,
+      authorization_revoked: 1,
+    }));
+
+    restore(backupId);
+
+    expect(db.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
+      granted_by_admin: 0,
+      authorization_revoked: 1,
+    });
   });
 
   it('cannot turn crafted cross-owner backup data into an admin grant', () => {
@@ -231,7 +247,7 @@ describe('user backup restore authorization', () => {
   });
 
   it('retains a validated modern mapping assignment', () => {
-    const providerChannelId = addProviderChannel(1);
+    const providerChannelId = addProviderChannel(1, 10);
     db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
     const mappingId = db.prepare(`
       INSERT INTO category_mappings
@@ -247,7 +263,7 @@ describe('user backup restore authorization', () => {
         provider_channel_id: providerChannelId,
         assignment_origin: 'mapping', mapping_id: mappingId,
       }),
-      categoryMappings: [{ id: mappingId, user_category_id: 100, category_type: 'series' }],
+      categoryMappings: [{ id: mappingId, user_category_id: 100, provider_category_id: 10, category_type: 'series' }],
     };
     const backupId = addBackup(data);
 

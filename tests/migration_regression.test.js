@@ -256,6 +256,27 @@ describe('Migration Bug Regression', () => {
         });
     });
 
+    it('does not infer mapping ownership while deduplicating a legacy schema', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+              CREATE TABLE user_channels (
+                id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
+                sort_order INTEGER DEFAULT 0, custom_name TEXT DEFAULT '', is_hidden INTEGER DEFAULT 0,
+                mapping_id INTEGER, granted_by_admin INTEGER DEFAULT 0, authorization_revoked INTEGER DEFAULT 0
+              );
+              INSERT INTO user_channels (id, user_category_id, provider_channel_id, mapping_id)
+              VALUES (1, 10, 20, 900), (2, 10, 20, NULL);
+            `);
+
+            expect(migrateUserChannelDeduplicationV1(legacyDb)).toEqual({ merged: 1, skipped: false });
+            expect(legacyDb.prepare('SELECT mapping_id FROM user_channels').get()).toEqual({ mapping_id: null });
+        } finally {
+            legacyDb.close();
+        }
+    });
+
     it('should revoke legacy ownership mismatches idempotently without changing IDs', () => {
         const legacyDb = new Database(':memory:');
         try {

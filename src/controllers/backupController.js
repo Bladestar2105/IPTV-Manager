@@ -108,12 +108,14 @@ export const restoreBackup = (req, res) => {
       // Insert backup data
       const insertCategory = db.prepare('INSERT INTO user_categories (id, user_id, name, sort_order, is_adult, type) VALUES (?, ?, ?, ?, ?, ?)');
       const getMapping = db.prepare(`
-        SELECT id, provider_id, COALESCE(category_type, 'live') AS category_type
+        SELECT id, provider_id, provider_category_id,
+               COALESCE(category_type, 'live') AS category_type
         FROM category_mappings
         WHERE id = ? AND user_id = ?
       `);
       const getProviderOwner = db.prepare(`
-        SELECT p.id AS provider_id, p.user_id AS provider_owner_id, COALESCE(pc.stream_type, 'live') AS stream_type
+        SELECT p.id AS provider_id, p.user_id AS provider_owner_id,
+               pc.original_category_id, COALESCE(pc.stream_type, 'live') AS stream_type
         FROM provider_channels pc
         JOIN providers p ON p.id = pc.provider_id
         WHERE pc.id = ?
@@ -146,7 +148,8 @@ export const restoreBackup = (req, res) => {
           allowExplicitAdminGrant: req.body?.allow_cross_owner === true
         });
         const isHidden = Number(chan.is_hidden) === 1 ? 1 : 0;
-        const authorizationRevoked = grant === null ? 1 : 0;
+        const authorizationRevoked = grant === null ||
+          (Number(chan.authorization_revoked) === 1 && grant !== 1) ? 1 : 0;
         const sourceOrigin = trustedFormat
           ? normalizeAssignmentOrigin(chan.assignment_origin, 'legacy')
           : 'imported';
@@ -177,10 +180,15 @@ export const restoreBackup = (req, res) => {
             const mapType = String(map?.category_type || 'live');
             const categoryType = String(category?.type || 'live');
             const streamType = String(provider.stream_type || 'live');
+            const providerCategoryId = Number(provider.original_category_id);
+            const mappingCategoryId = Number(current?.provider_category_id);
+            const sourceCategoryId = Number(sourceMapping?.provider_category_id);
             const typeValid = mapType === categoryType &&
               (streamType === mapType || (streamType === 'live' && mapType === 'radio'));
             return Boolean(map && current && Number(map.user_category_id) === categoryId &&
-              Number(current.provider_id) === Number(provider.provider_id) && typeValid);
+              Number(current.provider_id) === Number(provider.provider_id) &&
+              Number.isFinite(providerCategoryId) && providerCategoryId === mappingCategoryId &&
+              providerCategoryId === sourceCategoryId && typeValid);
           }
         });
         if (result.skipped) {

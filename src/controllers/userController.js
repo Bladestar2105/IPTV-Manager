@@ -351,11 +351,13 @@ export const createUser = async (req, res) => {
                     WHERE cat.user_id = ?
                 `).all(sourceUserId);
                 const getClonedMapping = db.prepare(`
-                    SELECT id, provider_id, user_id, user_category_id
+                    SELECT id, provider_id, user_id, user_category_id, provider_category_id,
+                           COALESCE(category_type, 'live') AS category_type
                     FROM category_mappings
                     WHERE id = ? AND user_id = ?
                 `);
-                const getClonedProvider = db.prepare('SELECT provider_id FROM provider_channels WHERE id = ?');
+                const getClonedProvider = db.prepare("SELECT provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type FROM provider_channels WHERE id = ?");
+                const getClonedCategory = db.prepare("SELECT COALESCE(type, 'live') AS type FROM user_categories WHERE id = ? AND user_id = ?");
 
                 for (const uc of sourceUserChans) {
                     const newCatId = categoryMap[uc.user_category_id];
@@ -366,7 +368,9 @@ export const createUser = async (req, res) => {
                         const remappedMappingId = sourceOrigin === 'mapping'
                           ? mappingIdMap.get(Number(uc.mapping_id)) || null
                           : null;
-                        const providerId = getClonedProvider.get(newProvChanId)?.provider_id;
+                        const provider = getClonedProvider.get(newProvChanId);
+                        const providerId = provider?.provider_id;
+                        const categoryType = String(getClonedCategory.get(newCatId, newUserId)?.type || 'live');
                         upsertMergedUserChannelAssignment(db, {
                             user_category_id: Number(newCatId),
                             provider_channel_id: Number(newProvChanId),
@@ -382,7 +386,11 @@ export const createUser = async (req, res) => {
                             mappingValidator: mappingId => {
                                 const mapping = getClonedMapping.get(Number(mappingId), newUserId);
                                 return Boolean(mapping && Number(mapping.user_category_id) === Number(newCatId) &&
-                                    Number(mapping.provider_id) === Number(providerId));
+                                    Number(mapping.provider_id) === Number(providerId) &&
+                                    Number(mapping.provider_category_id) === Number(provider?.original_category_id) &&
+                                    String(mapping.category_type || 'live') === categoryType &&
+                                    (String(provider?.stream_type || 'live') === String(mapping.category_type || 'live') ||
+                                      String(provider?.stream_type || 'live') === 'live' && String(mapping.category_type || 'live') === 'radio'));
                             }
                         });
                     }

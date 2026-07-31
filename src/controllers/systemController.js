@@ -651,7 +651,7 @@ export const importData = async (req, res) => {
       }
 
       const userAssignments = (importData.channels || []).filter(c => c.type === 'user_assignment');
-      const getProviderChannel = db.prepare("SELECT provider_id, COALESCE(stream_type, 'live') AS stream_type FROM provider_channels WHERE id = ?");
+      const getProviderChannel = db.prepare("SELECT provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type FROM provider_channels WHERE id = ?");
       const getMapping = db.prepare(`
         SELECT id, provider_id, user_id, user_category_id, COALESCE(category_type, 'live') AS category_type
         FROM category_mappings
@@ -684,12 +684,15 @@ export const importData = async (req, res) => {
         const restoredProviderId = restoredChannel?.provider_id;
         const restoredCategoryType = getCategoryType.get(newUserCatId)?.type || 'live';
         const sourceMappingType = sourceMapping?.category_type || 'live';
+        const providerCategoryId = Number(restoredChannel?.original_category_id);
+        const mappingCategoryId = Number(sourceMapping?.provider_category_id);
         const typeValid = sourceMappingType === restoredCategoryType &&
           (String(restoredChannel?.stream_type || 'live') === sourceMappingType ||
             (String(restoredChannel?.stream_type || 'live') === 'live' && sourceMappingType === 'radio'));
         const validMapping = requestedOrigin === 'mapping' && sourceMapping && remappedMappingId &&
           Number(sourceMapping.new_user_category_id) === Number(newUserCatId) &&
-          Number(sourceMapping.new_provider_id) === Number(restoredProviderId) && typeValid;
+          Number(sourceMapping.new_provider_id) === Number(restoredProviderId) &&
+          Number.isFinite(providerCategoryId) && providerCategoryId === mappingCategoryId && typeValid;
         const authorizationRevoked = grant === null ||
           (Number(ua.authorization_revoked) === 1 && grant !== 1) ? 1 : 0;
         const result = upsertMergedUserChannelAssignment(db, {
@@ -711,6 +714,7 @@ export const importData = async (req, res) => {
             return Boolean(mapping && Number(mapping.user_category_id) === Number(newUserCatId) &&
               Number(mapping.provider_id) === Number(restoredProviderId) &&
               Number(mapping.user_id) === Number(categoryOwnerMap.get(newUserCatId)) &&
+              Number(mapping.provider_category_id) === providerCategoryId &&
               String(mapping.category_type || 'live') === String(restoredCategoryType));
           }
         });
