@@ -58,7 +58,7 @@ describe('performSync Optimization', () => {
       if (sqlStr.includes('SELECT * FROM PROVIDERS')) {
         return { get: () => ({ id: 1, name: 'Test', url: 'http://test.com/m3u', username: '', password: '' }) };
       }
-      if (sqlStr.includes('SELECT * FROM CATEGORY_MAPPINGS')) {
+      if (sqlStr.includes('FROM CATEGORY_MAPPINGS CM')) {
         return { all: () => [] };
       }
       // Relaxed check for existing channels query (fetching all columns)

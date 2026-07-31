@@ -8,6 +8,11 @@ import db from '../../src/database/db.js';
 import * as authService from '../../src/services/authService.js';
 import fetch from 'node-fetch';
 import { spawn } from 'child_process';
+import ffmpeg from 'fluent-ffmpeg';
+
+const { streamDbState } = vi.hoisted(() => ({
+  streamDbState: { channelOverrides: {}, providerPool: [] }
+}));
 
 // Mock dependencies
 vi.mock('node-fetch');
@@ -76,30 +81,30 @@ vi.mock('../../src/database/db.js', () => {
         }
         if (query.includes('FROM authorized_user_channels')) {
           return {
-            get: vi.fn().mockReturnValue({
+            get: vi.fn((streamId) => ({
               user_channel_id: 1,
               provider_channel_id: 100,
-              remote_stream_id: 'remote1',
+              remote_stream_id: `remote${streamId}`,
               name: 'Test Channel',
               metadata: '{}',
+              mime_type: 'mkv',
               provider_url: 'http://upstream.com',
               provider_user: 'puser',
               provider_pass: 'ppass',
               backup_urls: null,
               user_agent: 'TestAgent',
-            }),
+              provider_id: 100,
+              provider_max_connections: 10,
+              granted_by_admin: 0,
+              category_owner_id: 1,
+              provider_owner_id: 1,
+              ...(streamDbState.channelOverrides[streamId] || {}),
+            })),
           };
         }
         if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
             return {
-                all: vi.fn().mockReturnValue([{
-                    id: 100,
-                    user_id: 1,
-                    url: 'http://upstream.com',
-                    username: 'puser',
-                    password: 'ppass',
-                    max_connections: 10
-                }])
+                all: vi.fn(() => streamDbState.providerPool)
             };
         }
         if (query.includes('SELECT id FROM stream_stats')) {
@@ -125,7 +130,8 @@ vi.mock('../../src/utils/helpers.js', () => ({
   getBaseUrl: vi.fn(() => 'http://localhost'),
   isSafeUrl: vi.fn(() => Promise.resolve(true)),
   safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4)),
-  providerSourceKey: vi.fn((url) => String(url || '')),
+  redactUrl: vi.fn((url) => url),
+  providerSourceKey: vi.fn((url) => String(url || '').replace(/\/+$/, '')),
 }));
 
 // We don't mock ffmpeg here because it's not strictly needed for m3u8 logic test,
@@ -159,6 +165,19 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    streamDbState.channelOverrides = {};
+    streamDbState.providerPool = [{
+      id: 100,
+      user_id: 1,
+      url: 'http://upstream.com',
+      username: 'puser',
+      password: 'ppass',
+      backup_urls: null,
+      user_agent: 'TestAgent',
+      max_connections: 10,
+    }];
+    streamManager.isSessionActive.mockResolvedValue(false);
+    streamManager.getProviderConnectionCount.mockResolvedValue(0);
 
     req = {
       params: { stream_id: '1', username: 'user', password: 'pass' },
@@ -194,6 +213,85 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  const sourceProvider = (overrides = {}) => ({
+    provider_id: 200,
+    provider_url: 'http://upstream.com',
+    provider_user: 'source-user',
+    provider_pass: 'source-pass',
+    backup_urls: null,
+    user_agent: 'SourceAgent',
+    provider_max_connections: 2,
+    granted_by_admin: 0,
+    category_owner_id: 1,
+    provider_owner_id: 1,
+    ...overrides,
+  });
+
+  it('keeps same-owner provider pooling behavior', async () => {
+    streamDbState.providerPool = [
+      { id: 101, url: 'http://upstream.com/', username: 'pool-user', password: 'pool-pass', max_connections: 3 },
+      { id: 200, url: 'http://upstream.com', username: 'source-user', password: 'source-pass', max_connections: 2 },
+    ];
+
+    const selected = await streamController.findAvailableProvider(1, sourceProvider(), req.ip, 'Live');
+
+    expect(selected.id).toBe(101);
+  });
+
+  it('uses an explicitly granted cross-owner source before an unrelated same-panel account', async () => {
+    streamDbState.providerPool = [
+      { id: 101, url: 'http://upstream.com', username: 'target-user', password: 'target-pass', max_connections: 3 },
+    ];
+    const source = sourceProvider({
+      granted_by_admin: 1,
+      category_owner_id: 1,
+      provider_owner_id: 2,
+      backup_urls: JSON.stringify(['http://configured-backup.example']),
+    });
+
+    const selected = await streamController.findAvailableProvider(1, source, req.ip, 'Live');
+
+    expect(selected.id).toBe(200);
+    expect(selected.backup_urls).toBe(source.backup_urls);
+  });
+
+  it('applies the cross-owner source connection limit without substituting a same-panel account', async () => {
+    streamDbState.providerPool = [
+      { id: 101, url: 'http://upstream.com', username: 'target-user', password: 'target-pass', max_connections: 3 },
+    ];
+    streamManager.getProviderConnectionCount.mockImplementation(async id => id === 200 ? 1 : 0);
+
+    const selected = await streamController.findAvailableProvider(1, sourceProvider({
+      granted_by_admin: 1,
+      category_owner_id: 1,
+      provider_owner_id: 2,
+      provider_max_connections: 1,
+    }), req.ip, 'Live');
+
+    expect(selected).toBeNull();
+    expect(streamManager.getProviderConnectionCount).toHaveBeenCalledWith(200);
+    expect(streamManager.getProviderConnectionCount).not.toHaveBeenCalledWith(101);
+  });
+
+  it('uses another account only when its URL is an explicit source backup', async () => {
+    streamDbState.providerPool = [
+      { id: 101, url: 'http://upstream.com', username: 'unrelated', password: 'unrelated', max_connections: 3 },
+      { id: 300, url: 'http://failover.example/', username: 'failover', password: 'failover-pass', max_connections: 2 },
+    ];
+    streamManager.getProviderConnectionCount.mockImplementation(async id => id === 200 ? 1 : 0);
+
+    const selected = await streamController.findAvailableProvider(1, sourceProvider({
+      granted_by_admin: 1,
+      category_owner_id: 1,
+      provider_owner_id: 2,
+      provider_max_connections: 1,
+      backup_urls: JSON.stringify(['http://failover.example']),
+    }), req.ip, 'Live');
+
+    expect(selected.id).toBe(300);
+    expect(streamManager.getProviderConnectionCount).not.toHaveBeenCalledWith(101);
   });
 
   it('should NOT call streamManager.add/cleanupUser/remove for standard .m3u8 requests', async () => {
@@ -243,9 +341,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
     vi.useRealTimers();
   });
 
-  it('should proxy MKV VOD range requests without browser auto-transcode', async () => {
-    req.params.ext = 'mkv';
-    req.path = '/movie/user/pass/1.mkv';
+  it('uses the stored MKV extension when the public movie suffix differs', async () => {
+    req.params.ext = 'ts';
+    req.path = '/movie/user/pass/1.ts';
     req.headers = {
       range: 'bytes=100-200',
       'user-agent': 'Mozilla/5.0 Firefox/140',
@@ -281,6 +379,135 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 100-200/1000');
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+  });
+
+  it('falls back to MP4 when stored movie metadata has no extension', async () => {
+    streamDbState.channelOverrides[2] = { mime_type: '' };
+    req.params = { ...req.params, stream_id: '2', ext: 'ts' };
+    req.path = '/movie/user/pass/2.ts';
+    res.headersSent = false;
+
+    await streamController.proxyMovie(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/movie/puser/ppass/remote2.mp4'),
+      expect.any(Object)
+    );
+  });
+
+  it('ignores a malformed public movie extension', async () => {
+    req.params.ext = 'ts%0a%23EXTINF';
+    req.path = '/movie/user/pass/1.ts%0a%23EXTINF';
+    res.headersSent = false;
+
+    await streamController.proxyMovie(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/movie/puser/ppass/remote1.mkv'),
+      expect.any(Object)
+    );
+    expect(fetch.mock.calls[0][0]).not.toContain('EXTINF');
+  });
+
+  it('uses the stored extension for movie backup URLs', async () => {
+    const backupUrls = JSON.stringify(['http://backup.example']);
+    streamDbState.channelOverrides[3] = {
+      mime_type: 'mkv',
+      backup_urls: backupUrls
+    };
+    streamDbState.providerPool[0].backup_urls = backupUrls;
+    req.params = { ...req.params, stream_id: '3', ext: 'ts' };
+    req.path = '/movie/user/pass/3.ts';
+    res.headersSent = false;
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      headers: { get: vi.fn() },
+      body: { destroy: vi.fn() },
+    }).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: { get: vi.fn() },
+      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
+    });
+
+    await streamController.proxyMovie(req, res);
+
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([
+      'http://upstream.com/movie/puser/ppass/remote3.mkv',
+      'http://backup.example/movie/puser/ppass/remote3.mkv'
+    ]);
+  });
+
+  it('proxies a cross-owner movie through the exact granted source account', async () => {
+    streamDbState.channelOverrides[4] = {
+      mime_type: 'mp4',
+      provider_id: 200,
+      provider_url: 'http://source.example',
+      provider_user: 'source-user',
+      provider_pass: 'source-pass',
+      provider_max_connections: 2,
+      backup_urls: JSON.stringify(['http://source-backup.example']),
+      granted_by_admin: 1,
+      category_owner_id: 1,
+      provider_owner_id: 2,
+    };
+    streamDbState.providerPool = [{
+      id: 101,
+      url: 'http://source.example',
+      username: 'target-user',
+      password: 'target-pass',
+      max_connections: 5,
+    }];
+    req.params = { ...req.params, stream_id: '4', ext: 'ts' };
+    res.headersSent = false;
+
+    await streamController.proxyMovie(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://source.example/movie/source-user/source-pass/remote4.mp4',
+      expect.any(Object)
+    );
+  });
+
+  it('proxies through an explicitly compatible cross-owner account failover', async () => {
+    streamDbState.channelOverrides[5] = {
+      mime_type: 'mp4',
+      provider_id: 200,
+      provider_url: 'http://source.example',
+      provider_user: 'source-user',
+      provider_pass: 'source-pass',
+      provider_max_connections: 1,
+      backup_urls: JSON.stringify(['http://failover.example']),
+      granted_by_admin: 1,
+      category_owner_id: 1,
+      provider_owner_id: 2,
+    };
+    streamDbState.providerPool = [
+      { id: 101, url: 'http://source.example', username: 'unrelated', password: 'unrelated', max_connections: 5 },
+      { id: 300, url: 'http://failover.example', username: 'failover-user', password: 'failover-pass', max_connections: 2, backup_urls: null },
+    ];
+    streamManager.getProviderConnectionCount.mockImplementation(async id => id === 200 ? 1 : 0);
+    req.params = { ...req.params, stream_id: '5', ext: 'ts' };
+    res.headersSent = false;
+
+    await streamController.proxyMovie(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://failover.example/movie/failover-user/failover-pass/remote5.mp4',
+      expect.any(Object)
+    );
+  });
+
+  it('uses the stored extension for movie transcoding', async () => {
+    req.params.ext = 'ts';
+    req.query.transcode = 'true';
+    req.path = '/movie/user/pass/1.ts';
+    res.headersSent = false;
+
+    await streamController.proxyMovie(req, res);
+
+    expect(ffmpeg).toHaveBeenCalledWith('http://upstream.com/movie/puser/ppass/remote1.mkv');
   });
 
   it('uses the stored MKV extension when the public series suffix differs', async () => {
@@ -432,6 +659,7 @@ Input #0, matroska,webm, from 'movie.mkv':
 
     expect(streamManager.add).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalled();
+    expect(spawn.mock.calls[0][1]).toContain('http://upstream.com/movie/puser/ppass/remote1.mkv');
     expect(res.json).toHaveBeenCalledWith({
       audio: [
         { index: 1, language: 'deu', codec: 'ac3', label: 'deu - ac3' },
@@ -473,6 +701,7 @@ Input #0, matroska,webm, from 'movie.mkv':
 
     expect(streamManager.add).not.toHaveBeenCalled();
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/vtt; charset=utf-8');
+    expect(spawn.mock.calls[0][1]).toContain('http://upstream.com/movie/puser/ppass/remote1.mkv');
     expect(spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.arrayContaining(['-map', '0:3', '-f', 'webvtt', '-']),

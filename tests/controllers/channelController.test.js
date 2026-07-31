@@ -45,7 +45,7 @@ describe('Channel Controller - createUserCategory', () => {
     beforeEach(() => {
         // Clear DB
         initDb(true);
-        const tables = ['user_channels', 'user_categories', 'provider_channels', 'providers', 'users', 'admin_users'];
+        const tables = ['user_channels', 'category_mappings', 'user_categories', 'provider_channels', 'providers', 'users', 'admin_users'];
         db.pragma('foreign_keys = OFF');
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
         db.pragma('foreign_keys = ON');
@@ -54,6 +54,7 @@ describe('Channel Controller - createUserCategory', () => {
         // Note: is_admin is not in users table, it's separate admin_users or managed by webui_access
         db.prepare("INSERT INTO admin_users (id, username, password, is_active) VALUES (1, 'admin', 'admin', 1)").run();
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (2, 'user', 'user', 1)").run();
+        db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (3, 'other', 'other', 1)").run();
     });
 
     afterEach(() => {
@@ -340,6 +341,185 @@ describe('Channel Controller - createUserCategory', () => {
         const created = db.prepare('SELECT * FROM user_channels WHERE id = ?').get(res.json.mock.calls[0][0].id);
         expect(created.sort_order).toBe(1);
         expect(created.granted_by_admin).toBe(0);
+    });
+
+    it('reorders only categories owned by the route user', () => {
+        const first = db.prepare("INSERT INTO user_categories (user_id, name, sort_order) VALUES (2, 'First', 10)").run().lastInsertRowid;
+        const second = db.prepare("INSERT INTO user_categories (user_id, name, sort_order) VALUES (2, 'Second', 20)").run().lastInsertRowid;
+        const foreign = db.prepare("INSERT INTO user_categories (user_id, name, sort_order) VALUES (3, 'Foreign', 30)").run().lastInsertRowid;
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.reorderUserCategories({
+            params: { userId: '2' },
+            body: { category_ids: [String(second), first] },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true });
+        expect(db.prepare('SELECT id, sort_order FROM user_categories ORDER BY id').all()).toEqual([
+            { id: first, sort_order: 1 },
+            { id: second, sort_order: 0 },
+            { id: foreign, sort_order: 30 }
+        ]);
+    });
+
+    it.each([
+        ['a foreign ID', 'foreign', false],
+        ['mixed own and foreign IDs', 'mixed', false],
+        ['an unknown ID', 'unknown', false],
+        ['a malformed ID', 'malformed', false],
+        ['duplicate IDs', 'duplicate', false],
+        ['an admin request containing a foreign ID', 'mixed', true]
+    ])('rejects category reorder with %s without partial writes', (_label, kind, isAdmin) => {
+        const first = db.prepare("INSERT INTO user_categories (user_id, name, sort_order) VALUES (2, 'First', 10)").run().lastInsertRowid;
+        const second = db.prepare("INSERT INTO user_categories (user_id, name, sort_order) VALUES (2, 'Second', 20)").run().lastInsertRowid;
+        const foreign = db.prepare("INSERT INTO user_categories (user_id, name, sort_order) VALUES (3, 'Foreign', 30)").run().lastInsertRowid;
+        const submitted = {
+            foreign: [foreign],
+            mixed: [second, foreign],
+            unknown: [second, 999999],
+            malformed: [second, 'not-an-id'],
+            duplicate: [first, String(first)]
+        }[kind];
+        const before = db.prepare('SELECT id, sort_order FROM user_categories ORDER BY id').all();
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.reorderUserCategories({
+            params: { userId: '2' },
+            body: { category_ids: submitted },
+            user: isAdmin ? { id: 1, is_admin: true } : { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT id, sort_order FROM user_categories ORDER BY id').all()).toEqual(before);
+    });
+
+    it('reorders only assignments in the route category', () => {
+        const category = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'Live')").run().lastInsertRowid;
+        const otherCategory = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'Other')").run().lastInsertRowid;
+        const foreignCategory = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (3, 'Foreign')").run().lastInsertRowid;
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const addAssignment = (catId, remoteId, sortOrder) => {
+            const providerChannel = db.prepare('INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (?, ?, ?)')
+                .run(provider, remoteId, `Channel ${remoteId}`).lastInsertRowid;
+            return db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)')
+                .run(catId, providerChannel, sortOrder).lastInsertRowid;
+        };
+        const first = addAssignment(category, 101, 10);
+        const second = addAssignment(category, 102, 20);
+        const other = addAssignment(otherCategory, 103, 30);
+        const foreign = addAssignment(foreignCategory, 104, 40);
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.reorderUserChannels({
+            params: { catId: String(category) },
+            body: { channel_ids: [second, String(first)] },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true });
+        expect(db.prepare('SELECT id, sort_order FROM user_channels ORDER BY id').all()).toEqual([
+            { id: first, sort_order: 1 },
+            { id: second, sort_order: 0 },
+            { id: other, sort_order: 30 },
+            { id: foreign, sort_order: 40 }
+        ]);
+    });
+
+    it.each([
+        ['another category of the same user', 'other', false],
+        ['a foreign user assignment', 'foreign', false],
+        ['mixed valid and other-category IDs', 'mixed', false],
+        ['an unknown ID', 'unknown', false],
+        ['a malformed ID', 'malformed', false],
+        ['duplicate IDs', 'duplicate', false],
+        ['an admin request containing an out-of-category ID', 'mixed', true]
+    ])('rejects channel reorder with %s without partial writes', (_label, kind, isAdmin) => {
+        const category = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'Live')").run().lastInsertRowid;
+        const otherCategory = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'Other')").run().lastInsertRowid;
+        const foreignCategory = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (3, 'Foreign')").run().lastInsertRowid;
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const addAssignment = (catId, remoteId, sortOrder) => {
+            const providerChannel = db.prepare('INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (?, ?, ?)')
+                .run(provider, remoteId, `Channel ${remoteId}`).lastInsertRowid;
+            return db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)')
+                .run(catId, providerChannel, sortOrder).lastInsertRowid;
+        };
+        const first = addAssignment(category, 101, 10);
+        const second = addAssignment(category, 102, 20);
+        const other = addAssignment(otherCategory, 103, 30);
+        const foreign = addAssignment(foreignCategory, 104, 40);
+        const submitted = {
+            other: [other],
+            foreign: [foreign],
+            mixed: [second, other],
+            unknown: [second, 999999],
+            malformed: [second, 'not-an-id'],
+            duplicate: [first, String(first)]
+        }[kind];
+        const before = db.prepare('SELECT id, sort_order FROM user_channels ORDER BY id').all();
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.reorderUserChannels({
+            params: { catId: String(category) },
+            body: { channel_ids: submitted },
+            user: isAdmin ? { id: 1, is_admin: true } : { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT id, sort_order FROM user_channels ORDER BY id').all()).toEqual(before);
+    });
+
+    it('maps only to a category with the same user and content type and allows explicit unmapping', () => {
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const target = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Live', 'live')").run().lastInsertRowid;
+        const mapping = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, category_type)
+          VALUES (?, 2, 10, 'Provider Live', 'live')
+        `).run(provider).lastInsertRowid;
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: String(target) },
+            user: { id: 2, is_admin: false }
+        }, res);
+        expect(db.prepare('SELECT user_category_id FROM category_mappings WHERE id = ?').get(mapping))
+            .toEqual({ user_category_id: target });
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: null },
+            user: { id: 2, is_admin: false }
+        }, res);
+        expect(db.prepare('SELECT user_category_id FROM category_mappings WHERE id = ?').get(mapping))
+            .toEqual({ user_category_id: null });
+    });
+
+    it.each([
+        ["another user's category", 'foreign'],
+        ['a category with the wrong type', 'wrong-type'],
+        ['an unknown category', 'unknown'],
+        ['a malformed category ID', 'malformed']
+    ])('rejects mapping to %s without changing the mapping', (_label, kind) => {
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const foreign = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (3, 'Foreign', 'live')").run().lastInsertRowid;
+        const wrongType = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Movies', 'movie')").run().lastInsertRowid;
+        const mapping = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, category_type)
+          VALUES (?, 2, 10, 'Provider Live', 'live')
+        `).run(provider).lastInsertRowid;
+        const target = { foreign, 'wrong-type': wrongType, unknown: 999999, malformed: 'not-an-id' }[kind];
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: target },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT user_category_id FROM category_mappings WHERE id = ?').get(mapping))
+            .toEqual({ user_category_id: null });
     });
 
     it('should handle database errors', async () => {

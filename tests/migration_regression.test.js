@@ -148,6 +148,8 @@ describe('Migration Bug Regression', () => {
         try {
             legacyDb.exec(`
               CREATE TABLE sync_configs (id INTEGER PRIMARY KEY);
+              CREATE TABLE user_channels (id INTEGER PRIMARY KEY);
+              INSERT INTO user_channels (id) VALUES (1);
               CREATE TABLE provider_series_episodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_key TEXT NOT NULL,
@@ -189,6 +191,58 @@ describe('Migration Bug Regression', () => {
                 (user_channel_id, source_key, series_remote_id, remote_episode_id)
               VALUES (1, 'source', 10, 7)
             `).run().lastInsertRowid).toBe(900000001);
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('rebuilds episode aliases with cascade, preserves valid IDs, and removes orphans idempotently', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE sync_configs (id INTEGER PRIMARY KEY);
+              CREATE TABLE user_channels (id INTEGER PRIMARY KEY);
+              INSERT INTO user_channels (id) VALUES (1), (2);
+              CREATE TABLE series_episode_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id >= 900000000 AND id < 1000000000),
+                user_channel_id INTEGER NOT NULL,
+                source_key TEXT NOT NULL,
+                series_remote_id INTEGER NOT NULL,
+                remote_episode_id INTEGER NOT NULL,
+                UNIQUE(user_channel_id, source_key, series_remote_id, remote_episode_id)
+              );
+              INSERT INTO series_episode_aliases
+                (id, user_channel_id, source_key, series_remote_id, remote_episode_id)
+              VALUES
+                (900000005, 1, 'source', 10, 7),
+                (900000006, 99, 'source', 10, 8);
+            `);
+            legacyDb.pragma('foreign_keys = ON');
+
+            migrateSeriesEpisodes(legacyDb);
+
+            expect(legacyDb.prepare(`
+              SELECT id, user_channel_id FROM series_episode_aliases ORDER BY id
+            `).all()).toEqual([{ id: 900000005, user_channel_id: 1 }]);
+            expect(legacyDb.prepare("PRAGMA foreign_key_list('series_episode_aliases')").all()).toEqual(
+              expect.arrayContaining([expect.objectContaining({
+                table: 'user_channels', from: 'user_channel_id', to: 'id', on_delete: 'CASCADE'
+              })])
+            );
+
+            migrateSeriesEpisodes(legacyDb);
+            expect(legacyDb.prepare('SELECT COUNT(*) AS count FROM series_episode_aliases').get().count).toBe(1);
+
+            const nextId = legacyDb.prepare(`
+              INSERT INTO series_episode_aliases
+                (user_channel_id, source_key, series_remote_id, remote_episode_id)
+              VALUES (2, 'source', 10, 9)
+            `).run().lastInsertRowid;
+            expect(nextId).toBeGreaterThanOrEqual(900000000);
+            expect(nextId).toBeLessThan(1000000000);
+
+            legacyDb.prepare('DELETE FROM user_channels WHERE id = 1').run();
+            expect(legacyDb.prepare('SELECT id FROM series_episode_aliases WHERE id = 900000005').get()).toBeUndefined();
         } finally {
             legacyDb.close();
         }

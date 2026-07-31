@@ -157,6 +157,18 @@ describe('sync authorization regression', () => {
     });
   });
 
+  it('ignores a legacy mapping that targets another tenant during sync', async () => {
+    configure();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (20, 2, 'Foreign', 'live', 0)").run();
+    memDb.prepare('UPDATE category_mappings SET user_category_id = 20 WHERE id = 1').run();
+
+    const result = await performSync(1, 1, { mode: 'scheduled' });
+
+    expect(result.errorMessage).toBe(null);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(1);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
+  });
+
   it('allows a trusted manual operation without authorizing future schedules', async () => {
     configure({ providerOwner: 2, enabled: 0, grant: 0 });
 

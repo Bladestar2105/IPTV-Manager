@@ -58,6 +58,15 @@ external WebVTT `<track>` via `subtitle_track=<ffmpeg_stream_index>` and
 server-side audio track still uses the FFmpeg MP4 output path with
 `audio_track=<ffmpeg_stream_index>`.
 
+For an explicit cross-owner channel grant, stream reservation always evaluates
+the exact source provider first and applies that provider's connection limit and
+backup URLs. A target-user provider account is eligible as account-level
+failover only when its normalized primary URL appears in the exact source
+provider's configured backup URL list. Merely sharing the same panel URL does
+not make another account compatible. Movie URL suffixes remain accepted for
+client compatibility, but the upstream extension comes only from stored channel
+metadata and falls back to `mp4`.
+
 ## Local Data
 
 By default the app stores runtime data in the repo root unless `DATA_DIR` is set.
@@ -121,6 +130,17 @@ migration keep any rows that migration hid; an approved sync can clear only
 their authorization revocation, while an administrator must explicitly restore
 a selected channel to clear its hidden state. Re-running the migration is
 idempotent and does not infer administrator grants.
+
+## Series Episode Cache Identity
+
+Series episode metadata is keyed by the normalized upstream panel URL. Provider
+accounts that use the same normalized URL therefore share one episode catalog.
+This assumes that series IDs, episode IDs, metadata, and container extensions
+are panel-global and do not vary by account. The first successful sync remains
+authoritative while its `last_modified` state is current; a later eligible and
+successful refresh for the same panel and series becomes the new authoritative
+record. Failed or unchanged sibling-account syncs do not overwrite cached
+metadata.
 
 ## Web Player Performance
 

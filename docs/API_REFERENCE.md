@@ -68,6 +68,13 @@ base URLs across all users, for example `from_url: "http://provider1.com"` to
 - `GET /api/category-mappings/:providerId/:userId`
 - `PUT /api/category-mappings/:id`
 
+Reorder requests accept unique positive integer IDs only. Category reorder IDs
+must all belong to the route user, and channel reorder IDs must all belong to
+the route category; otherwise the complete request is rejected without writes.
+Category mappings accept `null` for an explicit unmap, or a category owned by
+the mapping user with the same content type. Invalid, foreign, and mixed-type
+targets are rejected without changing the mapping.
+
 ## EPG and Mapping
 
 - `GET /api/epg/now`

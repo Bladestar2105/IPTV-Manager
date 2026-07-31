@@ -43,6 +43,7 @@ function getChannel(streamId, userId) {
         stmts.getChannel = db.prepare(`
       SELECT
         uc.id as user_channel_id,
+        uc.granted_by_admin,
         pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
@@ -54,7 +55,9 @@ function getChannel(streamId, userId) {
         p.password as provider_pass,
         p.backup_urls,
         p.user_agent,
-        p.max_connections as provider_max_connections
+        p.max_connections as provider_max_connections,
+        cat.user_id as category_owner_id,
+        p.user_id as provider_owner_id
       FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
@@ -101,7 +104,9 @@ function getSeriesEpisode(encodedId, userId) {
         if (!stmts.getSeriesAlias) {
             stmts.getSeriesAlias = db.prepare(`
               SELECT a.source_key AS episode_source_key, a.remote_episode_id,
-                     p.*, uc.id AS user_channel_id,
+                     p.*, uc.id AS user_channel_id, uc.granted_by_admin,
+                     cat.user_id AS category_owner_id,
+                     p.user_id AS provider_owner_id,
                      pc.remote_stream_id AS series_remote_id,
                      COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
               FROM series_episode_aliases a
@@ -129,7 +134,9 @@ function getSeriesEpisode(encodedId, userId) {
     if (!decoded) return null;
     if (!stmts.getLegacySeriesAssignments) {
         stmts.getLegacySeriesAssignments = db.prepare(`
-          SELECT p.*, uc.id AS user_channel_id,
+          SELECT p.*, uc.id AS user_channel_id, uc.granted_by_admin,
+                 cat.user_id AS category_owner_id,
+                 p.user_id AS provider_owner_id,
                  pc.remote_stream_id AS series_remote_id,
                  COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
           FROM authorized_user_channels uc
@@ -165,11 +172,21 @@ function getProviderPool(userId, providerUrl) {
     // Fetch all providers for the same user with the same base url
     const providers = stmts.getProviderPool.all(userId, `${base}%`);
     // Filter strictly by normalized base URL in case of LIKE edge cases
-    return providers.filter(p => p.url.replace(/\/+$/, '') === base);
+    const sourceKey = providerSourceKey(providerUrl);
+    return providers.filter(p => providerSourceKey(p.url) === sourceKey);
 }
 
-async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
-    const pool = getProviderPool(userId, originalProvider.provider_url || originalProvider.url);
+function parseProviderBackupUrls(value) {
+    if (!value) return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed.filter(url => typeof url === 'string' && url.trim()) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function getProviderCandidates(userId, originalProvider) {
     const normalizedOriginal = originalProvider.id ? originalProvider : {
         id: originalProvider.provider_id,
         url: originalProvider.provider_url,
@@ -179,13 +196,32 @@ async function findAvailableProvider(userId, originalProvider, reqIp, sessionNam
         user_agent: originalProvider.user_agent,
         max_connections: originalProvider.provider_max_connections
     };
+    const categoryOwnerId = Number(originalProvider.category_owner_id);
+    const providerOwnerId = Number(originalProvider.provider_owner_id);
+    const explicitCrossOwner = Number(originalProvider.granted_by_admin) === 1 &&
+        Number.isSafeInteger(categoryOwnerId) && Number.isSafeInteger(providerOwnerId) &&
+        providerOwnerId !== categoryOwnerId;
 
-    // Cross-user assignments reach this point only through the authorized
-    // assignment view. Keep the explicitly granted source provider available
-    // even though it is intentionally absent from the user's provider pool.
+    if (explicitCrossOwner) {
+        const candidates = [normalizedOriginal];
+        for (const backupUrl of parseProviderBackupUrls(normalizedOriginal.backup_urls)) {
+            for (const provider of getProviderPool(userId, backupUrl)) {
+                if (!candidates.some(candidate => candidate.id === provider.id)) candidates.push(provider);
+            }
+        }
+        return candidates;
+    }
+
+    const pool = getProviderPool(userId, normalizedOriginal.url);
+
     if (!pool.some(provider => provider.id === normalizedOriginal.id)) {
         pool.push(normalizedOriginal);
     }
+    return pool;
+}
+
+export async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
+    const pool = getProviderCandidates(userId, originalProvider);
 
     for (const p of pool) {
         let isSessionActive = false;
@@ -241,6 +277,7 @@ function applyProviderToChannel(channel, provider) {
   channel.provider_pass = provider.password;
   channel.backup_urls = provider.backup_urls;
   channel.user_agent = provider.user_agent;
+  channel.provider_max_connections = provider.max_connections;
 }
 
 async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
@@ -1015,8 +1052,6 @@ export const proxyMovie = async (req, res) => {
 
   try {
     const streamId = Number(req.params.stream_id || 0);
-    const requestedExtension = req.params.ext;
-
     if (!streamId) return res.sendStatus(404);
 
     const user = await getXtreamUser(req);
@@ -1027,20 +1062,19 @@ export const proxyMovie = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
-    const ext = normalizeContainerExtension(channel.mime_type || requestedExtension);
+    const ext = normalizeContainerExtension(channel.mime_type, 'mp4');
 
     const sessionName = `${channel.name} (VOD)`;
 
-    channel.provider_pass = decrypt(channel.provider_pass);
+    const sourcePassword = decrypt(channel.provider_pass);
+    let base = channel.provider_url.replace(/\/+$/, '');
+    let remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(sourcePassword)}/${channel.remote_stream_id}.${ext}`;
 
-    const base = channel.provider_url.replace(/\/+$/, '');
-    const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
-
-    const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
-        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    let backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(sourcePassword)}/${channel.remote_stream_id}.${ext}`;
     }, 'Movie');
 
-    const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
+    let { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
 
     if (req.query.subtitle_format === 'vtt') {
       await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
@@ -1053,6 +1087,14 @@ export const proxyMovie = async (req, res) => {
     }
 
     if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+
+    channel.provider_pass = decrypt(channel.provider_pass);
+    base = channel.provider_url.replace(/\/+$/, '');
+    remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    }, 'Movie');
+    ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie'));
 
     recordStreamStat(channel.provider_channel_id, 'Movie');
 

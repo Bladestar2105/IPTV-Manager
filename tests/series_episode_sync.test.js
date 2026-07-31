@@ -213,6 +213,27 @@ describe('Series episode sync', () => {
       expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(1);
     });
 
+    it('keeps the first current panel record authoritative across conflicting sibling metadata', async () => {
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'Account A Show', 'series', '{"last_modified":"1000"}'),
+               (2, 555, 'Account B Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValueOnce(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1, title: 'Account A Title' }]
+      })).mockResolvedValueOnce(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1, title: 'Account B Title' }]
+      }));
+
+      await syncSeriesEpisodes(1);
+      const sibling = await syncSeriesEpisodes(2);
+
+      expect(sibling.synced).toBe(0);
+      expect(fetchSafeMock).toHaveBeenCalledTimes(1);
+      expect(memDb.prepare(`
+        SELECT title FROM provider_series_episodes
+        WHERE source_key = ? AND series_remote_id = 555 AND remote_episode_id = 100
+      `).get(SOURCE)).toEqual({ title: 'Account A Title' });
+    });
+
     it('keeps reused remote episode IDs separate across series', async () => {
       memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
         VALUES (1, 555, 'Show One', 'series', '{"last_modified":"1000"}'),

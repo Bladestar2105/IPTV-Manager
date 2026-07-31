@@ -266,8 +266,16 @@ export async function performSync(providerId, userId, options = {}) {
 
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
     const allMappings = db.prepare(`
-      SELECT * FROM category_mappings
-      WHERE provider_id = ? AND user_id = ?
+      SELECT cm.*,
+             CASE
+               WHEN uc.user_id = cm.user_id
+                AND COALESCE(uc.type, 'live') = COALESCE(cm.category_type, 'live')
+               THEN cm.user_category_id
+               ELSE NULL
+             END AS user_category_id
+      FROM category_mappings cm
+      LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
+      WHERE cm.provider_id = ? AND cm.user_id = ?
     `).all(providerId, userId);
 
     const isFirstSync = allMappings.length === 0;
