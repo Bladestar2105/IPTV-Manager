@@ -89,6 +89,9 @@ describe('Export/Import Regression Tests', () => {
 
         expect(exportedBuffer).not.toBeNull();
         fs.writeFileSync(tempFilePath, exportedBuffer);
+        const exportedFormat = JSON.parse(zlib.gunzipSync(decryptWithPassword(exportedBuffer, TEST_EXPORT_PASSWORD)).toString('utf8'));
+        expect(exportedFormat.version).toBe(2);
+        expect(exportedFormat.assignment_provenance_version).toBe(1);
 
         // 4. Import Data (Clear DB first)
         db.prepare('PRAGMA foreign_keys = OFF').run();
@@ -290,5 +293,71 @@ describe('Export/Import Regression Tests', () => {
             { name: 'Owner Provider', enabled: 1, granted_by_admin: 0 },
             { name: 'Shared Provider', enabled: 1, granted_by_admin: 1 },
         ]);
+    });
+
+    it('merges duplicate assignments during system import and reports unique counts', async () => {
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+
+        const userId = db.prepare("INSERT INTO users (username, password) VALUES ('duplicate_import', 'pass')").run().lastInsertRowid;
+        const providerId = db.prepare(`
+            INSERT INTO providers (name, url, username, password, user_id)
+            VALUES ('Duplicate Provider', 'http://duplicate.example', 'u', ?, ?)
+        `).run(encrypt('provider-pass'), userId).lastInsertRowid;
+        const channelId = db.prepare(`
+            INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type)
+            VALUES (?, 501, 'Duplicate Channel', 'series')
+        `).run(providerId).lastInsertRowid;
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (?, 'Duplicate', 'series')").run(userId).lastInsertRowid;
+        db.prepare(`
+            INSERT INTO user_channels
+              (user_category_id, provider_channel_id, sort_order, assignment_origin, custom_name, is_hidden)
+            VALUES (?, ?, 4, 'legacy', '', 0)
+        `).run(categoryId, channelId);
+
+        let exportedBuffer;
+        systemController.exportData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD, user_id: 'all' }, query: {} },
+            { setHeader: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn(), send: vi.fn(buffer => { exportedBuffer = buffer; }) }
+        );
+        const exportedData = JSON.parse(zlib.gunzipSync(decryptWithPassword(exportedBuffer, TEST_EXPORT_PASSWORD)).toString('utf8'));
+        const sourceAssignment = exportedData.channels.find(channel => channel.type === 'user_assignment');
+        exportedData.channels.push({
+            ...sourceAssignment,
+            id: 9999,
+            assignment_origin: 'mapping',
+            mapping_id: 123456,
+            sort_order: 0,
+            custom_name: 'Imported name',
+            is_hidden: 1,
+        });
+        fs.writeFileSync(tempFilePath, encryptWithPassword(zlib.gzipSync(JSON.stringify(exportedData)), TEST_EXPORT_PASSWORD));
+
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+
+        const resImport = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+        await systemController.importData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD }, file: { path: tempFilePath } },
+            resImport
+        );
+
+        expect(resImport.json).toHaveBeenCalledWith({
+            success: true,
+            stats: expect.objectContaining({ channels: 1, channels_merged: 1, channels_skipped: 0 })
+        });
+        expect(db.prepare(`
+            SELECT assignment_origin, mapping_id, sort_order, custom_name, is_hidden
+            FROM user_channels
+        `).get()).toEqual({
+            assignment_origin: 'legacy', mapping_id: null, sort_order: 0,
+            custom_name: 'Imported name', is_hidden: 1
+        });
     });
 });

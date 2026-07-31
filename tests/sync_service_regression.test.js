@@ -78,6 +78,8 @@ describe('sync authorization regression', () => {
       CREATE TABLE user_channels (
         id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
         sort_order INTEGER, is_hidden INTEGER DEFAULT 0,
+        assignment_origin TEXT NOT NULL DEFAULT 'legacy'
+          CHECK (assignment_origin IN ('legacy', 'manual', 'mapping', 'imported')),
         mapping_id INTEGER,
         granted_by_admin INTEGER NOT NULL DEFAULT 0,
         authorization_revoked INTEGER NOT NULL DEFAULT 0

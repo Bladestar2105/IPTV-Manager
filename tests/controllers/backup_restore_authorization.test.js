@@ -82,6 +82,19 @@ describe('user backup restore authorization', () => {
     expect(clearChannelsCache).toHaveBeenCalledWith(1);
   });
 
+  it('writes a versioned provenance-aware backup payload', () => {
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    const result = response();
+    createBackup(
+      { params: { userId: '1' }, user: { id: 1, is_admin: false }, body: { name: 'versioned' } },
+      result
+    );
+    const backupId = result.json.mock.calls[0][0].id;
+    const payload = JSON.parse(db.prepare('SELECT data FROM user_backups WHERE id = ?').get(backupId).data);
+    expect(payload.format_version).toBe(2);
+    expect(payload.assignment_provenance_version).toBe(1);
+  });
+
   it('does not resurrect a revoked historical admin grant for a normal user', () => {
     const providerChannelId = addProviderChannel(2);
     db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
@@ -162,6 +175,86 @@ describe('user backup restore authorization', () => {
       is_hidden: 0,
       granted_by_admin: 0,
       authorization_revoked: 0,
+    });
+  });
+
+  it('merges duplicate modern assignments without losing hidden state or names', () => {
+    const providerChannelId = addProviderChannel(1);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    const mappingId = db.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+      SELECT p.id, 1, 10, 'Series', 100, 'series'
+      FROM provider_channels pc JOIN providers p ON p.id = pc.provider_id
+      WHERE pc.id = ?
+    `).run(providerChannelId).lastInsertRowid;
+    const data = {
+      format_version: 2,
+      assignment_provenance_version: 1,
+      ...backupData(1, {
+        provider_channel_id: providerChannelId,
+        assignment_origin: 'manual',
+        mapping_id: null,
+        sort_order: 9,
+        custom_name: '',
+        is_hidden: 0,
+      }),
+    };
+    data.categoryMappings = [{
+      id: mappingId, user_category_id: 100, provider_category_id: 10,
+      category_type: 'series',
+    }];
+    data.userChannels.push({
+      id: 201, user_category_id: 100, provider_channel_id: providerChannelId,
+      assignment_origin: 'mapping', mapping_id: mappingId,
+      sort_order: 2, custom_name: 'Mapped name', is_hidden: 1,
+    });
+    const backupId = addBackup(data);
+
+    const res = restore(backupId);
+
+    expect(db.prepare(`
+      SELECT id, assignment_origin, mapping_id, sort_order, custom_name, is_hidden
+      FROM user_channels
+    `).all()).toEqual([{
+      id: 200,
+      assignment_origin: 'manual',
+      mapping_id: null,
+      sort_order: 2,
+      custom_name: 'Mapped name',
+      is_hidden: 1,
+    }]);
+    expect(res.json).toHaveBeenCalledWith({
+      success: true, channels_restored: 0, channels_hidden: 1, channels_skipped: 0,
+      channels_merged: 1,
+    });
+  });
+
+  it('retains a validated modern mapping assignment', () => {
+    const providerChannelId = addProviderChannel(1);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    const mappingId = db.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+      SELECT p.id, 1, 10, 'Series', 100, 'series'
+      FROM provider_channels pc JOIN providers p ON p.id = pc.provider_id
+      WHERE pc.id = ?
+    `).run(providerChannelId).lastInsertRowid;
+    const data = {
+      format_version: 2,
+      assignment_provenance_version: 1,
+      ...backupData(1, {
+        provider_channel_id: providerChannelId,
+        assignment_origin: 'mapping', mapping_id: mappingId,
+      }),
+      categoryMappings: [{ id: mappingId, user_category_id: 100, category_type: 'series' }],
+    };
+    const backupId = addBackup(data);
+
+    restore(backupId);
+
+    expect(db.prepare('SELECT assignment_origin, mapping_id FROM user_channels').get()).toEqual({
+      assignment_origin: 'mapping', mapping_id: mappingId,
     });
   });
 

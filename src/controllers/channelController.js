@@ -2,6 +2,10 @@ import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
+import {
+  mergeAssignmentCandidates,
+  rebindSeriesEpisodeAliases
+} from '../services/userChannelAssignmentService.js';
 
 const MAX_BULK_IDS = 5000;
 
@@ -24,78 +28,19 @@ function bulkOperationError(status, message) {
   return error;
 }
 
-function rebindSeriesAliases(survivorId, loserId) {
-  const aliasTable = db.prepare(`
-    SELECT name FROM sqlite_master
-    WHERE type = 'table' AND name = 'series_episode_aliases'
-  `).get();
-  if (!aliasTable) return;
-
-  const aliases = db.prepare(`
-    SELECT id, source_key, series_remote_id, remote_episode_id
-    FROM series_episode_aliases
-    WHERE user_channel_id = ?
-    ORDER BY id
-  `).all(loserId);
-  const findAlias = db.prepare(`
-    SELECT id FROM series_episode_aliases
-    WHERE user_channel_id = ? AND source_key = ?
-      AND series_remote_id = ? AND remote_episode_id = ?
-  `);
-  const updateAlias = db.prepare('UPDATE series_episode_aliases SET user_channel_id = ? WHERE id = ?');
-  const deleteAlias = db.prepare('DELETE FROM series_episode_aliases WHERE id = ?');
-  for (const alias of aliases) {
-    const existing = findAlias.get(
-      survivorId,
-      alias.source_key,
-      alias.series_remote_id,
-      alias.remote_episode_id
-    );
-    if (existing) deleteAlias.run(alias.id);
-    else updateAlias.run(survivorId, alias.id);
-  }
-}
-
-function mergeUserChannelAssignments(survivor, duplicate) {
-  rebindSeriesAliases(survivor.id, duplicate.id);
-  const hasValidGrant = [survivor, duplicate].some(
-    row => Number(row.granted_by_admin) === 1 && Number(row.authorization_revoked) !== 1
-  );
-  const hasGrant = [survivor, duplicate].some(row => Number(row.granted_by_admin) === 1);
-  const customName = String(survivor.custom_name || '').trim()
-    ? survivor.custom_name
-    : (String(duplicate.custom_name || '').trim() ? duplicate.custom_name : '');
-  db.prepare(`
-    UPDATE user_channels
-    SET is_hidden = ?,
-        custom_name = ?,
-        granted_by_admin = ?,
-        authorization_revoked = ?,
-        sort_order = ?
-    WHERE id = ?
-  `).run(
-    Number(survivor.is_hidden) === 1 || Number(duplicate.is_hidden) === 1 ? 1 : 0,
-    customName,
-    hasValidGrant || hasGrant ? 1 : 0,
-    hasValidGrant ? 0 : (
-      Number(survivor.authorization_revoked) === 1 || Number(duplicate.authorization_revoked) === 1 ? 1 : 0
-    ),
-    Math.min(Number(survivor.sort_order) || 0, Number(duplicate.sort_order) || 0),
-    survivor.id
-  );
-  db.prepare('DELETE FROM user_channels WHERE id = ?').run(duplicate.id);
-}
-
 function reconcileMappingAssignments(mapping, targetId) {
   const ownedAssignments = db.prepare(`
     SELECT uc.*
     FROM user_channels uc
-    WHERE uc.mapping_id = ?
+    WHERE uc.mapping_id = ? AND uc.assignment_origin = 'mapping'
     ORDER BY uc.id
   `).all(mapping.id);
   if (targetId === null) {
     for (const assignment of ownedAssignments) {
-      db.prepare('DELETE FROM user_channels WHERE id = ? AND mapping_id = ?').run(assignment.id, mapping.id);
+      db.prepare(`
+        DELETE FROM user_channels
+        WHERE id = ? AND mapping_id = ? AND assignment_origin = 'mapping'
+      `).run(assignment.id, mapping.id);
     }
     return { assignments_removed: ownedAssignments.length, assignments_moved: 0, duplicates_merged: 0 };
   }
@@ -108,26 +53,89 @@ function reconcileMappingAssignments(mapping, targetId) {
     WHERE user_category_id = ? AND provider_channel_id = ?
     ORDER BY id
   `);
-  const move = db.prepare('UPDATE user_channels SET user_category_id = ? WHERE id = ? AND mapping_id = ?');
+  const update = db.prepare(`
+    UPDATE user_channels
+    SET user_category_id = ?, sort_order = ?, custom_name = ?, is_hidden = ?,
+        assignment_origin = ?, mapping_id = ?, granted_by_admin = ?, authorization_revoked = ?
+    WHERE id = ?
+  `);
+  const deleteAssignment = db.prepare('DELETE FROM user_channels WHERE id = ?');
 
   for (const assignment of ownedAssignments) {
     if (Number(assignment.user_category_id) === Number(targetId)) continue;
     const targetRows = findTarget.all(targetId, assignment.provider_channel_id);
     if (targetRows.length === 0) {
-      if (move.run(targetId, assignment.id, mapping.id).changes === 1) assignmentsMoved++;
+      if (update.run(
+        targetId,
+        assignment.sort_order,
+        assignment.custom_name || '',
+        Number(assignment.is_hidden) === 1 ? 1 : 0,
+        'mapping',
+        mapping.id,
+        Number(assignment.granted_by_admin) === 1 ? 1 : 0,
+        Number(assignment.authorization_revoked) === 1 ? 1 : 0,
+        assignment.id
+      ).changes === 1) assignmentsMoved++;
       continue;
     }
 
-    const target = targetRows.find(row => row.mapping_id === null || row.mapping_id === undefined) || targetRows[0];
-    if (target.id === assignment.id) continue;
-    const survivor = [target, assignment]
-      .filter(row => row.mapping_id === null || row.mapping_id === undefined)[0]
-      || ([target, assignment].sort((a, b) => Number(a.id) - Number(b.id))[0]);
-    const duplicate = survivor.id === assignment.id ? target : assignment;
-    mergeUserChannelAssignments(survivor, duplicate);
-    if (survivor.id === assignment.id) {
-      move.run(targetId, assignment.id, mapping.id);
+    const merged = mergeAssignmentCandidates(
+      [...targetRows, { ...assignment, user_category_id: targetId }],
+      {
+        mappingValidator: mappingId => {
+          if (Number(mappingId) === Number(mapping.id)) return true;
+          const row = db.prepare(`
+            SELECT user_id, provider_id, user_category_id, COALESCE(category_type, 'live') AS category_type
+            FROM category_mappings
+            WHERE id = ?
+          `).get(mappingId);
+          return row && Number(row.user_id) === Number(mapping.user_id) &&
+            Number(row.provider_id) === Number(mapping.provider_id) &&
+            String(row.category_type) === String(mapping.category_type) &&
+            Number(row.user_category_id) === Number(targetId);
+        }
+      }
+    );
+    const survivorId = Number(merged.id);
+    const survivorIsSource = survivorId === Number(assignment.id);
+    const survivor = survivorIsSource ? assignment : targetRows.find(row => Number(row.id) === survivorId) || targetRows[0];
+    const losers = targetRows.filter(row => Number(row.id) !== Number(survivor.id));
+
+    if (survivorIsSource) {
+      for (const loser of targetRows) {
+        rebindSeriesEpisodeAliases(db, assignment.id, loser.id);
+        deleteAssignment.run(loser.id);
+      }
+      update.run(
+        targetId,
+        merged.sort_order,
+        merged.custom_name || '',
+        merged.is_hidden,
+        merged.assignment_origin,
+        merged.mapping_id,
+        merged.granted_by_admin,
+        merged.authorization_revoked,
+        assignment.id
+      );
       assignmentsMoved++;
+    } else {
+      update.run(
+        targetId,
+        merged.sort_order,
+        merged.custom_name || '',
+        merged.is_hidden,
+        merged.assignment_origin,
+        merged.mapping_id,
+        merged.granted_by_admin,
+        merged.authorization_revoked,
+        survivor.id
+      );
+      for (const loser of losers) {
+        rebindSeriesEpisodeAliases(db, survivor.id, loser.id);
+        deleteAssignment.run(loser.id);
+      }
+      rebindSeriesEpisodeAliases(db, survivor.id, assignment.id);
+      deleteAssignment.run(assignment.id);
     }
     duplicatesMerged++;
   }
@@ -396,15 +404,17 @@ export const addUserChannel = (req, res) => {
     if (existing) {
         db.prepare(`
           UPDATE user_channels
-          SET is_hidden = 0, sort_order = ?, granted_by_admin = ?, authorization_revoked = 0
+          SET is_hidden = 0, sort_order = ?, assignment_origin = 'manual', mapping_id = NULL,
+              granted_by_admin = ?, authorization_revoked = 0
           WHERE id = ?
         `).run(newSortOrder, grantedByAdmin, existing.id);
         insertId = existing.id;
     } else {
         const info = db.prepare(`
           INSERT INTO user_channels
-            (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
-          VALUES (?, ?, ?, ?, 0)
+            (user_category_id, provider_channel_id, sort_order, assignment_origin, mapping_id,
+             granted_by_admin, authorization_revoked)
+          VALUES (?, ?, ?, 'manual', NULL, ?, 0)
         `).run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
         insertId = info.lastInsertRowid;
     }

@@ -270,6 +270,42 @@ describe('Channel Controller - createUserCategory', () => {
         expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = ?').get(created.id).id).toBe(created.id);
     });
 
+    it('transfers a mapped assignment to manual ownership when re-added', () => {
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Mapped', 'live')").run().lastInsertRowid;
+        const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Mapped Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const channelId = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 100, 'Mapped Channel', 'live')").run(providerId).lastInsertRowid;
+        const mappingId = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+          VALUES (?, 2, 100, 'Mapped', ?, 'live')
+        `).run(providerId, categoryId).lastInsertRowid;
+        const assignmentId = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, is_hidden, assignment_origin, mapping_id)
+          VALUES (?, ?, 1, 'mapping', ?)
+        `).run(categoryId, channelId, mappingId).lastInsertRowid;
+
+        const addRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+        channelController.addUserChannel({
+            params: { catId: String(categoryId) },
+            body: { provider_channel_id: channelId },
+            user: { id: 2, is_admin: false }
+        }, addRes);
+
+        expect(addRes.json).toHaveBeenCalledWith({ id: assignmentId });
+        expect(db.prepare('SELECT assignment_origin, mapping_id, is_hidden FROM user_channels WHERE id = ?').get(assignmentId))
+          .toEqual({ assignment_origin: 'manual', mapping_id: null, is_hidden: 0 });
+
+        const unmapRes = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+        channelController.updateCategoryMapping({
+            params: { id: String(mappingId) }, body: { user_category_id: null },
+            user: { id: 2, is_admin: false }
+        }, unmapRes);
+
+        expect(db.prepare('SELECT id, assignment_origin, mapping_id FROM user_channels WHERE id = ?').get(assignmentId))
+          .toEqual({ id: assignmentId, assignment_origin: 'manual', mapping_id: null });
+    });
+
     it('should return 404 for an unknown provider channel', () => {
         const categoryId = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'My Category')").run().lastInsertRowid;
         const req = {
@@ -722,8 +758,8 @@ describe('Channel Controller - createUserCategory', () => {
         const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 77, 'Series', 'live')").run(provider).lastInsertRowid;
         const assignment = db.prepare(`
           INSERT INTO user_channels
-            (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, mapping_id)
-          VALUES (?, ?, 4, 'Custom', 1, ?)
+            (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, assignment_origin, mapping_id)
+          VALUES (?, ?, 4, 'Custom', 1, 'mapping', ?)
         `).run(source, channel, mapping).lastInsertRowid;
         const alias = db.prepare(`
           INSERT INTO series_episode_aliases
@@ -763,8 +799,8 @@ describe('Channel Controller - createUserCategory', () => {
         `).run(target, channel).lastInsertRowid;
         const mapped = db.prepare(`
           INSERT INTO user_channels
-            (user_category_id, provider_channel_id, sort_order, custom_name, mapping_id)
-          VALUES (?, ?, 9, 'Mapped name', ?)
+            (user_category_id, provider_channel_id, sort_order, custom_name, assignment_origin, mapping_id)
+          VALUES (?, ?, 9, 'Mapped name', 'mapping', ?)
         `).run(source, channel, mapping).lastInsertRowid;
         const alias = db.prepare(`
           INSERT INTO series_episode_aliases
@@ -800,8 +836,8 @@ describe('Channel Controller - createUserCategory', () => {
         const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 99, 'Channel', 'live')").run(provider).lastInsertRowid;
         const owned = db.prepare(`
           INSERT INTO user_channels
-            (user_category_id, provider_channel_id, mapping_id, granted_by_admin, authorization_revoked)
-          VALUES (?, ?, ?, 1, 0)
+            (user_category_id, provider_channel_id, assignment_origin, mapping_id, granted_by_admin, authorization_revoked)
+          VALUES (?, ?, 'mapping', ?, 1, 0)
         `).run(category, channel, mapping).lastInsertRowid;
         const manual = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id) VALUES (?, ?)').run(manualCategory, channel).lastInsertRowid;
         const res = response();

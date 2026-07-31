@@ -30,7 +30,13 @@ All notable changes to this project are documented here.
   existing content catalog.
 - Reconcile mapping-owned assignments when mappings are retargeted or removed,
   while preserving manual assignments and hidden state.
-- Backfill legacy `mapping_id` values only for unambiguous matches and merge
-  duplicate user-channel assignments before enforcing uniqueness.
+- Added explicit `assignment_origin` provenance (`manual`, `mapping`, `legacy`,
+  or `imported`) and restricted mapping reconciliation to trusted mapping rows.
+- Replaced unsafe V1 mapping inference with a conservative V2 repair that
+  clears uncertain ownership while preserving assignment IDs and fields.
+- Deterministically merge duplicate assignments during legacy backup restore,
+  full-system import, cloning, and category import, including alias rebinding.
+- Treat manual re-add as an explicit transfer from mapping ownership to manual
+  ownership.
 - Validated the experimental portal with real software clients.
 - Hardware-specific MAG UI and favorites remain unsupported.

@@ -2,6 +2,7 @@ import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
 import { clearSettingsCache } from '../utils/helpers.js';
+import { mergeAssignmentCandidates, rebindSeriesEpisodeAliases } from '../services/userChannelAssignmentService.js';
 
 export function migrateProvidersSchema(db) {
   try {
@@ -811,71 +812,61 @@ export function migrateUserChannelMappingId(db) {
   }
 }
 
+export function migrateUserChannelAssignmentOrigin(db) {
+  try {
+    const columns = db.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name);
+    if (!columns.includes('assignment_origin')) {
+      db.exec(`
+        ALTER TABLE user_channels
+        ADD COLUMN assignment_origin TEXT NOT NULL DEFAULT 'legacy'
+          CHECK (assignment_origin IN ('legacy', 'manual', 'mapping', 'imported'))
+      `);
+      console.log('✅ DB Migration: assignment_origin column added to user_channels');
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_user_channels_origin_mapping
+      ON user_channels(assignment_origin, mapping_id)
+    `);
+  } catch (e) {
+    console.error('User channel assignment origin migration error:', e);
+    throw e;
+  }
+}
+
 export function migrateUserChannelMappingBackfillV1(db) {
   const markerKey = 'user_channel_mapping_backfill_v1';
   const migrate = db.transaction(() => {
     if (db.prepare('SELECT value FROM settings WHERE key = ?').get(markerKey)?.value) {
       return { assigned: 0, ambiguous: 0, unmatched: 0, skipped: true };
     }
-
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_category_mappings_backfill
-        ON category_mappings(provider_id, user_id, user_category_id, provider_category_id, category_type);
-    `);
-
-    const rows = db.prepare(`
-      SELECT uc.id AS user_channel_id,
-             cm.id AS mapping_id
-      FROM user_channels uc
-      JOIN user_categories cat ON cat.id = uc.user_category_id
-      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      LEFT JOIN category_mappings cm
-        ON cm.provider_id = pc.provider_id
-       AND cm.user_id = cat.user_id
-       AND cm.user_category_id = uc.user_category_id
-       AND cm.provider_category_id = pc.original_category_id
-       AND COALESCE(cm.category_type, 'live') = COALESCE(cat.type, 'live')
-       AND (
-         COALESCE(pc.stream_type, 'live') = COALESCE(cm.category_type, 'live')
-         OR (
-           COALESCE(pc.stream_type, 'live') = 'live'
-           AND COALESCE(cat.type, 'live') = 'radio'
-           AND COALESCE(cm.category_type, 'live') = 'radio'
-         )
-       )
-      WHERE uc.mapping_id IS NULL
-      ORDER BY uc.id, cm.id
-    `).all();
-
-    const candidates = new Map();
-    for (const row of rows) {
-      if (!candidates.has(row.user_channel_id)) candidates.set(row.user_channel_id, []);
-      if (row.mapping_id !== null && row.mapping_id !== undefined) {
-        candidates.get(row.user_channel_id).push(Number(row.mapping_id));
-      }
-    }
-
-    const assign = db.prepare('UPDATE user_channels SET mapping_id = ? WHERE id = ? AND mapping_id IS NULL');
-    let assigned = 0;
-    let ambiguous = 0;
-    let unmatched = 0;
-    for (const [userChannelId, mappingIds] of candidates) {
-      const uniqueIds = [...new Set(mappingIds)];
-      if (uniqueIds.length === 1) {
-        assigned += assign.run(uniqueIds[0], userChannelId).changes;
-      } else if (uniqueIds.length > 1) {
-        ambiguous++;
-      } else {
-        unmatched++;
-      }
-    }
-
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
       markerKey,
-      JSON.stringify({ assigned, ambiguous, unmatched })
+      JSON.stringify({ assigned: 0, ambiguous: 0, unmatched: 0, mode: 'marker-only' })
     );
-    console.info(`✅ Mapping backfill: ${assigned} assigned, ${ambiguous} ambiguous, ${unmatched} unmatched`);
-    return { assigned, ambiguous, unmatched, skipped: false };
+    console.info('✅ Mapping backfill V1 recorded without inferring assignment ownership');
+    return { assigned: 0, ambiguous: 0, unmatched: 0, skipped: false };
+  });
+
+  return migrate();
+}
+
+export function migrateUserChannelAssignmentProvenanceV2(db) {
+  const markerKey = 'user_channel_assignment_provenance_v2';
+  const migrate = db.transaction(() => {
+    const marker = db.prepare('SELECT value FROM settings WHERE key = ?').get(markerKey);
+    if (marker?.value) return { repaired: 0, skipped: true };
+
+    const repaired = db.prepare(`
+      UPDATE user_channels
+      SET assignment_origin = 'legacy', mapping_id = NULL
+      WHERE assignment_origin != 'legacy' OR mapping_id IS NOT NULL
+    `).run().changes;
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
+      markerKey,
+      JSON.stringify({ repaired, mode: 'fail-safe-legacy' })
+    );
+    console.info(`✅ Assignment provenance V2: ${repaired} uncertain row(s) reset to legacy`);
+    return { repaired, skipped: false };
   });
 
   return migrate();
@@ -897,6 +888,8 @@ export function migrateUserChannelDeduplicationV1(db) {
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name = 'series_episode_aliases'
     `).get();
+    const hasOrigin = db.prepare('PRAGMA table_info(user_channels)').all()
+      .some(column => column.name === 'assignment_origin');
     const duplicateGroups = db.prepare(`
       SELECT user_category_id, provider_channel_id
       FROM user_channels
@@ -908,6 +901,7 @@ export function migrateUserChannelDeduplicationV1(db) {
     const selectRows = db.prepare(`
       SELECT id, user_category_id, provider_channel_id, sort_order, custom_name,
              is_hidden, mapping_id, granted_by_admin, authorization_revoked
+             ${hasOrigin ? ', assignment_origin' : ''}
       FROM user_channels
       WHERE user_category_id = ? AND provider_channel_id = ?
       ORDER BY id
@@ -918,63 +912,37 @@ export function migrateUserChannelDeduplicationV1(db) {
           custom_name = ?,
           granted_by_admin = ?,
           authorization_revoked = ?,
-          sort_order = ?
+          sort_order = ?${hasOrigin ? ', assignment_origin = ?, mapping_id = ?' : ''}
       WHERE id = ?
     `);
     const deleteAssignment = db.prepare('DELETE FROM user_channels WHERE id = ?');
-    let merged = 0;
+    let mergedCount = 0;
 
     for (const group of duplicateGroups) {
       const rows = selectRows.all(group.user_category_id, group.provider_channel_id);
-      const survivor = rows
-        .filter(row => row.mapping_id === null || row.mapping_id === undefined)
-        .sort((a, b) => Number(a.id) - Number(b.id))[0] || rows[0];
-      const losers = rows.filter(row => row.id !== survivor.id);
-      const customName = rows.find(row => String(row.custom_name || '').trim())?.custom_name || '';
-      const hasValidGrant = rows.some(row => Number(row.granted_by_admin) === 1 && Number(row.authorization_revoked) !== 1);
-      const hasGrant = rows.some(row => Number(row.granted_by_admin) === 1);
-      const revoked = hasValidGrant ? 0 : (rows.some(row => Number(row.authorization_revoked) === 1) ? 1 : 0);
-      const sortOrder = Math.min(...rows.map(row => Number(row.sort_order) || 0));
-
-      if (aliasTable) {
-        const selectAliases = db.prepare(`
-          SELECT id, source_key, series_remote_id, remote_episode_id
-          FROM series_episode_aliases
-          WHERE user_channel_id = ?
-          ORDER BY id
-        `);
-        const findAlias = db.prepare(`
-          SELECT id FROM series_episode_aliases
-          WHERE user_channel_id = ? AND source_key = ?
-            AND series_remote_id = ? AND remote_episode_id = ?
-        `);
-        const rebindAlias = db.prepare('UPDATE series_episode_aliases SET user_channel_id = ? WHERE id = ?');
-        const removeAlias = db.prepare('DELETE FROM series_episode_aliases WHERE id = ?');
-        for (const loser of losers) {
-          for (const alias of selectAliases.all(loser.id)) {
-            const existing = findAlias.get(
-              survivor.id,
-              alias.source_key,
-              alias.series_remote_id,
-              alias.remote_episode_id
-            );
-            if (existing) removeAlias.run(alias.id);
-            else rebindAlias.run(survivor.id, alias.id);
-          }
-        }
-      }
+      const normalized = rows.map(row => ({
+        ...row,
+        assignment_origin: hasOrigin
+          ? row.assignment_origin
+          : (row.mapping_id === null || row.mapping_id === undefined ? 'legacy' : 'mapping')
+      }));
+      const mergedRow = mergeAssignmentCandidates(normalized);
+      const survivor = normalized.find(row => Number(row.id) === Number(mergedRow.id)) || normalized[0];
+      const losers = normalized.filter(row => Number(row.id) !== Number(survivor.id));
 
       updateSurvivor.run(
-        rows.some(row => Number(row.is_hidden) === 1) ? 1 : 0,
-        customName,
-        hasValidGrant || hasGrant ? 1 : 0,
-        revoked,
-        sortOrder,
+        mergedRow.is_hidden,
+        mergedRow.custom_name || '',
+        mergedRow.granted_by_admin,
+        mergedRow.authorization_revoked,
+        mergedRow.sort_order,
+        ...(hasOrigin ? [mergedRow.assignment_origin, mergedRow.mapping_id] : []),
         survivor.id
       );
       for (const loser of losers) {
+        if (aliasTable) rebindSeriesEpisodeAliases(db, survivor.id, loser.id);
         deleteAssignment.run(loser.id);
-        merged++;
+        mergedCount++;
       }
     }
 
@@ -984,10 +952,10 @@ export function migrateUserChannelDeduplicationV1(db) {
     `);
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
       markerKey,
-      JSON.stringify({ merged })
+      JSON.stringify({ merged: mergedCount })
     );
-    console.info(`✅ User channel deduplication: ${merged} duplicate assignment(s) merged`);
-    return { merged, skipped: false };
+    console.info(`✅ User channel deduplication: ${mergedCount} duplicate assignment(s) merged`);
+    return { merged: mergedCount, skipped: false };
   });
 
   return migrate();

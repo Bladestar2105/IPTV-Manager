@@ -7,6 +7,7 @@ import { isAdultCategory, providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
+import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
 
 /**
  * Delete one provider channel without violating the dependent foreign keys.
@@ -443,8 +444,8 @@ export async function performSync(providerId, userId, options = {}) {
     // Prepare statement unconditionally to avoid potential undefined issues
     const insertUserChannel = db.prepare(`
       INSERT INTO user_channels
-        (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
-      VALUES (?, ?, ?, ?, ?, 0)
+        (user_category_id, provider_channel_id, sort_order, assignment_origin, mapping_id, granted_by_admin, authorization_revoked)
+      VALUES (?, ?, ?, 'mapping', ?, ?, 0)
       ON CONFLICT DO NOTHING
     `);
     const authorizeExistingAssignment = db.prepare(`
@@ -452,13 +453,20 @@ export async function performSync(providerId, userId, options = {}) {
       SET granted_by_admin = ?, authorization_revoked = 0
       WHERE id = ?
     `);
-    const updateAssignmentMapping = db.prepare('UPDATE user_channels SET mapping_id = ? WHERE id = ?');
-    const deleteMappedAssignment = db.prepare('DELETE FROM user_channels WHERE id = ? AND mapping_id = ?');
+    const updateAssignmentMapping = db.prepare(`
+      UPDATE user_channels
+      SET mapping_id = ?, assignment_origin = 'mapping'
+      WHERE id = ? AND assignment_origin = 'mapping'
+    `);
+    const deleteMappedAssignment = db.prepare(`
+      DELETE FROM user_channels
+      WHERE id = ? AND mapping_id = ? AND assignment_origin = 'mapping'
+    `);
 
     if (config && config.auto_add_channels) {
       const existingAssignmentsRows = db.prepare(`
         SELECT uc.id, uc.user_category_id, uc.provider_channel_id,
-               uc.mapping_id, uc.granted_by_admin, uc.authorization_revoked
+               uc.mapping_id, uc.assignment_origin, uc.granted_by_admin, uc.authorization_revoked
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE pc.provider_id = ?
@@ -698,7 +706,9 @@ export async function performSync(providerId, userId, options = {}) {
                   .map(Number));
 
                 for (const [assignmentKey, assignment] of existingAssignments) {
-                  if (Number(assignment.provider_channel_id) !== Number(existingId) || !oldMappingIds.has(Number(assignment.mapping_id))) continue;
+                  if (Number(assignment.provider_channel_id) !== Number(existingId) ||
+                      !oldMappingIds.has(Number(assignment.mapping_id)) ||
+                      !isTrustedMappingAssignment(assignment, assignment.mapping_id)) continue;
                   deleteMappedAssignment.run(assignment.id, assignment.mapping_id);
                   existingAssignments.delete(assignmentKey);
                   console.debug(`  🗑️ Removed mapped assignment for moved channel "${newName}"`);
@@ -779,26 +789,21 @@ export async function performSync(providerId, userId, options = {}) {
                 const newSortOrder = currentMax + 1;
 
                 const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, mappingId, assignmentGrant);
-                const assignmentId = assignmentInfo.changes === 1
-                  ? Number(assignmentInfo.lastInsertRowid)
-                  : Number(db.prepare(`
-                    SELECT id FROM user_channels
-                    WHERE user_category_id = ? AND provider_channel_id = ?
-                  `).get(userCatId, provChannelId)?.id || 0);
+                const resolvedAssignment = db.prepare(`
+                  SELECT id, user_category_id, provider_channel_id, mapping_id,
+                         assignment_origin, granted_by_admin, authorization_revoked
+                  FROM user_channels
+                  WHERE user_category_id = ? AND provider_channel_id = ?
+                `).get(userCatId, provChannelId);
+                const assignmentId = Number(resolvedAssignment?.id || 0);
                 if (!assignmentId) throw new Error('Unable to resolve synchronized user-channel assignment');
 
                 // Update in-memory state
-                existingAssignments.set(assignmentKey, {
-                  id: assignmentId,
-                  user_category_id: userCatId,
-                  provider_channel_id: Number(provChannelId),
-                  mapping_id: mappingId,
-                  granted_by_admin: assignmentGrant,
-                  authorization_revoked: 0
-                });
-                maxSortMap.set(userCatId, newSortOrder);
+                existingAssignments.set(assignmentKey, resolvedAssignment);
+                if (assignmentInfo.changes === 1) maxSortMap.set(userCatId, newSortOrder);
               } else {
-                if (existingAssignment.mapping_id && Number(existingAssignment.mapping_id) !== mappingId) {
+                if (isTrustedMappingAssignment(existingAssignment, existingAssignment.mapping_id) &&
+                    Number(existingAssignment.mapping_id) !== mappingId) {
                   updateAssignmentMapping.run(mappingId, existingAssignment.id);
                   existingAssignment.mapping_id = mappingId;
                 }

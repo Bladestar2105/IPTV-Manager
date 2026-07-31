@@ -13,6 +13,10 @@ import geoip from 'geoip-lite';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 import { getGeoIpUpdatePlan, reloadGeoIpData, runGeoIpUpdateProcess } from '../services/geoIpUpdateService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
+import {
+  normalizeAssignmentOrigin,
+  upsertMergedUserChannelAssignment
+} from '../services/userChannelAssignmentService.js';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -228,7 +232,8 @@ export const exportData = (req, res) => {
     }
 
     const exportData = {
-      version: 1,
+      version: 2,
+      assignment_provenance_version: 1,
       timestamp: Date.now(),
       users: [],
       providers: [],
@@ -394,9 +399,11 @@ export const importData = async (req, res) => {
 
     const importData = JSON.parse(jsonStr);
 
-    if (!importData.version || !importData.users) {
+    if (!Array.isArray(importData.users)) {
       return res.status(400).json({error: 'Invalid export file format'});
     }
+    const trustedModernFormat = Number(importData.version) === 2 &&
+      Number(importData.assignment_provenance_version) === 1;
 
     // Security validation for URLs
     for (const p of importData.providers || []) {
@@ -438,7 +445,9 @@ export const importData = async (req, res) => {
       users_skipped: 0,
       providers: 0,
       categories: 0,
-      channels: 0
+      channels: 0,
+      channels_merged: 0,
+      channels_skipped: 0
     };
 
     db.transaction(() => {
@@ -503,7 +512,7 @@ export const importData = async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      for (const p of importData.providers) {
+      for (const p of importData.providers || []) {
         const newUserId = userIdMap.get(p.user_id);
         if (!newUserId) continue;
 
@@ -530,7 +539,7 @@ export const importData = async (req, res) => {
         stats.providers++;
       }
 
-      const provChannels = importData.channels.filter(c => !c.type && providerIdMap.has(c.provider_id));
+      const provChannels = (importData.channels || []).filter(c => !c.type && providerIdMap.has(c.provider_id));
 
       const insertProvChannel = db.prepare(`
         INSERT INTO provider_channels (
@@ -573,7 +582,7 @@ export const importData = async (req, res) => {
 
       const insertCategoryStmt = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
 
-      for (const cat of importData.categories) {
+      for (const cat of importData.categories || []) {
         const newUserId = userIdMap.get(cat.user_id);
         if (!newUserId) continue;
 
@@ -589,8 +598,9 @@ export const importData = async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       const mappingIdMap = new Map();
+      const mappingSourceMap = new Map();
 
-      for (const m of importData.mappings) {
+      for (const m of importData.mappings || []) {
         const newProvId = providerIdMap.get(m.provider_id);
         const newUserId = userIdMap.get(m.user_id);
         const newUserCatId = m.user_category_id ? categoryIdMap.get(m.user_category_id) : null;
@@ -598,6 +608,13 @@ export const importData = async (req, res) => {
         if (newProvId && newUserId) {
            const info = insertMappingStmt.run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created, m.category_type || 'live');
            mappingIdMap.set(Number(m.id), info.lastInsertRowid);
+           mappingSourceMap.set(Number(m.id), {
+             ...m,
+             new_id: Number(info.lastInsertRowid),
+             new_provider_id: Number(newProvId),
+             new_user_id: Number(newUserId),
+             new_user_category_id: newUserCatId ? Number(newUserCatId) : null
+           });
         }
       }
 
@@ -606,7 +623,7 @@ export const importData = async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      for (const s of importData.sync_configs) {
+      for (const s of importData.sync_configs || []) {
         const newProvId = providerIdMap.get(s.provider_id);
         const newUserId = userIdMap.get(s.user_id);
 
@@ -633,43 +650,80 @@ export const importData = async (req, res) => {
         }
       }
 
-      const userAssignments = importData.channels.filter(c => c.type === 'user_assignment');
-      const insertUserChannel = db.prepare(`
-        INSERT INTO user_channels
-          (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
-           mapping_id, granted_by_admin, authorization_revoked)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING
+      const userAssignments = (importData.channels || []).filter(c => c.type === 'user_assignment');
+      const getProviderChannel = db.prepare("SELECT provider_id, COALESCE(stream_type, 'live') AS stream_type FROM provider_channels WHERE id = ?");
+      const getMapping = db.prepare(`
+        SELECT id, provider_id, user_id, user_category_id, COALESCE(category_type, 'live') AS category_type
+        FROM category_mappings
+        WHERE id = ?
       `);
+      const getCategoryType = db.prepare("SELECT COALESCE(type, 'live') AS type FROM user_categories WHERE id = ?");
 
       for (const ua of userAssignments) {
         const newUserCatId = categoryIdMap.get(ua.user_category_id);
         const newProvChannelId = providerChannelIdMap.get(ua.provider_channel_id);
 
-        if (newUserCatId && newProvChannelId) {
-          const grant = resolveAssignmentGrant({
-            categoryOwnerId: categoryOwnerMap.get(newUserCatId),
-            providerOwnerId: providerChannelOwnerMap.get(newProvChannelId),
-            isAdmin: true,
-            allowExplicitAdminGrant: allowCrossOwner &&
-              Number(ua.granted_by_admin) === 1
-          });
-          insertUserChannel.run(
-            newUserCatId,
-            newProvChannelId,
-            ua.sort_order,
-            ua.custom_name || '',
-            Number(ua.is_hidden) === 1 ? 1 : 0,
-            Number(ua.mapping_id) > 0 ? (mappingIdMap.get(Number(ua.mapping_id)) || null) : null,
-            grant === 1 ? 1 : 0,
-            grant === null ? 1 : 0
-          );
-          stats.channels++;
+        if (!newUserCatId || !newProvChannelId) {
+          stats.channels_skipped++;
+          continue;
+        }
+
+        const grant = resolveAssignmentGrant({
+          categoryOwnerId: categoryOwnerMap.get(newUserCatId),
+          providerOwnerId: providerChannelOwnerMap.get(newProvChannelId),
+          isAdmin: true,
+          allowExplicitAdminGrant: allowCrossOwner && Number(ua.granted_by_admin) === 1
+        });
+        const requestedOrigin = trustedModernFormat
+          ? normalizeAssignmentOrigin(ua.assignment_origin, 'legacy')
+          : 'imported';
+        const sourceMappingId = Number(ua.mapping_id);
+        const sourceMapping = mappingSourceMap.get(sourceMappingId);
+        const remappedMappingId = requestedOrigin === 'mapping' ? mappingIdMap.get(sourceMappingId) : null;
+        const restoredChannel = getProviderChannel.get(newProvChannelId);
+        const restoredProviderId = restoredChannel?.provider_id;
+        const restoredCategoryType = getCategoryType.get(newUserCatId)?.type || 'live';
+        const sourceMappingType = sourceMapping?.category_type || 'live';
+        const typeValid = sourceMappingType === restoredCategoryType &&
+          (String(restoredChannel?.stream_type || 'live') === sourceMappingType ||
+            (String(restoredChannel?.stream_type || 'live') === 'live' && sourceMappingType === 'radio'));
+        const validMapping = requestedOrigin === 'mapping' && sourceMapping && remappedMappingId &&
+          Number(sourceMapping.new_user_category_id) === Number(newUserCatId) &&
+          Number(sourceMapping.new_provider_id) === Number(restoredProviderId) && typeValid;
+        const authorizationRevoked = grant === null ||
+          (Number(ua.authorization_revoked) === 1 && grant !== 1) ? 1 : 0;
+        const result = upsertMergedUserChannelAssignment(db, {
+          id: ua.id,
+          user_category_id: Number(newUserCatId),
+          provider_channel_id: Number(newProvChannelId),
+          sort_order: ua.sort_order,
+          custom_name: ua.custom_name || '',
+          is_hidden: Number(ua.is_hidden) === 1 ? 1 : 0,
+          assignment_origin: validMapping ? 'mapping' : (requestedOrigin === 'mapping' ? 'legacy' : requestedOrigin),
+          mapping_id: validMapping ? Number(remappedMappingId) : null,
+          granted_by_admin: grant === 1 ? 1 : 0,
+          authorization_revoked: authorizationRevoked,
+          grant_valid: grant === 1
+        }, {
+          preserveId: false,
+          mappingValidator: mappingId => {
+            const mapping = getMapping.get(Number(mappingId));
+            return Boolean(mapping && Number(mapping.user_category_id) === Number(newUserCatId) &&
+              Number(mapping.provider_id) === Number(restoredProviderId) &&
+              Number(mapping.user_id) === Number(categoryOwnerMap.get(newUserCatId)) &&
+              String(mapping.category_type || 'live') === String(restoredCategoryType));
+          }
+        });
+        if (result.skipped) stats.channels_skipped++;
+        else {
+          stats.channels += result.inserted;
+          stats.channels_merged += result.merged;
         }
       }
 
     })();
 
+    if (stats.channels_merged === 0) delete stats.channels_merged;
     res.json({success: true, stats});
 
   } catch (e) {

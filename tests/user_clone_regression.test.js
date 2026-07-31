@@ -56,6 +56,7 @@ describe('User clone regression', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     insertProviderRun.mockReturnValue({ lastInsertRowid: 20 });
+    insertUserChannelRun.mockReturnValue({ lastInsertRowid: 40 });
     insertChannelRun.mockImplementation((providerId, remoteStreamId, name) => {
       if (name == null) {
         throw new Error('NOT NULL constraint failed: provider_channels.name');
@@ -212,7 +213,7 @@ describe('User clone regression', () => {
     expect(insertProviderRun.mock.calls[0][12]).toBe(1);
     expect(insertProviderRun.mock.calls[0][13]).toBe('Europe/Berlin');
     expect(insertSyncRun).toHaveBeenCalledWith(20, 200, 1, 'daily', 1, 1, 1);
-    expect(insertUserChannelRun).toHaveBeenCalledWith(40, 30, 0, '', 0, null);
-    expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('VALUES (?, ?, ?, ?, ?, ?, 0, 0)'));
+    expect(insertUserChannelRun).toHaveBeenCalledWith(40, 30, 0, '', 0, 'legacy', null, 0, 0);
+    expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('assignment_origin'));
   });
 });

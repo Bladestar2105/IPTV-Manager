@@ -6,6 +6,7 @@ import { performSync, checkProviderExpiry, deleteProviderChannelCascade } from '
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
+import { upsertMergedUserChannelAssignment } from '../services/userChannelAssignmentService.js';
 
 const normalizeProviderBaseUrl = (url) => String(url || '').trim().replace(/\/+$/, '');
 const isHttpUrl = (url) => /^https?:\/\//i.test(url);
@@ -753,26 +754,36 @@ export const importCategory = async (req, res) => {
         ORDER BY original_sort_order ASC, name ASC
       `);
 
-      const insertChannel = db.prepare(`
-        INSERT INTO user_channels
-          (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
-        VALUES (?, ?, ?, ?, ?, 0)
-        ON CONFLICT DO NOTHING
-      `);
       const channels = stmt.all(providerId, Number(category_id), streamType);
-      const importedCount = channels.length;
+      let importedCount = 0;
+      let mergedCount = 0;
       db.transaction(() => {
         channels.forEach((ch, idx) => {
-          insertChannel.run(newCategoryId, ch.id, idx, mapping?.id || null, grantedByAdmin);
+          const result = upsertMergedUserChannelAssignment(db, {
+            user_category_id: newCategoryId,
+            provider_channel_id: ch.id,
+            sort_order: idx,
+            assignment_origin: 'mapping',
+            mapping_id: mapping?.id || null,
+            granted_by_admin: grantedByAdmin,
+            authorization_revoked: 0,
+            grant_valid: grantedByAdmin === 1
+          }, {
+            mappingValidator: mappingId => Number(mappingId) === Number(mapping?.id) && Boolean(mapping?.id)
+          });
+          importedCount += result.inserted;
+          mergedCount += result.merged;
         });
       })();
 
-      res.json({
+      const response = {
         success: true,
         category_id: newCategoryId,
         channels_imported: importedCount,
         is_adult: isAdult
-      });
+      };
+      if (mergedCount) response.channels_merged = mergedCount;
+      res.json(response);
     } else {
       res.json({
         success: true,
@@ -816,15 +827,10 @@ export const importCategories = async (req, res) => {
 
     const results = [];
     let totalChannels = 0;
+    let totalMerged = 0;
     let totalCategories = 0;
 
     const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
-    const insertChannel = db.prepare(`
-      INSERT INTO user_channels
-        (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
-      VALUES (?, ?, ?, ?, ?, 0)
-      ON CONFLICT DO NOTHING
-    `);
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 
     // Pre-fetch channels for all categories being imported to avoid N+1 queries
@@ -888,10 +894,22 @@ export const importCategories = async (req, res) => {
           const channels = channelsMap.get(`${Number(cat.id)}_${streamType}`) || [];
 
           channels.forEach((ch, idx) => {
-            insertChannel.run(newCategoryId, ch.id, idx, mapping?.id || null, grantedByAdmin);
+            const result = upsertMergedUserChannelAssignment(db, {
+              user_category_id: newCategoryId,
+              provider_channel_id: ch.id,
+              sort_order: idx,
+              assignment_origin: 'mapping',
+              mapping_id: mapping?.id || null,
+              granted_by_admin: grantedByAdmin,
+              authorization_revoked: 0,
+              grant_valid: grantedByAdmin === 1
+            }, {
+              mappingValidator: mappingId => Number(mappingId) === Number(mapping?.id) && Boolean(mapping?.id)
+            });
+            channelsImported += result.inserted;
+            totalChannels += result.inserted;
+            totalMerged += result.merged;
           });
-          channelsImported = channels.length;
-          totalChannels += channelsImported;
         }
 
         results.push({
@@ -903,12 +921,14 @@ export const importCategories = async (req, res) => {
       }
     })();
 
-    res.json({
+    const response = {
       success: true,
       categories_imported: totalCategories,
       channels_imported: totalChannels,
       results
-    });
+    };
+    if (totalMerged) response.channels_merged = totalMerged;
+    res.json(response);
   } catch (e) {
     console.error(e);
     res.status(500).json({error: e.message});
