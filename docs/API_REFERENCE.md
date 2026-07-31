@@ -107,6 +107,14 @@ matching `mapping_id`; a non-null ID alone is not trusted. Each user category
 can contain at most one assignment for a given provider channel. Bulk category
 and channel requests accept at most 5,000 IDs per request.
 
+Repeated provider-category imports reuse an existing valid mapping target and
+merge missing mapping-owned assignments into it. Mapping ownership is retained
+only when the user, target category, provider, provider category, content type,
+and provider stream are compatible; invalid provenance remains unowned instead
+of retaining a stale mapping reference. Backup and full-system import payloads
+are grouped before insertion, so merged state and the lowest available
+assignment ID do not depend on source row order.
+
 ## EPG and Mapping
 
 - `GET /api/epg/now`

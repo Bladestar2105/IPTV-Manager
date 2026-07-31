@@ -274,6 +274,62 @@ describe('user backup restore authorization', () => {
     });
   });
 
+  it.each([
+    [[200, 100]],
+    [[100, 200]],
+  ])('normalizes duplicate backup rows independently of payload order (%s)', (order) => {
+    const providerChannelId = addProviderChannel(1);
+    const data = backupData(1);
+    data.format_version = 2;
+    data.assignment_provenance_version = 1;
+    data.userChannels = order.map(id => ({
+      id,
+      user_category_id: 100,
+      provider_channel_id: providerChannelId,
+      sort_order: id === 100 ? 1 : 4,
+      custom_name: id === 100 ? '' : 'Stable name',
+      is_hidden: id === 100 ? 0 : 1,
+      assignment_origin: id === 100 ? 'mapping' : 'manual',
+      mapping_id: null,
+    }));
+    const backupId = addBackup(data);
+
+    restore(backupId);
+
+    expect(db.prepare(`
+      SELECT id, sort_order, custom_name, is_hidden, assignment_origin
+      FROM user_channels
+    `).get()).toEqual({
+      id: 100,
+      sort_order: 1,
+      custom_name: 'Stable name',
+      is_hidden: 1,
+      assignment_origin: 'manual'
+    });
+  });
+
+  it('falls back to the next valid source ID when the lowest ID collides', () => {
+    const providerChannelId = addProviderChannel(1);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (900, 2, 'Other', 'series')").run();
+    db.prepare(`
+      INSERT INTO user_channels (id, user_category_id, provider_channel_id, assignment_origin)
+      VALUES (100, 900, ?, 'legacy')
+    `).run(providerChannelId);
+    const data = backupData(1);
+    data.userChannels = [
+      { id: 200, user_category_id: 100, provider_channel_id: providerChannelId, assignment_origin: 'legacy' },
+      { id: 100, user_category_id: 100, provider_channel_id: providerChannelId, assignment_origin: 'legacy' },
+    ];
+    const backupId = addBackup(data);
+
+    restore(backupId);
+
+    expect(db.prepare(`
+      SELECT id FROM user_channels
+      WHERE user_category_id = 100 AND provider_channel_id = ?
+    `).get(providerChannelId)).toEqual({ id: 200 });
+  });
+
   it('uses current ownership and skips missing provider channels', () => {
     const providerChannelId = addProviderChannel(1);
     const data = backupData(1, { provider_channel_id: providerChannelId, granted_by_admin: 0 });

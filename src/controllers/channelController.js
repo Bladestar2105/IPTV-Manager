@@ -2,10 +2,7 @@ import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
-import {
-  mergeAssignmentCandidates,
-  rebindSeriesEpisodeAliases
-} from '../services/userChannelAssignmentService.js';
+import { retargetCategoryMapping } from '../services/categoryMappingService.js';
 
 const MAX_BULK_IDS = 5000;
 
@@ -26,120 +23,6 @@ function bulkOperationError(status, message) {
   const error = new Error(message);
   error.status = status;
   return error;
-}
-
-function reconcileMappingAssignments(mapping, targetId) {
-  const ownedAssignments = db.prepare(`
-    SELECT uc.*
-    FROM user_channels uc
-    WHERE uc.mapping_id = ? AND uc.assignment_origin = 'mapping'
-    ORDER BY uc.id
-  `).all(mapping.id);
-  if (targetId === null) {
-    for (const assignment of ownedAssignments) {
-      db.prepare(`
-        DELETE FROM user_channels
-        WHERE id = ? AND mapping_id = ? AND assignment_origin = 'mapping'
-      `).run(assignment.id, mapping.id);
-    }
-    return { assignments_removed: ownedAssignments.length, assignments_moved: 0, duplicates_merged: 0 };
-  }
-
-  let assignmentsMoved = 0;
-  let duplicatesMerged = 0;
-  const findTarget = db.prepare(`
-    SELECT *
-    FROM user_channels
-    WHERE user_category_id = ? AND provider_channel_id = ?
-    ORDER BY id
-  `);
-  const update = db.prepare(`
-    UPDATE user_channels
-    SET user_category_id = ?, sort_order = ?, custom_name = ?, is_hidden = ?,
-        assignment_origin = ?, mapping_id = ?, granted_by_admin = ?, authorization_revoked = ?
-    WHERE id = ?
-  `);
-  const deleteAssignment = db.prepare('DELETE FROM user_channels WHERE id = ?');
-
-  for (const assignment of ownedAssignments) {
-    if (Number(assignment.user_category_id) === Number(targetId)) continue;
-    const targetRows = findTarget.all(targetId, assignment.provider_channel_id);
-    if (targetRows.length === 0) {
-      if (update.run(
-        targetId,
-        assignment.sort_order,
-        assignment.custom_name || '',
-        Number(assignment.is_hidden) === 1 ? 1 : 0,
-        'mapping',
-        mapping.id,
-        Number(assignment.granted_by_admin) === 1 ? 1 : 0,
-        Number(assignment.authorization_revoked) === 1 ? 1 : 0,
-        assignment.id
-      ).changes === 1) assignmentsMoved++;
-      continue;
-    }
-
-    const merged = mergeAssignmentCandidates(
-      [...targetRows, { ...assignment, user_category_id: targetId }],
-      {
-        mappingValidator: mappingId => {
-          if (Number(mappingId) === Number(mapping.id)) return true;
-          const row = db.prepare(`
-            SELECT user_id, provider_id, user_category_id, COALESCE(category_type, 'live') AS category_type
-            FROM category_mappings
-            WHERE id = ?
-          `).get(mappingId);
-          return row && Number(row.user_id) === Number(mapping.user_id) &&
-            Number(row.provider_id) === Number(mapping.provider_id) &&
-            String(row.category_type) === String(mapping.category_type) &&
-            Number(row.user_category_id) === Number(targetId);
-        }
-      }
-    );
-    const survivorId = Number(merged.id);
-    const survivorIsSource = survivorId === Number(assignment.id);
-    const survivor = survivorIsSource ? assignment : targetRows.find(row => Number(row.id) === survivorId) || targetRows[0];
-    const losers = targetRows.filter(row => Number(row.id) !== Number(survivor.id));
-
-    if (survivorIsSource) {
-      for (const loser of targetRows) {
-        rebindSeriesEpisodeAliases(db, assignment.id, loser.id);
-        deleteAssignment.run(loser.id);
-      }
-      update.run(
-        targetId,
-        merged.sort_order,
-        merged.custom_name || '',
-        merged.is_hidden,
-        merged.assignment_origin,
-        merged.mapping_id,
-        merged.granted_by_admin,
-        merged.authorization_revoked,
-        assignment.id
-      );
-      assignmentsMoved++;
-    } else {
-      update.run(
-        targetId,
-        merged.sort_order,
-        merged.custom_name || '',
-        merged.is_hidden,
-        merged.assignment_origin,
-        merged.mapping_id,
-        merged.granted_by_admin,
-        merged.authorization_revoked,
-        survivor.id
-      );
-      for (const loser of losers) {
-        rebindSeriesEpisodeAliases(db, survivor.id, loser.id);
-        deleteAssignment.run(loser.id);
-      }
-      rebindSeriesEpisodeAliases(db, survivor.id, assignment.id);
-      deleteAssignment.run(assignment.id);
-    }
-    duplicatesMerged++;
-  }
-  return { assignments_removed: 0, assignments_moved: assignmentsMoved, duplicates_merged: duplicatesMerged };
 }
 
 export const getUserCategories = (req, res) => {
@@ -557,7 +440,8 @@ export const updateCategoryMapping = (req, res) => {
     const { user_category_id } = req.body;
 
     const mapping = db.prepare(`
-      SELECT id, user_id, provider_id, COALESCE(category_type, 'live') AS category_type
+      SELECT id, user_id, provider_id, provider_category_id,
+             COALESCE(category_type, 'live') AS category_type
       FROM category_mappings
       WHERE id = ?
     `).get(id);
@@ -572,27 +456,7 @@ export const updateCategoryMapping = (req, res) => {
       return res.status(400).json({error: 'Invalid user_category_id'});
     }
 
-    const result = db.transaction(() => {
-      if (targetId !== null) {
-        const target = db.prepare(`
-          SELECT id, user_id, COALESCE(type, 'live') AS type
-          FROM user_categories
-          WHERE id = ?
-        `).get(targetId);
-        if (!target || target.user_id !== mapping.user_id || target.type !== mapping.category_type) {
-          return false;
-        }
-      }
-
-      const reconciliation = reconcileMappingAssignments(mapping, targetId);
-      const updated = db.prepare(`
-        UPDATE category_mappings
-        SET user_category_id = ?
-        WHERE id = ? AND user_id = ?
-      `).run(targetId, id, mapping.user_id).changes === 1;
-      if (!updated) return false;
-      return { success: true, ...reconciliation };
-    })();
+    const result = db.transaction(() => retargetCategoryMapping(db, mapping, targetId))();
 
     if (!result) return res.status(400).json({error: 'Invalid user_category_id'});
 

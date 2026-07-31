@@ -154,6 +154,14 @@ rebinds/de-duplicates series aliases before removing losers. Modern backup and
 system formats may retain mapping ownership only after relationship validation;
 legacy formats are imported as unowned.
 
+The shared mapping validator checks mapping ownership, target category, provider
+category, content type, and stream compatibility (including live-provider radio
+categories). Reimporting a mapped provider category reuses its valid target and
+reconciles mapping-owned assignments in one transaction; manual, legacy, and
+imported rows are not moved or deleted. Backup and system-import assignments are
+grouped before writes, preserving hidden state, aliases, merged fields, and the
+lowest available source ID independently of payload order.
+
 Provider sync state is persisted per provider and stream type in
 `provider_sync_state`. A first complete empty snapshot with local rows is
 recorded but is not destructive; cleanup requires a second consecutive empty

@@ -26,7 +26,12 @@ export function mergeAssignmentCandidates(candidates, { mappingValidator } = {})
     const aId = Number(a.id);
     const bId = Number(b.id);
     if (Number.isInteger(aId) && Number.isInteger(bId) && aId !== bId) return aId - bId;
-    return a._source_index - b._source_index;
+    const stableKey = row => JSON.stringify([
+      row.custom_name || '', row.sort_order, row.is_hidden,
+      row.mapping_id, row.provider_channel_id, row.granted_by_admin,
+      row.authorization_revoked, row.assignment_origin
+    ]);
+    return stableKey(a).localeCompare(stableKey(b));
   });
   let preferred = ordered[0];
   let assignmentOrigin = preferred.assignment_origin;
@@ -67,6 +72,36 @@ export function mergeAssignmentCandidates(candidates, { mappingValidator } = {})
     granted_by_admin: validGrant ? 1 : (requestedGrant ? 1 : 0),
     authorization_revoked: validGrant ? 0 : (rows.some(row => Number(row.authorization_revoked) === 1) ? 1 : 0)
   };
+}
+
+export function mergeAssignmentGroups(candidates, { mappingValidator, preserveLowestId = false } = {}) {
+  const groups = new Map();
+  let skipped = 0;
+  for (const candidate of candidates || []) {
+    const categoryId = Number(candidate?.user_category_id);
+    const providerChannelId = Number(candidate?.provider_channel_id);
+    if (!Number.isInteger(categoryId) || categoryId <= 0 ||
+        !Number.isInteger(providerChannelId) || providerChannelId <= 0) {
+      skipped++;
+      continue;
+    }
+    const key = `${categoryId}:${providerChannelId}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(candidate);
+  }
+
+  const merged = [];
+  for (const [key, rows] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const candidate = mergeAssignmentCandidates(rows, { mappingValidator });
+    if (!candidate) continue;
+    const validIds = rows
+      .map(row => Number(row.id))
+      .filter(id => Number.isInteger(id) && id > 0)
+      .sort((a, b) => a - b);
+    if (preserveLowestId && validIds.length > 0) candidate.id = validIds[0];
+    merged.push({ key, candidate, rows, duplicateCount: Math.max(0, rows.length - 1), validIds });
+  }
+  return { groups: merged, skipped };
 }
 
 export function rebindSeriesEpisodeAliases(database, survivorId, loserId) {

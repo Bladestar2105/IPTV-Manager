@@ -3,8 +3,16 @@ import { clearChannelsCache } from '../services/cacheService.js';
 import { resolveAssignmentGrant } from '../utils/helpers.js';
 import {
   normalizeAssignmentOrigin,
+  mergeAssignmentGroups,
   upsertMergedUserChannelAssignment
 } from '../services/userChannelAssignmentService.js';
+import {
+  getCategoryMapping,
+  retargetCategoryMapping,
+  validateMappingTarget,
+  validateMappingAssignmentRelationship,
+  validateStoredMappingAssignment
+} from '../services/categoryMappingService.js';
 
 export const getBackups = (req, res) => {
   try {
@@ -108,7 +116,7 @@ export const restoreBackup = (req, res) => {
       // Insert backup data
       const insertCategory = db.prepare('INSERT INTO user_categories (id, user_id, name, sort_order, is_adult, type) VALUES (?, ?, ?, ?, ?, ?)');
       const getMapping = db.prepare(`
-        SELECT id, provider_id, provider_category_id,
+        SELECT id, provider_id, user_id, user_category_id, provider_category_id,
                COALESCE(category_type, 'live') AS category_type
         FROM category_mappings
         WHERE id = ? AND user_id = ?
@@ -121,12 +129,30 @@ export const restoreBackup = (req, res) => {
         WHERE pc.id = ?
       `);
       const getCategoryType = db.prepare("SELECT COALESCE(type, 'live') AS type FROM user_categories WHERE id = ? AND user_id = ?");
-      const updateMapping = db.prepare('UPDATE category_mappings SET user_category_id = ?, auto_created = ? WHERE id = ? AND user_id = ?');
+      const updateMappingMetadata = db.prepare('UPDATE category_mappings SET auto_created = ? WHERE id = ? AND user_id = ?');
 
       for (const cat of data.userCategories) {
         insertCategory.run(cat.id, userId, cat.name, cat.sort_order, cat.is_adult, cat.type);
       }
 
+      // Reconnect mappings before validating assignment provenance. This keeps the
+      // relationship validator from observing a temporarily detached target.
+      for (const map of data.categoryMappings) {
+        const categoryId = Number(map.user_category_id);
+        if (restoredCategoryIds.has(categoryId)) {
+          const currentMapping = getCategoryMapping(db, map.id);
+          if (currentMapping && Number(currentMapping.user_id) === userId) {
+            if (validateMappingTarget(db, currentMapping, categoryId)) {
+              if (!retargetCategoryMapping(db, currentMapping, categoryId)) {
+                throw new Error('Mapping retarget failed');
+              }
+              updateMappingMetadata.run(map.auto_created ? 1 : 0, map.id, userId);
+            }
+          }
+        }
+      }
+
+      const candidates = [];
       for (const chan of data.userChannels) {
         const categoryId = Number(chan.user_category_id);
         const providerChannelId = Number(chan.provider_channel_id);
@@ -155,54 +181,64 @@ export const restoreBackup = (req, res) => {
           : 'imported';
         const sourceMappingId = Number(chan.mapping_id);
         const sourceMapping = backupMappingTargets.get(sourceMappingId);
-        const restoredMappingId = sourceOrigin === 'mapping' && Number.isInteger(sourceMappingId) && sourceMappingId > 0 &&
-          sourceMapping && Number(sourceMapping.user_category_id) === categoryId && getMapping.get(sourceMappingId, userId)
-          ? sourceMappingId
+        const currentMapping = sourceOrigin === 'mapping' ? getMapping.get(sourceMappingId, userId) : null;
+        const category = getCategoryType.get(categoryId, userId);
+        const sourceValidationMapping = currentMapping && sourceMapping
+          ? { ...currentMapping, ...sourceMapping,
+              provider_id: sourceMapping.provider_id ?? currentMapping.provider_id,
+              user_id: sourceMapping.user_id ?? currentMapping.user_id,
+              id: sourceMapping.id ?? currentMapping.id }
           : null;
-        const result = upsertMergedUserChannelAssignment(db, {
+        const sourceValid = sourceOrigin === 'mapping' && sourceMapping && currentMapping &&
+          Number(sourceMapping.user_category_id) === categoryId &&
+          validateMappingAssignmentRelationship({
+            mapping: sourceValidationMapping,
+            userId,
+            userCategoryId: categoryId,
+            userCategoryType: category?.type,
+            providerId: provider.provider_id,
+            providerCategoryId: provider.original_category_id,
+            providerStreamType: provider.stream_type
+          });
+        const restoredMappingId = sourceValid && validateStoredMappingAssignment(db, {
+          mappingId: sourceMappingId,
+          userId,
+          userCategoryId: categoryId,
+          providerChannelId
+        }) ? sourceMappingId : null;
+        const validMapping = Boolean(restoredMappingId);
+        candidates.push({
           id: chan.id,
           user_category_id: categoryId,
           provider_channel_id: providerChannelId,
           sort_order: chan.sort_order,
           custom_name: chan.custom_name || '',
           is_hidden: isHidden,
-          assignment_origin: sourceOrigin,
+          assignment_origin: validMapping ? 'mapping' : (sourceOrigin === 'mapping' ? 'legacy' : sourceOrigin),
           mapping_id: restoredMappingId,
           granted_by_admin: grant === 1 ? 1 : 0,
           authorization_revoked: authorizationRevoked,
-          grant_valid: grant === 1
-        }, {
-          preserveId: true,
-          mappingValidator: mappingId => {
-            const map = backupMappingTargets.get(Number(mappingId));
-            const current = getMapping.get(Number(mappingId), userId);
-            const category = getCategoryType.get(categoryId, userId);
-            const mapType = String(map?.category_type || 'live');
-            const categoryType = String(category?.type || 'live');
-            const streamType = String(provider.stream_type || 'live');
-            const providerCategoryId = Number(provider.original_category_id);
-            const mappingCategoryId = Number(current?.provider_category_id);
-            const sourceCategoryId = Number(sourceMapping?.provider_category_id);
-            const typeValid = mapType === categoryType &&
-              (streamType === mapType || (streamType === 'live' && mapType === 'radio'));
-            return Boolean(map && current && Number(map.user_category_id) === categoryId &&
-              Number(current.provider_id) === Number(provider.provider_id) &&
-              Number.isFinite(providerCategoryId) && providerCategoryId === mappingCategoryId &&
-              providerCategoryId === sourceCategoryId && typeValid);
-          }
+          grant_valid: grant === 1,
+          mapping_valid: validMapping
         });
-        if (result.skipped) {
-          stats.channels_skipped++;
-          continue;
-        }
-        if (result.merged) stats.channels_merged = (stats.channels_merged || 0) + result.merged;
       }
 
-      for (const map of data.categoryMappings) {
-        const categoryId = Number(map.user_category_id);
-        if (restoredCategoryIds.has(categoryId)) {
-          updateMapping.run(categoryId, map.auto_created ? 1 : 0, map.id, userId);
-        }
+      const grouped = mergeAssignmentGroups(candidates, { preserveLowestId: true });
+      const getAssignmentById = db.prepare('SELECT id FROM user_channels WHERE id = ?');
+      for (const group of grouped.groups) {
+        const candidate = { ...group.candidate };
+        candidate.id = group.validIds.find(id => !getAssignmentById.get(id)) || null;
+        const result = upsertMergedUserChannelAssignment(db, candidate, {
+          preserveId: true,
+          mappingValidator: mappingId => validateStoredMappingAssignment(db, {
+            mappingId,
+            userId,
+            userCategoryId: candidate.user_category_id,
+            providerChannelId: candidate.provider_channel_id
+          })
+        });
+        if (result.skipped) stats.channels_skipped++;
+        else stats.channels_merged = (stats.channels_merged || 0) + group.duplicateCount + result.merged;
       }
 
       const categoryPlaceholders = [...restoredCategoryIds].map(() => '?').join(',');
