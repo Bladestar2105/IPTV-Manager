@@ -39,6 +39,8 @@ describe('Stalker/MAG portal flow', () => {
   let radioChannelId;
   let archivedProgramStart;
   let archivedProgramStop;
+  let expiredArchiveStart;
+  let expiredArchiveStop;
   let epgSourceId;
 
   const streamUser = (token, ip = '127.0.0.1') => getXtreamUser({
@@ -279,6 +281,8 @@ describe('Stalker/MAG portal flow', () => {
     const now = Math.floor(Date.now() / 1000);
     archivedProgramStart = now - 7200;
     archivedProgramStop = now - 3600;
+    expiredArchiveStart = now - 8 * 86400;
+    expiredArchiveStop = expiredArchiveStart + 3600;
     const insertEpgChannel = epgDb.prepare(`
       INSERT INTO epg_channels (id, name, source_type, source_id, updated_at)
       VALUES (?, ?, 'custom', ?, ?)
@@ -299,6 +303,10 @@ describe('Stalker/MAG portal flow', () => {
         archivedProgramStop,
         'Archived Show',
         'Archived description'
+      );
+      insertProgram.run(
+        epgIds[0], epgSourceId, expiredArchiveStart, expiredArchiveStop,
+        'Expired Archive', 'Outside the configured archive window'
       );
       insertProgram.run(epgIds[0], epgSourceId, now - 60, now + 1800, 'Current Show', 'Current description');
       insertProgram.run(epgIds[0], epgSourceId, now + 1800, now + 3600, 'Next Show', 'Next description');
@@ -628,7 +636,228 @@ describe('Stalker/MAG portal flow', () => {
       .query({ type: 'itv', action: 'get_epg_info', token, period: 'invalid' });
     expect(malformedPeriod.body.js.data[String(authorizedChannelIds[0])]
       .some(program => program.name === 'Beyond Clamp')).toBe(false);
+
+    const archiveDay = formatStalkerDateTime(archivedProgramStart * 1000).slice(0, 10);
+    const simple = await request(app)
+      .get('/server/load.php')
+      .query({
+        type: 'epg',
+        action: 'get_simple_data_table',
+        token,
+        ch_id: authorizedChannelIds[0],
+        date: archiveDay,
+        p: 1
+      });
+    expect(simple.body.js).toMatchObject({
+      cur_page: 1,
+      selected_item: 0,
+      max_page_items: 10
+    });
+    expect(simple.body.js.data.find(program => program.name === 'Archived Show')).toMatchObject({
+      id: `stalker_archive_${authorizedChannelIds[0]}_${archivedProgramStart}_${archivedProgramStop}`,
+      ch_id: String(authorizedChannelIds[0]),
+      start_timestamp: archivedProgramStart,
+      stop_timestamp: archivedProgramStop,
+      open: 0,
+      mark_archive: 1,
+      mark_memo: 0,
+      mark_rec: 0
+    });
+
+    const deniedSimple = await request(app)
+      .get('/server/load.php')
+      .query({
+        type: 'epg',
+        action: 'get_simple_data_table',
+        token,
+        ch_id: hiddenChannelIds[0],
+        date: archiveDay,
+        p: 1
+      });
+    expect(deniedSimple.body.js.data).toEqual([]);
   });
+
+  it('bounds and benchmarks bulk EPG responses', async () => {
+    const benchmarkMac = '02:00:00:00:61:10';
+    const benchmarkUserId = Number(db.prepare(`
+      INSERT INTO users (username, password, is_active)
+      VALUES (?, 'unused', 1)
+    `).run(`stalker_epg_${stamp}`).lastInsertRowid);
+    const benchmarkProviderId = Number(db.prepare(`
+      INSERT INTO providers (name, url, username, password, user_id)
+      VALUES (?, ?, 'upstream', 'unused', ?)
+    `).run(`Stalker EPG ${stamp}`, `http://epg-${stamp}.invalid`, benchmarkUserId).lastInsertRowid);
+    const benchmarkCategoryId = Number(db.prepare(`
+      INSERT INTO user_categories (user_id, name, type, sort_order)
+      VALUES (?, 'EPG benchmark', 'live', 0)
+    `).run(benchmarkUserId).lastInsertRowid);
+    const benchmarkSourceId = 7_000_000 + benchmarkUserId;
+
+    const clearChannels = () => {
+      db.prepare('DELETE FROM user_channels WHERE user_category_id = ?').run(benchmarkCategoryId);
+      db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(benchmarkProviderId);
+      epgDb.prepare("DELETE FROM epg_programs WHERE source_type = 'custom' AND source_id = ?")
+        .run(benchmarkSourceId);
+      epgDb.prepare("DELETE FROM epg_channels WHERE source_type = 'custom' AND source_id = ?")
+        .run(benchmarkSourceId);
+    };
+    const measure = async (scenario, token, period) => {
+      const heapBefore = process.memoryUsage().heapUsed;
+      const rssBefore = process.memoryUsage().rss;
+      const started = performance.now();
+      const response = await request(app)
+        .get('/server/load.php')
+        .query({ type: 'itv', action: 'get_epg_info', token, period });
+      const durationMs = performance.now() - started;
+      const memory = process.memoryUsage();
+      const programCount = Object.values(response.body.js.data)
+        .reduce((total, programs) => total + programs.length, 0);
+      process.stdout.write(
+        `[Stalker EPG benchmark] scenario=${scenario} channels=${Object.keys(response.body.js.data).length} ` +
+        `programmes=${programCount} duration_ms=${durationMs.toFixed(1)} ` +
+        `heap_delta_mib=${(Math.max(memory.heapUsed - heapBefore, 0) / 1024 / 1024).toFixed(1)} ` +
+        `rss_delta_mib=${(Math.max(memory.rss - rssBefore, 0) / 1024 / 1024).toFixed(1)}\n`
+      );
+      expect(response.status).toBe(200);
+      expect(durationMs).toBeLessThan(20_000);
+      expect(memory.heapUsed - heapBefore).toBeLessThan(512 * 1024 * 1024);
+      return response.body.js.data;
+    };
+
+    try {
+      await request(app)
+        .post(`/api/users/${benchmarkUserId}/stalker-devices`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ mac: benchmarkMac })
+        .expect(201);
+      const handshakeResponse = await request(app)
+        .get('/server/load.php')
+        .set('Cookie', `mac=${encodeURIComponent(benchmarkMac)}`)
+        .query({ type: 'stb', action: 'handshake' });
+      const token = handshakeResponse.body.js.token;
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+
+      const insertProviderChannel = db.prepare(`
+        INSERT INTO provider_channels (
+          provider_id, remote_stream_id, name, stream_type, original_sort_order, epg_channel_id
+        ) VALUES (?, ?, ?, 'live', ?, '')
+      `);
+      const insertUserChannel = db.prepare(`
+        INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, is_hidden)
+        VALUES (?, ?, ?, 0)
+      `);
+      const providerChannelIds = [];
+      const userChannelIds = [];
+      db.transaction(() => {
+        for (let index = 0; index < 10_000; index += 1) {
+          const providerChannelId = Number(insertProviderChannel.run(
+            benchmarkProviderId,
+            index + 1,
+            `Benchmark ${index + 1}`,
+            index
+          ).lastInsertRowid);
+          providerChannelIds.push(providerChannelId);
+          userChannelIds.push(Number(insertUserChannel.run(
+            benchmarkCategoryId,
+            providerChannelId,
+            index
+          ).lastInsertRowid));
+        }
+      })();
+
+      const emptyData = await measure('10000-empty', token, 1);
+      expect(Object.keys(emptyData)).toHaveLength(10_000);
+      expect(userChannelIds.every(id => emptyData[String(id)].length === 0)).toBe(true);
+
+      const now = Math.floor(Date.now() / 1000);
+      const updateEpgId = db.prepare('UPDATE provider_channels SET epg_channel_id = ? WHERE id = ?');
+      const insertEpgChannel = epgDb.prepare(`
+        INSERT INTO epg_channels (id, name, source_type, source_id, updated_at)
+        VALUES (?, ?, 'custom', ?, ?)
+      `);
+      const insertProgram = epgDb.prepare(`
+        INSERT INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
+        VALUES (?, 'custom', ?, ?, ?, ?, '', 'en')
+      `);
+      db.transaction(() => {
+        providerChannelIds.forEach((providerChannelId, index) => {
+          updateEpgId.run(`${stamp}_bulk_${String(index).padStart(5, '0')}`, providerChannelId);
+        });
+      })();
+      epgDb.transaction(() => {
+        providerChannelIds.forEach((_, index) => {
+          const epgId = `${stamp}_bulk_${String(index).padStart(5, '0')}`;
+          insertEpgChannel.run(epgId, `Bulk ${index}`, benchmarkSourceId, now);
+          insertProgram.run(epgId, benchmarkSourceId, now, now + 1800, `Programme ${index}`);
+        });
+      })();
+
+      const populatedData = await measure('10000-one-each', token, 1);
+      expect(Object.keys(populatedData)).toEqual(userChannelIds.map(String));
+      expect(userChannelIds.every(id => populatedData[String(id)].length === 1)).toBe(true);
+
+      clearChannels();
+      const denseUserChannelIds = [];
+      db.transaction(() => {
+        for (let index = 0; index < 41; index += 1) {
+          const epgId = `${stamp}_dense_${String(index).padStart(2, '0')}`;
+          const providerChannelId = Number(db.prepare(`
+            INSERT INTO provider_channels (
+              provider_id, remote_stream_id, name, stream_type, original_sort_order, epg_channel_id
+            ) VALUES (?, ?, ?, 'live', ?, ?)
+          `).run(benchmarkProviderId, 20_000 + index, `Dense ${index}`, index, epgId).lastInsertRowid);
+          denseUserChannelIds.push(Number(insertUserChannel.run(
+            benchmarkCategoryId,
+            providerChannelId,
+            index
+          ).lastInsertRowid));
+        }
+      })();
+      epgDb.transaction(() => {
+        for (let channel = 0; channel < 41; channel += 1) {
+          const epgId = `${stamp}_dense_${String(channel).padStart(2, '0')}`;
+          insertEpgChannel.run(epgId, `Dense ${channel}`, benchmarkSourceId, now);
+          for (let programme = 0; programme < 501; programme += 1) {
+            const start = now + programme * 600;
+            insertProgram.run(
+              epgId,
+              benchmarkSourceId,
+              start,
+              start + 600,
+              `Dense ${channel}-${String(programme).padStart(3, '0')}`
+            );
+          }
+        }
+      })();
+
+      const denseData = await measure('41-dense-global-cap', token, 168);
+      const denseCounts = denseUserChannelIds.map(id => denseData[String(id)].length);
+      expect(denseCounts.every(count => count <= 500)).toBe(true);
+      expect(denseCounts.reduce((total, count) => total + count, 0)).toBe(20_000);
+      expect(denseData[String(denseUserChannelIds[0])][0].name).toBe('Dense 0-000');
+      expect(denseData[String(denseUserChannelIds[0])].at(-1).name).toBe('Dense 0-499');
+
+      const repeatedData = await measure('41-dense-repeat', token, 168);
+      expect(denseUserChannelIds.map(id => [
+        id,
+        denseData[String(id)].length,
+        denseData[String(id)][0]?.name,
+        denseData[String(id)].at(-1)?.name
+      ])).toEqual(denseUserChannelIds.map(id => [
+        id,
+        repeatedData[String(id)].length,
+        repeatedData[String(id)][0]?.name,
+        repeatedData[String(id)].at(-1)?.name
+      ]));
+    } finally {
+      clearChannels();
+      db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(benchmarkUserId);
+      db.prepare('DELETE FROM stalker_devices WHERE user_id = ?').run(benchmarkUserId);
+      db.prepare('DELETE FROM user_categories WHERE id = ?').run(benchmarkCategoryId);
+      db.prepare('DELETE FROM providers WHERE id = ?').run(benchmarkProviderId);
+      db.prepare('DELETE FROM users WHERE id = ?').run(benchmarkUserId);
+    }
+  }, 120_000);
 
   it('serves authorized VOD, series, radio, and catch-up contracts', async () => {
     await registerDevice();
@@ -804,20 +1033,67 @@ describe('Stalker/MAG portal flow', () => {
     expect(archiveLink.body.js.cmd)
       .toContain(`/${authorizedChannelIds[0]}.ts?token=`);
 
-    const tamperedArchive = await request(app)
-      .get('/server/load.php')
-      .query({
-        type: 'tv_archive',
-        action: 'create_link',
-        token,
-        cmd: `auto /media/stalker_archive_${hiddenChannelIds[0]}_${archivedProgramStart}_${archivedProgramStop}.mpg`
-      });
-    expect(tamperedArchive.body.js).toMatchObject({ cmd: '', error: 'nothing_to_play' });
+    for (const command of [
+      `auto /media/stalker_archive_${hiddenChannelIds[0]}_${archivedProgramStart}_${archivedProgramStop}.mpg`,
+      `auto /media/stalker_archive_${authorizedChannelIds[0]}_${archivedProgramStart + 1}_${archivedProgramStop}.mpg`,
+      `auto /media/stalker_archive_${authorizedChannelIds[0]}_${archivedProgramStart}_${archivedProgramStop + 1}.mpg`,
+      `auto /media/stalker_archive_${authorizedChannelIds[0]}_${expiredArchiveStart}_${expiredArchiveStop}.mpg`
+    ]) {
+      const tamperedArchive = await request(app)
+        .get('/server/load.php')
+        .query({ type: 'tv_archive', action: 'create_link', token, cmd: command });
+      expect(tamperedArchive.body.js).toMatchObject({ cmd: '', error: 'nothing_to_play' });
+    }
 
     const unknown = await request(app)
       .get('/server/load.php')
       .query({ type: 'vod', action: 'unsupported_action', token });
     expect(unknown.body).toEqual({ js: {} });
+  });
+
+  it('enforces the create_link module type matrix', async () => {
+    await registerDevice();
+    const token = await handshake();
+    const createLink = (type, cmd, extra = {}) => request(app)
+      .get('/server/load.php')
+      .query({ type, action: 'create_link', token, cmd, ...extra });
+    const liveCommand = `ffrt4://itv/${authorizedChannelIds[0]}`;
+    const movieCommand = `ffrt4://vod/${movieChannelId}`;
+    const seriesCommand = `ffrt4://series/${seriesChannelId}/season/1`;
+    const radioCommand = `ffrt4://radio/${radioChannelId}`;
+    const archiveCommand = `auto /media/stalker_archive_${authorizedChannelIds[0]}_${archivedProgramStart}_${archivedProgramStop}.mpg`;
+
+    await expect(createLink('itv', liveCommand))
+      .resolves.toHaveProperty('body.js.cmd', expect.stringContaining('/live/token/auth/'));
+    await expect(createLink('vod', movieCommand))
+      .resolves.toHaveProperty('body.js.cmd', expect.stringContaining('/movie/token/auth/'));
+    await expect(createLink('series', seriesCommand, { series: 1 }))
+      .resolves.toHaveProperty('body.js.cmd', expect.stringContaining('/series/token/auth/'));
+    await expect(createLink('vod', seriesCommand, { series: 1 }))
+      .resolves.toHaveProperty('body.js.cmd', expect.stringContaining('/series/token/auth/'));
+    await expect(createLink('radio', radioCommand))
+      .resolves.toHaveProperty('body.js.cmd', expect.stringContaining('/live/token/auth/'));
+    await expect(createLink('tv_archive', archiveCommand))
+      .resolves.toHaveProperty('body.js.cmd', expect.stringContaining('/timeshift/token/auth/'));
+
+    const mismatches = [
+      ['itv', movieCommand, {}],
+      ['itv', radioCommand, {}],
+      ['itv', seriesCommand, { series: 1 }],
+      ['radio', liveCommand, {}],
+      ['radio', movieCommand, {}],
+      ['vod', liveCommand, {}],
+      ['series', movieCommand, {}],
+      ['tv_archive', liveCommand, {}],
+      ['vod', seriesCommand, {}],
+      ['vod', `ffrt4://series/${seriesChannelId}`, { series: 1 }],
+      ['tv_archive', `ffmpeg http://localhost${archiveCommand.slice(5)}`, {}]
+    ];
+
+    for (const [type, command, extra] of mismatches) {
+      const response = await createLink(type, command, extra);
+      expect(response.body.js).toMatchObject({ id: 0, cmd: '', error: 'nothing_to_play' });
+    }
   });
 
   it('encrypts optional parental PINs and exposes them only to the device profile', async () => {

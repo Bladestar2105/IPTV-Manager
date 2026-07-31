@@ -26,13 +26,11 @@ export function expiryEpoch(value) {
 }
 
 export const STALKER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const dateTimeFormatters = new Map();
 
-export function formatStalkerDateTime(value, timeZone = STALKER_TIMEZONE) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
+function dateTimeFormatter(timeZone) {
+  if (!dateTimeFormatters.has(timeZone)) {
+    dateTimeFormatters.set(timeZone, new Intl.DateTimeFormat('en-CA', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
@@ -41,7 +39,17 @@ export function formatStalkerDateTime(value, timeZone = STALKER_TIMEZONE) {
       minute: '2-digit',
       second: '2-digit',
       hourCycle: 'h23'
-    }).formatToParts(date).map(part => [part.type, part.value])
+    }));
+  }
+  return dateTimeFormatters.get(timeZone);
+}
+
+export function formatStalkerDateTime(value, timeZone = STALKER_TIMEZONE) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const parts = Object.fromEntries(
+    dateTimeFormatter(timeZone).formatToParts(date).map(part => [part.type, part.value])
   );
 
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;

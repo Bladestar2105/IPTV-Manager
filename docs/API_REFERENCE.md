@@ -310,16 +310,21 @@ repopulates it with series-scoped keys.
 The public compatibility endpoints implement MAC handshake/session
 authentication plus `do_auth`, `get_profile`, `get_modules`, `get_localization`,
 `get_main_info`, `get_time`, `get_genres`, `get_ordered_list`,
-`get_all_channels`, `get_short_epg`, `get_epg_info`, and `create_link`.
+`get_all_channels`, `get_short_epg`, `get_epg_info`, `get_simple_data_table`,
+and `create_link`.
 `get_ordered_list` uses 1-based pages, with `p=0` accepted as a page-one
 compatibility alias, and accepts either `genre` or `category`.
 `get_all_channels` excludes adult categories; an authenticated explicit adult
 genre request remains available through `get_ordered_list`.
 
 An optional per-device 4–8 digit parental PIN is encrypted at rest and returned
-only as `parent_password` in the authenticated profile. Without a configured
-PIN, that profile field is empty. Profile timezone and `get_time` use the same
-server timezone.
+only as `parent_password` in that device's authenticated profile. Without a
+configured PIN, that profile field is empty. Adult channels are excluded from
+the bulk all-channels list, but an authenticated session can explicitly request
+an adult category. Enforcement is primarily the client's Stalker parental
+control; the server does not currently challenge every adult `create_link`
+request with the PIN. Profile timezone and `get_time` use the same server
+timezone.
 
 Content types are `itv` (live TV), `vod` (movies), `series`, and `radio`.
 Series listings expose episodes already synchronized into
@@ -328,11 +333,30 @@ published. Radio categories use live provider channels and can be created or
 imported from the normal category-management UI. MP3/AAC radio sources pass
 through directly; other radio sources use the authenticated MP3 transcode path.
 
+`create_link` enforces the requested module: `itv`, `radio`, and `series`
+commands must target the same type; `vod` accepts movies plus the documented
+series episode command only when both its positive season and `series` episode
+number are present. `tv_archive` accepts only the opaque archive command emitted
+for an authorized EPG row. Cross-module commands return `nothing_to_play`.
+
+Bulk EPG clamps `period` to 168 hours. The response window determines a maximum
+of four programme rows per hour, capped at 500 rows per channel, with a global
+20,000-row cap. Channel keys remain present with empty arrays. EPG channel IDs
+and programme start times provide deterministic selection order; once the
+global cap is reached, later rows remain omitted and a counts-only warning is
+logged. The application has no existing global HTTP compression middleware, so
+this PR adds no isolated compression dependency; bounded database iteration and
+response limits are used instead.
+
 Archived EPG rows are marked only when the channel has catch-up enabled and the
 programme remains inside its configured archive window. Their opaque
 `/media/<id>.mpg` commands are resolved with
 `type=tv_archive&action=create_link` into the normal token-authenticated
 timeshift proxy after the exact EPG interval is revalidated.
+`type=epg&action=get_simple_data_table` returns the authorized channel's
+date-filtered programmes in deterministic 10-row pages for archive-capable
+clients. Click-through archive playback has been validated with OTT Navigator
+1.7.4.1 on Android 16 through the authenticated IPTV-Manager timeshift proxy.
 
 Generated links for all content reuse the normal token-authenticated live,
 movie, series, or timeshift proxies, so user channel grants, region locks,
