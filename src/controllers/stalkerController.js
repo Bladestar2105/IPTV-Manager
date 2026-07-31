@@ -681,11 +681,6 @@ function createSeriesLink(req, session, target, params) {
   return linkResponse(alias, url);
 }
 
-function formatTimeshiftStart(timestamp) {
-  const [date, time] = formatStalkerDateTime(timestamp * 1000).split(' ');
-  return `${date}:${time.slice(0, 5).replace(':', '-')}`;
-}
-
 function createArchiveLink(req, session, command) {
   const match = command.trim().match(
     /^(?:auto\s+)?\/media\/stalker_archive_(\d+)_(\d+)_(\d+)\.mpg$/i
@@ -720,7 +715,7 @@ function createArchiveLink(req, session, command) {
   }
 
   const duration = Math.min(Math.max(Math.ceil((stop - start) / 60), 1), 1440);
-  const url = `${getBaseUrl(req)}/timeshift/token/auth/${duration}/${formatTimeshiftStart(start)}/${channel.id}.ts?token=${encodeURIComponent(session.token)}`;
+  const url = `${getBaseUrl(req)}/timeshift/token/auth/${duration}/epoch-${start}/${channel.id}.ts?token=${encodeURIComponent(session.token)}`;
   return linkResponse(archiveProgramId(channel.id, start, stop), url);
 }
 

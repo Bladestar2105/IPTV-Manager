@@ -161,8 +161,8 @@ export const createUser = async (req, res) => {
                 const sourceProviders = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(sourceUserId);
 
                 const insertProvider = db.prepare(`
-                    INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections, use_mapped_epg_icon)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections, use_mapped_epg_icon, timeshift_timezone)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
 
                 for (const prov of sourceProviders) {
@@ -179,7 +179,8 @@ export const createUser = async (req, res) => {
                         prov.backup_urls,
                         prov.user_agent,
                         prov.max_connections || 0,
-                        prov.use_mapped_epg_icon ? 1 : 0
+                        prov.use_mapped_epg_icon ? 1 : 0,
+                        prov.timeshift_timezone || null
                     );
                     providerMap[prov.id] = result.lastInsertRowid;
                 }

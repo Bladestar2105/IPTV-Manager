@@ -22,6 +22,11 @@ export function migrateProvidersSchema(db) {
       db.exec('ALTER TABLE providers ADD COLUMN epg_enabled INTEGER DEFAULT 1');
       console.log('✅ DB Migration: epg_enabled column added to providers');
     }
+
+    if (!columns.includes('timeshift_timezone')) {
+      db.exec('ALTER TABLE providers ADD COLUMN timeshift_timezone TEXT');
+      console.log('✅ DB Migration: timeshift_timezone column added to providers');
+    }
   } catch (e) {
     console.error('Schema migration error:', e);
   }

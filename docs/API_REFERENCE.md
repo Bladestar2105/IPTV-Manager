@@ -58,6 +58,11 @@ base URLs across all users, for example `from_url: "http://provider1.com"` to
 `to_url: "http://provider2.com"`. Default provider EPG URLs under
 `/xmltv.php` are moved to the new base URL; custom EPG URLs stay unchanged.
 
+Provider create/update payloads accept an optional `timeshift_timezone` IANA
+name (for example `Europe/Berlin` or `UTC`). Empty or null uses the server
+runtime timezone; invalid names are rejected. Provider export/import and user
+provider cloning preserve this setting.
+
 ## Categories and Channels
 
 - `GET /api/users/:userId/categories`

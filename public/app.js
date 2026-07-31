@@ -1168,6 +1168,7 @@ function prepareEditProvider(p) {
   form.password.value = p.plain_password || '********';
   form.epg_url.value = p.epg_url || '';
   form.user_agent.value = p.user_agent || '';
+  form.timeshift_timezone.value = p.timeshift_timezone || '';
   form.user_id.value = p.user_id || '';
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
@@ -2081,6 +2082,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     epg_update_interval: f.epg_update_interval.value,
     epg_enabled: f.epg_enabled.checked,
     use_mapped_epg_icon: f.use_mapped_epg_icon.checked,
+    timeshift_timezone: f.timeshift_timezone.value.trim() || null,
     backup_urls: backupUrls,
     max_connections: f.max_connections.value || 0
   };

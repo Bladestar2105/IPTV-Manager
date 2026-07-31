@@ -66,9 +66,9 @@ describe('Export/Import Regression Tests', () => {
         // 2. Create Provider with Encrypted Password
         const encryptedPass = encrypt(TEST_PROVIDER_PASSWORD);
         db.prepare(`
-            INSERT INTO providers (name, url, username, password, user_id)
-            VALUES (?, ?, ?, ?, ?)
-        `).run('TestProvider', 'http://example.com', 'user', encryptedPass, userId);
+            INSERT INTO providers (name, url, username, password, user_id, timeshift_timezone)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run('TestProvider', 'http://example.com', 'user', encryptedPass, userId, 'Europe/Berlin');
 
         // 3. Export Data
         const reqExport = {
@@ -119,6 +119,7 @@ describe('Export/Import Regression Tests', () => {
 
         const decryptedImportedPass = decrypt(importedProvider.password);
         expect(decryptedImportedPass).toBe(TEST_PROVIDER_PASSWORD);
+        expect(importedProvider.timeshift_timezone).toBe('Europe/Berlin');
     });
 
     it('should fallback to plaintext export if decryption fails (plaintext password in DB)', () => {

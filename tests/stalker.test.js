@@ -1029,7 +1029,7 @@ describe('Stalker/MAG portal flow', () => {
         cmd: `auto /media/${archived.id}.mpg`
       });
     expect(archiveLink.body.js.cmd)
-      .toContain(`/timeshift/token/auth/60/`);
+      .toContain(`/timeshift/token/auth/60/epoch-${archivedProgramStart}/`);
     expect(archiveLink.body.js.cmd)
       .toContain(`/${authorizedChannelIds[0]}.ts?token=`);
 
