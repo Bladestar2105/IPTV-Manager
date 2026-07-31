@@ -3,6 +3,8 @@ import db from '../database/db.js';
 import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 
+const MAX_BULK_IDS = 5000;
+
 function parsePositiveSafeInteger(value) {
   if (typeof value === 'string' && !/^[1-9]\d*$/.test(value)) return null;
   if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -20,6 +22,116 @@ function bulkOperationError(status, message) {
   const error = new Error(message);
   error.status = status;
   return error;
+}
+
+function rebindSeriesAliases(survivorId, loserId) {
+  const aliasTable = db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name = 'series_episode_aliases'
+  `).get();
+  if (!aliasTable) return;
+
+  const aliases = db.prepare(`
+    SELECT id, source_key, series_remote_id, remote_episode_id
+    FROM series_episode_aliases
+    WHERE user_channel_id = ?
+    ORDER BY id
+  `).all(loserId);
+  const findAlias = db.prepare(`
+    SELECT id FROM series_episode_aliases
+    WHERE user_channel_id = ? AND source_key = ?
+      AND series_remote_id = ? AND remote_episode_id = ?
+  `);
+  const updateAlias = db.prepare('UPDATE series_episode_aliases SET user_channel_id = ? WHERE id = ?');
+  const deleteAlias = db.prepare('DELETE FROM series_episode_aliases WHERE id = ?');
+  for (const alias of aliases) {
+    const existing = findAlias.get(
+      survivorId,
+      alias.source_key,
+      alias.series_remote_id,
+      alias.remote_episode_id
+    );
+    if (existing) deleteAlias.run(alias.id);
+    else updateAlias.run(survivorId, alias.id);
+  }
+}
+
+function mergeUserChannelAssignments(survivor, duplicate) {
+  rebindSeriesAliases(survivor.id, duplicate.id);
+  const hasValidGrant = [survivor, duplicate].some(
+    row => Number(row.granted_by_admin) === 1 && Number(row.authorization_revoked) !== 1
+  );
+  const hasGrant = [survivor, duplicate].some(row => Number(row.granted_by_admin) === 1);
+  const customName = String(survivor.custom_name || '').trim()
+    ? survivor.custom_name
+    : (String(duplicate.custom_name || '').trim() ? duplicate.custom_name : '');
+  db.prepare(`
+    UPDATE user_channels
+    SET is_hidden = ?,
+        custom_name = ?,
+        granted_by_admin = ?,
+        authorization_revoked = ?,
+        sort_order = ?
+    WHERE id = ?
+  `).run(
+    Number(survivor.is_hidden) === 1 || Number(duplicate.is_hidden) === 1 ? 1 : 0,
+    customName,
+    hasValidGrant || hasGrant ? 1 : 0,
+    hasValidGrant ? 0 : (
+      Number(survivor.authorization_revoked) === 1 || Number(duplicate.authorization_revoked) === 1 ? 1 : 0
+    ),
+    Math.min(Number(survivor.sort_order) || 0, Number(duplicate.sort_order) || 0),
+    survivor.id
+  );
+  db.prepare('DELETE FROM user_channels WHERE id = ?').run(duplicate.id);
+}
+
+function reconcileMappingAssignments(mapping, targetId) {
+  const ownedAssignments = db.prepare(`
+    SELECT uc.*
+    FROM user_channels uc
+    WHERE uc.mapping_id = ?
+    ORDER BY uc.id
+  `).all(mapping.id);
+  if (targetId === null) {
+    for (const assignment of ownedAssignments) {
+      db.prepare('DELETE FROM user_channels WHERE id = ? AND mapping_id = ?').run(assignment.id, mapping.id);
+    }
+    return { assignments_removed: ownedAssignments.length, assignments_moved: 0, duplicates_merged: 0 };
+  }
+
+  let assignmentsMoved = 0;
+  let duplicatesMerged = 0;
+  const findTarget = db.prepare(`
+    SELECT *
+    FROM user_channels
+    WHERE user_category_id = ? AND provider_channel_id = ?
+    ORDER BY id
+  `);
+  const move = db.prepare('UPDATE user_channels SET user_category_id = ? WHERE id = ? AND mapping_id = ?');
+
+  for (const assignment of ownedAssignments) {
+    if (Number(assignment.user_category_id) === Number(targetId)) continue;
+    const targetRows = findTarget.all(targetId, assignment.provider_channel_id);
+    if (targetRows.length === 0) {
+      if (move.run(targetId, assignment.id, mapping.id).changes === 1) assignmentsMoved++;
+      continue;
+    }
+
+    const target = targetRows.find(row => row.mapping_id === null || row.mapping_id === undefined) || targetRows[0];
+    if (target.id === assignment.id) continue;
+    const survivor = [target, assignment]
+      .filter(row => row.mapping_id === null || row.mapping_id === undefined)[0]
+      || ([target, assignment].sort((a, b) => Number(a.id) - Number(b.id))[0]);
+    const duplicate = survivor.id === assignment.id ? target : assignment;
+    mergeUserChannelAssignments(survivor, duplicate);
+    if (survivor.id === assignment.id) {
+      move.run(targetId, assignment.id, mapping.id);
+      assignmentsMoved++;
+    }
+    duplicatesMerged++;
+  }
+  return { assignments_removed: 0, assignments_moved: assignmentsMoved, duplicates_merged: duplicatesMerged };
 }
 
 export const getUserCategories = (req, res) => {
@@ -103,6 +215,7 @@ export const bulkDeleteUserCategories = (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
+    if (ids.length > MAX_BULK_IDS) return res.status(400).json({error: `A maximum of ${MAX_BULK_IDS} ids is allowed`});
 
     const categoryIds = parseUniquePositiveIds(ids);
     if (!categoryIds) return res.status(400).json({error: 'Invalid ids'});
@@ -373,6 +486,7 @@ export const bulkDeleteUserChannels = (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
+    if (ids.length > MAX_BULK_IDS) return res.status(400).json({error: `A maximum of ${MAX_BULK_IDS} ids is allowed`});
 
     const channelIds = parseUniquePositiveIds(ids);
     if (!channelIds) return res.status(400).json({error: 'Invalid ids'});
@@ -448,7 +562,7 @@ export const updateCategoryMapping = (req, res) => {
       return res.status(400).json({error: 'Invalid user_category_id'});
     }
 
-    const updated = db.transaction(() => {
+    const result = db.transaction(() => {
       if (targetId !== null) {
         const target = db.prepare(`
           SELECT id, user_id, COALESCE(type, 'live') AS type
@@ -460,17 +574,20 @@ export const updateCategoryMapping = (req, res) => {
         }
       }
 
-      return db.prepare(`
+      const reconciliation = reconcileMappingAssignments(mapping, targetId);
+      const updated = db.prepare(`
         UPDATE category_mappings
         SET user_category_id = ?
         WHERE id = ? AND user_id = ?
       `).run(targetId, id, mapping.user_id).changes === 1;
+      if (!updated) return false;
+      return { success: true, ...reconciliation };
     })();
 
-    if (!updated) return res.status(400).json({error: 'Invalid user_category_id'});
+    if (!result) return res.status(400).json({error: 'Invalid user_category_id'});
 
     clearChannelsCache(mapping.user_id);
-    res.json({success: true});
+    res.json(result);
   } catch (e) {
     res.status(500).json({error: e.message});
   }

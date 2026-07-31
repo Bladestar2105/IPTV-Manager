@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { performance } from 'node:perf_hooks';
 
 const { fetchSafe, xtreamState } = vi.hoisted(() => ({
   fetchSafe: vi.fn(),
@@ -20,9 +21,12 @@ vi.mock('../src/services/logoResolver.js', () => ({ prePopulateProviderIconCache
 
 describe('sync authorization regression', () => {
   let performSync;
+  let selectStaleProviderChannels;
+  let deleteProviderChannelCascade;
 
   beforeAll(async () => {
-    ({ performSync } = await import('../src/services/syncService.js'));
+    ({ performSync, selectStaleProviderChannels, deleteProviderChannelCascade } = await import('../src/services/syncService.js'));
+    memDb.pragma('foreign_keys = ON');
     memDb.exec(`
       CREATE TABLE providers (
         id INTEGER PRIMARY KEY, name TEXT, url TEXT, username TEXT, password TEXT,
@@ -42,6 +46,21 @@ describe('sync authorization regression', () => {
         plot TEXT, "cast" TEXT, director TEXT, genre TEXT, releaseDate TEXT,
         youtube_trailer TEXT, episode_run_time TEXT,
         UNIQUE(provider_id, remote_stream_id)
+      );
+      CREATE TABLE epg_channel_mappings (
+        id INTEGER PRIMARY KEY, provider_channel_id INTEGER,
+        FOREIGN KEY (provider_channel_id) REFERENCES provider_channels(id)
+      );
+      CREATE TABLE stream_stats (
+        id INTEGER PRIMARY KEY, channel_id INTEGER,
+        FOREIGN KEY (channel_id) REFERENCES provider_channels(id)
+      );
+      CREATE TABLE provider_sync_state (
+        provider_id INTEGER, stream_type TEXT,
+        empty_snapshot_count INTEGER NOT NULL DEFAULT 0,
+        last_nonempty_count INTEGER NOT NULL DEFAULT 0,
+        last_snapshot_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(provider_id, stream_type)
       );
       CREATE TABLE sync_logs (
         id INTEGER PRIMARY KEY, provider_id INTEGER, user_id INTEGER, sync_time INTEGER,
@@ -63,6 +82,15 @@ describe('sync authorization regression', () => {
         granted_by_admin INTEGER NOT NULL DEFAULT 0,
         authorization_revoked INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE series_episode_aliases (
+        id INTEGER PRIMARY KEY,
+        user_channel_id INTEGER NOT NULL,
+        source_key TEXT NOT NULL,
+        series_remote_id INTEGER NOT NULL,
+        remote_episode_id INTEGER NOT NULL,
+        UNIQUE(user_channel_id, source_key, series_remote_id, remote_episode_id),
+        FOREIGN KEY (user_channel_id) REFERENCES user_channels(id) ON DELETE CASCADE
+      );
       CREATE TABLE user_categories (
         id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, is_adult INTEGER,
         sort_order INTEGER, type TEXT
@@ -72,7 +100,8 @@ describe('sync authorization regression', () => {
 
   beforeEach(() => {
     for (const table of [
-      'security_logs', 'sync_logs', 'user_channels', 'provider_channels',
+      'security_logs', 'sync_logs', 'series_episode_aliases',
+      'epg_channel_mappings', 'stream_stats', 'user_channels', 'provider_channels', 'provider_sync_state',
       'category_mappings', 'user_categories', 'sync_configs', 'providers',
     ]) {
       memDb.prepare(`DELETE FROM ${table}`).run();
@@ -343,9 +372,157 @@ describe('sync authorization regression', () => {
 
     xtreamState.channels = [];
     await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(1);
+    await performSync(1, 1, { mode: 'scheduled' });
     expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(0);
     expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
   });
+
+  it('removes stale channels with EPG, stream-stat, assignment, and alias dependencies', async () => {
+    configure();
+    await performSync(1, 1, { mode: 'scheduled' });
+    const channel = memDb.prepare('SELECT id FROM provider_channels WHERE remote_stream_id = 101').get();
+    const assignment = memDb.prepare('SELECT id FROM user_channels WHERE provider_channel_id = ?').get(channel.id);
+    memDb.prepare('INSERT INTO epg_channel_mappings (id, provider_channel_id) VALUES (1, ?)').run(channel.id);
+    memDb.prepare('INSERT INTO stream_stats (id, channel_id) VALUES (1, ?)').run(channel.id);
+    memDb.prepare(`
+      INSERT INTO series_episode_aliases
+        (id, user_channel_id, source_key, series_remote_id, remote_episode_id)
+      VALUES (1, ?, 'source', 101, 1)
+    `).run(assignment.id);
+
+    xtreamState.channels = [];
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(1);
+    await performSync(1, 1, { mode: 'scheduled' });
+
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(0);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM epg_channel_mappings').get().count).toBe(0);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM stream_stats').get().count).toBe(0);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM series_episode_aliases').get().count).toBe(0);
+  });
+
+  it('does not delete a channel belonging to another provider', () => {
+    memDb.prepare("INSERT INTO providers (id, name, url, username, password, user_id) VALUES (2, 'Other', 'http://other.test', 'u', 'p', 2)").run();
+    const channel = memDb.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (2, 202, 'Other', 'live')").run().lastInsertRowid;
+    expect(deleteProviderChannelCascade(memDb, 1, channel)).toBe(0);
+    expect(memDb.prepare('SELECT id FROM provider_channels WHERE id = ?').get(channel)).toEqual({ id: channel });
+  });
+
+  it('rolls back the full synchronization when a dependent cleanup fails', async () => {
+    configure();
+    await performSync(1, 1, { mode: 'scheduled' });
+    const channel = memDb.prepare('SELECT id FROM provider_channels WHERE remote_stream_id = 101').get();
+    memDb.prepare('INSERT INTO stream_stats (id, channel_id) VALUES (1, ?)').run(channel.id);
+    memDb.exec(`
+      CREATE TRIGGER fail_stream_stat_delete
+      BEFORE DELETE ON stream_stats
+      BEGIN SELECT RAISE(FAIL, 'dependent cleanup failure'); END;
+    `);
+    xtreamState.channels = [];
+    await performSync(1, 1, { mode: 'scheduled' });
+    const failed = await performSync(1, 1, { mode: 'scheduled' });
+    expect(failed.errorMessage).toMatch(/dependent cleanup failure/);
+    expect(memDb.prepare('SELECT id FROM provider_channels WHERE id = ?').get(channel.id)).toEqual({ id: channel.id });
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(1);
+    memDb.exec('DROP TRIGGER fail_stream_stat_delete');
+  });
+
+  it('confirms empty VOD snapshots independently from live and ignores failed or invalid responses', async () => {
+    configure();
+    await performSync(1, 1, { mode: 'scheduled' });
+    const movie = memDb.prepare(`
+      INSERT INTO provider_channels
+        (provider_id, remote_stream_id, name, stream_type)
+      VALUES (1, 900, 'Movie', 'movie')
+    `).run().lastInsertRowid;
+
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT id FROM provider_channels WHERE id = ?').get(movie)).toEqual({ id: movie });
+    expect(memDb.prepare("SELECT empty_snapshot_count FROM provider_sync_state WHERE provider_id = 1 AND stream_type = 'movie'").get())
+      .toEqual({ empty_snapshot_count: 1 });
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT id FROM provider_channels WHERE id = ?').get(movie)).toBeUndefined();
+
+    const secondMovie = memDb.prepare(`
+      INSERT INTO provider_channels
+        (provider_id, remote_stream_id, name, stream_type)
+      VALUES (1, 901, 'Movie 2', 'movie')
+    `).run().lastInsertRowid;
+    fetchSafe.mockImplementation(async url => {
+      if (url.includes('action=get_vod_streams')) return { ok: false, status: 503, json: async () => [] };
+      return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => [] };
+    });
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT id FROM provider_channels WHERE id = ?').get(secondMovie)).toEqual({ id: secondMovie });
+    expect(memDb.prepare("SELECT empty_snapshot_count FROM provider_sync_state WHERE provider_id = 1 AND stream_type = 'movie'").get())
+      .toEqual({ empty_snapshot_count: 2 });
+
+    fetchSafe.mockImplementation(async url => {
+      if (url.includes('action=get_vod_streams')) return { ok: true, status: 200, json: async () => ({ error: 'auth' }) };
+      return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => [] };
+    });
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT id FROM provider_channels WHERE id = ?').get(secondMovie)).toEqual({ id: secondMovie });
+    expect(memDb.prepare("SELECT empty_snapshot_count FROM provider_sync_state WHERE provider_id = 1 AND stream_type = 'movie'").get())
+      .toEqual({ empty_snapshot_count: 2 });
+  });
+
+  it('accepts an initially empty provider without creating destructive cleanup state', async () => {
+    configure();
+    xtreamState.channels = [];
+    const result = await performSync(1, 1, { mode: 'scheduled' });
+    expect(result.errorMessage).toBe(null);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(0);
+    expect(memDb.prepare("SELECT empty_snapshot_count FROM provider_sync_state WHERE provider_id = 1 AND stream_type = 'live'").get())
+      .toEqual({ empty_snapshot_count: 0 });
+  });
+
+  it('selects 40k live, VOD, and series catalogs deterministically without SQL placeholders', () => {
+    const existing = [];
+    const seen = new Map([
+      ['live', new Set()], ['movie', new Set()], ['series', new Set()]
+    ]);
+    for (const type of ['live', 'movie', 'series']) {
+      for (let id = 1; id <= 40000; id++) {
+        existing.push({ id: existing.length + 1, remote_stream_id: id, stream_type: type });
+        seen.get(type).add(id);
+      }
+    }
+    existing.push({ id: existing.length + 1, remote_stream_id: 40001, stream_type: 'live' });
+    const started = performance.now();
+    const stale = selectStaleProviderChannels(existing, seen, new Set(['live', 'movie', 'series']));
+    const elapsed = performance.now() - started;
+    expect(stale).toEqual([{ id: 120001, remote_stream_id: 40001, stream_type: 'live' }]);
+    console.info(`[Sync catalog benchmark] processed=${existing.length} stale=${stale.length} elapsed_ms=${elapsed.toFixed(1)} heap_delta_mib=${((process.memoryUsage().heapUsed) / 1024 / 1024).toFixed(1)} rss_mib=${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)}`);
+  });
+
+  it('synchronizes a 100,000-channel live catalog and removes one stale item', async () => {
+    configure();
+    memDb.prepare('UPDATE sync_configs SET auto_add_channels = 0').run();
+    const catalog = Array.from({ length: 100000 }, (_, index) => ({
+      name: `Channel ${index + 1}`,
+      stream_id: index + 1,
+      category_id: 10,
+      stream_type: 'live'
+    }));
+    xtreamState.channels = catalog;
+    const started = performance.now();
+    const before = process.memoryUsage();
+    const first = await performSync(1, 1, { mode: 'scheduled' });
+    const elapsed = performance.now() - started;
+    const after = process.memoryUsage();
+    expect(first.errorMessage).toBe(null);
+    expect(first.channelsAdded).toBe(100000);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(100000);
+    console.info(`[Sync catalog benchmark] processed=100000 stale=0 elapsed_ms=${elapsed.toFixed(1)} heap_delta_mib=${((after.heapUsed - before.heapUsed) / 1024 / 1024).toFixed(1)} rss_delta_mib=${((after.rss - before.rss) / 1024 / 1024).toFixed(1)}`);
+
+    xtreamState.channels = catalog.slice(1);
+    const second = await performSync(1, 1, { mode: 'scheduled' });
+    expect(second.errorMessage).toBe(null);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(99999);
+  }, 120000);
 
   afterAll(() => memDb.close());
 });

@@ -203,6 +203,31 @@ export function migrateChannelsSchemaV3(db) {
   }
 }
 
+export function migrateProviderSyncState(db) {
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_sync_state (
+        provider_id INTEGER NOT NULL,
+        stream_type TEXT NOT NULL,
+        empty_snapshot_count INTEGER NOT NULL DEFAULT 0,
+        last_nonempty_count INTEGER NOT NULL DEFAULT 0,
+        last_snapshot_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (provider_id, stream_type),
+        FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_provider_sync_state_provider
+        ON provider_sync_state(provider_id);
+    `);
+  });
+
+  try {
+    migrate();
+  } catch (e) {
+    console.error('Provider sync state migration error:', e);
+    throw e;
+  }
+}
+
 export function migrateUserCategoriesType(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(user_categories)").all();
@@ -784,6 +809,188 @@ export function migrateUserChannelMappingId(db) {
   } catch (e) {
     console.error('User channel mapping migration error:', e);
   }
+}
+
+export function migrateUserChannelMappingBackfillV1(db) {
+  const markerKey = 'user_channel_mapping_backfill_v1';
+  const migrate = db.transaction(() => {
+    if (db.prepare('SELECT value FROM settings WHERE key = ?').get(markerKey)?.value) {
+      return { assigned: 0, ambiguous: 0, unmatched: 0, skipped: true };
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_category_mappings_backfill
+        ON category_mappings(provider_id, user_id, user_category_id, provider_category_id, category_type);
+    `);
+
+    const rows = db.prepare(`
+      SELECT uc.id AS user_channel_id,
+             cm.id AS mapping_id
+      FROM user_channels uc
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      LEFT JOIN category_mappings cm
+        ON cm.provider_id = pc.provider_id
+       AND cm.user_id = cat.user_id
+       AND cm.user_category_id = uc.user_category_id
+       AND cm.provider_category_id = pc.original_category_id
+       AND COALESCE(cm.category_type, 'live') = COALESCE(cat.type, 'live')
+       AND (
+         COALESCE(pc.stream_type, 'live') = COALESCE(cm.category_type, 'live')
+         OR (
+           COALESCE(pc.stream_type, 'live') = 'live'
+           AND COALESCE(cat.type, 'live') = 'radio'
+           AND COALESCE(cm.category_type, 'live') = 'radio'
+         )
+       )
+      WHERE uc.mapping_id IS NULL
+      ORDER BY uc.id, cm.id
+    `).all();
+
+    const candidates = new Map();
+    for (const row of rows) {
+      if (!candidates.has(row.user_channel_id)) candidates.set(row.user_channel_id, []);
+      if (row.mapping_id !== null && row.mapping_id !== undefined) {
+        candidates.get(row.user_channel_id).push(Number(row.mapping_id));
+      }
+    }
+
+    const assign = db.prepare('UPDATE user_channels SET mapping_id = ? WHERE id = ? AND mapping_id IS NULL');
+    let assigned = 0;
+    let ambiguous = 0;
+    let unmatched = 0;
+    for (const [userChannelId, mappingIds] of candidates) {
+      const uniqueIds = [...new Set(mappingIds)];
+      if (uniqueIds.length === 1) {
+        assigned += assign.run(uniqueIds[0], userChannelId).changes;
+      } else if (uniqueIds.length > 1) {
+        ambiguous++;
+      } else {
+        unmatched++;
+      }
+    }
+
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
+      markerKey,
+      JSON.stringify({ assigned, ambiguous, unmatched })
+    );
+    console.info(`✅ Mapping backfill: ${assigned} assigned, ${ambiguous} ambiguous, ${unmatched} unmatched`);
+    return { assigned, ambiguous, unmatched, skipped: false };
+  });
+
+  return migrate();
+}
+
+export function migrateUserChannelDeduplicationV1(db) {
+  const markerKey = 'user_channel_deduplication_v1';
+  const migrate = db.transaction(() => {
+    const marker = db.prepare('SELECT value FROM settings WHERE key = ?').get(markerKey);
+    if (marker?.value) {
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_user_channels_category_provider
+          ON user_channels(user_category_id, provider_channel_id);
+      `);
+      return { merged: 0, skipped: true };
+    }
+
+    const aliasTable = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = 'series_episode_aliases'
+    `).get();
+    const duplicateGroups = db.prepare(`
+      SELECT user_category_id, provider_channel_id
+      FROM user_channels
+      GROUP BY user_category_id, provider_channel_id
+      HAVING COUNT(*) > 1
+      ORDER BY user_category_id, provider_channel_id
+    `).all();
+
+    const selectRows = db.prepare(`
+      SELECT id, user_category_id, provider_channel_id, sort_order, custom_name,
+             is_hidden, mapping_id, granted_by_admin, authorization_revoked
+      FROM user_channels
+      WHERE user_category_id = ? AND provider_channel_id = ?
+      ORDER BY id
+    `);
+    const updateSurvivor = db.prepare(`
+      UPDATE user_channels
+      SET is_hidden = ?,
+          custom_name = ?,
+          granted_by_admin = ?,
+          authorization_revoked = ?,
+          sort_order = ?
+      WHERE id = ?
+    `);
+    const deleteAssignment = db.prepare('DELETE FROM user_channels WHERE id = ?');
+    let merged = 0;
+
+    for (const group of duplicateGroups) {
+      const rows = selectRows.all(group.user_category_id, group.provider_channel_id);
+      const survivor = rows
+        .filter(row => row.mapping_id === null || row.mapping_id === undefined)
+        .sort((a, b) => Number(a.id) - Number(b.id))[0] || rows[0];
+      const losers = rows.filter(row => row.id !== survivor.id);
+      const customName = rows.find(row => String(row.custom_name || '').trim())?.custom_name || '';
+      const hasValidGrant = rows.some(row => Number(row.granted_by_admin) === 1 && Number(row.authorization_revoked) !== 1);
+      const hasGrant = rows.some(row => Number(row.granted_by_admin) === 1);
+      const revoked = hasValidGrant ? 0 : (rows.some(row => Number(row.authorization_revoked) === 1) ? 1 : 0);
+      const sortOrder = Math.min(...rows.map(row => Number(row.sort_order) || 0));
+
+      if (aliasTable) {
+        const selectAliases = db.prepare(`
+          SELECT id, source_key, series_remote_id, remote_episode_id
+          FROM series_episode_aliases
+          WHERE user_channel_id = ?
+          ORDER BY id
+        `);
+        const findAlias = db.prepare(`
+          SELECT id FROM series_episode_aliases
+          WHERE user_channel_id = ? AND source_key = ?
+            AND series_remote_id = ? AND remote_episode_id = ?
+        `);
+        const rebindAlias = db.prepare('UPDATE series_episode_aliases SET user_channel_id = ? WHERE id = ?');
+        const removeAlias = db.prepare('DELETE FROM series_episode_aliases WHERE id = ?');
+        for (const loser of losers) {
+          for (const alias of selectAliases.all(loser.id)) {
+            const existing = findAlias.get(
+              survivor.id,
+              alias.source_key,
+              alias.series_remote_id,
+              alias.remote_episode_id
+            );
+            if (existing) removeAlias.run(alias.id);
+            else rebindAlias.run(survivor.id, alias.id);
+          }
+        }
+      }
+
+      updateSurvivor.run(
+        rows.some(row => Number(row.is_hidden) === 1) ? 1 : 0,
+        customName,
+        hasValidGrant || hasGrant ? 1 : 0,
+        revoked,
+        sortOrder,
+        survivor.id
+      );
+      for (const loser of losers) {
+        deleteAssignment.run(loser.id);
+        merged++;
+      }
+    }
+
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_user_channels_category_provider
+        ON user_channels(user_category_id, provider_channel_id);
+    `);
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(
+      markerKey,
+      JSON.stringify({ merged })
+    );
+    console.info(`✅ User channel deduplication: ${merged} duplicate assignment(s) merged`);
+    return { merged, skipped: false };
+  });
+
+  return migrate();
 }
 
 export function migrateUserChannelAdminGrants(db) {

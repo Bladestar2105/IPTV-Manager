@@ -48,7 +48,8 @@ vi.mock('../../src/utils/helpers.js', () => ({
 
 vi.mock('../../src/services/syncService.js', () => ({
   performSync: vi.fn(),
-  checkProviderExpiry: vi.fn()
+  checkProviderExpiry: vi.fn(),
+  deleteProviderChannelCascade: vi.fn()
 }));
 
 vi.mock('../../src/services/epgService.js', () => ({

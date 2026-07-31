@@ -333,6 +333,7 @@ export const createUser = async (req, res) => {
                       (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
                        mapping_id, granted_by_admin, authorization_revoked)
                     VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+                    ON CONFLICT DO NOTHING
                 `);
 
                 // Fetch all user channels for source user categories

@@ -22,5 +22,15 @@ All notable changes to this project are documented here.
   mappings without duplicating provider channels.
 - Run bulk category deletion and channel hiding validation and writes in one
   transaction with post-commit cache invalidation.
+- Delete stale provider channels with their EPG, statistics, assignment, and
+  series-alias dependents before removing the provider row.
+- Synchronize large live, movie, and series catalogs without unbounded SQLite
+  placeholder lists.
+- Require two consecutive authoritative empty snapshots before removing an
+  existing content catalog.
+- Reconcile mapping-owned assignments when mappings are retargeted or removed,
+  while preserving manual assignments and hidden state.
+- Backfill legacy `mapping_id` values only for unambiguous matches and merge
+  duplicate user-channel assignments before enforcing uniqueness.
 - Validated the experimental portal with real software clients.
 - Hardware-specific MAG UI and favorites remain unsupported.
