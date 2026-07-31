@@ -771,6 +771,17 @@ export function migrateUserChannelsIsHidden(db) {
 export function migrateUserChannelAdminGrants(db) {
   const migrate = db.transaction(() => {
     const columns = db.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name);
+    const markerKey = 'user_channel_authorization_v1';
+    const completed = db.prepare('SELECT value FROM settings WHERE key = ?').get(markerKey);
+    const authorizationView = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'view' AND name = 'authorized_user_channels'
+    `).get();
+    if (completed?.value === 'true' && authorizationView &&
+        columns.includes('granted_by_admin') && columns.includes('authorization_revoked')) {
+      return 0;
+    }
+
     if (!columns.includes('granted_by_admin')) {
       db.exec('ALTER TABLE user_channels ADD COLUMN granted_by_admin INTEGER NOT NULL DEFAULT 0');
     }
@@ -827,6 +838,11 @@ export function migrateUserChannelAdminGrants(db) {
         AND uc.authorization_revoked = 0
         AND (p.user_id = cat.user_id OR uc.granted_by_admin = 1)
     `);
+
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, 'true')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(markerKey);
 
     return revoked;
   });

@@ -61,6 +61,7 @@ describe('Migration Bug Regression', () => {
         try {
             legacyDb.exec(`
               CREATE TABLE providers (id INTEGER PRIMARY KEY, user_id INTEGER);
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
               CREATE TABLE provider_channels (id INTEGER PRIMARY KEY, provider_id INTEGER NOT NULL);
               CREATE TABLE user_categories (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL);
               CREATE TABLE user_channels (
@@ -86,7 +87,17 @@ describe('Migration Bug Regression', () => {
             ]);
             expect(legacyDb.prepare('SELECT id FROM authorized_user_channels ORDER BY id').all()).toEqual([{ id: 40 }]);
 
+            expect(legacyDb.prepare("SELECT value FROM settings WHERE key = 'user_channel_authorization_v1'").get())
+              .toEqual({ value: 'true' });
+            legacyDb.exec(`
+              CREATE TRIGGER reject_repeated_authorization_backfill
+              BEFORE UPDATE ON user_channels
+              BEGIN
+                SELECT RAISE(FAIL, 'authorization backfill repeated');
+              END;
+            `);
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(0);
+            legacyDb.exec('DROP TRIGGER reject_repeated_authorization_backfill');
             expect(legacyDb.prepare('SELECT id FROM user_channels ORDER BY id').all()).toEqual([{ id: 40 }, { id: 41 }]);
 
             legacyDb.prepare('UPDATE user_channels SET granted_by_admin = 1, authorization_revoked = 0 WHERE id = 41').run();
@@ -102,6 +113,7 @@ describe('Migration Bug Regression', () => {
         try {
             legacyDb.exec(`
               CREATE TABLE providers (id INTEGER PRIMARY KEY, user_id INTEGER);
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
               CREATE TABLE provider_channels (id INTEGER PRIMARY KEY, provider_id INTEGER NOT NULL);
               CREATE TABLE user_categories (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL);
               CREATE TABLE user_channels (
