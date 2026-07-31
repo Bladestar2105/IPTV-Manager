@@ -1,16 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from 'vitest';
-import path from 'path';
+import fs from 'fs';
 import { Readable } from 'stream';
+
+const { TEST_DATA_DIR } = vi.hoisted(() => {
+  const fsModule = require('fs');
+  const osModule = require('os');
+  const pathModule = require('path');
+  return { TEST_DATA_DIR: fsModule.mkdtempSync(pathModule.join(osModule.tmpdir(), 'iptv-epg-streaming-')) };
+});
 
 // Mock constants BEFORE imports
 vi.mock('../src/config/constants.js', async () => {
   const path = await import('path');
-  const fs = await import('fs');
-  const dir = path.resolve('temp_test_epg_data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return {
-    DATA_DIR: dir,
-    EPG_DB_PATH: path.resolve('temp_test_epg_data/epg.db')
+    DATA_DIR: TEST_DATA_DIR,
+    EPG_DB_PATH: path.join(TEST_DATA_DIR, 'epg.db')
   };
 });
 
@@ -21,7 +25,7 @@ vi.mock('../src/utils/network.js', () => ({
   httpsAgent: {}
 }));
 
-import { initDb } from '../src/database/db.js';
+import db, { initDb } from '../src/database/db.js';
 import { initEpgDb, default as epgDb } from '../src/database/epgDb.js';
 import { loadAllEpgChannels, importEpgFromUrl } from '../src/services/epgService.js';
 import { fetchSafe } from '../src/utils/network.js';
@@ -37,6 +41,12 @@ describe('EPG Streaming Optimization', () => {
     epgDb.prepare('DELETE FROM epg_channels').run();
     epgDb.prepare('DELETE FROM epg_programs').run();
     vi.clearAllMocks();
+  });
+
+  afterAll(() => {
+    epgDb.close();
+    db.close();
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   });
 
   it('should correctly parse pretty-printed channels from EPG stream', async () => {

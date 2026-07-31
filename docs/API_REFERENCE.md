@@ -68,6 +68,13 @@ base URLs across all users, for example `from_url: "http://provider1.com"` to
 - `GET /api/category-mappings/:providerId/:userId`
 - `PUT /api/category-mappings/:id`
 
+Reorder requests accept unique positive integer IDs only. Category reorder IDs
+must all belong to the route user, and channel reorder IDs must all belong to
+the route category; otherwise the complete request is rejected without writes.
+Category mappings accept `null` for an explicit unmap, or a category owned by
+the mapping user with the same content type. Invalid, foreign, and mixed-type
+targets are rejected without changing the mapping.
+
 ## EPG and Mapping
 
 - `GET /api/epg/now`
@@ -105,6 +112,16 @@ all providers.
 - `POST /api/users/:userId/backups/:id/restore`
 - `DELETE /api/users/:userId/backups/:id`
 
+Restore recalculates channel authorization from current category and provider
+ownership. A normal user's backup cannot recreate a historical administrator
+grant: cross-owner rows are restored with `authorization_revoked = 1`, while
+their user-selected `is_hidden` value remains separate and missing references
+are skipped. An authenticated admin restore may deliberately create a current
+cross-owner grant only by sending `allow_cross_owner: true`; omitted or false
+values keep those rows revoked with grant `0`. The restore response
+includes non-sensitive `channels_restored`, `channels_hidden`, and
+`channels_skipped` counters.
+
 ## System, Security, and Statistics
 
 - `GET /api/settings`
@@ -135,6 +152,27 @@ When enabled, each provider sync also fetches series episodes via
 is stored once per upstream panel (keyed by the normalized provider URL):
 provider entries that point at the same panel with different credentials
 share the episode catalog instead of fetching and storing it per account.
+
+Cross-owner sync configs require an explicit administrator approval. Send
+`allow_cross_owner: true` when an admin intentionally creates or updates such a
+config; the server persists this as `granted_by_admin = 1`. Unapproved
+cross-owner creates are rejected with HTTP 400, existing unapproved configs
+remain disabled, and scheduled syncs never infer approval from an owner
+mismatch. Same-owner configs are always normalized to
+`granted_by_admin = 0`.
+
+Manual cross-owner provider syncs likewise require `allow_cross_owner: true`.
+Adding `restore_revoked_assignments: true` clears only
+`authorization_revoked` on assignments covered by that approved sync and sets
+their administrator grant; it does not clear `is_hidden`. An administrator can
+explicitly restore one legacy pre-release row through the normal channel
+assignment endpoint, which clears both states for that selected channel only.
+
+Full system imports validate stored grant and revocation flags against the
+rebuilt ownership relationships. Imported cross-owner administrator grants are
+restored only when the admin import request also includes
+`allow_cross_owner: true`; otherwise their sync configs remain disabled and
+their channel assignments remain authorization-revoked.
 - `GET /api/sync-logs`
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`
@@ -153,6 +191,11 @@ needed. Pass `force: true` to force the underlying updater.
 - `GET /api/shares`
 - `DELETE /api/shares/:token`
 - `GET /share/:slug`
+
+New short-link slugs keep a readable name prefix and add a cryptographically
+random suffix. Existing stored slugs remain valid. Public slugs and share
+management tokens are treated as bearer credentials and redacted from request
+logs.
 
 ## Proxy
 
@@ -185,8 +228,37 @@ extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 `get.php` expands each series into one playlist entry per episode
 (`<Series Name> SXX EXX`) like a native Xtream panel, using episodes cached by
 the provider episode sync (see `sync_series_episodes` on sync configs). Series
-whose episodes have not been synced yet fall back to a single series-level
-entry.
+whose episodes have not been synced yet are omitted because a series assignment
+ID is not a playable episode ID. Provider synchronization populates the episode
+cache in the background; playlist requests never wait indefinitely for it.
+
+Provider-controlled container extensions are normalized when stored and again
+when a public or upstream URL is generated. Known MIME types are mapped to
+their standard suffixes, and values containing path, query, fragment, percent,
+control, or playlist-injection characters fall back to a safe extension.
+
+Expanded episodes use compact persistent alias IDs from `900,000,001` through
+`999,999,999`, safely within the signed 32-bit range and below the legacy ID
+namespace. Each alias binds the upstream source, series, episode, and exact
+authorized `user_channel_id`; `get_series_info`, generated M3U entries, normal
+credentials, and token-authenticated share routes use the same IDs. Cached
+provider- or assignment-based legacy IDs are accepted only when they resolve to
+exactly one currently authorized series and episode, otherwise playback fails
+closed.
+
+Channel visibility requires `is_hidden = 0`, `authorization_revoked = 0`, and
+either matching provider/category ownership or `granted_by_admin = 1`.
+Ownership changes revoke ordinary assignments without changing the user's
+hidden preference. Same-owner assignments normalize to grant `0`; explicit
+cross-owner administrator assignments normalize to grant `1`.
+Clients should refresh series metadata or playlists when a stale ID is
+ambiguous. Live and movie stream IDs are unchanged.
+
+The public episode URL suffix is compatibility metadata. Upstream and backup
+requests use the normalized `container_extension` stored for the exact episode.
+On first startup after upgrading, the rebuildable episode cache is recreated
+when its old source-wide uniqueness key is detected; the next provider sync
+repopulates it with series-scoped keys.
 
 ## Stream Proxy
 

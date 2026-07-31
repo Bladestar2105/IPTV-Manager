@@ -61,7 +61,7 @@ describe('Sync Scheduler', () => {
     await vi.advanceTimersByTimeAsync(60000);
 
     expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('SELECT * FROM sync_configs'));
-    expect(syncService.performSync).toHaveBeenCalledWith(101, 201, false);
+    expect(syncService.performSync).toHaveBeenCalledWith(101, 201, { mode: 'scheduled' });
   });
 
   it('should not schedule concurrent syncs for the same config', async () => {

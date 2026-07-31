@@ -10,6 +10,7 @@ const { mockDb } = vi.hoisted(() => ({
 
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
+  openDbConnection: vi.fn(() => ({ prepare: mockDb.prepare, close: vi.fn() })),
 }));
 
 vi.mock('../../src/services/authService.js', () => ({
@@ -108,6 +109,7 @@ describe('xtreamController share compatibility', () => {
     await getPlaylist(req, res);
 
     const payload = res.write.mock.calls.map(call => call[0]).join('');
+    expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('JOIN authorized_user_channels uc'));
     expect(payload).toContain('url-tvg="http://localhost/xmltv.php?token=share-token"');
     expect(payload).toContain('http://localhost/live/token/auth/100.ts?token=share-token');
   });
@@ -199,6 +201,7 @@ describe('xtreamController share compatibility', () => {
     await xmltv(req, res);
 
     expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('uc.id IN (?,?)'));
+    expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM authorized_user_channels uc'));
     const xml = res.write.mock.calls.map(call => call[0]).join('');
     expect(xml).toContain('<channel id="news.epg">');
   });

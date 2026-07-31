@@ -1,6 +1,7 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 
 export const discover = async (req, res) => {
   try {
@@ -73,7 +74,7 @@ export const lineup = async (req, res) => {
         pc.stream_type,
         pc.mime_type,
         cat.name as category_name
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0
@@ -115,7 +116,7 @@ export const auto = async (req, res) => {
     // Verify channel belongs to user
     const channel = db.prepare(`
       SELECT uc.id as user_channel_id, pc.stream_type, pc.mime_type
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
       WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
@@ -128,7 +129,7 @@ export const auto = async (req, res) => {
 
     if (channel.stream_type === 'movie') {
         typePath = 'movie'; // maps to proxyMovie
-        ext = channel.mime_type || 'mp4';
+        ext = normalizeContainerExtension(channel.mime_type);
     }
 
     const host = getBaseUrl(req);

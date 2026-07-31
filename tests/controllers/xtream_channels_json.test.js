@@ -11,6 +11,7 @@ const { mockDb } = vi.hoisted(() => {
 
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
+  openDbConnection: vi.fn(() => ({ prepare: mockDb.prepare, close: vi.fn() })),
 }));
 
 vi.mock('node-fetch', () => ({
@@ -19,6 +20,10 @@ vi.mock('node-fetch', () => ({
 
 vi.mock('../../src/services/authService.js', () => ({
   getXtreamUser: vi.fn(),
+}));
+
+vi.mock('../../src/services/cacheService.js', () => ({
+  channelsJsonCache: new Map(),
 }));
 
 vi.mock('../../src/services/epgService.js', () => ({
@@ -34,6 +39,7 @@ vi.mock('../../src/utils/crypto.js', () => ({
 vi.mock('../../src/utils/helpers.js', () => ({
   getBaseUrl: vi.fn().mockReturnValue('http://localhost'),
   safeLookup: vi.fn((hostname, options, callback) => callback(null, '127.0.0.1', 4)),
+  providerSourceKey: vi.fn(url => `source:${url}`),
 }));
 
 vi.mock('../../src/config/constants.js', () => ({
@@ -45,12 +51,14 @@ vi.mock('../../src/config/constants.js', () => ({
 // Import the controller after mocking
 import { playerChannelsJson } from '../../src/controllers/xtreamController.js';
 import { getXtreamUser } from '../../src/services/authService.js';
+import { channelsJsonCache } from '../../src/services/cacheService.js';
 
 describe('xtreamController - playerChannelsJson', () => {
   let req, res;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    channelsJsonCache.clear();
     req = {
       query: {},
       params: {},
@@ -130,6 +138,56 @@ describe('xtreamController - playerChannelsJson', () => {
     const output = JSON.parse(res.send.mock.calls[0][0]);
 
     expect(output[0].url).toBe('http://localhost/live/mpd/token/auth/101/manifest.mpd?token=dash-test');
-    expect(output[0].container_extension).toBe('dash');
+    expect(output[0].container_extension).toBe('mpd');
+  });
+
+  it('emits synchronized series episodes only through compact aliases', async () => {
+    getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
+    const channels = [
+      {
+        user_channel_id: 42,
+        remote_stream_id: 500,
+        provider_id: 7,
+        provider_url: 'http://panel.test',
+        name: 'Synced',
+        stream_type: 'series',
+        category_name: 'Series',
+      },
+      {
+        user_channel_id: 43,
+        remote_stream_id: 501,
+        provider_id: 7,
+        provider_url: 'http://panel.test',
+        name: 'Unsynced',
+        stream_type: 'series',
+        category_name: 'Series',
+      },
+    ];
+
+    mockDb.prepare.mockImplementation(sql => {
+      if (sql.includes('FROM provider_series_episodes')) {
+        return {
+          all: vi.fn((_sourceKey, seriesId) => seriesId === 500
+            ? [{ remote_episode_id: 9, season: 1, episode_num: 2, container_extension: '.MKV', logo: '' }]
+            : []),
+        };
+      }
+      if (sql.includes('INSERT OR IGNORE INTO series_episode_aliases')) return { run: vi.fn() };
+      if (sql.includes('SELECT id FROM series_episode_aliases')) return { get: vi.fn(() => ({ id: 900000009 })) };
+      return { iterate: vi.fn(() => channels) };
+    });
+
+    await playerChannelsJson(req, res);
+
+    const output = JSON.parse(res.send.mock.calls[0][0]);
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatchObject({
+      name: 'Synced S01 E02',
+      type: 'series',
+      container_extension: 'mkv',
+      url: 'http://localhost/series/token/auth/900000009.mkv',
+    });
+    expect(JSON.stringify(output)).not.toContain('/42.');
+    expect(JSON.stringify(output)).not.toContain('/43.');
   });
 });

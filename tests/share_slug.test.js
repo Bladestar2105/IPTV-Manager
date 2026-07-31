@@ -70,13 +70,13 @@ describe('Share Controller - Slug Generation', () => {
             '[1,2,3]', // channels
             null, // start
             null, // end
-            'soccer-night' // slug
+            expect.stringMatching(/^soccer-night-[a-f0-9]{16}$/) // slug
         );
 
         expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
             success: true,
-            slug: 'soccer-night',
-            short_link: 'http://localhost:3000/share/soccer-night'
+            slug: expect.stringMatching(/^soccer-night-[a-f0-9]{16}$/),
+            short_link: expect.stringMatching(/^http:\/\/localhost:3000\/share\/soccer-night-[a-f0-9]{16}$/)
         }));
     });
 
@@ -91,7 +91,7 @@ describe('Share Controller - Slug Generation', () => {
         expect(mockRes.json).toHaveBeenCalledWith({ error: 'Name required' });
     });
 
-    it('should handle duplicate slugs by appending a counter', () => {
+    it('should handle random suffix collisions by retrying', () => {
         mockReq.body = {
             channels: [1],
             name: 'My Share'
@@ -107,14 +107,25 @@ describe('Share Controller - Slug Generation', () => {
 
         shareController.createShare(mockReq, mockRes);
 
-        // Should check 'my-share' then 'my-share-1'
         expect(stmtMock.run).toHaveBeenCalledWith(
-            expect.any(String), 1, 'My Share', '[1]', null, null, 'my-share-1'
+            expect.any(String), 1, 'My Share', '[1]', null, null, expect.stringMatching(/^my-share-[a-f0-9]{16}$/)
         );
+        expect(stmtMock.get).toHaveBeenCalledTimes(2);
+        expect(stmtMock.get.mock.calls[0][0]).not.toBe(stmtMock.get.mock.calls[1][0]);
+    });
 
-        expect(mockRes.json).toHaveBeenCalledWith(expect.objectContaining({
-            slug: 'my-share-1'
-        }));
+    it('uses different unguessable slugs for shares with the same name', () => {
+        mockReq.body = { channels: [1], name: 'Family TV' };
+        const stmtMock = { run: vi.fn(), get: vi.fn().mockReturnValue(undefined) };
+        mockDb.prepare.mockReturnValue(stmtMock);
+
+        shareController.createShare(mockReq, mockRes);
+        shareController.createShare(mockReq, mockRes);
+
+        const slugs = mockRes.json.mock.calls.map(([payload]) => payload.slug);
+        expect(slugs[0]).toMatch(/^family-tv-[a-f0-9]{16}$/);
+        expect(slugs[1]).toMatch(/^family-tv-[a-f0-9]{16}$/);
+        expect(slugs[0]).not.toBe(slugs[1]);
     });
 
     it('should redirect to player when accessing valid slug', () => {

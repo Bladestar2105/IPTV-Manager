@@ -74,7 +74,7 @@ const pruneMappingJobs = () => {
 const getUserEpgChannelIds = (user) => {
   let query = `
     SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
-    FROM user_channels uc
+    FROM authorized_user_channels uc
     JOIN user_categories cat ON cat.id = uc.user_category_id
     JOIN provider_channels pc ON pc.id = uc.provider_channel_id
     LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -373,7 +373,7 @@ export const manualMapping = async (req, res) => {
 
     if (!req.user.is_admin) {
         const used = db.prepare(`
-            SELECT 1 FROM user_channels uc
+            SELECT 1 FROM authorized_user_channels uc
             JOIN user_categories cat ON cat.id = uc.user_category_id
             WHERE uc.provider_channel_id = ? AND cat.user_id = ?
         `).get(Number(provider_channel_id), req.user.id);
@@ -401,7 +401,7 @@ export const deleteMapping = async (req, res) => {
     const id = Number(req.params.id);
     if (!req.user.is_admin) {
         const used = db.prepare(`
-            SELECT 1 FROM user_channels uc
+            SELECT 1 FROM authorized_user_channels uc
             JOIN user_categories cat ON cat.id = uc.user_category_id
             WHERE uc.provider_channel_id = ? AND cat.user_id = ?
         `).get(id, req.user.id);
@@ -450,7 +450,7 @@ export const resetMapping = async (req, res) => {
                 DELETE FROM epg_channel_mappings
                 WHERE provider_channel_id IN (
                     SELECT provider_channel_id
-                    FROM user_channels
+                    FROM authorized_user_channels
                     WHERE user_category_id = ?
                 )
             `).run(Number(category_id));
@@ -459,7 +459,7 @@ export const resetMapping = async (req, res) => {
                 DELETE FROM epg_channel_mappings
                 WHERE provider_channel_id IN (
                     SELECT uc.provider_channel_id
-                    FROM user_channels uc
+                    FROM authorized_user_channels uc
                     JOIN user_categories cat ON cat.id = uc.user_category_id
                     WHERE uc.user_category_id = ? AND cat.user_id = ?
                 )
@@ -495,13 +495,13 @@ const selectAutoMappingChannels = ({ provider_id, category_id, only_used, all_pr
   const params = [];
 
   if (all_providers) {
-    if (only_used) query += ' AND pc.id IN (SELECT provider_channel_id FROM user_channels)';
+    if (only_used) query += ' AND pc.id IN (SELECT provider_channel_id FROM authorized_user_channels)';
   } else if (category_id) {
     if (user.is_admin) {
       query += `
         AND pc.id IN (
           SELECT provider_channel_id
-          FROM user_channels
+          FROM authorized_user_channels
           WHERE user_category_id = ?
         )
       `;
@@ -510,7 +510,7 @@ const selectAutoMappingChannels = ({ provider_id, category_id, only_used, all_pr
       query += `
         AND pc.id IN (
           SELECT uc.provider_channel_id
-          FROM user_channels uc
+          FROM authorized_user_channels uc
           JOIN user_categories cat ON cat.id = uc.user_category_id
           WHERE uc.user_category_id = ? AND cat.user_id = ?
         )
@@ -520,13 +520,13 @@ const selectAutoMappingChannels = ({ provider_id, category_id, only_used, all_pr
   } else if (user.is_admin) {
     query += ' AND pc.provider_id = ?';
     params.push(Number(provider_id));
-    if (only_used) query += ' AND pc.id IN (SELECT provider_channel_id FROM user_channels)';
+    if (only_used) query += ' AND pc.id IN (SELECT provider_channel_id FROM authorized_user_channels)';
   } else {
     query += `
       AND pc.provider_id = ?
       AND pc.id IN (
         SELECT uc.provider_channel_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN user_categories cat ON cat.id = uc.user_category_id
         WHERE cat.user_id = ?
       )

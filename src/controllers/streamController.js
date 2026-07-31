@@ -9,10 +9,16 @@ import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup, redactUrl, providerSourceKey } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { fetchSafe } from '../utils/network.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
+import {
+  decodeSeriesEpisodeId,
+  SERIES_EPISODE_ALIAS_MIN,
+  SERIES_EPISODE_OFFSET
+} from '../utils/seriesEpisodeId.js';
 
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
@@ -26,7 +32,9 @@ const stmts = {
     updateStat: null,
     updateStatTimeOnly: null,
     insertStat: null,
-    getProvider: null,
+    getSeriesAlias: null,
+    getLegacySeriesAssignments: null,
+    getSeriesEpisode: null,
     getProviderPool: null
 };
 
@@ -35,18 +43,22 @@ function getChannel(streamId, userId) {
         stmts.getChannel = db.prepare(`
       SELECT
         uc.id as user_channel_id,
+        uc.granted_by_admin,
         pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
         pc.metadata,
+        pc.mime_type,
         p.id as provider_id,
         p.url as provider_url,
         p.username as provider_user,
         p.password as provider_pass,
         p.backup_urls,
         p.user_agent,
-        p.max_connections as provider_max_connections
-      FROM user_channels uc
+        p.max_connections as provider_max_connections,
+        cat.user_id as category_owner_id,
+        p.user_id as provider_owner_id
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -76,9 +88,79 @@ function insertStat(channelId, lastViewed) {
     return stmts.insertStat.run(channelId, lastViewed);
 }
 
-function getProvider(id) {
-    if (!stmts.getProvider) stmts.getProvider = db.prepare('SELECT * FROM providers WHERE id = ?');
-    return stmts.getProvider.get(id);
+function getSeriesEpisode(encodedId, userId) {
+    const publicId = Number(encodedId);
+    if (!Number.isSafeInteger(publicId) || publicId <= 0) return null;
+
+    if (!stmts.getSeriesEpisode) {
+        stmts.getSeriesEpisode = db.prepare(`
+          SELECT season, episode_num, title, container_extension, logo
+          FROM provider_series_episodes
+          WHERE source_key = ? AND series_remote_id = ? AND remote_episode_id = ?
+        `);
+    }
+
+    if (publicId >= SERIES_EPISODE_ALIAS_MIN && publicId < SERIES_EPISODE_OFFSET) {
+        if (!stmts.getSeriesAlias) {
+            stmts.getSeriesAlias = db.prepare(`
+              SELECT a.source_key AS episode_source_key, a.remote_episode_id,
+                     p.*, uc.id AS user_channel_id, uc.granted_by_admin,
+                     cat.user_id AS category_owner_id,
+                     p.user_id AS provider_owner_id,
+                     pc.remote_stream_id AS series_remote_id,
+                     COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
+              FROM series_episode_aliases a
+              JOIN authorized_user_channels uc ON uc.id = a.user_channel_id
+              JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+              JOIN providers p ON p.id = pc.provider_id
+              JOIN user_categories cat ON cat.id = uc.user_category_id
+              WHERE a.id = ? AND cat.user_id = ? AND pc.stream_type = 'series'
+                AND pc.remote_stream_id = a.series_remote_id
+            `);
+        }
+
+        const assignment = stmts.getSeriesAlias.get(publicId, userId);
+        if (!assignment || providerSourceKey(assignment.url) !== assignment.episode_source_key) return null;
+        const episode = stmts.getSeriesEpisode.get(
+          assignment.episode_source_key,
+          assignment.series_remote_id,
+          assignment.remote_episode_id
+        );
+        return episode ? { ...assignment, ...episode } : null;
+    }
+    if (publicId < SERIES_EPISODE_OFFSET) return null;
+
+    const decoded = decodeSeriesEpisodeId(publicId);
+    if (!decoded) return null;
+    if (!stmts.getLegacySeriesAssignments) {
+        stmts.getLegacySeriesAssignments = db.prepare(`
+          SELECT p.*, uc.id AS user_channel_id, uc.granted_by_admin,
+                 cat.user_id AS category_owner_id,
+                 p.user_id AS provider_owner_id,
+                 pc.remote_stream_id AS series_remote_id,
+                 COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
+          FROM authorized_user_channels uc
+          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+          JOIN providers p ON p.id = pc.provider_id
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE (uc.id = ? OR p.id = ?) AND cat.user_id = ? AND pc.stream_type = 'series'
+        `);
+    }
+
+    const matches = [];
+    for (const assignment of stmts.getLegacySeriesAssignments.all(
+      decoded.assignmentId,
+      decoded.assignmentId,
+      userId
+    )) {
+        const episode = stmts.getSeriesEpisode.get(
+          providerSourceKey(assignment.url),
+          assignment.series_remote_id,
+          decoded.remoteEpisodeId
+        );
+        if (episode) matches.push({ ...assignment, ...episode, remote_episode_id: decoded.remoteEpisodeId });
+    }
+    return matches.length === 1 ? matches[0] : null;
 }
 
 function getProviderPool(userId, providerUrl) {
@@ -90,11 +172,56 @@ function getProviderPool(userId, providerUrl) {
     // Fetch all providers for the same user with the same base url
     const providers = stmts.getProviderPool.all(userId, `${base}%`);
     // Filter strictly by normalized base URL in case of LIKE edge cases
-    return providers.filter(p => p.url.replace(/\/+$/, '') === base);
+    const sourceKey = providerSourceKey(providerUrl);
+    return providers.filter(p => providerSourceKey(p.url) === sourceKey);
 }
 
-async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
-    const pool = getProviderPool(userId, originalProvider.provider_url || originalProvider.url);
+function parseProviderBackupUrls(value) {
+    if (!value) return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed.filter(url => typeof url === 'string' && url.trim()) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function getProviderCandidates(userId, originalProvider) {
+    const normalizedOriginal = originalProvider.id ? originalProvider : {
+        id: originalProvider.provider_id,
+        url: originalProvider.provider_url,
+        username: originalProvider.provider_user,
+        password: originalProvider.provider_pass,
+        backup_urls: originalProvider.backup_urls,
+        user_agent: originalProvider.user_agent,
+        max_connections: originalProvider.provider_max_connections
+    };
+    const categoryOwnerId = Number(originalProvider.category_owner_id);
+    const providerOwnerId = Number(originalProvider.provider_owner_id);
+    const explicitCrossOwner = Number(originalProvider.granted_by_admin) === 1 &&
+        Number.isSafeInteger(categoryOwnerId) && Number.isSafeInteger(providerOwnerId) &&
+        providerOwnerId !== categoryOwnerId;
+
+    if (explicitCrossOwner) {
+        const candidates = [normalizedOriginal];
+        for (const backupUrl of parseProviderBackupUrls(normalizedOriginal.backup_urls)) {
+            for (const provider of getProviderPool(userId, backupUrl)) {
+                if (!candidates.some(candidate => candidate.id === provider.id)) candidates.push(provider);
+            }
+        }
+        return candidates;
+    }
+
+    const pool = getProviderPool(userId, normalizedOriginal.url);
+
+    if (!pool.some(provider => provider.id === normalizedOriginal.id)) {
+        pool.push(normalizedOriginal);
+    }
+    return pool;
+}
+
+export async function findAvailableProvider(userId, originalProvider, reqIp, sessionName) {
+    const pool = getProviderCandidates(userId, originalProvider);
 
     for (const p of pool) {
         let isSessionActive = false;
@@ -150,6 +277,7 @@ function applyProviderToChannel(channel, provider) {
   channel.provider_pass = provider.password;
   channel.backup_urls = provider.backup_urls;
   channel.user_agent = provider.user_agent;
+  channel.provider_max_connections = provider.max_connections;
 }
 
 async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
@@ -435,6 +563,7 @@ async function fetchWithBackups(primaryUrl, backupUrls, options) {
             if (res.ok) {
                 return { response: res, successfulUrl: res.url || u };
             }
+            res.body?.destroy?.();
             // If 404/403/407/etc, we might want to try backup? Yes.
             console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
 
@@ -923,8 +1052,6 @@ export const proxyMovie = async (req, res) => {
 
   try {
     const streamId = Number(req.params.stream_id || 0);
-    const ext = req.params.ext;
-
     if (!streamId) return res.sendStatus(404);
 
     const user = await getXtreamUser(req);
@@ -935,19 +1062,19 @@ export const proxyMovie = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
+    const ext = normalizeContainerExtension(channel.mime_type, 'mp4');
 
     const sessionName = `${channel.name} (VOD)`;
 
-    channel.provider_pass = decrypt(channel.provider_pass);
+    const sourcePassword = decrypt(channel.provider_pass);
+    let base = channel.provider_url.replace(/\/+$/, '');
+    let remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(sourcePassword)}/${channel.remote_stream_id}.${ext}`;
 
-    const base = channel.provider_url.replace(/\/+$/, '');
-    const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
-
-    const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
-        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    let backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(sourcePassword)}/${channel.remote_stream_id}.${ext}`;
     }, 'Movie');
 
-    const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
+    let { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
 
     if (req.query.subtitle_format === 'vtt') {
       await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
@@ -960,6 +1087,14 @@ export const proxyMovie = async (req, res) => {
     }
 
     if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+
+    channel.provider_pass = decrypt(channel.provider_pass);
+    base = channel.provider_url.replace(/\/+$/, '');
+    remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    }, 'Movie');
+    ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie'));
 
     recordStreamStat(channel.provider_channel_id, 'Movie');
 
@@ -1084,42 +1219,24 @@ export const proxySeries = async (req, res) => {
   const cleanup = createSafeCleanup(connectionId);
 
   try {
-    const epIdRaw = Number(req.params.episode_id || 0);
-    const ext = req.params.ext;
-
-    if (!epIdRaw) return res.sendStatus(404);
+    const epIdRaw = req.params.episode_id;
 
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
 
-    const OFFSET = 1000000000;
-    const providerId = Math.floor(epIdRaw / OFFSET);
-    const remoteEpisodeId = epIdRaw % OFFSET;
+    const seriesEpisode = getSeriesEpisode(epIdRaw, user.id);
+    if (!seriesEpisode) return res.sendStatus(404);
+    if (!shareGuestAllowed(user, seriesEpisode)) return res.sendStatus(403);
 
-    if (!providerId || !remoteEpisodeId) return res.sendStatus(404);
+    const provider = seriesEpisode;
+    const remoteEpisodeId = seriesEpisode.remote_episode_id;
+    const ext = normalizeContainerExtension(seriesEpisode.container_extension);
 
-    const provider = getProvider(providerId);
-    if (!provider) return res.sendStatus(404);
-
-    if (user.is_share_guest) return res.sendStatus(403);
-
-    let sessionName = episodeNameCache.get(epIdRaw.toString());
+    let sessionName = episodeNameCache.get(String(epIdRaw));
     if (!sessionName) {
-      // Fallback to synced episode data (M3U playback skips get_series_info)
-      try {
-        const epRow = db.prepare(`
-          SELECT e.season, e.episode_num, e.title, pc.name as series_name
-          FROM provider_series_episodes e
-          LEFT JOIN provider_channels pc ON pc.provider_id = ? AND pc.remote_stream_id = e.series_remote_id AND pc.stream_type = 'series'
-          WHERE e.source_key = ? AND e.remote_episode_id = ?
-        `).get(providerId, providerSourceKey(provider.url), remoteEpisodeId);
-        if (epRow) {
-          const epCode = `S${String(epRow.season || 0).padStart(2, '0')} E${String(epRow.episode_num || 0).padStart(2, '0')}`;
-          sessionName = `${epRow.series_name || 'Series'} ${epCode}${epRow.title ? ` - ${epRow.title}` : ''}`;
-        }
-      } catch { /* name lookup is cosmetic only */ }
+      const epCode = `S${String(seriesEpisode.season || 0).padStart(2, '0')} E${String(seriesEpisode.episode_num || 0).padStart(2, '0')}`;
+      sessionName = `${seriesEpisode.series_name || 'Series'} ${epCode}${seriesEpisode.title ? ` - ${seriesEpisode.title}` : ''}`;
     }
-    if (!sessionName) sessionName = `Series Episode ${remoteEpisodeId}`;
 
     const sourceProvider = { ...provider, password: decrypt(provider.password) };
     let base = sourceProvider.url.replace(/\/+$/, '');

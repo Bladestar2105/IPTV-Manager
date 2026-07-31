@@ -1,16 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
-const { mockDb } = vi.hoisted(() => {
+const { mockDb, aliasDb } = vi.hoisted(() => {
   return {
     mockDb: {
       prepare: vi.fn(),
+    },
+    aliasDb: {
+      prepare: vi.fn(),
+      close: vi.fn(),
     },
   };
 });
 
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
+  openDbConnection: vi.fn(() => aliasDb),
 }));
 
 vi.mock('node-fetch', () => ({
@@ -115,6 +120,23 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     };
 
     getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
+    episodes[0].container_extension = 'mkv';
+    episodes[1].container_extension = 'mkv';
+    movieChannel.mime_type = 'mkv';
+
+    aliasDb.prepare.mockImplementation((sql) => {
+      if (sql.includes('INSERT OR IGNORE INTO series_episode_aliases')) {
+        return { run: vi.fn() };
+      }
+      if (sql.includes('SELECT id FROM series_episode_aliases')) {
+        return {
+          get: vi.fn((_userChannelId, _sourceKey, _seriesRemoteId, remoteEpisodeId) => ({
+            id: remoteEpisodeId === 123 ? 900000501 : 900000502,
+          })),
+        };
+      }
+      throw new Error(`Unexpected alias SQL: ${sql}`);
+    });
 
     mockDb.prepare.mockImplementation((sql) => {
       if (sql.includes('provider_series_episodes')) {
@@ -136,19 +158,20 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
   const collectOutput = () => res.write.mock.calls.map((c) => c[0]).join('');
 
-  it('expands series into one entry per episode with encoded episode IDs', async () => {
+  it('expands series into one entry per episode with compact aliases', async () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
+    expect(mockDb.prepare.mock.calls.some(([sql]) => sql.includes('JOIN authorized_user_channels uc'))).toBe(true);
 
     // Episode entries with SXX EXX naming
     expect(output).toContain('tvg-name="My Show S01 E01"');
     expect(output).toContain(',My Show S01 E01\n');
     expect(output).toContain('tvg-name="My Show S01 E02"');
 
-    // Encoded episode URL: providerId * 1e9 + remote_episode_id, episode container
-    expect(output).toContain('http://localhost/series/u/p/7000000123.mkv');
-    expect(output).toContain('http://localhost/series/u/p/7000000124.mkv');
+    expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
+    expect(output).toContain('http://localhost/series/u/p/900000502.mkv');
+    expect(aliasDb.close).toHaveBeenCalledTimes(1);
 
     // No series-level URL for the expanded series
     expect(output).not.toContain('/series/u/p/42.');
@@ -161,12 +184,12 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).toContain('group-title="Serien DE",My Show S01 E01');
   });
 
-  it('falls back to the legacy series entry when no episodes are synced', async () => {
+  it('omits unsynchronized series instead of emitting a bare assignment URL', async () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
-    expect(output).toContain('tvg-name="Unsynced Show"');
-    expect(output).toContain('http://localhost/series/u/p/43.mp4');
+    expect(output).not.toContain('tvg-name="Unsynced Show"');
+    expect(output).not.toContain('/series/u/p/43.');
   });
 
   it('keeps movie entries unchanged', async () => {
@@ -183,7 +206,21 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
     const output = collectOutput();
     expect(output).toContain('#EXTINF:-1,My Show S01 E01\n');
-    expect(output).toContain('http://localhost/series/u/p/7000000123.mkv');
+    expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
     expect(output).not.toContain('tvg-name="My Show S01 E01"');
+  });
+
+  it('cannot inject an extra playlist line through provider extensions', async () => {
+    episodes[0].container_extension = 'mp4\r\n#EXTINF:-1,Injected';
+    movieChannel.mime_type = 'mkv?token=secret';
+
+    await getPlaylist(req, res);
+
+    const output = collectOutput();
+    expect(output).toContain('/series/u/p/900000501.mp4');
+    expect(output).toContain('/movie/u/p/100.mp4');
+    expect(output).not.toContain('Injected');
+    expect(output).not.toContain('token=secret');
+    expect(output.split('\n').filter(line => line.startsWith('#EXTINF')).length).toBe(3);
   });
 });

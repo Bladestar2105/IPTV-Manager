@@ -52,7 +52,12 @@ export async function fetchSafe(url, options = {}, redirectCount = 0) {
 
     if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
       const location = response.headers.get('location');
-      const nextUrl = new URL(location, url).toString(); // Handle relative URLs
+      let nextUrl;
+      try {
+        nextUrl = new URL(location, url).toString(); // Handle relative URLs
+      } finally {
+        response.body?.destroy?.();
+      }
       return await fetchSafe(nextUrl, options, redirectCount + 1);
     }
 

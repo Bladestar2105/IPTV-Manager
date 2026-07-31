@@ -768,6 +768,121 @@ export function migrateUserChannelsIsHidden(db) {
   }
 }
 
+export function migrateUserChannelAdminGrants(db) {
+  const migrate = db.transaction(() => {
+    const columns = db.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name);
+    const markerKey = 'user_channel_authorization_v1';
+    const completed = db.prepare('SELECT value FROM settings WHERE key = ?').get(markerKey);
+    const authorizationView = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'view' AND name = 'authorized_user_channels'
+    `).get();
+    if (completed?.value === 'true' && authorizationView &&
+        columns.includes('granted_by_admin') && columns.includes('authorization_revoked')) {
+      return 0;
+    }
+
+    if (!columns.includes('granted_by_admin')) {
+      db.exec('ALTER TABLE user_channels ADD COLUMN granted_by_admin INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!columns.includes('authorization_revoked')) {
+      db.exec('ALTER TABLE user_channels ADD COLUMN authorization_revoked INTEGER NOT NULL DEFAULT 0');
+    }
+
+    db.prepare(`
+      UPDATE user_channels
+      SET granted_by_admin = 0,
+          authorization_revoked = 0
+      WHERE (granted_by_admin != 0 OR authorization_revoked != 0)
+        AND EXISTS (
+        SELECT 1
+        FROM user_categories cat
+        JOIN provider_channels pc ON pc.id = user_channels.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        WHERE cat.id = user_channels.user_category_id
+          AND p.user_id = cat.user_id
+      )
+    `).run();
+
+    db.prepare(`
+      UPDATE user_channels
+      SET authorization_revoked = 0
+      WHERE granted_by_admin = 1
+        AND authorization_revoked != 0
+    `).run();
+
+    const revoked = db.prepare(`
+      UPDATE user_channels
+      SET authorization_revoked = 1
+      WHERE authorization_revoked = 0
+        AND granted_by_admin = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM user_categories cat
+          JOIN provider_channels pc ON pc.id = user_channels.provider_channel_id
+          JOIN providers p ON p.id = pc.provider_id
+          WHERE cat.id = user_channels.user_category_id
+            AND p.user_id = cat.user_id
+        )
+    `).run().changes;
+
+    db.exec(`
+      DROP VIEW IF EXISTS authorized_user_channels;
+      CREATE VIEW authorized_user_channels AS
+      SELECT uc.*
+      FROM user_channels uc
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE uc.is_hidden = 0
+        AND uc.authorization_revoked = 0
+        AND (p.user_id = cat.user_id OR uc.granted_by_admin = 1)
+    `);
+
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, 'true')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(markerKey);
+
+    return revoked;
+  });
+
+  try {
+    const revoked = migrate();
+    console.info(`✅ DB Migration: user channel authorization ready; revoked ${revoked} unauthorized assignment(s)`);
+    return revoked;
+  } catch (e) {
+    console.error('User channel admin grants migration error:', e.message);
+    throw e;
+  }
+}
+
+export function migrateSyncConfigAdminGrants(db) {
+  const migrate = db.transaction(() => {
+    const columns = db.prepare('PRAGMA table_info(sync_configs)').all().map(column => column.name);
+    if (columns.includes('granted_by_admin')) return 0;
+
+    db.exec('ALTER TABLE sync_configs ADD COLUMN granted_by_admin INTEGER NOT NULL DEFAULT 0');
+    return db.prepare(`
+      UPDATE sync_configs
+      SET enabled = 0
+      WHERE enabled = 1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM providers p
+          WHERE p.id = sync_configs.provider_id
+            AND p.user_id IS sync_configs.user_id
+        )
+    `).run().changes;
+  });
+
+  const disabled = migrate();
+  if (disabled > 0) {
+    console.info(`Sync grant migration disabled ${disabled} unapproved cross-owner config(s)`);
+  }
+  return disabled;
+}
+
 export function migrateUserNotes(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(users)").all();
@@ -847,22 +962,32 @@ export function migrateEpgMappingJobs(db) {
 }
 
 export function migrateSeriesEpisodes(db) {
-  try {
-    // Episode data is keyed by the upstream panel (source_key = normalized
-    // provider URL), not by provider row: users sharing the same panel with
-    // their own credentials share one copy of the episode catalog.
-    // An early uncommitted schema keyed these tables by provider_id; since the
-    // tables are a rebuildable cache, drop and recreate them in that case.
-    for (const table of ['provider_series_episodes', 'provider_series_state']) {
-      const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-      if (cols.length > 0 && !cols.includes('source_key')) {
-        db.exec(`DROP TABLE ${table}`);
-        console.log(`✅ DB Migration: ${table} rebuilt with source_key schema`);
-      }
+  const migrate = db.transaction(() => {
+    const expectedEpisodeKey = 'source_key,series_remote_id,remote_episode_id';
+    const episodeColumns = db.prepare('PRAGMA table_info(provider_series_episodes)').all().map(column => column.name);
+    const stateColumns = db.prepare('PRAGMA table_info(provider_series_state)').all().map(column => column.name);
+    let rebuildCache = (episodeColumns.length > 0 && !episodeColumns.includes('source_key')) ||
+      (stateColumns.length > 0 && !stateColumns.includes('source_key'));
+
+    if (episodeColumns.length > 0 && !rebuildCache) {
+      const uniqueKeys = db.prepare(`
+        SELECT name
+        FROM pragma_index_list('provider_series_episodes')
+        WHERE "unique" = 1
+      `).all().map(index => db.prepare(
+        'SELECT name FROM pragma_index_info(?) ORDER BY seqno'
+      ).all(index.name).map(column => column.name).join(','));
+      rebuildCache = uniqueKeys.length !== 1 || uniqueKeys[0] !== expectedEpisodeKey;
     }
 
-    // Episodes per upstream series, populated by the episode sync so that
-    // get.php can expand series into playable per-episode entries.
+    if (rebuildCache) {
+      db.exec(`
+        DROP TABLE IF EXISTS provider_series_episodes;
+        DROP TABLE IF EXISTS provider_series_state;
+      `);
+      console.info('✅ DB Migration: series episode cache rebuilt with series-scoped keys');
+    }
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS provider_series_episodes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -875,30 +1000,84 @@ export function migrateSeriesEpisodes(db) {
         container_extension TEXT DEFAULT 'mp4',
         logo TEXT DEFAULT '',
         added TEXT DEFAULT '',
-        UNIQUE(source_key, remote_episode_id)
-      )
-    `);
-    db.exec('CREATE INDEX IF NOT EXISTS idx_pse_series ON provider_series_episodes(source_key, series_remote_id, season, episode_num)');
+        UNIQUE(source_key, series_remote_id, remote_episode_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pse_series
+        ON provider_series_episodes(source_key, series_remote_id, season, episode_num);
 
-    // Per-series sync state (last_modified from get_series) so unchanged
-    // series are skipped on subsequent episode syncs.
-    db.exec(`
       CREATE TABLE IF NOT EXISTS provider_series_state (
         source_key TEXT NOT NULL,
         series_remote_id INTEGER NOT NULL,
         last_modified TEXT DEFAULT '',
         synced_at INTEGER DEFAULT 0,
         PRIMARY KEY (source_key, series_remote_id)
-      )
+      );
+
+      CREATE TABLE IF NOT EXISTS series_episode_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id >= 900000000 AND id < 1000000000),
+        user_channel_id INTEGER NOT NULL,
+        source_key TEXT NOT NULL,
+        series_remote_id INTEGER NOT NULL,
+        remote_episode_id INTEGER NOT NULL,
+        UNIQUE(user_channel_id, source_key, series_remote_id, remote_episode_id),
+        FOREIGN KEY (user_channel_id) REFERENCES user_channels(id) ON DELETE CASCADE
+      );
     `);
 
-    const tableInfo = db.prepare("PRAGMA table_info(sync_configs)").all();
-    const columns = tableInfo.map(c => c.name);
+    const aliasForeignKeys = db.prepare("PRAGMA foreign_key_list('series_episode_aliases')").all();
+    const hasAliasCascade = aliasForeignKeys.some(key =>
+      key.table === 'user_channels' &&
+      key.from === 'user_channel_id' &&
+      key.to === 'id' &&
+      String(key.on_delete).toUpperCase() === 'CASCADE'
+    );
+
+    if (!hasAliasCascade) {
+      db.exec(`
+        DROP TABLE IF EXISTS series_episode_aliases_new;
+        CREATE TABLE series_episode_aliases_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id >= 900000000 AND id < 1000000000),
+          user_channel_id INTEGER NOT NULL,
+          source_key TEXT NOT NULL,
+          series_remote_id INTEGER NOT NULL,
+          remote_episode_id INTEGER NOT NULL,
+          UNIQUE(user_channel_id, source_key, series_remote_id, remote_episode_id),
+          FOREIGN KEY (user_channel_id) REFERENCES user_channels(id) ON DELETE CASCADE
+        );
+        INSERT INTO series_episode_aliases_new
+          (id, user_channel_id, source_key, series_remote_id, remote_episode_id)
+        SELECT a.id, a.user_channel_id, a.source_key, a.series_remote_id, a.remote_episode_id
+        FROM series_episode_aliases a
+        JOIN user_channels uc ON uc.id = a.user_channel_id;
+        DROP TABLE series_episode_aliases;
+        ALTER TABLE series_episode_aliases_new RENAME TO series_episode_aliases;
+      `);
+      console.info('✅ DB Migration: series episode aliases rebuilt with cascading assignment cleanup');
+    }
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_series_episode_aliases_user_channel
+        ON series_episode_aliases(user_channel_id);
+    `);
+
+    const aliasSequence = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'series_episode_aliases'").get();
+    if (!aliasSequence) {
+      db.prepare("INSERT INTO sqlite_sequence(name, seq) VALUES ('series_episode_aliases', 900000000)").run();
+    } else if (Number(aliasSequence.seq) < 900000000) {
+      db.prepare("UPDATE sqlite_sequence SET seq = 900000000 WHERE name = 'series_episode_aliases'").run();
+    }
+
+    const columns = db.prepare('PRAGMA table_info(sync_configs)').all().map(column => column.name);
     if (!columns.includes('sync_series_episodes')) {
       db.exec('ALTER TABLE sync_configs ADD COLUMN sync_series_episodes INTEGER DEFAULT 1');
-      console.log('✅ DB Migration: sync_series_episodes column added to sync_configs');
+      console.info('✅ DB Migration: sync_series_episodes column added to sync_configs');
     }
+  });
+
+  try {
+    migrate();
   } catch (e) {
     console.error('Series episodes migration error:', e);
+    throw e;
   }
 }

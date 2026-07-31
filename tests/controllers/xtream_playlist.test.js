@@ -11,6 +11,7 @@ const { mockDb } = vi.hoisted(() => {
 
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
+  openDbConnection: vi.fn(() => ({ prepare: mockDb.prepare, close: vi.fn() })),
 }));
 
 vi.mock('node-fetch', () => ({

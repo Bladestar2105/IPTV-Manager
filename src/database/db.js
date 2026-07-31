@@ -7,13 +7,19 @@ import * as migrations from './migrations.js';
 // Ensure Data Directory exists
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'db.sqlite'), { timeout: 5000 });
-// Enable foreign keys
-db.pragma('foreign_keys = ON');
-db.pragma('busy_timeout = 5000');
+const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
+
+export function openDbConnection() {
+    const connection = new Database(DB_PATH, { timeout: 5000 });
+    connection.pragma('foreign_keys = ON');
+    connection.pragma('busy_timeout = 5000');
+    connection.pragma('synchronous = NORMAL');
+    return connection;
+}
+
+const db = openDbConnection();
 // Performance tuning
 db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
 
 export function initDb(isPrimary) {
     if (isPrimary) {
@@ -111,7 +117,9 @@ export function initDb(isPrimary) {
       provider_channel_id INTEGER NOT NULL,
       sort_order INTEGER DEFAULT 0,
       custom_name TEXT DEFAULT '',
-      is_hidden INTEGER DEFAULT 0
+      is_hidden INTEGER DEFAULT 0,
+      granted_by_admin INTEGER NOT NULL DEFAULT 0,
+      authorization_revoked INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS user_backups (
@@ -135,6 +143,7 @@ export function initDb(isPrimary) {
       next_sync INTEGER DEFAULT 0,
       auto_add_categories INTEGER DEFAULT 1,
       auto_add_channels INTEGER DEFAULT 1,
+      granted_by_admin INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (provider_id) REFERENCES providers(id),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
@@ -298,6 +307,8 @@ export function initDb(isPrimary) {
             migrations.migrateUserAllowedCountries(db);
             migrations.migrateUserChannelsCustomName(db);
             migrations.migrateUserChannelsIsHidden(db);
+            migrations.migrateUserChannelAdminGrants(db);
+            migrations.migrateSyncConfigAdminGrants(db);
             migrations.migrateUserNotes(db);
             if (typeof migrations.migrateProviderUseMappedEpgIcon === 'function') {
                 migrations.migrateProviderUseMappedEpgIcon(db);

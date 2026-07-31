@@ -83,7 +83,7 @@ describe('Sync Service Functional Tests', () => {
 
   it('should sync the live channel and assign to user category', async () => {
     // 1. Perform first sync. The mock returns a live channel with category 10 and stream_id 1234.
-    const result = await performSync(providerId, userId, true);
+    const result = await performSync(providerId, userId, { mode: 'manual', allowCrossOwner: true });
 
     expect(result.channelsAdded).toBe(1);
 
@@ -132,7 +132,7 @@ describe('Sync Service Functional Tests', () => {
     xtreamApi.Xtream.prototype.getChannels = vi.fn().mockResolvedValue([]);
 
     // Perform second sync
-    const result = await performSync(providerId, userId, true);
+    const result = await performSync(providerId, userId, { mode: 'manual', allowCrossOwner: true });
 
     expect(result.channelsUpdated).toBe(1); // The channel 1234 should have been updated
 

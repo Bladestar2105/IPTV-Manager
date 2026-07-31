@@ -93,7 +93,7 @@ describe('Series episode sync', () => {
         container_extension TEXT DEFAULT 'mp4',
         logo TEXT DEFAULT '',
         added TEXT DEFAULT '',
-        UNIQUE(source_key, remote_episode_id)
+        UNIQUE(source_key, series_remote_id, remote_episode_id)
       );
       CREATE TABLE provider_series_state (
         source_key TEXT NOT NULL,
@@ -144,12 +144,16 @@ describe('Series episode sync', () => {
     it('parses array-of-seasons payloads and skips invalid entries', () => {
       const eps = parseSeriesInfoEpisodes({
         episodes: [
-          [ { id: 5, episode_num: 1, season: 1 }, { title: 'no id' } ],
+          [
+            { id: 5, episode_num: 1, season: 1, container_extension: 'mp4\r\n#EXTINF:-1,Injected' },
+            { title: 'no id' }
+          ],
           'garbage'
         ]
       });
       expect(eps).toHaveLength(1);
       expect(eps[0].remote_episode_id).toBe(5);
+      expect(eps[0].container_extension).toBe('mp4');
     });
 
     it('returns empty for missing/invalid payloads', () => {
@@ -207,6 +211,48 @@ describe('Series episode sync', () => {
 
       // Only ONE copy of the episode exists
       expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(1);
+    });
+
+    it('keeps the first current panel record authoritative across conflicting sibling metadata', async () => {
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'Account A Show', 'series', '{"last_modified":"1000"}'),
+               (2, 555, 'Account B Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValueOnce(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1, title: 'Account A Title' }]
+      })).mockResolvedValueOnce(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1, title: 'Account B Title' }]
+      }));
+
+      await syncSeriesEpisodes(1);
+      const sibling = await syncSeriesEpisodes(2);
+
+      expect(sibling.synced).toBe(0);
+      expect(fetchSafeMock).toHaveBeenCalledTimes(1);
+      expect(memDb.prepare(`
+        SELECT title FROM provider_series_episodes
+        WHERE source_key = ? AND series_remote_id = 555 AND remote_episode_id = 100
+      `).get(SOURCE)).toEqual({ title: 'Account A Title' });
+    });
+
+    it('keeps reused remote episode IDs separate across series', async () => {
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'Show One', 'series', '{"last_modified":"1000"}'),
+               (1, 556, 'Show Two', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1 }]
+      }));
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(2);
+      expect(memDb.prepare(`
+        SELECT series_remote_id, remote_episode_id
+        FROM provider_series_episodes
+        ORDER BY series_remote_id
+      `).all()).toEqual([
+        { series_remote_id: 555, remote_episode_id: 100 },
+        { series_remote_id: 556, remote_episode_id: 100 },
+      ]);
     });
 
     it('skips unchanged series and prunes episodes of removed series', async () => {

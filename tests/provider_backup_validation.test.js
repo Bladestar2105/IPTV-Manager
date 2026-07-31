@@ -44,7 +44,10 @@ vi.mock('../src/utils/helpers.js', async () => {
         checkProviderExpiry: vi.fn(),
         isAdultCategory: vi.fn().mockReturnValue(false),
         safeLookup: vi.fn(),
-        redactUrl: vi.fn((url) => url)
+        redactUrl: vi.fn((url) => url),
+        providerSourceKey: vi.fn((url) => String(url || '')),
+        resolveAssignmentGrant: vi.fn(({ categoryOwnerId, providerOwnerId, isAdmin }) =>
+          Number(categoryOwnerId) === Number(providerOwnerId) ? 0 : (isAdmin ? 1 : null))
     };
 });
 

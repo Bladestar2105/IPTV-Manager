@@ -61,8 +61,8 @@ describe('EPG Mapping Category Mode', () => {
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (1, 'admin', 'admin', 1)").run();
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (2, 'user', 'user', 1)").run();
 
-        db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url) VALUES (1, 'TestProvider', 'http://test.com', 'user', 'pass', 'http://epg.com')").run();
-        db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url) VALUES (2, 'SecondProvider', 'http://test2.com', 'user', 'pass', 'http://epg2.com')").run();
+        db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url, user_id) VALUES (1, 'TestProvider', 'http://test.com', 'user', 'pass', 'http://epg.com', 2)").run();
+        db.prepare("INSERT INTO providers (id, name, url, username, password, epg_url, user_id) VALUES (2, 'SecondProvider', 'http://test2.com', 'user', 'pass', 'http://epg2.com', 1)").run();
 
         // Channel 1: Provider 1
         db.prepare("INSERT INTO provider_channels (id, provider_id, remote_stream_id, name, stream_type) VALUES (1, 1, 100, 'Test Channel 1', 'live')").run();

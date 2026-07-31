@@ -1,7 +1,20 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
-import { isAdultCategory } from '../utils/helpers.js';
+import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
+
+function parsePositiveSafeInteger(value) {
+  if (typeof value === 'string' && !/^[1-9]\d*$/.test(value)) return null;
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseUniquePositiveIds(values) {
+  const ids = values.map(parsePositiveSafeInteger);
+  if (ids.some(id => id === null) || new Set(ids).size !== ids.length) return null;
+  return ids;
+}
 
 export const getUserCategories = (req, res) => {
   try {
@@ -22,7 +35,7 @@ export const createUserCategory = (req, res) => {
     const catType = type || 'live';
 
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
     const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
 
@@ -85,51 +98,60 @@ export const bulkDeleteUserCategories = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
-    // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
-    const placeholders = Array(ids.length).fill('?').join(',');
+    const categoryIds = parseUniquePositiveIds(ids);
+    if (!categoryIds) return res.status(400).json({error: 'Invalid ids'});
+    const placeholders = Array(categoryIds.length).fill('?').join(',');
+    const categories = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...categoryIds);
+    if (categories.length !== categoryIds.length) return res.status(400).json({error: 'Category not found'});
+    if (!req.user.is_admin && categories.some(category => category.user_id !== req.user.id)) {
+      return res.status(403).json({error: 'Access denied'});
+    }
 
-    const cats = db.prepare(`SELECT DISTINCT user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
-    const userIdsToClear = cats.map(c => c.user_id);
-
-    db.transaction(() => {
-      if (!req.user.is_admin) {
-        const checkCats = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
-        const catMap = new Map(checkCats.map(c => [c.id, c.user_id]));
-        for (const id of ids) {
-          const catUserId = catMap.get(Number(id));
-          if (catUserId === undefined || catUserId !== req.user.id) {
-            throw new Error('Access denied');
-          }
-        }
-      }
-
-      db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...ids);
-      db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...ids);
-      db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...ids);
+    const userIdsToClear = [...new Set(categories.map(category => category.user_id))];
+    const deleted = db.transaction(() => {
+      db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...categoryIds);
+      db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...categoryIds);
+      return db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...categoryIds).changes;
     })();
 
     db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_bulk_deleted', `User ${req.user.username} bulk deleted ${ids.length} categories`, Math.floor(Date.now() / 1000));
 
     userIdsToClear.forEach(uId => clearChannelsCache(uId));
-    res.json({success: true, deleted: ids.length});
+    res.json({success: true, deleted});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
 export const reorderUserCategories = (req, res) => {
   try {
-    const userId = Number(req.params.userId);
+    const userId = parsePositiveSafeInteger(req.params.userId);
+    if (!userId) return res.status(400).json({error: 'Invalid user ID'});
     if (!req.user.is_admin && req.user.id !== userId) return res.status(403).json({error: 'Access denied'});
 
     const { category_ids } = req.body;
     if (!Array.isArray(category_ids)) return res.status(400).json({error: 'category_ids must be array'});
+    const categoryIds = parseUniquePositiveIds(category_ids);
+    if (!categoryIds) return res.status(400).json({error: 'Invalid category_ids'});
 
-    const update = db.prepare('UPDATE user_categories SET sort_order = ? WHERE id = ?');
+    const update = db.prepare('UPDATE user_categories SET sort_order = ? WHERE id = ? AND user_id = ?');
 
-    db.transaction(() => {
-      category_ids.forEach((catId, index) => {
-        update.run(index, catId);
+    const reordered = db.transaction(() => {
+      if (categoryIds.length === 0) return true;
+      const placeholders = Array(categoryIds.length).fill('?').join(',');
+      const matched = db.prepare(`
+        SELECT id FROM user_categories
+        WHERE user_id = ? AND id IN (${placeholders})
+      `).all(userId, ...categoryIds);
+      if (matched.length !== categoryIds.length) return false;
+
+      categoryIds.forEach((catId, index) => {
+        if (update.run(index, catId, userId).changes !== 1) {
+          throw new Error('Category reorder scope changed');
+        }
       });
+      return true;
     })();
+
+    if (!reordered) return res.status(400).json({error: 'Invalid category_ids'});
 
     clearChannelsCache(userId);
     res.json({success: true});
@@ -192,7 +214,7 @@ export const getCategoryChannels = (req, res) => {
 
     const rows = db.prepare(`
       SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
-      FROM user_channels uc
+      FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
@@ -227,17 +249,40 @@ export const addUserChannel = (req, res) => {
     const { provider_channel_id } = req.body;
     if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
 
-    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
-    const newSortOrder = (maxSort?.max_sort || -1) + 1;
+    const providerChannel = db.prepare(`
+      SELECT pc.id, p.user_id
+      FROM provider_channels pc
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE pc.id = ?
+    `).get(Number(provider_channel_id));
+    if (!providerChannel) return res.status(404).json({error: 'Channel not found'});
+    const grantedByAdmin = resolveAssignmentGrant({
+      categoryOwnerId: cat.user_id,
+      providerOwnerId: providerChannel.user_id,
+      isAdmin: req.user.is_admin,
+      allowExplicitAdminGrant: true
+    });
+    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
-    const existingHidden = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ? AND is_hidden = 1').get(catId, Number(provider_channel_id));
+    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
+    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
+
+    const existing = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(catId, Number(provider_channel_id));
 
     let insertId;
-    if (existingHidden) {
-        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ? WHERE id = ?').run(newSortOrder, existingHidden.id);
-        insertId = existingHidden.id;
+    if (existing) {
+        db.prepare(`
+          UPDATE user_channels
+          SET is_hidden = 0, sort_order = ?, granted_by_admin = ?, authorization_revoked = 0
+          WHERE id = ?
+        `).run(newSortOrder, grantedByAdmin, existing.id);
+        insertId = existing.id;
     } else {
-        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder);
+        const info = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
+          VALUES (?, ?, ?, ?, 0)
+        `).run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
         insertId = info.lastInsertRowid;
     }
 
@@ -248,7 +293,8 @@ export const addUserChannel = (req, res) => {
 
 export const reorderUserChannels = (req, res) => {
   try {
-    const catId = Number(req.params.catId);
+    const catId = parsePositiveSafeInteger(req.params.catId);
+    if (!catId) return res.status(400).json({error: 'Invalid category ID'});
     const cat = db.prepare('SELECT user_id FROM user_categories WHERE id = ?').get(catId);
     if (!cat) return res.status(404).json({error: 'Category not found'});
     if (!req.user.is_admin && cat.user_id !== req.user.id) {
@@ -257,14 +303,29 @@ export const reorderUserChannels = (req, res) => {
 
     const { channel_ids } = req.body;
     if (!Array.isArray(channel_ids)) return res.status(400).json({error: 'channel_ids must be array'});
+    const channelIds = parseUniquePositiveIds(channel_ids);
+    if (!channelIds) return res.status(400).json({error: 'Invalid channel_ids'});
 
-    const update = db.prepare('UPDATE user_channels SET sort_order = ? WHERE id = ?');
+    const update = db.prepare('UPDATE user_channels SET sort_order = ? WHERE id = ? AND user_category_id = ?');
 
-    db.transaction(() => {
-      channel_ids.forEach((chId, index) => {
-        update.run(index, chId);
+    const reordered = db.transaction(() => {
+      if (channelIds.length === 0) return true;
+      const placeholders = Array(channelIds.length).fill('?').join(',');
+      const matched = db.prepare(`
+        SELECT id FROM user_channels
+        WHERE user_category_id = ? AND id IN (${placeholders})
+      `).all(catId, ...channelIds);
+      if (matched.length !== channelIds.length) return false;
+
+      channelIds.forEach((chId, index) => {
+        if (update.run(index, chId, catId).changes !== 1) {
+          throw new Error('Channel reorder scope changed');
+        }
       });
+      return true;
     })();
+
+    if (!reordered) return res.status(400).json({error: 'Invalid channel_ids'});
 
     clearChannelsCache(cat.user_id);
     res.json({success: true});
@@ -303,34 +364,27 @@ export const bulkDeleteUserChannels = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
-    // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
-    const placeholders = Array(ids.length).fill('?').join(',');
-
+    const channelIds = parseUniquePositiveIds(ids);
+    if (!channelIds) return res.status(400).json({error: 'Invalid ids'});
+    const placeholders = Array(channelIds.length).fill('?').join(',');
     const channels = db.prepare(`
-        SELECT DISTINCT cat.user_id
+        SELECT uc.id, uc.is_hidden, cat.user_id
         FROM user_channels uc
         JOIN user_categories cat ON cat.id = uc.user_category_id
         WHERE uc.id IN (${placeholders})
-    `).all(...ids);
-    const userIdsToClear = channels.map(c => c.user_id);
-
-    if (!req.user.is_admin) {
-        const checkChannels = db.prepare(`
-            SELECT cat.user_id
-            FROM user_channels uc
-            JOIN user_categories cat ON cat.id = uc.user_category_id
-            WHERE uc.id IN (${placeholders})
-        `).all(...ids);
-
-        for (const ch of checkChannels) {
-            if (ch.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
-        }
+    `).all(...channelIds);
+    if (channels.length !== channelIds.length) return res.status(400).json({error: 'Channel not found'});
+    if (!req.user.is_admin && channels.some(channel => channel.user_id !== req.user.id)) {
+      return res.status(403).json({error: 'Access denied'});
     }
 
-    db.prepare(`UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders})`).run(...ids);
+    const userIdsToClear = [...new Set(channels.map(channel => channel.user_id))];
+    const deleted = db.transaction(() => db.prepare(
+      `UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders}) AND is_hidden <> 1`
+    ).run(...channelIds).changes)();
 
     userIdsToClear.forEach(uId => clearChannelsCache(uId));
-    res.json({success: true, deleted: ids.length});
+    res.json({success: true, deleted});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
@@ -356,18 +410,49 @@ export const getCategoryMappings = (req, res) => {
 
 export const updateCategoryMapping = (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const id = parsePositiveSafeInteger(req.params.id);
+    if (!id) return res.status(400).json({error: 'Invalid mapping ID'});
+    if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'user_category_id')) {
+      return res.status(400).json({error: 'user_category_id required'});
+    }
     const { user_category_id } = req.body;
 
-    const mapping = db.prepare('SELECT user_id FROM category_mappings WHERE id = ?').get(id);
+    const mapping = db.prepare(`
+      SELECT id, user_id, provider_id, COALESCE(category_type, 'live') AS category_type
+      FROM category_mappings
+      WHERE id = ?
+    `).get(id);
     if (!mapping) return res.status(404).json({error: 'Mapping not found'});
 
     if (!req.user.is_admin && mapping.user_id !== req.user.id) {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    db.prepare('UPDATE category_mappings SET user_category_id = ? WHERE id = ?')
-      .run(user_category_id ? Number(user_category_id) : null, id);
+    const targetId = user_category_id === null ? null : parsePositiveSafeInteger(user_category_id);
+    if (user_category_id !== null && !targetId) {
+      return res.status(400).json({error: 'Invalid user_category_id'});
+    }
+
+    const updated = db.transaction(() => {
+      if (targetId !== null) {
+        const target = db.prepare(`
+          SELECT id, user_id, COALESCE(type, 'live') AS type
+          FROM user_categories
+          WHERE id = ?
+        `).get(targetId);
+        if (!target || target.user_id !== mapping.user_id || target.type !== mapping.category_type) {
+          return false;
+        }
+      }
+
+      return db.prepare(`
+        UPDATE category_mappings
+        SET user_category_id = ?
+        WHERE id = ? AND user_id = ?
+      `).run(targetId, id, mapping.user_id).changes === 1;
+    })();
+
+    if (!updated) return res.status(400).json({error: 'Invalid user_category_id'});
 
     clearChannelsCache(mapping.user_id);
     res.json({success: true});

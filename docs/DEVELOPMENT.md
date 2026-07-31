@@ -13,6 +13,17 @@
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
+## Pull Request Validation
+
+Pull requests to `main` must pass the Node.js 24 validation job before merge.
+It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
+full test suite with an isolated temporary `DATA_DIR`, runs the build command,
+and fails on high or critical production dependency vulnerabilities. The
+temporary test directory is removed even when a test fails. Pull-request Docker
+builds run only after validation and verify the image without logging in to the
+registry or publishing it. Tagged release archives depend on both validation
+and the Docker job, so failed lint, tests, builds, or audits block publishing.
+
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
 `npm install` after changing Node versions to keep native bindings aligned with
@@ -46,6 +57,15 @@ external WebVTT `<track>` via `subtitle_track=<ffmpeg_stream_index>` and
 `subtitle_format=vtt`, so the video URL remains seekable. Selecting a
 server-side audio track still uses the FFmpeg MP4 output path with
 `audio_track=<ffmpeg_stream_index>`.
+
+For an explicit cross-owner channel grant, stream reservation always evaluates
+the exact source provider first and applies that provider's connection limit and
+backup URLs. A target-user provider account is eligible as account-level
+failover only when its normalized primary URL appears in the exact source
+provider's configured backup URL list. Merely sharing the same panel URL does
+not make another account compatible. Movie URL suffixes remain accepted for
+client compatibility, but the upstream extension comes only from stored channel
+metadata and falls back to `mp4`.
 
 ## Local Data
 
@@ -102,6 +122,25 @@ Heavy one-time migrations should:
 - mark completion in `settings`
 - avoid repeated `VACUUM`
 - preserve existing user/provider data
+
+The channel-authorization migration preserves assignment IDs and the existing
+`is_hidden` value, adds `authorization_revoked`, and marks ungranted ownership
+mismatches as revoked. Databases that ran the earlier pre-release grant
+migration keep any rows that migration hid; an approved sync can clear only
+their authorization revocation, while an administrator must explicitly restore
+a selected channel to clear its hidden state. Re-running the migration is
+idempotent and does not infer administrator grants.
+
+## Series Episode Cache Identity
+
+Series episode metadata is keyed by the normalized upstream panel URL. Provider
+accounts that use the same normalized URL therefore share one episode catalog.
+This assumes that series IDs, episode IDs, metadata, and container extensions
+are panel-global and do not vary by account. The first successful sync remains
+authoritative while its `last_modified` state is current; a later eligible and
+successful refresh for the same panel and series becomes the new authoritative
+record. Failed or unchanged sibling-account syncs do not overwrite cached
+metadata.
 
 ## Web Player Performance
 

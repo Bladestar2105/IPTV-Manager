@@ -1,14 +1,16 @@
 import zlib from 'zlib';
-import db from '../database/db.js';
+import db, { openDbConnection } from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels, getEpgXmlForChannels } from '../services/epgService.js';
 import { channelsJsonCache } from '../services/cacheService.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
+import { SERIES_EPISODE_ALIAS_MIN, SERIES_EPISODE_OFFSET } from '../utils/seriesEpisodeId.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -39,6 +41,33 @@ const sanitizeMetadata = (val) => {
 };
 
 const encodeXtreamEpgText = (val) => val ? Buffer.from(String(val)).toString('base64') : '';
+
+const prepareSeriesEpisodeAliases = (database = db) => ({
+  insert: database.prepare(`
+    INSERT OR IGNORE INTO series_episode_aliases
+      (user_channel_id, source_key, series_remote_id, remote_episode_id)
+    VALUES (?, ?, ?, ?)
+  `),
+  select: database.prepare(`
+    SELECT id FROM series_episode_aliases
+    WHERE user_channel_id = ? AND source_key = ? AND series_remote_id = ? AND remote_episode_id = ?
+  `),
+});
+
+const getOrCreateSeriesEpisodeAlias = (statements, userChannelId, sourceKey, seriesRemoteId, remoteEpisodeId) => {
+  const values = [Number(userChannelId), String(sourceKey || ''), Number(seriesRemoteId), Number(remoteEpisodeId)];
+  if (!values[1] || !values.every((value, index) => index === 1 || (Number.isSafeInteger(value) && value > 0))) return null;
+
+  let row = statements.select.get(...values);
+  if (!row) {
+    statements.insert.run(...values);
+    row = statements.select.get(...values);
+  }
+  return row && Number.isSafeInteger(Number(row.id)) &&
+    row.id >= SERIES_EPISODE_ALIAS_MIN && row.id < SERIES_EPISODE_OFFSET
+    ? String(row.id)
+    : null;
+};
 
 const formatXtreamEpgListing = (program, epgId) => ({
   id: String(program.start),
@@ -237,7 +266,7 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT DISTINCT cat.*
         FROM user_categories cat
-        JOIN user_channels uc ON uc.user_category_id = cat.id
+        JOIN authorized_user_channels uc ON uc.user_category_id = cat.id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = ? AND uc.is_hidden = 0
       `;
@@ -276,7 +305,7 @@ export const playerApi = async (req, res) => {
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult,
                map.epg_channel_id as manual_epg_id
         FROM user_categories cat
-        JOIN user_channels uc ON cat.id = uc.user_category_id
+        JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE cat.user_id = ? AND pc.stream_type = 'live' AND uc.is_hidden = 0`;
@@ -324,7 +353,7 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, cat.is_adult as category_is_adult
         FROM user_categories cat
-        JOIN user_channels uc ON cat.id = uc.user_category_id
+        JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = 'movie' AND uc.is_hidden = 0`;
       let params = [user.id];
@@ -356,7 +385,7 @@ export const playerApi = async (req, res) => {
           rating_5based: ch.rating_5based || 0,
           added: ch.added || nowStr,
           category_id: String(ch.user_category_id),
-          container_extension: ch.mime_type || 'mp4',
+          container_extension: normalizeContainerExtension(ch.mime_type),
           custom_sid: null,
           direct_source: ''
         };
@@ -370,7 +399,7 @@ export const playerApi = async (req, res) => {
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
                cat.is_adult as category_is_adult
         FROM user_categories cat
-        JOIN user_channels uc ON cat.id = uc.user_category_id
+        JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE cat.user_id = ? AND pc.stream_type = 'series' AND uc.is_hidden = 0`;
       let params = [user.id];
@@ -428,11 +457,11 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0 AND pc.stream_type = 'series'
       `).get(seriesId, user.id);
 
       if (!channel) return res.json({});
@@ -448,29 +477,61 @@ export const playerApi = async (req, res) => {
 
         const data = await resp.json();
 
-        const OFFSET = 1000000000;
-        const providerId = channel.provider_id;
-
         if (data.info && channel.custom_name) {
             data.info.name = channel.custom_name;
         }
 
         if (data.episodes) {
-           for (const seasonKey in data.episodes) {
-              const episodes = data.episodes[seasonKey];
-              if (Array.isArray(episodes)) {
-                 episodes.forEach(ep => {
+           const sourceKey = providerSourceKey(channel.url);
+           const episodeAliases = prepareSeriesEpisodeAliases();
+           const upsertEpisode = db.prepare(`
+             INSERT INTO provider_series_episodes
+               (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(source_key, series_remote_id, remote_episode_id) DO UPDATE SET
+               season = excluded.season,
+               episode_num = excluded.episode_num,
+               title = excluded.title,
+               container_extension = excluded.container_extension,
+               logo = excluded.logo,
+               added = excluded.added
+           `);
+           db.transaction(() => {
+             for (const seasonKey in data.episodes) {
+                const episodes = data.episodes[seasonKey];
+                if (!Array.isArray(episodes)) continue;
+                data.episodes[seasonKey] = episodes.filter(ep => {
                     const originalId = Number(ep.id);
-                    const newId = (providerId * OFFSET + originalId).toString();
+                    const newId = getOrCreateSeriesEpisodeAlias(
+                      episodeAliases,
+                      channel.user_channel_id,
+                      sourceKey,
+                      remoteSeriesId,
+                      originalId
+                    );
+                    if (!newId) return false;
+                    upsertEpisode.run(
+                      sourceKey,
+                      remoteSeriesId,
+                      originalId,
+                      Number(ep.season ?? seasonKey) || 0,
+                      Number(ep.episode_num) || 0,
+                      ep.title || '',
+                      normalizeContainerExtension(ep.container_extension),
+                      ep.info?.movie_image || ep.movie_image || ep.cover || '',
+                      ep.added || ''
+                    );
                     ep.id = newId;
+                    ep.container_extension = normalizeContainerExtension(ep.container_extension);
 
                     // Cache the episode name for the active streams dashboard
                     const seriesName = data.info ? data.info.name : 'Unknown Series';
                     const epTitle = ep.title ? ep.title : `Episode ${originalId}`;
                     episodeNameCache.set(newId, `${seriesName} - ${epTitle}`);
-                 });
-              }
-           }
+                    return true;
+                });
+             }
+           })();
         }
 
         return res.json(data);
@@ -487,7 +548,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -535,7 +596,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -570,7 +631,7 @@ export const playerApi = async (req, res) => {
 
       const channel = db.prepare(`
         SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -604,7 +665,7 @@ export const playerApi = async (req, res) => {
       const placeholders = streamIds.map(() => '?').join(',');
       const channels = db.prepare(`
         SELECT uc.id as user_channel_id, pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -668,7 +729,7 @@ export const getPlaylist = async (req, res) => {
         pc.provider_id, pc.remote_stream_id,
              cat.name as category_name, map.epg_channel_id as manual_epg_id
       FROM user_categories cat
-      JOIN user_channels uc ON cat.id = uc.user_category_id
+      JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND uc.is_hidden = 0`;
@@ -721,14 +782,15 @@ export const getPlaylist = async (req, res) => {
       WHERE source_key = ? AND series_remote_id = ?
       ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
     `);
+    const episodeAliasDb = openDbConnection();
+    const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
     const sourceKeyByProviderId = new Map(
       db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, providerSourceKey(p.url)])
     );
-    const EPISODE_ID_OFFSET = 1000000000; // must match proxySeries decoding
-
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
+    try {
     for (const ch of stmt.iterate(...params)) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
       const logo = ch.logo || '';
@@ -748,13 +810,22 @@ export const getPlaylist = async (req, res) => {
       finalName = finalName.trim();
 
       if (ch.stream_type === 'series') {
-        const episodes = episodesStmt.all(sourceKeyByProviderId.get(ch.provider_id) || '', ch.remote_stream_id);
+        const sourceKey = sourceKeyByProviderId.get(ch.provider_id) || '';
+        const episodes = episodesStmt.all(sourceKey, ch.remote_stream_id);
         if (episodes.length > 0) {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
             const epLogo = ep.logo ? sanitizeM3uTag(ep.logo) : safeLogo;
-            let episodeUrl = seriesPrefix + (ch.provider_id * EPISODE_ID_OFFSET + ep.remote_episode_id) + '.' + (ep.container_extension || 'mp4');
+            const episodeId = getOrCreateSeriesEpisodeAlias(
+              episodeAliases,
+              ch.user_channel_id,
+              sourceKey,
+              ch.remote_stream_id,
+              ep.remote_episode_id
+            );
+            if (!episodeId) continue;
+            let episodeUrl = seriesPrefix + episodeId + '.' + normalizeContainerExtension(ep.container_extension);
             if (useTokenAuth) {
               episodeUrl += tokenParam;
             }
@@ -773,14 +844,13 @@ export const getPlaylist = async (req, res) => {
           }
           continue;
         }
-        // Episodes not synced (yet): fall through to the legacy series entry.
+        // Unsynchronized series have no playable episode identifier yet.
+        continue;
       }
 
       let streamUrl;
       if (ch.stream_type === 'movie') {
-         streamUrl = moviePrefix + streamId + '.' + (ch.mime_type || 'mp4');
-      } else if (ch.stream_type === 'series') {
-         streamUrl = seriesPrefix + streamId + '.' + (ch.mime_type || 'mp4');
+         streamUrl = moviePrefix + streamId + '.' + normalizeContainerExtension(ch.mime_type);
       } else {
          streamUrl = livePrefix + streamId + '.' + (output === 'hls' ? 'm3u8' : 'ts');
       }
@@ -799,6 +869,9 @@ export const getPlaylist = async (req, res) => {
           res.write(buffer);
           buffer = '';
       }
+    }
+    } finally {
+      episodeAliasDb.close();
     }
 
     if (buffer.length > 0) {
@@ -823,7 +896,7 @@ export const xmltv = async (req, res) => {
     const allowedIds = new Set();
     let query = `
         SELECT DISTINCT COALESCE(map.epg_channel_id, pc.epg_channel_id) as epg_id
-        FROM user_channels uc
+        FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -895,6 +968,7 @@ export const playerChannelsJson = async (req, res) => {
         pc.logo,
         pc.epg_channel_id,
         pc.remote_stream_id,
+        pc.provider_id,
         pc.stream_type,
         pc.tv_archive,
         pc.tv_archive_duration,
@@ -904,9 +978,10 @@ export const playerChannelsJson = async (req, res) => {
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id,
-        p.use_mapped_epg_icon
+        p.use_mapped_epg_icon,
+        p.url as provider_url
       FROM user_categories cat
-      JOIN user_channels uc ON cat.id = uc.user_category_id
+      JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
@@ -931,6 +1006,27 @@ export const playerChannelsJson = async (req, res) => {
     // 📊 Impact: Significantly lowers RAM usage and speeds up response generation for player JSON payload.
     let jsonOutput = '[';
     let isFirst = true;
+    const appendItem = (item, ch) => {
+      if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
+        if (ch.plot) item.plot = ch.plot;
+        if (ch.cast) item.cast = ch.cast;
+        if (ch.director) item.director = ch.director;
+        if (ch.genre) item.genre = ch.genre;
+        if (ch.releaseDate) item.releaseDate = ch.releaseDate;
+        if (ch.rating) item.rating = ch.rating;
+        if (ch.episode_run_time) item.duration = ch.episode_run_time;
+      }
+
+      if (ch.drm_license_type || ch.drm_license_key) {
+        item.drm = {};
+        if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
+        if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
+      }
+
+      if (!isFirst) jsonOutput += ',';
+      jsonOutput += JSON.stringify(item);
+      isFirst = false;
+    };
 
     if (!isExpired) {
         // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
@@ -938,7 +1034,16 @@ export const playerChannelsJson = async (req, res) => {
         const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
         const moviePrefix = `${host}/movie/token/auth/`;
         const seriesPrefix = `${host}/series/token/auth/`;
+        const episodesStmt = db.prepare(`
+          SELECT remote_episode_id, season, episode_num, container_extension, logo
+          FROM provider_series_episodes
+          WHERE source_key = ? AND series_remote_id = ?
+          ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
+        `);
+        const episodeAliasDb = openDbConnection();
+        const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
 
+        try {
         for (const ch of stmt.iterate(user.id)) {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
@@ -955,17 +1060,43 @@ export const playerChannelsJson = async (req, res) => {
           }
           name = name.trim();
 
-          const containerExtension = String(ch.mime_type || '').trim().toLowerCase();
-          const isDashStream = containerExtension === 'mpd' || containerExtension === 'dash' || containerExtension === 'application/dash+xml';
+          const containerExtension = normalizeContainerExtension(
+            ch.mime_type,
+            ch.stream_type === 'live' ? 'ts' : 'mp4'
+          );
+          const isDashStream = containerExtension === 'mpd';
           let streamUrl;
           let type = 'live';
 
           if (ch.stream_type === 'movie') {
              type = 'movie';
-             streamUrl = moviePrefix + ch.user_channel_id + '.' + (containerExtension || 'mp4') + tokenParam;
+             streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
           } else if (ch.stream_type === 'series') {
-             type = 'series';
-             streamUrl = seriesPrefix + ch.user_channel_id + '.' + (containerExtension || 'mp4') + tokenParam;
+             const sourceKey = providerSourceKey(ch.provider_url);
+             for (const ep of episodesStmt.all(sourceKey, ch.remote_stream_id)) {
+               const episodeId = getOrCreateSeriesEpisodeAlias(
+                 episodeAliases,
+                 ch.user_channel_id,
+                 sourceKey,
+                 ch.remote_stream_id,
+                 ep.remote_episode_id
+               );
+               if (!episodeId) continue;
+               const extension = normalizeContainerExtension(ep.container_extension);
+               const episodeCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
+               appendItem({
+                 name: `${name} ${episodeCode}`,
+                 group,
+                 logo: ep.logo || logo,
+                 epg_id: epgId,
+                 url: seriesPrefix + episodeId + '.' + extension + tokenParam,
+                 type: 'series',
+                 container_extension: extension,
+                 tv_archive: 0,
+                 tv_archive_duration: 0
+               }, ch);
+             }
+             continue;
           } else {
              if (isDashStream) {
                  streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
@@ -986,27 +1117,10 @@ export const playerChannelsJson = async (req, res) => {
             tv_archive_duration: ch.tv_archive_duration || 0
           };
 
-          if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
-            if (ch.plot) item.plot = ch.plot;
-            if (ch.cast) item.cast = ch.cast;
-            if (ch.director) item.director = ch.director;
-            if (ch.genre) item.genre = ch.genre;
-            if (ch.releaseDate) item.releaseDate = ch.releaseDate;
-            if (ch.rating) item.rating = ch.rating;
-            if (ch.episode_run_time) item.duration = ch.episode_run_time;
-          }
-
-          if (ch.drm_license_type || ch.drm_license_key) {
-              item.drm = {};
-              if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-              if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
-          }
-
-          if (!isFirst) {
-            jsonOutput += ',';
-          }
-          jsonOutput += JSON.stringify(item);
-          isFirst = false;
+          appendItem(item, ch);
+        }
+        } finally {
+          episodeAliasDb.close();
         }
     }
     jsonOutput += ']';
@@ -1045,7 +1159,7 @@ export const playerPlaylist = async (req, res) => {
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id
       FROM user_categories cat
-      JOIN user_channels uc ON cat.id = uc.user_category_id
+      JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
@@ -1083,7 +1197,6 @@ export const playerPlaylist = async (req, res) => {
         const livePrefix = `${host}/live/token/auth/`;
         const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
         const moviePrefix = `${host}/movie/token/auth/`;
-        const seriesPrefix = `${host}/series/token/auth/`;
 
         // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
         // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
@@ -1096,12 +1209,14 @@ export const playerPlaylist = async (req, res) => {
       const name = ch.name || 'Unknown';
 
       let streamUrl;
+      const containerExtension = normalizeContainerExtension(
+        ch.mime_type,
+        ch.stream_type === 'live' ? 'ts' : 'mp4'
+      );
       if (ch.stream_type === 'movie') {
-         streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
-      } else if (ch.stream_type === 'series') {
-         streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
+         streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
       } else {
-         if (ch.mime_type === 'mpd') {
+         if (containerExtension === 'mpd') {
              streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
          } else {
              streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;
