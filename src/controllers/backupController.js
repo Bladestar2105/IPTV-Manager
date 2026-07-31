@@ -185,12 +185,15 @@ export const restoreBackup = (req, res) => {
         const category = getCategoryType.get(categoryId, userId);
         const sourceValidationMapping = currentMapping && sourceMapping
           ? { ...currentMapping, ...sourceMapping,
-              provider_id: sourceMapping.provider_id ?? currentMapping.provider_id,
-              user_id: sourceMapping.user_id ?? currentMapping.user_id,
-              id: sourceMapping.id ?? currentMapping.id }
+              id: sourceMapping.id === undefined ? currentMapping.id : sourceMapping.id,
+              provider_id: sourceMapping.provider_id === undefined ? currentMapping.provider_id : sourceMapping.provider_id,
+              user_id: sourceMapping.user_id === undefined ? currentMapping.user_id : sourceMapping.user_id,
+              user_category_id: sourceMapping.user_category_id === undefined ? currentMapping.user_category_id : sourceMapping.user_category_id,
+              provider_category_id: sourceMapping.provider_category_id === undefined ? currentMapping.provider_category_id : sourceMapping.provider_category_id,
+              category_type: sourceMapping.category_type === undefined ? currentMapping.category_type : sourceMapping.category_type }
           : null;
         const sourceValid = sourceOrigin === 'mapping' && sourceMapping && currentMapping &&
-          Number(sourceMapping.user_category_id) === categoryId &&
+          Number(sourceValidationMapping.user_category_id) === categoryId &&
           validateMappingAssignmentRelationship({
             mapping: sourceValidationMapping,
             userId,
