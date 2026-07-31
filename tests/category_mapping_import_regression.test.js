@@ -90,10 +90,11 @@ describe('category import mapping lifecycle', () => {
     const { providerId } = addProvider();
     const body = {
       user_id: 1,
-      categories: [{ id: 10, name: 'News', import_channels: true, type: 'live' }]
+      categories: [{ id: '10', name: 'News', import_channels: true, type: 'live' }]
     };
     const first = response();
     await importCategories(request(providerId, body), first);
+    expect(first.json.mock.calls[0][0].results[0].category_id).toBe('10');
     const second = response();
     await importCategories(request(providerId, body), second);
 

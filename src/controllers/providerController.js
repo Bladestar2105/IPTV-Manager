@@ -935,7 +935,7 @@ export const importCategories = async (req, res) => {
           });
         }
         totalCategories++;
-        results.push({ category_id: providerCategoryId, new_id: targetCategoryId, name: cat.name, channels_imported: channelsImported });
+        results.push({ category_id: cat.id, new_id: targetCategoryId, name: cat.name, channels_imported: channelsImported });
       }
       return true;
     })();
