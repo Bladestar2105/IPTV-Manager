@@ -710,6 +710,8 @@ export const proxyLive = async (req, res) => {
     let reqExt = 'ts';
     if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
     if (req.path.endsWith('.mp4')) reqExt = 'mp4';
+    if (req.path.endsWith('.mp3')) reqExt = 'mp3';
+    if (req.path.endsWith('.aac')) reqExt = 'aac';
 
     const wantsTranscode = (req.query.transcode === 'true');
 
@@ -725,7 +727,7 @@ export const proxyLive = async (req, res) => {
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
-    const remoteExt = (reqExt === 'm3u8' && !wantsTranscode) ? 'm3u8' : 'ts';
+    const remoteExt = (!wantsTranscode && ['m3u8', 'mp3', 'aac'].includes(reqExt)) ? reqExt : 'ts';
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
@@ -747,18 +749,16 @@ export const proxyLive = async (req, res) => {
         const upstream = result.response;
 
         const isMp4 = (reqExt === 'mp4');
-        const outputFormat = isMp4 ? 'mp4' : 'mpegts';
-        const contentType = isMp4 ? 'video/mp4' : 'video/mp2t';
+        const isMp3 = (reqExt === 'mp3');
+        const outputFormat = isMp4 ? 'mp4' : (isMp3 ? 'mp3' : 'mpegts');
+        const contentType = isMp4 ? 'video/mp4' : (isMp3 ? 'audio/mpeg' : 'video/mp2t');
 
         res.setHeader('Content-Type', contentType);
         res.setHeader('Connection', 'keep-alive');
 
-        const outputOptions = [
-            '-c:v copy',
-            '-c:a aac',
-            '-b:a 128k',
-            `-f ${outputFormat}`
-        ];
+        const outputOptions = isMp3
+          ? ['-vn', '-c:a libmp3lame', '-b:a 128k', '-f mp3']
+          : ['-c:v copy', '-c:a aac', '-b:a 128k', `-f ${outputFormat}`];
 
         if (isMp4) {
             outputOptions.push('-movflags frag_keyframe+empty_moov');
@@ -866,7 +866,10 @@ export const proxyLive = async (req, res) => {
       return;
     }
 
-    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader(
+      'Content-Type',
+      reqExt === 'mp3' ? 'audio/mpeg' : (reqExt === 'aac' ? 'audio/aac' : 'video/mp2t')
+    );
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');

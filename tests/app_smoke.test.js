@@ -56,6 +56,7 @@ describe('application wiring smoke checks', () => {
     expect(streamRoutes).toContain("'/live/:username/:password/:stream_id.ts'");
     expect(streamRoutes).toContain("router.get('/movie/:username/:password/:stream_id.:ext'");
     expect(streamRoutes).toContain("'/live/token/auth/:stream_id.ts'");
+    expect(streamRoutes).toContain("'Cross-Origin-Resource-Policy', 'cross-origin'");
     expect(hdhrRoutes).toContain("router.get(['/:token/discover.json'");
     expect(hdhrRoutes).toContain("router.get('/:token/auto/v:channelId'");
     expect(stalkerRoutes).toContain("'/server/load.php'");

@@ -3,7 +3,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as streamController from '../src/controllers/streamController.js';
 
 // Mocks
-const { mockDb, mockFetch, mockProviderPoolAll } = vi.hoisted(() => {
+const { mockDb, mockFetch, mockProviderPoolAll, mockFfmpeg, mockFfmpegCommand } = vi.hoisted(() => {
+    const mockFfmpegCommand = {
+        inputFormat: vi.fn().mockReturnThis(),
+        outputOptions: vi.fn().mockReturnThis(),
+        on: vi.fn().mockReturnThis(),
+        pipe: vi.fn()
+    };
     return {
         mockDb: {
             prepare: vi.fn(),
@@ -11,7 +17,9 @@ const { mockDb, mockFetch, mockProviderPoolAll } = vi.hoisted(() => {
             pragma: vi.fn(),
         },
         mockFetch: vi.fn(),
-        mockProviderPoolAll: vi.fn()
+        mockProviderPoolAll: vi.fn(),
+        mockFfmpeg: vi.fn(() => mockFfmpegCommand),
+        mockFfmpegCommand
     };
 });
 
@@ -61,12 +69,7 @@ vi.mock('../src/config/constants.js', () => ({
 
 // Mock fluent-ffmpeg module
 vi.mock('fluent-ffmpeg', () => ({
-    default: vi.fn(() => ({
-        inputFormat: vi.fn().mockReturnThis(),
-        outputOptions: vi.fn().mockReturnThis(),
-        on: vi.fn().mockReturnThis(),
-        pipe: vi.fn()
-    }))
+    default: mockFfmpeg
 }));
 
 describe('Stream Controller - Backup Failover', () => {
@@ -163,6 +166,28 @@ describe('Stream Controller - Backup Failover', () => {
 
         expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('http://primary.com'), expect.any(Object));
         expect(mockRes.sendStatus).not.toHaveBeenCalled();
+    });
+
+    it('should transcode a transport stream to MP3 for radio clients', async () => {
+        mockReq.path = '/live/u/p/123.mp3';
+        mockReq.query.transcode = 'true';
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            body: { destroy: vi.fn() }
+        });
+
+        await streamController.proxyLive(mockReq, mockRes);
+
+        expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/555.ts'), expect.any(Object));
+        expect(mockFfmpegCommand.outputOptions).toHaveBeenCalledWith([
+            '-vn',
+            '-c:a libmp3lame',
+            '-b:a 128k',
+            '-f mp3'
+        ]);
+        expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', 'audio/mpeg');
     });
 
     it('should failover to first backup if primary fails', async () => {

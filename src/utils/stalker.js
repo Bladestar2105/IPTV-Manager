@@ -24,3 +24,25 @@ export function expiryEpoch(value) {
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
 }
+
+export const STALKER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+export function formatStalkerDateTime(value, timeZone = STALKER_TIMEZONE) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(date).map(part => [part.type, part.value])
+  );
+
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}

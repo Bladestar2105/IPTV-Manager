@@ -252,6 +252,8 @@ describe('redactUrl', () => {
     expect(redactUrl('/api/test?mac=00:11:22:33:44:55')).toBe('/api/test?mac=********');
     expect(redactUrl('/server/load.php?type=stb&mac=00%3A1A%3A79%3A00%3A00%3A01'))
       .toBe('/server/load.php?type=stb&mac=********');
+    expect(redactUrl('/server/load.php?type=stb&metrics=%7B%22mac%22%3A%2200%3A1A%3A79%3A00%3A00%3A01%22%7D'))
+      .toBe('/server/load.php?type=stb&metrics=********');
   });
 
   it('should return non-string inputs as-is', () => {

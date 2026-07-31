@@ -231,8 +231,8 @@ export function redactUrl(url) {
     // 3. Redact HDHomeRun token: /hdhr/TOKEN/...
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
-    // 4. Redact credentials in query strings while preserving key casing
-    redacted = redacted.replace(/([?&])(password|token|access_token|mac)=[^&]*/gi, '$1$2=********');
+    // 4. Redact credentials and Stalker device metrics while preserving key casing
+    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&]*/gi, '$1$2=********');
 
     return redacted;
   } catch (e) {

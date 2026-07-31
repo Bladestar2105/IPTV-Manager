@@ -24,7 +24,7 @@
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
 - **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.
-- **Stalker/MAG (Experimental)**: MAC-authenticated live TV with per-user categories, channels, short EPG, and tokenized playback links.
+- **Stalker/MAG (Experimental)**: MAC-authenticated live TV, movies, synchronized series, radio, EPG-backed catch-up, and tokenized playback links.
 - **Shared Links**: Create public share links with customizable slugs (short URLs) and expiration dates.
 - **Bulk Operations**: Optimized bulk category import and deletion for managing large playlists efficiently.
 - **VOD & Series Support**: Full proxy support for Movies and TV Series.
@@ -227,8 +227,18 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
 ### Stalker/MAG (Experimental)
 - Register one or more MAC addresses in the selected user's **Stalker/MAG** tab.
 - Configure the client with `http(s)://your-server/c/`.
-- The current implementation covers live TV. VOD, series, catch-up, and a
-  hardware-specific MAG portal UI are not included yet.
+- Current IPTVnator builds recognize the authenticated portal flow when configured
+  with `http(s)://your-server/stalker_portal/c`.
+- An optional 4–8 digit parental PIN can be set per device. It is encrypted at
+  rest; when absent, the portal profile returns an empty parental PIN.
+- Bulk channel lists exclude adult categories. Authenticated clients can request
+  an adult category explicitly and apply the configured parental PIN.
+- The portal serves live TV with EPG, movies, synchronized series episodes,
+  radio categories, and EPG-backed catch-up through the existing authenticated
+  stream proxies.
+- Radio categories can be created or imported from a provider's live categories.
+  MP3/AAC sources pass through directly; transport-stream radio is transcoded
+  to MP3 for software clients. A hardware-specific MAG portal UI is not included.
 
 ### HDHomeRun Emulation
 - `GET /hdhr/:token/discover.json`

@@ -237,6 +237,9 @@
 
                                    <input type="radio" class="btn-check category-type-filter" name="cat-filter-type" id="cat-filter-series" value="series" autocomplete="off">
                                    <label class="btn btn-outline-secondary" for="cat-filter-series" data-i18n="typeSeries">Series</label>
+
+                                   <input type="radio" class="btn-check category-type-filter" name="cat-filter-type" id="cat-filter-radio" value="radio" autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="cat-filter-radio" data-i18n="typeRadio">Radio</label>
                                 </div>
                              </div>
                              <form id="category-form" class="input-group input-group-sm mb-2">
@@ -265,6 +268,9 @@
 
                                    <input type="radio" class="btn-check channel-type-filter" name="chan-filter-type" id="chan-filter-series" value="series" autocomplete="off">
                                    <label class="btn btn-outline-secondary" for="chan-filter-series" data-i18n="typeSeries">Series</label>
+
+                                   <input type="radio" class="btn-check channel-type-filter" name="chan-filter-type" id="chan-filter-radio" value="radio" autocomplete="off">
+                                   <label class="btn btn-outline-secondary" for="chan-filter-radio" data-i18n="typeRadio">Radio</label>
                                 </div>
                              </div>
                              <select id="channel-provider-select" class="form-select form-select-sm mb-2" data-i18n-label="selectProvider"></select>
@@ -400,7 +406,7 @@
                     <!-- Stalker/MAG Tab -->
                     <div class="tab-pane fade" id="tab-stalker" role="tabpanel" aria-labelledby="tab-stalker-btn">
                        <div class="alert alert-info small">
-                          <span data-i18n="stalkerExperimentalLiveTv">Experimental live-TV support. Register each client's MAC address before connecting.</span>
+                          <span data-i18n="stalkerExperimentalPortal">Experimental portal support for live TV, movies, series, radio, and catch-up. Register each client's MAC address before connecting.</span>
                        </div>
                        <div class="mb-3">
                           <label class="form-label small fw-bold" for="stalker-portal-url" data-i18n="stalkerPortalUrl">Portal URL</label>
@@ -411,6 +417,7 @@
                        </div>
                        <form id="stalker-device-form" class="input-group input-group-sm mb-3">
                           <input id="stalker-device-mac" class="form-control" autocomplete="off" placeholder="00:1A:79:00:00:00" data-i18n-label="stalkerDeviceMac" aria-label="Device MAC address" required>
+                          <input id="stalker-device-pin" class="form-control" type="password" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password" data-i18n-placeholder="stalkerParentalPinOptional" data-i18n-label="stalkerParentalPin" aria-label="Parental PIN" placeholder="Optional PIN">
                           <button class="btn btn-primary" type="submit" data-i18n="stalkerAddDevice">Add device</button>
                        </form>
                        <ul id="stalker-device-list" class="list-group small"></ul>
@@ -853,6 +860,10 @@
              <div class="form-check">
                <input class="form-check-input import-type-radio" type="radio" name="import-type" id="import-type-series" value="series">
                <label class="form-check-label" for="import-type-series" data-i18n="typeSeries">Series</label>
+             </div>
+             <div class="form-check">
+               <input class="form-check-input import-type-radio" type="radio" name="import-type" id="import-type-radio" value="radio">
+               <label class="form-check-label" for="import-type-radio" data-i18n="typeRadio">Radio</label>
              </div>
           </div>
           <div class="input-group input-group-sm mb-3">

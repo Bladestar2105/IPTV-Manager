@@ -1090,6 +1090,7 @@ export function migrateStalkerTables(db) {
         user_id INTEGER NOT NULL,
         mac TEXT NOT NULL COLLATE NOCASE UNIQUE,
         enabled INTEGER NOT NULL DEFAULT 1,
+        parental_pin_encrypted TEXT,
         serial_number TEXT,
         device_uid TEXT,
         model TEXT,
@@ -1119,20 +1120,19 @@ export function migrateStalkerTables(db) {
         ON stalker_sessions(expires_at);
     `);
 
-    const hasAdminGrant = db.prepare('PRAGMA table_info(user_channels)')
-      .all()
-      .some(column => column.name === 'granted_by_admin');
-    db.exec(`
-      DROP VIEW IF EXISTS authorized_user_channels;
-      CREATE VIEW authorized_user_channels AS
-      SELECT uc.*
-      FROM user_channels uc
-      JOIN user_categories cat ON cat.id = uc.user_category_id
-      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-      JOIN providers p ON p.id = pc.provider_id
-      WHERE uc.is_hidden = 0
-        AND (${hasAdminGrant ? 'p.user_id = cat.user_id OR uc.granted_by_admin = 1' : 'p.user_id = cat.user_id'})
-    `);
+    const deviceColumns = db.prepare('PRAGMA table_info(stalker_devices)').all();
+    if (!deviceColumns.some(column => column.name === 'parental_pin_encrypted')) {
+      db.exec('ALTER TABLE stalker_devices ADD COLUMN parental_pin_encrypted TEXT');
+    }
+
+    const authorizationView = db.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'view' AND name = 'authorized_user_channels'
+    `).get();
+    if (!authorizationView) {
+      throw new Error('Stalker/MAG requires the authorized_user_channels authorization view');
+    }
   });
 
   migrate();

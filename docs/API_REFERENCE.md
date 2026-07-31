@@ -27,6 +27,10 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `PUT /api/users/:userId/stalker-devices/:deviceId`
 - `DELETE /api/users/:userId/stalker-devices/:deviceId`
 
+Stalker device create/update payloads accept an optional `parental_pin` containing
+4–8 digits. An empty or `null` value clears it. Device responses never contain
+the PIN or its encrypted value and expose only `parental_pin_configured`.
+
 Deleting a user removes user-owned providers and dependent runtime/configuration
 rows first, including provider icon cache entries, share links, temporary
 tokens, user backups, sync data, categories, channels, and mappings. This keeps
@@ -270,6 +274,8 @@ repopulates it with series-scoped keys.
 - `GET /live/:username/:password/:stream_id.ts`
 - `GET /live/:username/:password/:stream_id.m3u8`
 - `GET /live/:username/:password/:stream_id.mp4`
+- `GET /live/:username/:password/:stream_id.mp3`
+- `GET /live/:username/:password/:stream_id.aac`
 - `GET /live/segment/:username/:password/seg.ts`
 - `GET /live/segment/:username/:password/seg.key`
 - `GET /movie/:username/:password/:stream_id.:ext`
@@ -282,6 +288,8 @@ repopulates it with series-scoped keys.
 - `GET /live/token/auth/:stream_id.ts`
 - `GET /live/token/auth/:stream_id.m3u8`
 - `GET /live/token/auth/:stream_id.mp4`
+- `GET /live/token/auth/:stream_id.mp3`
+- `GET /live/token/auth/:stream_id.aac`
 - `GET /movie/token/auth/:stream_id.:ext`
 - `GET /series/token/auth/:episode_id.:ext`
 - `GET /movie/token/auth/:stream_id.:ext?audio_track=<index>`
@@ -300,15 +308,36 @@ repopulates it with series-scoped keys.
 - `GET /c/`
 
 The public compatibility endpoints implement MAC handshake/session
-authentication plus `get_profile`, `get_modules`, `get_main_info`,
-`get_genres`, `get_ordered_list`, `get_all_channels`, `get_short_epg`, and
-`create_link`. Generated links reuse the normal token-authenticated live stream
-proxy, so user channel grants, region locks, and connection limits remain in
-force. Device management is admin-only.
+authentication plus `do_auth`, `get_profile`, `get_modules`, `get_localization`,
+`get_main_info`, `get_time`, `get_genres`, `get_ordered_list`,
+`get_all_channels`, `get_short_epg`, `get_epg_info`, and `create_link`.
+`get_ordered_list` uses 1-based pages, with `p=0` accepted as a page-one
+compatibility alias, and accepts either `genre` or `category`.
+`get_all_channels` excludes adult categories; an authenticated explicit adult
+genre request remains available through `get_ordered_list`.
 
-This first version targets Stalker-compatible live-TV clients. It does not yet
-ship a full hardware-specific MAG portal UI or implement VOD, series, and
-catch-up.
+An optional per-device 4–8 digit parental PIN is encrypted at rest and returned
+only as `parent_password` in the authenticated profile. Without a configured
+PIN, that profile field is empty. Profile timezone and `get_time` use the same
+server timezone.
+
+Content types are `itv` (live TV), `vod` (movies), `series`, and `radio`.
+Series listings expose episodes already synchronized into
+`provider_series_episodes`; ambiguous duplicate season/episode numbers are not
+published. Radio categories use live provider channels and can be created or
+imported from the normal category-management UI. MP3/AAC radio sources pass
+through directly; other radio sources use the authenticated MP3 transcode path.
+
+Archived EPG rows are marked only when the channel has catch-up enabled and the
+programme remains inside its configured archive window. Their opaque
+`/media/<id>.mpg` commands are resolved with
+`type=tv_archive&action=create_link` into the normal token-authenticated
+timeshift proxy after the exact EPG interval is revalidated.
+
+Generated links for all content reuse the normal token-authenticated live,
+movie, series, or timeshift proxies, so user channel grants, region locks,
+session revocation, and connection limits remain in force. Device management is
+admin-only. A hardware-specific MAG portal UI is not included.
 
 ## HDHomeRun Emulation
 

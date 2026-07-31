@@ -461,14 +461,15 @@ async function loadStalkerDevices(userId) {
 
             const details = document.createElement('div');
             const seen = device.last_seen ? new Date(device.last_seen * 1000).toLocaleString() : t('stalkerNever');
-            details.innerHTML = `<strong>${escapeHtml(device.mac)}</strong><br><small class="text-muted">${escapeHtml(t('stalkerLastSeen', { value: seen }))}</small>`;
+            const pinStatus = device.parental_pin_configured ? t('stalkerPinConfigured') : t('stalkerPinNotConfigured');
+            details.innerHTML = `<strong>${escapeHtml(device.mac)}</strong><br><small class="text-muted">${escapeHtml(t('stalkerLastSeen', { value: seen }))} · ${escapeHtml(pinStatus)}</small>`;
 
             const actions = document.createElement('div');
-            actions.className = 'btn-group btn-group-sm';
+            actions.className = 'd-flex align-items-center gap-1';
 
             const toggle = document.createElement('button');
             toggle.type = 'button';
-            toggle.className = device.enabled ? 'btn btn-outline-warning' : 'btn btn-outline-success';
+            toggle.className = device.enabled ? 'btn btn-sm btn-outline-warning' : 'btn btn-sm btn-outline-success';
             toggle.textContent = device.enabled ? t('stalkerDisable') : t('stalkerEnable');
             toggle.onclick = async () => {
                 try {
@@ -483,9 +484,55 @@ async function loadStalkerDevices(userId) {
                 }
             };
 
+            const setPin = document.createElement('button');
+            setPin.type = 'button';
+            setPin.className = 'btn btn-sm btn-outline-primary';
+            setPin.textContent = t('stalkerSetPin');
+            const pinInput = document.createElement('input');
+            pinInput.type = 'password';
+            pinInput.inputMode = 'numeric';
+            pinInput.pattern = '[0-9]{4,8}';
+            pinInput.maxLength = 8;
+            pinInput.autocomplete = 'new-password';
+            pinInput.className = 'form-control form-control-sm';
+            pinInput.style.width = '7rem';
+            pinInput.placeholder = t('stalkerParentalPinOptional');
+            pinInput.setAttribute('aria-label', t('stalkerParentalPin'));
+            setPin.onclick = async () => {
+                if (!pinInput.value) return;
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ parental_pin: pinInput.value })
+                    });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
+            };
+
+            const clearPin = document.createElement('button');
+            clearPin.type = 'button';
+            clearPin.className = 'btn btn-sm btn-outline-secondary';
+            clearPin.textContent = t('stalkerClearPin');
+            clearPin.onclick = async () => {
+                if (!confirm(t('stalkerClearPinConfirm', { mac: device.mac }))) return;
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ parental_pin: null })
+                    });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
+            };
+
             const remove = document.createElement('button');
             remove.type = 'button';
-            remove.className = 'btn btn-outline-danger';
+            remove.className = 'btn btn-sm btn-outline-danger';
             remove.textContent = t('stalkerDelete');
             remove.onclick = async () => {
                 if (!confirm(t('stalkerDeleteDeviceConfirm', { mac: device.mac }))) return;
@@ -497,7 +544,9 @@ async function loadStalkerDevices(userId) {
                 }
             };
 
-            actions.append(toggle, remove);
+            actions.append(toggle, pinInput, setPin);
+            if (device.parental_pin_configured) actions.append(clearPin);
+            actions.append(remove);
             item.append(details, actions);
             list.appendChild(item);
         });
@@ -632,15 +681,20 @@ document.getElementById('stalker-device-form').addEventListener('submit', async 
     if (!selectedUserId) return;
 
     const input = document.getElementById('stalker-device-mac');
+    const pinInput = document.getElementById('stalker-device-pin');
     const button = event.target.querySelector('button[type="submit"]');
     setLoadingState(button, true, 'saving');
     try {
         await fetchJSON(`/api/users/${selectedUserId}/stalker-devices`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ mac: input.value })
+            body: JSON.stringify({
+                mac: input.value,
+                parental_pin: pinInput.value || undefined
+            })
         });
         input.value = '';
+        pinInput.value = '';
         loadStalkerDevices(selectedUserId);
     } catch (error) {
         alert(t('stalkerDeviceError', { error: error.message }));
@@ -1631,11 +1685,12 @@ async function fetchProviderChannels(reset) {
   
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
+  const providerType = type === 'radio' ? 'live' : type;
 
   isLoadingChannels = true;
   
   try {
-    const url = `/api/providers/${providerId}/channels?type=${type}&page=${channelPage}&limit=${channelLimit}&search=${encodeURIComponent(channelSearch)}`;
+    const url = `/api/providers/${providerId}/channels?type=${providerType}&page=${channelPage}&limit=${channelLimit}&search=${encodeURIComponent(channelSearch)}`;
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;

@@ -27,10 +27,17 @@ describe('i18n smoke checks', () => {
     const translations = loadTranslations();
     const stalkerKeys = [
       'stalkerMag',
-      'stalkerExperimentalLiveTv',
+      'stalkerExperimentalPortal',
       'stalkerPortalUrl',
       'stalkerCopyPortalUrl',
       'stalkerDeviceMac',
+      'stalkerParentalPin',
+      'stalkerParentalPinOptional',
+      'stalkerPinConfigured',
+      'stalkerPinNotConfigured',
+      'stalkerSetPin',
+      'stalkerClearPin',
+      'stalkerClearPinConfirm',
       'stalkerAddDevice',
       'stalkerNoDevices',
       'stalkerLastSeen',

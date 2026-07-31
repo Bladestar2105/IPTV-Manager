@@ -172,8 +172,12 @@ export async function getXtreamUser(req) {
 
   // Check token auth first (avoids logging failed attempts for placeholder credentials)
   if (token) {
+    const isStalkerToken = /^[0-9a-f]{64}$/i.test(token) && Boolean(
+      db.prepare('SELECT 1 FROM stalker_sessions WHERE token = ?').get(token)
+    );
+    if (isStalkerToken) tokenCache.delete(token);
     // 0. Check Token Cache
-    if (tokenCache.has(token)) {
+    if (!isStalkerToken && tokenCache.has(token)) {
       const cached = tokenCache.get(token);
       if (Date.now() < cached.expiry) {
         if (cached.requiredSessionId) {
@@ -217,11 +221,11 @@ export async function getXtreamUser(req) {
       }
 
       // 2. Check Stalker/MAG sessions
-      if (!user && !row) {
+      if (!user && !row && isStalkerToken) {
           stalkerRow = db.prepare(`
             SELECT ss.user_id
             FROM stalker_sessions ss
-            JOIN stalker_devices sd ON sd.id = ss.device_id
+            JOIN stalker_devices sd ON sd.id = ss.device_id AND sd.user_id = ss.user_id
             JOIN users u ON u.id = ss.user_id
             WHERE ss.token = ? AND ss.expires_at > ? AND sd.enabled = 1 AND u.is_active = 1
           `).get(token, now);
@@ -235,7 +239,7 @@ export async function getXtreamUser(req) {
       }
 
       // 3. Check HDHR tokens (if not found yet and token length matches hex string)
-      if (!user && /^[0-9a-f]{32}$/i.test(token)) {
+      if (!user && !isStalkerToken && /^[0-9a-f]{32}$/i.test(token)) {
           // Verify we didn't fail a required session check above
           if (!row && !stalkerRow) {
             user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
@@ -244,7 +248,7 @@ export async function getXtreamUser(req) {
       }
 
       // 4. Check Shared Links
-      if (!user && !row && !stalkerRow) {
+      if (!user && !row && !stalkerRow && !isStalkerToken) {
           const share = db.prepare('SELECT * FROM shared_links WHERE token = ?').get(token);
           if (share) {
               user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(share.user_id);
@@ -263,7 +267,7 @@ export async function getXtreamUser(req) {
       }
 
       // Cache the result
-      if (!stalkerRow && (userToCache || row)) {
+      if (!isStalkerToken && !stalkerRow && (userToCache || row)) {
           tokenCache.set(token, {
               user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
               requiredSessionId: requiredSessionId,
