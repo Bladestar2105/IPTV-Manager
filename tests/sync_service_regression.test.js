@@ -59,6 +59,7 @@ describe('sync authorization regression', () => {
       CREATE TABLE user_channels (
         id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
         sort_order INTEGER, is_hidden INTEGER DEFAULT 0,
+        mapping_id INTEGER,
         granted_by_admin INTEGER NOT NULL DEFAULT 0,
         authorization_revoked INTEGER NOT NULL DEFAULT 0
       );
@@ -254,6 +255,96 @@ describe('sync authorization regression', () => {
     });
     expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels WHERE id = 30').get())
       .toEqual({ granted_by_admin: 1, authorization_revoked: 0 });
+  });
+
+  it('maintains parallel live and radio mappings without duplicate assignments', async () => {
+    configure();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (20, 1, 'Radio', 'radio', 1)").run();
+    memDb.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (1, 1, 10, 'Live as Radio', 20, 0, 'radio')
+    `).run();
+
+    await performSync(1, 1, { mode: 'scheduled' });
+    let assignments = memDb.prepare(`
+      SELECT user_category_id, provider_channel_id, mapping_id, is_hidden
+      FROM user_channels ORDER BY user_category_id
+    `).all();
+    expect(assignments).toHaveLength(2);
+    expect(assignments[0].provider_channel_id).toBe(assignments[1].provider_channel_id);
+    expect(assignments.every(assignment => assignment.mapping_id)).toBe(true);
+
+    memDb.prepare('UPDATE user_channels SET is_hidden = 1 WHERE user_category_id = 20').run();
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT is_hidden FROM user_channels WHERE user_category_id = 20').get()).toEqual({ is_hidden: 1 });
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(2);
+  });
+
+  it('reconciles mapped radio assignments on category movement but preserves manual assignments', async () => {
+    configure();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (20, 1, 'Radio A', 'radio', 1)").run();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (30, 1, 'Live B', 'live', 2)").run();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (40, 1, 'Radio B', 'radio', 3)").run();
+    memDb.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES
+        (1, 1, 10, 'Live as Radio A', 20, 0, 'radio'),
+        (1, 1, 11, 'Live B', 30, 0, 'live'),
+        (1, 1, 11, 'Live B as Radio', 40, 0, 'radio')
+    `).run();
+    await performSync(1, 1, { mode: 'scheduled' });
+    const providerChannelId = memDb.prepare('SELECT id FROM provider_channels WHERE remote_stream_id = 101').get().id;
+    memDb.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (30, ?, 99)').run(providerChannelId);
+
+    xtreamState.channels = [{ ...xtreamState.channels[0], category_id: 11 }];
+    await performSync(1, 1, { mode: 'scheduled' });
+
+    const assignments = memDb.prepare(`
+      SELECT user_category_id, mapping_id
+      FROM user_channels WHERE provider_channel_id = ? ORDER BY user_category_id
+    `).all(providerChannelId);
+    expect(assignments.map(assignment => assignment.user_category_id)).toEqual([30, 40]);
+    expect(assignments.filter(assignment => assignment.user_category_id === 30 && assignment.mapping_id === null)).toHaveLength(1);
+  });
+
+  it('applies existing cross-owner authorization rules to radio mappings', async () => {
+    configure({ providerOwner: 2, grant: 1 });
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (20, 1, 'Radio', 'radio', 1)").run();
+    memDb.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (1, 1, 10, 'Live as Radio', 20, 0, 'radio')
+    `).run();
+
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels WHERE user_category_id = 20').get())
+      .toEqual({ granted_by_admin: 1, authorization_revoked: 0 });
+
+    memDb.prepare('DELETE FROM user_channels').run();
+    memDb.prepare('UPDATE sync_configs SET granted_by_admin = 0').run();
+    const blocked = await performSync(1, 1, { mode: 'scheduled' });
+    expect(blocked.errorMessage).toMatch(/explicit administrator approval/i);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
+  });
+
+  it('removes disappeared provider channels and both mapped assignments', async () => {
+    configure();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (20, 1, 'Radio', 'radio', 1)").run();
+    memDb.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (1, 1, 10, 'Live as Radio', 20, 0, 'radio')
+    `).run();
+
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(2);
+
+    xtreamState.channels = [];
+    await performSync(1, 1, { mode: 'scheduled' });
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM provider_channels').get().count).toBe(0);
+    expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
   });
 
   afterAll(() => memDb.close());

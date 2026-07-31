@@ -77,6 +77,11 @@ export const restoreBackup = (req, res) => {
     if ([...restoredCategoryIds].some(id => !Number.isInteger(id) || id <= 0)) {
       return res.status(400).json({ error: 'Invalid backup data' });
     }
+    const backupMappingTargets = new Map(
+      data.categoryMappings
+        .filter(map => Number.isInteger(Number(map.id)) && Number(map.id) > 0)
+        .map(map => [Number(map.id), Number(map.user_category_id)])
+    );
 
     const stats = { channels_restored: 0, channels_hidden: 0, channels_skipped: 0 };
 
@@ -98,9 +103,10 @@ export const restoreBackup = (req, res) => {
       const insertChannel = db.prepare(`
         INSERT INTO user_channels
           (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
-           granted_by_admin, authorization_revoked)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           mapping_id, granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
+      const getMapping = db.prepare('SELECT id FROM category_mappings WHERE id = ? AND user_id = ?');
       const getProviderOwner = db.prepare(`
         SELECT p.user_id AS provider_owner_id
         FROM provider_channels pc
@@ -135,6 +141,11 @@ export const restoreBackup = (req, res) => {
         });
         const isHidden = Number(chan.is_hidden) === 1 ? 1 : 0;
         const authorizationRevoked = grant === null ? 1 : 0;
+        const mappingId = Number(chan.mapping_id);
+        const restoredMappingId = Number.isInteger(mappingId) && mappingId > 0 &&
+          backupMappingTargets.get(mappingId) === categoryId && getMapping.get(mappingId, userId)
+          ? mappingId
+          : null;
 
         insertChannel.run(
           chan.id,
@@ -143,6 +154,7 @@ export const restoreBackup = (req, res) => {
           chan.sort_order,
           chan.custom_name || '',
           isHidden,
+          restoredMappingId,
           grant === 1 ? 1 : 0,
           authorizationRevoked
         );

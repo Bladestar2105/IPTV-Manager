@@ -6,6 +6,7 @@ import {
     migrateProviderPasswords,
     migrateOtpSecrets,
     migrateSeriesEpisodes,
+    migrateUserChannelMappingId,
     migrateUserChannelAdminGrants,
     migrateSyncConfigAdminGrants
 } from '../src/database/migrations.js';
@@ -54,6 +55,21 @@ describe('Migration Bug Regression', () => {
         const row = db.prepare('SELECT otp_secret FROM users WHERE id = ?').get(id);
         const decryptedOnce = decrypt(row.otp_secret);
         expect(decryptedOnce).toBe(secret);
+    });
+
+    it('adds the nullable mapping ownership column idempotently', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec('CREATE TABLE user_channels (id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER)');
+            migrateUserChannelMappingId(legacyDb);
+            migrateUserChannelMappingId(legacyDb);
+            expect(legacyDb.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name))
+              .toContain('mapping_id');
+            expect(legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_channels_mapping'").get())
+              .toEqual({ name: 'idx_user_channels_mapping' });
+        } finally {
+            legacyDb.close();
+        }
     });
 
     it('should revoke legacy ownership mismatches idempotently without changing IDs', () => {

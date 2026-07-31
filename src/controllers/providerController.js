@@ -734,6 +734,10 @@ export const importCategory = async (req, res) => {
       ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
       DO UPDATE SET user_category_id = excluded.user_category_id
     `).run(providerId, targetUserId, Number(category_id), category_name, newCategoryId, catType);
+    const mapping = db.prepare(`
+      SELECT id FROM category_mappings
+      WHERE provider_id = ? AND user_id = ? AND provider_category_id = ? AND category_type = ?
+    `).get(providerId, targetUserId, Number(category_id), catType);
 
     if (import_channels) {
       let streamType = 'live';
@@ -748,14 +752,14 @@ export const importCategory = async (req, res) => {
 
       const insertChannel = db.prepare(`
         INSERT INTO user_channels
-          (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
-        VALUES (?, ?, ?, ?, 0)
+          (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, ?, ?, 0)
       `);
       const channels = stmt.all(providerId, Number(category_id), streamType);
       const importedCount = channels.length;
       db.transaction(() => {
         channels.forEach((ch, idx) => {
-          insertChannel.run(newCategoryId, ch.id, idx, grantedByAdmin);
+          insertChannel.run(newCategoryId, ch.id, idx, mapping?.id || null, grantedByAdmin);
         });
       })();
 
@@ -813,8 +817,8 @@ export const importCategories = async (req, res) => {
     const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
     const insertChannel = db.prepare(`
       INSERT INTO user_channels
-        (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
-      VALUES (?, ?, ?, ?, 0)
+        (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
+      VALUES (?, ?, ?, ?, ?, 0)
     `);
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 
@@ -851,6 +855,10 @@ export const importCategories = async (req, res) => {
         ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
         DO UPDATE SET user_category_id = excluded.user_category_id
       `);
+      const getCategoryMapping = db.prepare(`
+        SELECT id FROM category_mappings
+        WHERE provider_id = ? AND user_id = ? AND provider_category_id = ? AND category_type = ?
+      `);
 
       for (const cat of categories) {
         if (!cat.id || !cat.name) continue;
@@ -864,6 +872,7 @@ export const importCategories = async (req, res) => {
         totalCategories++;
 
         insertCategoryMapping.run(providerId, targetUserId, Number(cat.id), cat.name, newCategoryId, catType);
+        const mapping = getCategoryMapping.get(providerId, targetUserId, Number(cat.id), catType);
 
         let channelsImported = 0;
         if (cat.import_channels) {
@@ -874,7 +883,7 @@ export const importCategories = async (req, res) => {
           const channels = channelsMap.get(`${Number(cat.id)}_${streamType}`) || [];
 
           channels.forEach((ch, idx) => {
-            insertChannel.run(newCategoryId, ch.id, idx, grantedByAdmin);
+            insertChannel.run(newCategoryId, ch.id, idx, mapping?.id || null, grantedByAdmin);
           });
           channelsImported = channels.length;
           totalChannels += channelsImported;

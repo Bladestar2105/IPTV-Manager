@@ -1439,10 +1439,23 @@ export const proxyTimeshift = async (req, res) => {
       } catch {
         archiveProgram = null;
       }
-      const expectedDuration = archiveProgram
-        ? Math.min(Math.max(Math.ceil((Number(archiveProgram.stop) - epochStart) / 60), 1), 1440)
+      const archiveStart = Number(archiveProgram?.start);
+      const archiveStop = Number(archiveProgram?.stop);
+      const expectedDuration = isSupportedEpoch(archiveStart) && isSupportedEpoch(archiveStop) && archiveStop > archiveStart
+        ? Math.min(Math.max(Math.ceil((archiveStop - archiveStart) / 60), 1), 1440)
         : 0;
-      if (!channel.tv_archive || !archiveProgram || epochStart > now || epochStart < now - archiveDays * 86400 || expectedDuration !== durationNumber) {
+      if (
+        !channel.tv_archive ||
+        !archiveProgram ||
+        !isSupportedEpoch(archiveStart) ||
+        !isSupportedEpoch(archiveStop) ||
+        archiveStart !== epochStart ||
+        archiveStop <= archiveStart ||
+        archiveStop > now ||
+        epochStart > now ||
+        epochStart < now - archiveDays * 86400 ||
+        expectedDuration !== durationNumber
+      ) {
         return res.sendStatus(404);
       }
     }

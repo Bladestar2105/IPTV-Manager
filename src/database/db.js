@@ -120,7 +120,8 @@ export function initDb(isPrimary) {
       custom_name TEXT DEFAULT '',
       is_hidden INTEGER DEFAULT 0,
       granted_by_admin INTEGER NOT NULL DEFAULT 0,
-      authorization_revoked INTEGER NOT NULL DEFAULT 0
+      authorization_revoked INTEGER NOT NULL DEFAULT 0,
+      mapping_id INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS user_backups (
@@ -308,6 +309,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserAllowedCountries(db);
             migrations.migrateUserChannelsCustomName(db);
             migrations.migrateUserChannelsIsHidden(db);
+            migrations.migrateUserChannelMappingId(db);
             migrations.migrateUserChannelAdminGrants(db);
             migrations.migrateSyncConfigAdminGrants(db);
             migrations.migrateUserNotes(db);

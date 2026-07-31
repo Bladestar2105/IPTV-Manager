@@ -131,6 +131,12 @@ their authorization revocation, while an administrator must explicitly restore
 a selected channel to clear its hidden state. Re-running the migration is
 idempotent and does not infer administrator grants.
 
+Automatic category synchronization records ownership of new assignments in the
+nullable `user_channels.mapping_id` column. Legacy or manually curated rows
+remain unowned (`NULL`) so a category move cannot delete them; only assignments
+created by an active mapping are reconciled. The migration adds the column and
+an index without changing public IDs.
+
 ## Series Episode Cache Identity
 
 Series episode metadata is keyed by the normalized upstream panel URL. Provider

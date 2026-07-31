@@ -1051,6 +1051,51 @@ describe('Stalker/MAG portal flow', () => {
     expect(unknown.body).toEqual({ js: {} });
   });
 
+  it('accepts completed epoch catch-up only and rejects incomplete or invalid programmes', async () => {
+    await registerDevice();
+    const token = await handshake();
+    const current = epgDb.prepare(`
+      SELECT start, stop FROM epg_programs
+      WHERE channel_id = ? AND title = 'Current Show'
+    `).get(epgIds[0]);
+    const requestEpoch = (start, duration, channelId = authorizedChannelIds[0]) => request(app)
+      .get(`/timeshift/token/auth/${duration}/epoch-${start}/${channelId}.ts`)
+      .query({ token });
+
+    const completed = await requestEpoch(archivedProgramStart, 60);
+    // The fixture upstream is intentionally unavailable; a 502 proves the
+    // completed programme passed archive validation and reached proxy fetch.
+    expect(completed.status).toBe(502);
+
+    expect((await requestEpoch(current.start, Math.ceil((current.stop - current.start) / 60))).status).toBe(404);
+    expect((await requestEpoch(current.stop + 1, 31)).status).toBe(404);
+    expect((await requestEpoch(archivedProgramStart, 61)).status).toBe(404);
+
+    const originalStop = epgDb.prepare('SELECT stop FROM epg_programs WHERE channel_id = ? AND title = \'Archived Show\'').get(epgIds[0]).stop;
+    epgDb.prepare("UPDATE epg_programs SET stop = 'invalid-stop' WHERE channel_id = ? AND title = 'Archived Show'").run(epgIds[0]);
+    expect((await requestEpoch(archivedProgramStart, 60)).status).toBe(404);
+    epgDb.prepare("UPDATE epg_programs SET stop = ? WHERE channel_id = ? AND title = 'Archived Show'").run(originalStop, epgIds[0]);
+
+    epgDb.prepare("UPDATE epg_programs SET stop = ? WHERE channel_id = ? AND title = 'Archived Show'").run(archivedProgramStart - 1, epgIds[0]);
+    expect((await requestEpoch(archivedProgramStart, 60)).status).toBe(404);
+    epgDb.prepare("UPDATE epg_programs SET stop = ? WHERE channel_id = ? AND title = 'Archived Show'").run(originalStop, epgIds[0]);
+
+    expect((await requestEpoch(archivedProgramStart, 60, hiddenChannelIds[0])).status).toBe(404);
+    expect((await requestEpoch(archivedProgramStart, 60, unauthorizedChannelIds[0])).status).toBe(404);
+
+    const formatted = await request(app)
+      .get(`/timeshift/token/auth/60/2026-01-15:12-00/${authorizedChannelIds[0]}.ts`)
+      .query({ token });
+    expect(formatted.status).toBe(502);
+
+    await request(app)
+      .put(`/api/users/${userId}/stalker-devices/${(await db.prepare('SELECT id FROM stalker_devices WHERE user_id = ?').get(userId)).id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ enabled: false })
+      .expect(200);
+    expect((await requestEpoch(archivedProgramStart, 60)).status).toBe(401);
+  });
+
   it('enforces the create_link module type matrix', async () => {
     await registerDevice();
     const token = await handshake();

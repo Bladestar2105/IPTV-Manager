@@ -773,6 +773,19 @@ export function migrateUserChannelsIsHidden(db) {
   }
 }
 
+export function migrateUserChannelMappingId(db) {
+  try {
+    const columns = db.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name);
+    if (!columns.includes('mapping_id')) {
+      db.exec('ALTER TABLE user_channels ADD COLUMN mapping_id INTEGER');
+      console.log('✅ DB Migration: mapping_id column added to user_channels');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_user_channels_mapping ON user_channels(mapping_id)');
+  } catch (e) {
+    console.error('User channel mapping migration error:', e);
+  }
+}
+
 export function migrateUserChannelAdminGrants(db) {
   const migrate = db.transaction(() => {
     const columns = db.prepare('PRAGMA table_info(user_channels)').all().map(column => column.name);
