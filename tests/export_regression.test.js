@@ -295,6 +295,60 @@ describe('Export/Import Regression Tests', () => {
         ]);
     });
 
+    it('preserves validated modern mapping provenance after ID remapping', async () => {
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+
+        const userId = db.prepare("INSERT INTO users (username, password) VALUES ('mapped_import', 'pass')").run().lastInsertRowid;
+        const providerId = db.prepare(`
+            INSERT INTO providers (name, url, username, password, user_id)
+            VALUES ('Mapped Provider', 'http://mapped.example', 'u', ?, ?)
+        `).run(encrypt('provider-pass'), userId).lastInsertRowid;
+        const channelId = db.prepare(`
+            INSERT INTO provider_channels (provider_id, remote_stream_id, name, original_category_id, stream_type)
+            VALUES (?, 701, 'Mapped Series', 77, 'series')
+        `).run(providerId).lastInsertRowid;
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (?, 'Mapped', 'series')").run(userId).lastInsertRowid;
+        const mappingId = db.prepare(`
+            INSERT INTO category_mappings
+              (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+            VALUES (?, ?, 77, 'Mapped', ?, 'series')
+        `).run(providerId, userId, categoryId).lastInsertRowid;
+        db.prepare(`
+            INSERT INTO user_channels (user_category_id, provider_channel_id, assignment_origin, mapping_id)
+            VALUES (?, ?, 'mapping', ?)
+        `).run(categoryId, channelId, mappingId);
+
+        let exportedBuffer;
+        systemController.exportData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD, user_id: 'all' }, query: {} },
+            { setHeader: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn(), send: vi.fn(buffer => { exportedBuffer = buffer; }) }
+        );
+        const exportedData = JSON.parse(zlib.gunzipSync(decryptWithPassword(exportedBuffer, TEST_EXPORT_PASSWORD)).toString('utf8'));
+        const sourceMappingId = exportedData.mappings.find(mapping => mapping.id === Number(mappingId)).id;
+        fs.writeFileSync(tempFilePath, encryptWithPassword(zlib.gzipSync(JSON.stringify(exportedData)), TEST_EXPORT_PASSWORD));
+
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+        const resImport = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+        await systemController.importData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD }, file: { path: tempFilePath } },
+            resImport
+        );
+
+        const restored = db.prepare('SELECT assignment_origin, mapping_id FROM user_channels').get();
+        expect(restored.assignment_origin).toBe('mapping');
+        expect(Number(restored.mapping_id)).not.toBe(Number(sourceMappingId));
+        expect(db.prepare('SELECT provider_category_id FROM category_mappings WHERE id = ?').get(restored.mapping_id))
+            .toEqual({ provider_category_id: 77 });
+    });
+
     it('merges duplicate assignments during system import and reports unique counts', async () => {
         db.prepare('PRAGMA foreign_keys = OFF').run();
         for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {

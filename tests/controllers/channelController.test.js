@@ -755,7 +755,7 @@ describe('Channel Controller - createUserCategory', () => {
             (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
           VALUES (?, 2, 77, 'Provider', ?, 'live')
         `).run(provider, source).lastInsertRowid;
-        const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 77, 'Series', 'live')").run(provider).lastInsertRowid;
+        const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, original_category_id, stream_type) VALUES (?, 77, 'Series', 77, 'live')").run(provider).lastInsertRowid;
         const assignment = db.prepare(`
           INSERT INTO user_channels
             (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, assignment_origin, mapping_id)
@@ -780,6 +780,34 @@ describe('Channel Controller - createUserCategory', () => {
           .toEqual({ user_category_id: target, mapping_id: mapping, is_hidden: 1, custom_name: 'Custom' });
         expect(db.prepare('SELECT id, user_channel_id FROM series_episode_aliases WHERE id = ?').get(alias))
           .toEqual({ id: alias, user_channel_id: assignment });
+    });
+
+    it('demotes stale mapping-owned assignments before retargeting', () => {
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Stale Mapping Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const source = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Stale Source', 'live')").run().lastInsertRowid;
+        const target = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Stale Target', 'live')").run().lastInsertRowid;
+        const mapping = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+          VALUES (?, 2, 77, 'Provider', ?, 'live')
+        `).run(provider, source).lastInsertRowid;
+        const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, original_category_id, stream_type) VALUES (?, 77, 'Stale Channel', 99, 'live')").run(provider).lastInsertRowid;
+        const assignment = db.prepare(`
+          INSERT INTO user_channels (user_category_id, provider_channel_id, assignment_origin, mapping_id)
+          VALUES (?, ?, 'mapping', ?)
+        `).run(source, channel, mapping).lastInsertRowid;
+        const res = response();
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: String(target) },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({
+            success: true, assignments_removed: 0, assignments_moved: 0, duplicates_merged: 0
+        });
+        expect(db.prepare('SELECT user_category_id, assignment_origin, mapping_id FROM user_channels WHERE id = ?').get(assignment))
+          .toEqual({ user_category_id: source, assignment_origin: 'legacy', mapping_id: null });
     });
 
     it('merges a retargeted assignment into a manual target and preserves aliases', () => {

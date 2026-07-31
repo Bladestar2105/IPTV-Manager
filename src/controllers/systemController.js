@@ -15,8 +15,13 @@ import { getGeoIpUpdatePlan, reloadGeoIpData, runGeoIpUpdateProcess } from '../s
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
 import {
   normalizeAssignmentOrigin,
+  mergeAssignmentGroups,
   upsertMergedUserChannelAssignment
 } from '../services/userChannelAssignmentService.js';
+import {
+  validateMappingAssignmentRelationship,
+  validateStoredMappingAssignment
+} from '../services/categoryMappingService.js';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -447,7 +452,9 @@ export const importData = async (req, res) => {
       categories: 0,
       channels: 0,
       channels_merged: 0,
-      channels_skipped: 0
+      channels_skipped: 0,
+      channels_hidden: 0,
+      channels_authorization_revoked: 0
     };
 
     db.transaction(() => {
@@ -651,18 +658,27 @@ export const importData = async (req, res) => {
       }
 
       const userAssignments = (importData.channels || []).filter(c => c.type === 'user_assignment');
-      const getProviderChannel = db.prepare("SELECT provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type FROM provider_channels WHERE id = ?");
+      const getProviderChannel = db.prepare(`
+        SELECT provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type
+        FROM provider_channels WHERE id = ?
+      `);
       const getMapping = db.prepare(`
-        SELECT id, provider_id, user_id, user_category_id, COALESCE(category_type, 'live') AS category_type
+        SELECT id, provider_id, user_id, user_category_id, provider_category_id,
+               COALESCE(category_type, 'live') AS category_type
         FROM category_mappings
         WHERE id = ?
       `);
-      const getCategoryType = db.prepare("SELECT COALESCE(type, 'live') AS type FROM user_categories WHERE id = ?");
+      const sourceProviderChannels = new Map(
+        (importData.channels || []).filter(channel => !channel.type).map(channel => [Number(channel.id), channel])
+      );
+      const sourceCategories = new Map(
+        (importData.categories || []).map(category => [Number(category.id), category])
+      );
+      const candidates = [];
 
       for (const ua of userAssignments) {
         const newUserCatId = categoryIdMap.get(ua.user_category_id);
         const newProvChannelId = providerChannelIdMap.get(ua.provider_channel_id);
-
         if (!newUserCatId || !newProvChannelId) {
           stats.channels_skipped++;
           continue;
@@ -680,22 +696,33 @@ export const importData = async (req, res) => {
         const sourceMappingId = Number(ua.mapping_id);
         const sourceMapping = mappingSourceMap.get(sourceMappingId);
         const remappedMappingId = requestedOrigin === 'mapping' ? mappingIdMap.get(sourceMappingId) : null;
+        const sourceChannel = sourceProviderChannels.get(Number(ua.provider_channel_id));
+        const sourceCategory = sourceCategories.get(Number(ua.user_category_id));
         const restoredChannel = getProviderChannel.get(newProvChannelId);
-        const restoredProviderId = restoredChannel?.provider_id;
-        const restoredCategoryType = getCategoryType.get(newUserCatId)?.type || 'live';
-        const sourceMappingType = sourceMapping?.category_type || 'live';
-        const providerCategoryId = Number(restoredChannel?.original_category_id);
-        const mappingCategoryId = Number(sourceMapping?.provider_category_id);
-        const typeValid = sourceMappingType === restoredCategoryType &&
-          (String(restoredChannel?.stream_type || 'live') === sourceMappingType ||
-            (String(restoredChannel?.stream_type || 'live') === 'live' && sourceMappingType === 'radio'));
-        const validMapping = requestedOrigin === 'mapping' && sourceMapping && remappedMappingId &&
-          Number(sourceMapping.new_user_category_id) === Number(newUserCatId) &&
-          Number(sourceMapping.new_provider_id) === Number(restoredProviderId) &&
-          Number.isFinite(providerCategoryId) && providerCategoryId === mappingCategoryId && typeValid;
+        const sourceValid = requestedOrigin === 'mapping' && sourceMapping && sourceChannel && sourceCategory &&
+          validateMappingAssignmentRelationship({
+            mapping: sourceMapping,
+            userId: sourceMapping.user_id ?? sourceCategory.user_id,
+            userCategoryId: ua.user_category_id,
+            userCategoryType: sourceCategory.type,
+            providerId: sourceChannel.provider_id,
+            providerCategoryId: sourceChannel.original_category_id,
+            providerStreamType: sourceChannel.stream_type
+          });
+        const restoredValid = sourceValid && remappedMappingId && restoredChannel &&
+          validateStoredMappingAssignment(db, {
+            mappingId: remappedMappingId,
+            userId: categoryOwnerMap.get(newUserCatId),
+            userCategoryId: newUserCatId,
+            providerChannelId: newProvChannelId
+          });
+        const validMapping = Boolean(sourceValid && restoredValid &&
+          Number(mappingSourceMap.get(sourceMappingId)?.new_user_category_id) === Number(newUserCatId) &&
+          Number(mappingSourceMap.get(sourceMappingId)?.new_provider_id) === Number(restoredChannel?.provider_id) &&
+          Number(getMapping.get(Number(remappedMappingId))?.provider_category_id) === Number(restoredChannel?.original_category_id));
         const authorizationRevoked = grant === null ||
           (Number(ua.authorization_revoked) === 1 && grant !== 1) ? 1 : 0;
-        const result = upsertMergedUserChannelAssignment(db, {
+        candidates.push({
           id: ua.id,
           user_category_id: Number(newUserCatId),
           provider_channel_id: Number(newProvChannelId),
@@ -706,23 +733,33 @@ export const importData = async (req, res) => {
           mapping_id: validMapping ? Number(remappedMappingId) : null,
           granted_by_admin: grant === 1 ? 1 : 0,
           authorization_revoked: authorizationRevoked,
-          grant_valid: grant === 1
-        }, {
-          preserveId: false,
-          mappingValidator: mappingId => {
-            const mapping = getMapping.get(Number(mappingId));
-            return Boolean(mapping && Number(mapping.user_category_id) === Number(newUserCatId) &&
-              Number(mapping.provider_id) === Number(restoredProviderId) &&
-              Number(mapping.user_id) === Number(categoryOwnerMap.get(newUserCatId)) &&
-              Number(mapping.provider_category_id) === providerCategoryId &&
-              String(mapping.category_type || 'live') === String(restoredCategoryType));
-          }
+          grant_valid: grant === 1,
+          mapping_valid: validMapping
         });
-        if (result.skipped) stats.channels_skipped++;
-        else {
-          stats.channels += result.inserted;
-          stats.channels_merged += result.merged;
+      }
+
+      const grouped = mergeAssignmentGroups(candidates, { preserveLowestId: true });
+      const getAssignmentById = db.prepare('SELECT id FROM user_channels WHERE id = ?');
+      for (const group of grouped.groups) {
+        const candidate = { ...group.candidate };
+        candidate.id = group.validIds.find(id => !getAssignmentById.get(id)) || null;
+        const result = upsertMergedUserChannelAssignment(db, candidate, {
+          preserveId: true,
+          mappingValidator: mappingId => validateStoredMappingAssignment(db, {
+            mappingId,
+            userId: categoryOwnerMap.get(candidate.user_category_id),
+            userCategoryId: candidate.user_category_id,
+            providerChannelId: candidate.provider_channel_id
+          })
+        });
+        if (result.skipped) {
+          stats.channels_skipped++;
+          continue;
         }
+        stats.channels += result.inserted;
+        stats.channels_merged += group.duplicateCount + result.merged;
+        stats.channels_hidden += Number(result.hidden) === 1 ? 1 : 0;
+        stats.channels_authorization_revoked += Number(result.authorization_revoked) === 1 ? 1 : 0;
       }
 
     })();

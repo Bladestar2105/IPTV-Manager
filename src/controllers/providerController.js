@@ -7,9 +7,23 @@ import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
 import { upsertMergedUserChannelAssignment } from '../services/userChannelAssignmentService.js';
+import {
+  upsertCategoryMappingWithReconciliation,
+  validateMappingAssignmentRelationship
+} from '../services/categoryMappingService.js';
 
 const normalizeProviderBaseUrl = (url) => String(url || '').trim().replace(/\/+$/, '');
 const isHttpUrl = (url) => /^https?:\/\//i.test(url);
+const parseProviderCategoryId = value => {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
 
 const replaceDefaultEpgProviderUrl = (epgUrl, fromBase, toBase) => {
   const trimmed = String(epgUrl || '').trim();
@@ -701,8 +715,9 @@ export const importCategory = async (req, res) => {
     const providerId = Number(req.params.providerId);
     const { user_id, category_id, category_name, import_channels, type } = req.body;
     const catType = type || 'live';
+    const providerCategoryId = parseProviderCategoryId(category_id);
 
-    if (!user_id || !category_id || !category_name) {
+    if (!user_id || providerCategoryId === null || !category_name) {
       return res.status(400).json({error: 'Missing required fields'});
     }
 
@@ -724,74 +739,90 @@ export const importCategory = async (req, res) => {
     });
     if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
-    const isAdult = isAdultCategory(category_name) ? 1 : 0;
-
-    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(targetUserId);
-    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
-
-    const catInfo = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(targetUserId, category_name, isAdult, newSortOrder, catType);
-    const newCategoryId = catInfo.lastInsertRowid;
-
-    db.prepare(`
-      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-      VALUES (?, ?, ?, ?, ?, 0, ?)
-      ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
-      DO UPDATE SET user_category_id = excluded.user_category_id
-    `).run(providerId, targetUserId, Number(category_id), category_name, newCategoryId, catType);
-    const mapping = db.prepare(`
-      SELECT id FROM category_mappings
-      WHERE provider_id = ? AND user_id = ? AND provider_category_id = ? AND category_type = ?
-    `).get(providerId, targetUserId, Number(category_id), catType);
-
-    if (import_channels) {
-      let streamType = 'live';
-      if(catType === 'movie') streamType = 'movie';
-      if(catType === 'series') streamType = 'series';
-
-      const stmt = db.prepare(`
-        SELECT id FROM provider_channels
-        WHERE provider_id = ? AND original_category_id = ? AND stream_type = ?
-        ORDER BY original_sort_order ASC, name ASC
-      `);
-
-      const channels = stmt.all(providerId, Number(category_id), streamType);
+    const result = db.transaction(() => {
+      const existing = db.prepare(`
+        SELECT cm.*,
+               COALESCE(cm.category_type, 'live') AS category_type,
+               uc.user_id AS target_user_id,
+               COALESCE(uc.type, 'live') AS target_category_type
+        FROM category_mappings cm
+        LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
+        WHERE cm.provider_id = ? AND cm.user_id = ? AND cm.provider_category_id = ?
+          AND COALESCE(cm.category_type, 'live') = ?
+      `).get(providerId, targetUserId, providerCategoryId, catType);
+      const reusableTarget = existing && Number(existing.user_category_id) > 0 &&
+        Number(existing.target_user_id) === targetUserId &&
+        String(existing.target_category_type) === String(catType)
+        ? Number(existing.user_category_id)
+        : null;
+      let targetCategoryId = reusableTarget;
+      const isAdult = isAdultCategory(category_name) ? 1 : 0;
+      if (!targetCategoryId) {
+        const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(targetUserId);
+        targetCategoryId = Number(db.prepare(`
+          INSERT INTO user_categories (user_id, name, is_adult, sort_order, type)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(targetUserId, category_name, isAdult, Number(maxSort?.max_sort ?? -1) + 1, catType).lastInsertRowid);
+      }
+      const mappingResult = upsertCategoryMappingWithReconciliation(db, {
+        providerId,
+        userId: targetUserId,
+        providerCategoryId,
+        providerCategoryName: category_name,
+        categoryType: catType,
+        targetCategoryId,
+        autoCreated: 0
+      });
+      targetCategoryId = mappingResult.user_category_id;
+      const mapping = mappingResult.mapping;
       let importedCount = 0;
       let mergedCount = 0;
-      db.transaction(() => {
+      if (import_channels) {
+        const streamType = catType === 'movie' || catType === 'series' ? catType : 'live';
+        const channels = db.prepare(`
+          SELECT id, provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type
+          FROM provider_channels
+          WHERE provider_id = ? AND original_category_id = ? AND COALESCE(stream_type, 'live') = ?
+          ORDER BY original_sort_order ASC, name ASC, id
+        `).all(providerId, providerCategoryId, streamType);
         channels.forEach((ch, idx) => {
-          const result = upsertMergedUserChannelAssignment(db, {
-            user_category_id: newCategoryId,
+          const valid = validateMappingAssignmentRelationship({
+            mapping,
+            userId: targetUserId,
+            userCategoryId: targetCategoryId,
+            userCategoryType: catType,
+            providerId: ch.provider_id,
+            providerCategoryId: ch.original_category_id,
+            providerStreamType: ch.stream_type
+          });
+          const assignment = upsertMergedUserChannelAssignment(db, {
+            user_category_id: targetCategoryId,
             provider_channel_id: ch.id,
             sort_order: idx,
-            assignment_origin: 'mapping',
-            mapping_id: mapping?.id || null,
+            assignment_origin: valid ? 'mapping' : 'legacy',
+            mapping_id: valid ? mapping.id : null,
             granted_by_admin: grantedByAdmin,
             authorization_revoked: 0,
-            grant_valid: grantedByAdmin === 1
-          }, {
-            mappingValidator: mappingId => Number(mappingId) === Number(mapping?.id) && Boolean(mapping?.id)
-          });
-          importedCount += result.inserted;
-          mergedCount += result.merged;
+            grant_valid: grantedByAdmin === 1,
+            mapping_valid: valid
+          }, { mappingValidator: mappingId => Number(mappingId) === Number(mapping?.id) && valid });
+          importedCount += assignment.inserted;
+          mergedCount += assignment.merged;
         });
-      })();
+      }
+      return { targetCategoryId, mapping, isAdult, importedCount, mergedCount, reused: mappingResult.reused };
+    })();
 
-      const response = {
-        success: true,
-        category_id: newCategoryId,
-        channels_imported: importedCount,
-        is_adult: isAdult
-      };
-      if (mergedCount) response.channels_merged = mergedCount;
-      res.json(response);
-    } else {
-      res.json({
-        success: true,
-        category_id: newCategoryId,
-        channels_imported: 0,
-        is_adult: isAdult
-      });
-    }
+    clearChannelsCache(targetUserId);
+    const response = {
+      success: true,
+      category_id: result.targetCategoryId,
+      channels_imported: result.importedCount,
+      is_adult: result.isAdult
+    };
+    if (result.mergedCount) response.channels_merged = result.mergedCount;
+    if (result.reused) response.category_reused = true;
+    res.json(response);
   } catch (e) {
     console.error(e);
     res.status(500).json({error: e.message});
@@ -830,96 +861,86 @@ export const importCategories = async (req, res) => {
     let totalMerged = 0;
     let totalCategories = 0;
 
-    const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
-    const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
-
-    // Pre-fetch channels for all categories being imported to avoid N+1 queries
-    const categoriesToImportChannels = categories.filter(c => c.import_channels && c.id);
-    const categoryIds = [...new Set(categoriesToImportChannels.map(c => Number(c.id)))];
-    const channelsMap = new Map();
-
-    if (categoryIds.length > 0) {
-      // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
-      const placeholders = Array(categoryIds.length).fill('?').join(',');
-      // ⚡ Bolt: Replace .all() with .iterate() to eliminate massive intermediate array allocations in V8
-      // 🎯 Why: .iterate() prevents fetching potentially 100k+ channels into a single array before mapping them.
-      const stmt = db.prepare(`
-        SELECT id, original_category_id, stream_type FROM provider_channels
-        WHERE provider_id = ? AND original_category_id IN (${placeholders})
-        ORDER BY original_sort_order ASC, name ASC
-      `);
-
-      for (const ch of stmt.iterate(providerId, ...categoryIds)) {
-        const key = `${ch.original_category_id}_${ch.stream_type}`;
-        if (!channelsMap.has(key)) channelsMap.set(key, []);
-        channelsMap.get(key).push(ch);
-      }
-    }
-
-    db.transaction(() => {
-      let maxSort = getMaxSort.get(targetUserId).max_sort;
-
-      // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
-      const insertCategoryMapping = db.prepare(`
-        INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-        VALUES (?, ?, ?, ?, ?, 0, ?)
-        ON CONFLICT(provider_id, user_id, provider_category_id, category_type)
-        DO UPDATE SET user_category_id = excluded.user_category_id
-      `);
-      const getCategoryMapping = db.prepare(`
-        SELECT id FROM category_mappings
-        WHERE provider_id = ? AND user_id = ? AND provider_category_id = ? AND category_type = ?
-      `);
-
+    const result = db.transaction(() => {
+      let maxSort = Number(db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS max_sort FROM user_categories WHERE user_id = ?').get(targetUserId).max_sort);
       for (const cat of categories) {
-        if (!cat.id || !cat.name) continue;
-
+        const providerCategoryId = parseProviderCategoryId(cat.id);
+        if (providerCategoryId === null || !cat.name) continue;
         const catType = cat.type || 'live';
+        const existing = db.prepare(`
+          SELECT cm.id, cm.user_category_id,
+                 uc.user_id AS target_user_id, COALESCE(uc.type, 'live') AS target_category_type
+          FROM category_mappings cm
+          LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
+          WHERE cm.provider_id = ? AND cm.user_id = ? AND cm.provider_category_id = ?
+            AND COALESCE(cm.category_type, 'live') = ?
+        `).get(providerId, targetUserId, providerCategoryId, catType);
+        const reusableTarget = existing && Number(existing.user_category_id) > 0 &&
+          Number(existing.target_user_id) === targetUserId &&
+          String(existing.target_category_type) === String(catType)
+          ? Number(existing.user_category_id)
+          : null;
+        let targetCategoryId = reusableTarget;
         const isAdult = isAdultCategory(cat.name) ? 1 : 0;
-        maxSort++;
-
-        const catInfo = insertUserCategory.run(targetUserId, cat.name, isAdult, maxSort, catType);
-        const newCategoryId = catInfo.lastInsertRowid;
-        totalCategories++;
-
-        insertCategoryMapping.run(providerId, targetUserId, Number(cat.id), cat.name, newCategoryId, catType);
-        const mapping = getCategoryMapping.get(providerId, targetUserId, Number(cat.id), catType);
-
+        if (!targetCategoryId) {
+          targetCategoryId = Number(db.prepare(`
+            INSERT INTO user_categories (user_id, name, is_adult, sort_order, type)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(targetUserId, cat.name, isAdult, ++maxSort, catType).lastInsertRowid);
+        }
+        const mappingResult = upsertCategoryMappingWithReconciliation(db, {
+          providerId,
+          userId: targetUserId,
+          providerCategoryId,
+          providerCategoryName: cat.name,
+          categoryType: catType,
+          targetCategoryId,
+          autoCreated: 0
+        });
+        targetCategoryId = mappingResult.user_category_id;
+        const mapping = mappingResult.mapping;
         let channelsImported = 0;
         if (cat.import_channels) {
-          let streamType = 'live';
-          if(catType === 'movie') streamType = 'movie';
-          if(catType === 'series') streamType = 'series';
-
-          const channels = channelsMap.get(`${Number(cat.id)}_${streamType}`) || [];
-
+          const streamType = catType === 'movie' || catType === 'series' ? catType : 'live';
+          const channels = db.prepare(`
+            SELECT id, provider_id, original_category_id, COALESCE(stream_type, 'live') AS stream_type
+            FROM provider_channels
+            WHERE provider_id = ? AND original_category_id = ? AND COALESCE(stream_type, 'live') = ?
+            ORDER BY original_sort_order ASC, name ASC, id
+          `).all(providerId, providerCategoryId, streamType);
           channels.forEach((ch, idx) => {
-            const result = upsertMergedUserChannelAssignment(db, {
-              user_category_id: newCategoryId,
+            const valid = validateMappingAssignmentRelationship({
+              mapping,
+              userId: targetUserId,
+              userCategoryId: targetCategoryId,
+              userCategoryType: catType,
+              providerId: ch.provider_id,
+              providerCategoryId: ch.original_category_id,
+              providerStreamType: ch.stream_type
+            });
+            const assignment = upsertMergedUserChannelAssignment(db, {
+              user_category_id: targetCategoryId,
               provider_channel_id: ch.id,
               sort_order: idx,
-              assignment_origin: 'mapping',
-              mapping_id: mapping?.id || null,
+              assignment_origin: valid ? 'mapping' : 'legacy',
+              mapping_id: valid ? mapping.id : null,
               granted_by_admin: grantedByAdmin,
               authorization_revoked: 0,
-              grant_valid: grantedByAdmin === 1
-            }, {
-              mappingValidator: mappingId => Number(mappingId) === Number(mapping?.id) && Boolean(mapping?.id)
-            });
-            channelsImported += result.inserted;
-            totalChannels += result.inserted;
-            totalMerged += result.merged;
+              grant_valid: grantedByAdmin === 1,
+              mapping_valid: valid
+            }, { mappingValidator: mappingId => Number(mappingId) === Number(mapping?.id) && valid });
+            channelsImported += assignment.inserted;
+            totalChannels += assignment.inserted;
+            totalMerged += assignment.merged;
           });
         }
-
-        results.push({
-          category_id: cat.id,
-          new_id: newCategoryId,
-          name: cat.name,
-          channels_imported: channelsImported
-        });
+        totalCategories++;
+        results.push({ category_id: cat.id, new_id: targetCategoryId, name: cat.name, channels_imported: channelsImported });
       }
+      return true;
     })();
+
+    if (result) clearChannelsCache(targetUserId);
 
     const response = {
       success: true,

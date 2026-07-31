@@ -36,6 +36,14 @@ All notable changes to this project are documented here.
   clears uncertain ownership while preserving assignment IDs and fields.
 - Deterministically merge duplicate assignments during legacy backup restore,
   full-system import, cloning, and category import, including alias rebinding.
+- Preserve trusted mapping provenance during version-2 system imports only after
+  validating user, category, provider, provider-category, type, and stream
+  relationships.
+- Reuse and transactionally reconcile existing mapping targets during repeated
+  category imports instead of stranding mapping-owned assignments.
+- Group backup and system-import duplicate assignments before insertion so
+  merged state and the lowest available assignment ID are independent of input
+  order.
 - Treat manual re-add as an explicit transfer from mapping ownership to manual
   ownership.
 - Validated the experimental portal with real software clients.
