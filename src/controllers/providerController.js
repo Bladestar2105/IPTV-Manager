@@ -707,7 +707,7 @@ export const importCategory = async (req, res) => {
     const catType = type || 'live';
     const providerCategoryId = Number(category_id);
 
-    if (!user_id || !Number.isInteger(providerCategoryId) || providerCategoryId <= 0 || !category_name) {
+    if (!user_id || !Number.isInteger(providerCategoryId) || providerCategoryId < 0 || !category_name) {
       return res.status(400).json({error: 'Missing required fields'});
     }
 
@@ -855,7 +855,7 @@ export const importCategories = async (req, res) => {
       let maxSort = Number(db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS max_sort FROM user_categories WHERE user_id = ?').get(targetUserId).max_sort);
       for (const cat of categories) {
         const providerCategoryId = Number(cat.id);
-        if (!Number.isInteger(providerCategoryId) || providerCategoryId <= 0 || !cat.name) continue;
+        if (!Number.isInteger(providerCategoryId) || providerCategoryId < 0 || !cat.name) continue;
         const catType = cat.type || 'live';
         const existing = db.prepare(`
           SELECT cm.id, cm.user_category_id,

@@ -126,4 +126,28 @@ describe('category import mapping lifecycle', () => {
       user_category_id: Number(targetCategoryId), assignment_origin: 'mapping', mapping_id: Number(mappingId)
     });
   });
+
+  it('accepts uncategorized provider category zero for single and bulk imports', async () => {
+    const providerId = db.prepare(`
+      INSERT INTO providers (name, url, username, password, user_id)
+      VALUES ('Provider', 'http://provider.example', 'u', 'p', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO provider_channels
+        (provider_id, remote_stream_id, name, original_category_id, stream_type)
+      VALUES (?, 11, 'Uncategorized', 0, 'live')
+    `).run(providerId);
+
+    const single = response();
+    await importCategory(request(providerId, {
+      user_id: 1, category_id: '0', category_name: 'Uncategorized', import_channels: true, type: 'live'
+    }), single);
+    expect(single.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, channels_imported: 1 }));
+
+    const bulk = response();
+    await importCategories(request(providerId, {
+      user_id: 1, categories: [{ id: '0', name: 'Uncategorized', import_channels: true, type: 'live' }]
+    }), bulk);
+    expect(bulk.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, channels_imported: 0 }));
+  });
 });
