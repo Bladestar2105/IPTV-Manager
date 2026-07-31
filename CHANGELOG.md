@@ -17,5 +17,10 @@ All notable changes to this project are documented here.
   responses.
 - Added provider-timezone-aware catch-up formatting with epoch-preserving
   internal archive links.
+- Reject internal epoch catch-up links for programmes that have not ended.
+- Synchronize radio category mappings for live provider channels alongside live
+  mappings without duplicating provider channels.
+- Run bulk category deletion and channel hiding validation and writes in one
+  transaction with post-commit cache invalidation.
 - Validated the experimental portal with real software clients.
 - Hardware-specific MAG UI and favorites remain unsupported.

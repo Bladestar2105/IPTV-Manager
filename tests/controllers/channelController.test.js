@@ -665,4 +665,48 @@ describe('Channel Controller - createUserCategory', () => {
         expect(res.status).toHaveBeenCalledWith(400);
         expect(db.prepare('SELECT id FROM user_categories WHERE id = ?').get(category)).toEqual({ id: category });
     });
+
+    it('deletes categories, assignments, and mappings atomically after validation', () => {
+        const own = addAssignment(2);
+        const providerId = db.prepare(`
+          SELECT pc.provider_id
+          FROM provider_channels pc
+          JOIN user_channels uc ON uc.provider_channel_id = pc.id
+          WHERE uc.id = ?
+        `).get(own.assignmentId).provider_id;
+        const mappingId = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+          VALUES (?, 2, 10, 'Mapped', ?, 'live')
+        `).run(providerId, own.categoryId).lastInsertRowid;
+        channelsJsonCache.set('user_2_live', ['cached']);
+        const res = response();
+
+        channelController.bulkDeleteUserCategories({
+            body: { ids: [own.categoryId] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true, deleted: 1 });
+        expect(db.prepare('SELECT id FROM user_categories WHERE id = ?').get(own.categoryId)).toBeUndefined();
+        expect(db.prepare('SELECT id FROM user_channels WHERE id = ?').get(own.assignmentId)).toBeUndefined();
+        expect(db.prepare('SELECT user_category_id FROM category_mappings WHERE id = ?').get(mappingId))
+          .toEqual({ user_category_id: null });
+        expect(channelsJsonCache.has('user_2_live')).toBe(false);
+    });
+
+    it('rejects a mixed-owner category request without deleting either category', () => {
+        const own = addAssignment(2);
+        const foreign = addAssignment(3);
+        const res = response();
+
+        channelController.bulkDeleteUserCategories({
+            body: { ids: [own.categoryId, foreign.categoryId] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(db.prepare('SELECT id FROM user_categories WHERE id IN (?, ?) ORDER BY id').all(own.categoryId, foreign.categoryId))
+          .toEqual([{ id: own.categoryId }, { id: foreign.categoryId }]);
+    });
 });

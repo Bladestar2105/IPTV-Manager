@@ -588,6 +588,7 @@ export const importData = async (req, res) => {
         INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
+      const mappingIdMap = new Map();
 
       for (const m of importData.mappings) {
         const newProvId = providerIdMap.get(m.provider_id);
@@ -595,7 +596,8 @@ export const importData = async (req, res) => {
         const newUserCatId = m.user_category_id ? categoryIdMap.get(m.user_category_id) : null;
 
         if (newProvId && newUserId) {
-           insertMappingStmt.run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created, m.category_type || 'live');
+           const info = insertMappingStmt.run(newProvId, newUserId, m.provider_category_id, m.provider_category_name, newUserCatId, m.auto_created, m.category_type || 'live');
+           mappingIdMap.set(Number(m.id), info.lastInsertRowid);
         }
       }
 
@@ -635,8 +637,8 @@ export const importData = async (req, res) => {
       const insertUserChannel = db.prepare(`
         INSERT INTO user_channels
           (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
-           granted_by_admin, authorization_revoked)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+           mapping_id, granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const ua of userAssignments) {
@@ -657,6 +659,7 @@ export const importData = async (req, res) => {
             ua.sort_order,
             ua.custom_name || '',
             Number(ua.is_hidden) === 1 ? 1 : 0,
+            Number(ua.mapping_id) > 0 ? (mappingIdMap.get(Number(ua.mapping_id)) || null) : null,
             grant === 1 ? 1 : 0,
             grant === null ? 1 : 0
           );

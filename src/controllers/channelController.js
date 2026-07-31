@@ -16,6 +16,12 @@ function parseUniquePositiveIds(values) {
   return ids;
 }
 
+function bulkOperationError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
 export const getUserCategories = (req, res) => {
   try {
     const userId = Number(req.params.userId);
@@ -101,24 +107,28 @@ export const bulkDeleteUserCategories = (req, res) => {
     const categoryIds = parseUniquePositiveIds(ids);
     if (!categoryIds) return res.status(400).json({error: 'Invalid ids'});
     const placeholders = Array(categoryIds.length).fill('?').join(',');
-    const categories = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...categoryIds);
-    if (categories.length !== categoryIds.length) return res.status(400).json({error: 'Category not found'});
-    if (!req.user.is_admin && categories.some(category => category.user_id !== req.user.id)) {
-      return res.status(403).json({error: 'Access denied'});
-    }
+    const result = db.transaction(() => {
+      const categories = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...categoryIds);
+      if (categories.length !== categoryIds.length) throw bulkOperationError(400, 'Category not found');
+      if (!req.user.is_admin && categories.some(category => category.user_id !== req.user.id)) {
+        throw bulkOperationError(403, 'Access denied');
+      }
 
-    const userIdsToClear = [...new Set(categories.map(category => category.user_id))];
-    const deleted = db.transaction(() => {
       db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...categoryIds);
       db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...categoryIds);
-      return db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...categoryIds).changes;
+      const deleted = db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...categoryIds).changes;
+      if (deleted !== categoryIds.length) throw bulkOperationError(400, 'Category not found');
+
+      db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_bulk_deleted', `User ${req.user.username} bulk deleted ${deleted} categories`, Math.floor(Date.now() / 1000));
+      return {
+        userIdsToClear: [...new Set(categories.map(category => category.user_id))],
+        deleted
+      };
     })();
 
-    db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_bulk_deleted', `User ${req.user.username} bulk deleted ${ids.length} categories`, Math.floor(Date.now() / 1000));
-
-    userIdsToClear.forEach(uId => clearChannelsCache(uId));
-    res.json({success: true, deleted});
-  } catch (e) { res.status(500).json({error: e.message}); }
+    result.userIdsToClear.forEach(uId => clearChannelsCache(uId));
+    res.json({success: true, deleted: result.deleted});
+  } catch (e) { res.status(e.status || 500).json({error: e.message}); }
 };
 
 export const reorderUserCategories = (req, res) => {
@@ -367,25 +377,30 @@ export const bulkDeleteUserChannels = (req, res) => {
     const channelIds = parseUniquePositiveIds(ids);
     if (!channelIds) return res.status(400).json({error: 'Invalid ids'});
     const placeholders = Array(channelIds.length).fill('?').join(',');
-    const channels = db.prepare(`
-        SELECT uc.id, uc.is_hidden, cat.user_id
-        FROM user_channels uc
-        JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE uc.id IN (${placeholders})
-    `).all(...channelIds);
-    if (channels.length !== channelIds.length) return res.status(400).json({error: 'Channel not found'});
-    if (!req.user.is_admin && channels.some(channel => channel.user_id !== req.user.id)) {
-      return res.status(403).json({error: 'Access denied'});
-    }
+    const result = db.transaction(() => {
+      const channels = db.prepare(`
+          SELECT uc.id, uc.is_hidden, cat.user_id
+          FROM user_channels uc
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE uc.id IN (${placeholders})
+      `).all(...channelIds);
+      if (channels.length !== channelIds.length) throw bulkOperationError(400, 'Channel not found');
+      if (!req.user.is_admin && channels.some(channel => channel.user_id !== req.user.id)) {
+        throw bulkOperationError(403, 'Access denied');
+      }
 
-    const userIdsToClear = [...new Set(channels.map(channel => channel.user_id))];
-    const deleted = db.transaction(() => db.prepare(
-      `UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders}) AND is_hidden <> 1`
-    ).run(...channelIds).changes)();
+      const deleted = db.prepare(
+        `UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders}) AND is_hidden <> 1`
+      ).run(...channelIds).changes;
+      return {
+        userIdsToClear: [...new Set(channels.map(channel => channel.user_id))],
+        deleted
+      };
+    })();
 
-    userIdsToClear.forEach(uId => clearChannelsCache(uId));
-    res.json({success: true, deleted});
-  } catch (e) { res.status(500).json({error: e.message}); }
+    result.userIdsToClear.forEach(uId => clearChannelsCache(uId));
+    res.json({success: true, deleted: result.deleted});
+  } catch (e) { res.status(e.status || 500).json({error: e.message}); }
 };
 
 export const getCategoryMappings = (req, res) => {

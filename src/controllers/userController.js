@@ -308,10 +308,11 @@ export const createUser = async (req, res) => {
                     INSERT OR IGNORE INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 `);
+                const mappingIdMap = new Map();
 
                 for (const m of sourceMappings) {
                     if (providerMap[m.provider_id]) {
-                        insertMapping.run(
+                        const mappingInfo = insertMapping.run(
                             providerMap[m.provider_id],
                             newUserId,
                             m.provider_category_id,
@@ -320,6 +321,7 @@ export const createUser = async (req, res) => {
                             m.auto_created,
                             m.category_type || 'live'
                         );
+                        mappingIdMap.set(Number(m.id), Number(mappingInfo.lastInsertRowid));
                     }
                 }
 
@@ -329,13 +331,13 @@ export const createUser = async (req, res) => {
                 const insertUserChan = db.prepare(`
                     INSERT INTO user_channels
                       (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
-                       granted_by_admin, authorization_revoked)
-                    VALUES (?, ?, ?, ?, ?, 0, 0)
+                       mapping_id, granted_by_admin, authorization_revoked)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, 0)
                 `);
 
                 // Fetch all user channels for source user categories
                 const sourceUserChans = db.prepare(`
-                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name, uc.is_hidden
+                    SELECT uc.user_category_id, uc.provider_channel_id, uc.sort_order, uc.custom_name, uc.is_hidden, uc.mapping_id
                     FROM user_channels uc
                     JOIN user_categories cat ON uc.user_category_id = cat.id
                     WHERE cat.user_id = ?
@@ -346,7 +348,7 @@ export const createUser = async (req, res) => {
                     const newProvChanId = channelMap[uc.provider_channel_id];
 
                     if (newCatId && newProvChanId) {
-                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order, uc.custom_name || '', uc.is_hidden || 0);
+                        insertUserChan.run(newCatId, newProvChanId, uc.sort_order, uc.custom_name || '', uc.is_hidden || 0, mappingIdMap.get(Number(uc.mapping_id)) || null);
                     }
                 }
             }

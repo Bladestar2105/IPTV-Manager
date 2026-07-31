@@ -117,15 +117,18 @@ export async function performSync(providerId, userId, options = {}) {
 
     let allChannels = [];
     let allCategories = [];
+    const completeStreamTypes = new Set();
 
     // 1. Live & M3U Fallback
     try {
        let liveChans = [];
        let m3uMode = false;
+       let liveFetchComplete = false;
 
        // Try Xtream API
        try {
          liveChans = await xtream.getChannels();
+         liveFetchComplete = Array.isArray(liveChans);
        } catch {
           try {
              const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`, { timeout: 60000 });
@@ -133,6 +136,7 @@ export async function performSync(providerId, userId, options = {}) {
                  const contentType = resp.headers.get('content-type');
                  if (contentType && contentType.includes('application/json')) {
                      liveChans = await resp.json();
+                     liveFetchComplete = Array.isArray(liveChans);
                  }
              }
           } catch(e) {}
@@ -140,6 +144,8 @@ export async function performSync(providerId, userId, options = {}) {
 
        // M3U Fallback if Xtream failed or empty
        if (!Array.isArray(liveChans) || liveChans.length === 0) {
+           const apiFetchComplete = liveFetchComplete;
+           liveFetchComplete = false;
            try {
              // Try fetching as M3U
              const m3uResp = await fetchSafe(provider.url, { timeout: 60000 }); // Use original URL
@@ -148,6 +154,7 @@ export async function performSync(providerId, userId, options = {}) {
                  if (parsed.isM3u) {
                      console.debug('  📂 Detected M3U Playlist');
                      m3uMode = true;
+                     liveFetchComplete = true;
 
                      // Map to Xtream format
                      parsed.channels.forEach((ch, idx) => {
@@ -184,6 +191,7 @@ export async function performSync(providerId, userId, options = {}) {
                  }
              }
            } catch (e) { console.error('M3U fallback error:', e.message); }
+           if (!liveFetchComplete && apiFetchComplete) liveFetchComplete = true;
        }
 
        // Normalize
@@ -195,6 +203,7 @@ export async function performSync(providerId, userId, options = {}) {
            }
            allChannels.push(c);
          });
+         if (liveFetchComplete) completeStreamTypes.add('live');
        }
 
        if (!m3uMode) {
@@ -221,6 +230,7 @@ export async function performSync(providerId, userId, options = {}) {
                 c.category_type = 'movie';
                 allChannels.push(c);
             });
+            completeStreamTypes.add('movie');
          }
        } else {
          console.error(`VOD fetch failed: ${resp.status}`);
@@ -249,6 +259,7 @@ export async function performSync(providerId, userId, options = {}) {
                 c.stream_icon = c.cover;
                 allChannels.push(c);
             });
+            completeStreamTypes.add('series');
          }
        }
 
@@ -262,8 +273,6 @@ export async function performSync(providerId, userId, options = {}) {
     } catch(e) { console.error('Series sync error:', e); }
 
     // Process categories and create mappings
-    const categoryMap = new Map(); // Map<String, Int> -> "catId_type" -> userCatId
-
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
     const allMappings = db.prepare(`
       SELECT cm.*,
@@ -280,14 +289,11 @@ export async function performSync(providerId, userId, options = {}) {
 
     const isFirstSync = allMappings.length === 0;
 
-    // Create lookup map and populate initial categoryMap
+    // Create lookup map
     const mappingLookup = new Map(); // Key: "catId_type"
     for (const m of allMappings) {
       const key = `${m.provider_category_id}_${m.category_type || 'live'}`;
       mappingLookup.set(key, m);
-      if (m.user_category_id) {
-        categoryMap.set(key, m.user_category_id);
-      }
     }
 
     // Prepare channel statements
@@ -325,20 +331,21 @@ export async function performSync(providerId, userId, options = {}) {
     // Prepare statement unconditionally to avoid potential undefined issues
     const insertUserChannel = db.prepare(`
       INSERT INTO user_channels
-        (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
-      VALUES (?, ?, ?, ?, 0)
+        (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
+      VALUES (?, ?, ?, ?, ?, 0)
     `);
     const authorizeExistingAssignment = db.prepare(`
       UPDATE user_channels
       SET granted_by_admin = ?, authorization_revoked = 0
       WHERE id = ?
     `);
-    const deleteUserChannel = db.prepare('DELETE FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?');
+    const updateAssignmentMapping = db.prepare('UPDATE user_channels SET mapping_id = ? WHERE id = ?');
+    const deleteMappedAssignment = db.prepare('DELETE FROM user_channels WHERE id = ? AND mapping_id = ?');
 
     if (config && config.auto_add_channels) {
       const existingAssignmentsRows = db.prepare(`
         SELECT uc.id, uc.user_category_id, uc.provider_channel_id,
-               uc.granted_by_admin, uc.authorization_revoked
+               uc.mapping_id, uc.granted_by_admin, uc.authorization_revoked
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE pc.provider_id = ?
@@ -365,6 +372,17 @@ export async function performSync(providerId, userId, options = {}) {
       INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
       VALUES (?, ?, ?, ?, ?, 1, ?)
     `);
+
+    const getMappedTargets = (categoryId, categoryType) => {
+      const keys = [`${categoryId}_${categoryType}`];
+      if (categoryType === 'live') keys.push(`${categoryId}_radio`);
+      return keys.map(key => ({ key, mapping: mappingLookup.get(key) })).filter(({ key, mapping }) => {
+        if (!mapping?.user_category_id || !mapping.id) return false;
+        const expectedType = key.endsWith('_radio') ? 'radio' : categoryType;
+        return (mapping.category_type || 'live') === expectedType;
+      }).map(({ mapping }) => mapping);
+    };
+    const seenRemoteIdsByType = new Map();
 
     // Execute all DB operations in a single transaction
     db.transaction(() => {
@@ -397,9 +415,7 @@ export async function performSync(providerId, userId, options = {}) {
           const newCategoryId = catInfo.lastInsertRowid;
 
           // Create new mapping (only for new categories)
-          insertCategoryMapping.run(providerId, userId, catId, catName, newCategoryId, catType);
-
-          categoryMap.set(lookupKey, newCategoryId);
+          const mappingInfo = insertCategoryMapping.run(providerId, userId, catId, catName, newCategoryId, catType);
 
           // Update lookup to prevent duplicates in current run
           mappingLookup.set(lookupKey, {
@@ -408,6 +424,7 @@ export async function performSync(providerId, userId, options = {}) {
             provider_category_id: catId,
             provider_category_name: catName,
             user_category_id: newCategoryId,
+            id: Number(mappingInfo.lastInsertRowid),
             auto_created: 1,
             category_type: catType
           });
@@ -416,7 +433,7 @@ export async function performSync(providerId, userId, options = {}) {
           console.debug(`  ✅ Created category: ${catName} (${catType}) (id=${newCategoryId})`);
         } else if (!mapping && isFirstSync) {
           // First sync: Create mapping without user category
-          db.prepare(`
+          const mappingInfo = db.prepare(`
             INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
             VALUES (?, ?, ?, ?, NULL, 0, ?)
           `).run(providerId, userId, catId, catName, catType);
@@ -428,6 +445,7 @@ export async function performSync(providerId, userId, options = {}) {
             provider_category_id: catId,
             provider_category_name: catName,
             user_category_id: null,
+            id: Number(mappingInfo.lastInsertRowid),
             auto_created: 0,
             category_type: catType
           });
@@ -448,6 +466,11 @@ export async function performSync(providerId, userId, options = {}) {
           const tvArchive = Number(ch.tv_archive) === 1 ? 1 : 0;
           const tvArchiveDuration = Number(ch.tv_archive_duration) || 0;
           const streamType = ch.stream_type || 'live';
+          const catId = Number(ch.category_id || 0);
+          const catType = ch.category_type || 'live';
+          const mappingTargets = getMappedTargets(catId, catType);
+          if (!seenRemoteIdsByType.has(streamType)) seenRemoteIdsByType.set(streamType, new Set());
+          seenRemoteIdsByType.get(streamType).add(sid);
           const mimeType = normalizeContainerExtension(
             ch.container_extension,
             streamType === 'live' ? 'ts' : 'mp4'
@@ -547,16 +570,20 @@ export async function performSync(providerId, userId, options = {}) {
               // remove it from the old user category (if auto_add_channels is enabled).
               // The subsequent logic will add it to the new user category if applicable.
               if (categoryChanged && config && config.auto_add_channels) {
-                const oldLookupKey = `${existingRow.original_category_id}_${existingRow.stream_type || 'live'}`;
-                const oldUserCatId = categoryMap.get(oldLookupKey);
+                const oldCategoryId = Number(existingRow.original_category_id || 0);
+                const oldCategoryType = existingRow.stream_type || 'live';
+                const oldKeys = [`${oldCategoryId}_${oldCategoryType}`];
+                if (oldCategoryType === 'live') oldKeys.push(`${oldCategoryId}_radio`);
+                const oldMappingIds = new Set(oldKeys
+                  .map(key => mappingLookup.get(key)?.id)
+                  .filter(Boolean)
+                  .map(Number));
 
-                if (oldUserCatId) {
-                  const assignmentKey = `${oldUserCatId}_${existingId}`;
-                  if (existingAssignments.has(assignmentKey)) {
-                    deleteUserChannel.run(oldUserCatId, existingId);
-                    existingAssignments.delete(assignmentKey);
-                    console.debug(`  🗑️ Removed moved channel "${newName}" from old user category (id=${oldUserCatId})`);
-                  }
+                for (const [assignmentKey, assignment] of existingAssignments) {
+                  if (Number(assignment.provider_channel_id) !== Number(existingId) || !oldMappingIds.has(Number(assignment.mapping_id))) continue;
+                  deleteMappedAssignment.run(assignment.id, assignment.mapping_id);
+                  existingAssignments.delete(assignmentKey);
+                  console.debug(`  🗑️ Removed mapped assignment for moved channel "${newName}"`);
                 }
               }
 
@@ -620,13 +647,9 @@ export async function performSync(providerId, userId, options = {}) {
 
           // Auto-add to user categories if enabled
           if (config && config.auto_add_channels) {
-            const catId = Number(ch.category_id || 0);
-            const catType = ch.category_type || 'live';
-            const lookupKey = `${catId}_${catType}`;
-
-            const userCatId = categoryMap.get(lookupKey);
-
-            if (userCatId) {
+            for (const mapping of mappingTargets) {
+              const userCatId = Number(mapping.user_category_id);
+              const mappingId = Number(mapping.id);
               // Check if already added (Optimized in-memory check)
               const assignmentKey = `${userCatId}_${provChannelId}`;
 
@@ -637,22 +660,47 @@ export async function performSync(providerId, userId, options = {}) {
                 if (currentMax === undefined) currentMax = -1;
                 const newSortOrder = currentMax + 1;
 
-                const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, assignmentGrant);
+                const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, mappingId, assignmentGrant);
 
                 // Update in-memory state
                 existingAssignments.set(assignmentKey, {
                   id: Number(assignmentInfo.lastInsertRowid),
+                  user_category_id: userCatId,
+                  provider_channel_id: Number(provChannelId),
+                  mapping_id: mappingId,
                   granted_by_admin: assignmentGrant,
                   authorization_revoked: 0
                 });
                 maxSortMap.set(userCatId, newSortOrder);
-              } else if (!crossOwner) {
-                authorizeExistingAssignment.run(0, existingAssignment.id);
-              } else if (Number(existingAssignment.granted_by_admin) === 1 || restoreRevokedAssignments) {
-                authorizeExistingAssignment.run(1, existingAssignment.id);
+              } else {
+                if (existingAssignment.mapping_id && Number(existingAssignment.mapping_id) !== mappingId) {
+                  updateAssignmentMapping.run(mappingId, existingAssignment.id);
+                  existingAssignment.mapping_id = mappingId;
+                }
+                if (!crossOwner) {
+                  authorizeExistingAssignment.run(0, existingAssignment.id);
+                } else if (Number(existingAssignment.granted_by_admin) === 1 || restoreRevokedAssignments) {
+                  authorizeExistingAssignment.run(1, existingAssignment.id);
+                }
               }
             }
           }
+        }
+      }
+
+      // Remove provider entries that were confirmed absent from a complete
+      // stream-type response. Explicitly remove assignments first because
+      // legacy databases do not enforce a foreign key on user_channels.
+      for (const streamType of completeStreamTypes) {
+        const seenIds = [...(seenRemoteIdsByType.get(streamType) || [])];
+        const notInSeen = seenIds.length ? ` AND remote_stream_id NOT IN (${Array(seenIds.length).fill('?').join(',')})` : '';
+        const staleRows = db.prepare(`
+          SELECT id FROM provider_channels
+          WHERE provider_id = ? AND COALESCE(stream_type, 'live') = ?${notInSeen}
+        `).all(providerId, streamType, ...seenIds);
+        for (const stale of staleRows) {
+          db.prepare('DELETE FROM user_channels WHERE provider_channel_id = ?').run(stale.id);
+          db.prepare('DELETE FROM provider_channels WHERE id = ? AND provider_id = ?').run(stale.id, providerId);
         }
       }
     })();

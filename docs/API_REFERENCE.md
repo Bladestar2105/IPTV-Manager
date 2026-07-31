@@ -186,6 +186,12 @@ rebuilt ownership relationships. Imported cross-owner administrator grants are
 restored only when the admin import request also includes
 `allow_cross_owner: true`; otherwise their sync configs remain disabled and
 their channel assignments remain authorization-revoked.
+
+Radio categories are user-facing mappings of live provider channels. A live
+provider category may be mapped to both live and radio user categories, and
+automatic synchronization maintains both mappings independently. The same
+provider channel record is reused while each user-facing mapping has its own
+`user_channels` assignment.
 - `GET /api/sync-logs`
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`
@@ -343,6 +349,10 @@ commands must target the same type; `vod` accepts movies plus the documented
 series episode command only when both its positive season and `series` episode
 number are present. `tv_archive` accepts only the opaque archive command emitted
 for an authorized EPG row. Cross-module commands return `nothing_to_play`.
+
+Epoch-based internal catch-up links are accepted only for completed EPG
+programmes inside the configured archive window. Formatted Xtream timeshift
+starts remain supported.
 
 Bulk EPG clamps `period` to 168 hours. The response window determines a maximum
 of four programme rows per hour, capped at 500 rows per channel, with a global
