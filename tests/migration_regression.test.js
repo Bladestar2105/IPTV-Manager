@@ -15,6 +15,7 @@ import {
     migrateUserChannelAdminGrants,
     migrateSyncConfigAdminGrants
 } from '../src/database/migrations.js';
+import { mergeAssignmentCandidates } from '../src/services/userChannelAssignmentService.js';
 
 describe('Migration Bug Regression', () => {
     beforeAll(() => {
@@ -240,6 +241,19 @@ describe('Migration Bug Regression', () => {
         } finally {
             legacyDb.close();
         }
+    });
+
+    it('keeps a valid mapping when a lower-id duplicate mapping is stale', () => {
+        const merged = mergeAssignmentCandidates([
+            { id: 10, user_category_id: 1, provider_channel_id: 2, assignment_origin: 'mapping', mapping_id: 900 },
+            { id: 11, user_category_id: 1, provider_channel_id: 2, assignment_origin: 'mapping', mapping_id: 901 }
+        ], { mappingValidator: mappingId => mappingId === 901 });
+
+        expect(merged).toMatchObject({
+            id: 11,
+            assignment_origin: 'mapping',
+            mapping_id: 901
+        });
     });
 
     it('should revoke legacy ownership mismatches idempotently without changing IDs', () => {

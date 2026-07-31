@@ -28,14 +28,23 @@ export function mergeAssignmentCandidates(candidates, { mappingValidator } = {})
     if (Number.isInteger(aId) && Number.isInteger(bId) && aId !== bId) return aId - bId;
     return a._source_index - b._source_index;
   });
-  const preferred = ordered[0];
+  let preferred = ordered[0];
   let assignmentOrigin = preferred.assignment_origin;
   let mappingId = assignmentOrigin === 'mapping' ? Number(preferred.mapping_id) || null : null;
-  if (assignmentOrigin === 'mapping' && (
-    !mappingId || preferred.mapping_valid === false || mappingValidator && !mappingValidator(mappingId, preferred)
-  )) {
-    assignmentOrigin = 'legacy';
-    mappingId = null;
+  if (assignmentOrigin === 'mapping') {
+    const validMapping = ordered.find(row => {
+      if (row.assignment_origin !== 'mapping') return false;
+      const candidateMappingId = Number(row.mapping_id) || null;
+      return candidateMappingId && row.mapping_valid !== false &&
+        (!mappingValidator || mappingValidator(candidateMappingId, row));
+    });
+    if (validMapping) {
+      preferred = validMapping;
+      mappingId = Number(validMapping.mapping_id) || null;
+    } else {
+      assignmentOrigin = 'legacy';
+      mappingId = null;
+    }
   }
 
   const customName = ordered.find(row => String(row.custom_name || '').trim())?.custom_name || '';
