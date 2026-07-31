@@ -98,33 +98,26 @@ export const bulkDeleteUserCategories = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
-    // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
-    const placeholders = Array(ids.length).fill('?').join(',');
+    const categoryIds = parseUniquePositiveIds(ids);
+    if (!categoryIds) return res.status(400).json({error: 'Invalid ids'});
+    const placeholders = Array(categoryIds.length).fill('?').join(',');
+    const categories = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...categoryIds);
+    if (categories.length !== categoryIds.length) return res.status(400).json({error: 'Category not found'});
+    if (!req.user.is_admin && categories.some(category => category.user_id !== req.user.id)) {
+      return res.status(403).json({error: 'Access denied'});
+    }
 
-    const cats = db.prepare(`SELECT DISTINCT user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
-    const userIdsToClear = cats.map(c => c.user_id);
-
-    db.transaction(() => {
-      if (!req.user.is_admin) {
-        const checkCats = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...ids);
-        const catMap = new Map(checkCats.map(c => [c.id, c.user_id]));
-        for (const id of ids) {
-          const catUserId = catMap.get(Number(id));
-          if (catUserId === undefined || catUserId !== req.user.id) {
-            throw new Error('Access denied');
-          }
-        }
-      }
-
-      db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...ids);
-      db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...ids);
-      db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...ids);
+    const userIdsToClear = [...new Set(categories.map(category => category.user_id))];
+    const deleted = db.transaction(() => {
+      db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...categoryIds);
+      db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...categoryIds);
+      return db.prepare(`DELETE FROM user_categories WHERE id IN (${placeholders})`).run(...categoryIds).changes;
     })();
 
     db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_bulk_deleted', `User ${req.user.username} bulk deleted ${ids.length} categories`, Math.floor(Date.now() / 1000));
 
     userIdsToClear.forEach(uId => clearChannelsCache(uId));
-    res.json({success: true, deleted: ids.length});
+    res.json({success: true, deleted});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
@@ -371,34 +364,27 @@ export const bulkDeleteUserChannels = (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({error: 'ids array required'});
 
-    // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
-    const placeholders = Array(ids.length).fill('?').join(',');
-
+    const channelIds = parseUniquePositiveIds(ids);
+    if (!channelIds) return res.status(400).json({error: 'Invalid ids'});
+    const placeholders = Array(channelIds.length).fill('?').join(',');
     const channels = db.prepare(`
-        SELECT DISTINCT cat.user_id
+        SELECT uc.id, uc.is_hidden, cat.user_id
         FROM user_channels uc
         JOIN user_categories cat ON cat.id = uc.user_category_id
         WHERE uc.id IN (${placeholders})
-    `).all(...ids);
-    const userIdsToClear = channels.map(c => c.user_id);
-
-    if (!req.user.is_admin) {
-        const checkChannels = db.prepare(`
-            SELECT cat.user_id
-            FROM user_channels uc
-            JOIN user_categories cat ON cat.id = uc.user_category_id
-            WHERE uc.id IN (${placeholders})
-        `).all(...ids);
-
-        for (const ch of checkChannels) {
-            if (ch.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
-        }
+    `).all(...channelIds);
+    if (channels.length !== channelIds.length) return res.status(400).json({error: 'Channel not found'});
+    if (!req.user.is_admin && channels.some(channel => channel.user_id !== req.user.id)) {
+      return res.status(403).json({error: 'Access denied'});
     }
 
-    db.prepare(`UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders})`).run(...ids);
+    const userIdsToClear = [...new Set(channels.map(channel => channel.user_id))];
+    const deleted = db.transaction(() => db.prepare(
+      `UPDATE user_channels SET is_hidden = 1 WHERE id IN (${placeholders}) AND is_hidden <> 1`
+    ).run(...channelIds).changes)();
 
     userIdsToClear.forEach(uId => clearChannelsCache(uId));
-    res.json({success: true, deleted: ids.length});
+    res.json({success: true, deleted});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 

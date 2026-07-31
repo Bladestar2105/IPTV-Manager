@@ -35,6 +35,7 @@ vi.mock('../../src/utils/crypto.js', () => {
 // Import modules AFTER mocking
 import db, { initDb } from '../../src/database/db.js';
 import * as channelController from '../../src/controllers/channelController.js';
+import { channelsJsonCache } from '../../src/services/cacheService.js';
 
 describe('Channel Controller - createUserCategory', () => {
     afterAll(() => {
@@ -542,5 +543,126 @@ describe('Channel Controller - createUserCategory', () => {
 
         expect(res.status).toHaveBeenCalledWith(500);
         expect(res.json).toHaveBeenCalledWith({ error: 'DB Error' });
+    });
+
+    const addAssignment = (userId, isHidden = 0) => {
+        const categoryId = db.prepare('INSERT INTO user_categories (user_id, name) VALUES (?, ?)')
+            .run(userId, `Category ${userId}-${Date.now()}-${Math.random()}`).lastInsertRowid;
+        const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES (?, 'http://provider.test', 'u', 'p', ?)")
+            .run(`Provider ${userId}-${Date.now()}-${Math.random()}`, userId).lastInsertRowid;
+        const providerChannelId = db.prepare('INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (?, ?, ?)')
+            .run(providerId, Number(`${userId}${Date.now()}`.slice(-8)), `Channel ${userId}`).lastInsertRowid;
+        const assignmentId = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, is_hidden) VALUES (?, ?, ?)')
+            .run(categoryId, providerChannelId, isHidden).lastInsertRowid;
+        return { assignmentId, categoryId, userId };
+    };
+
+    const response = () => ({ json: vi.fn(), status: vi.fn().mockReturnThis() });
+
+    it('atomically hides valid own assignments and reports the changed count', () => {
+        const first = addAssignment(2);
+        const second = addAssignment(2);
+        const res = response();
+
+        channelController.bulkDeleteUserChannels({
+            body: { ids: [first.assignmentId, String(second.assignmentId)] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true, deleted: 2 });
+        expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id IN (?, ?) ORDER BY id').all(first.assignmentId, second.assignmentId))
+            .toEqual([{ is_hidden: 1 }, { is_hidden: 1 }]);
+    });
+
+    it.each([
+        ['an unknown ID', ({ own }) => [own.assignmentId, 999999]],
+        ['a malformed ID', ({ own }) => [own.assignmentId, 'not-an-id']],
+        ['duplicate IDs', ({ own }) => [own.assignmentId, String(own.assignmentId)]]
+    ])('rejects %s without writing or clearing caches', (_label, idsFor) => {
+        const own = addAssignment(2);
+        const before = db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(own.assignmentId);
+        const cacheKey = 'user_2_live';
+        channelsJsonCache.set(cacheKey, ['cached']);
+        const res = response();
+
+        channelController.bulkDeleteUserChannels({
+            body: { ids: idsFor({ own }) },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(own.assignmentId)).toEqual(before);
+        expect(channelsJsonCache.has(cacheKey)).toBe(true);
+    });
+
+    it('rejects mixed own and foreign assignments without partial writes', () => {
+        const own = addAssignment(2);
+        const foreign = addAssignment(3);
+        const res = response();
+
+        channelController.bulkDeleteUserChannels({
+            body: { ids: [own.assignmentId, foreign.assignmentId] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id IN (?, ?) ORDER BY id').all(own.assignmentId, foreign.assignmentId))
+            .toEqual([{ is_hidden: 0 }, { is_hidden: 0 }]);
+    });
+
+    it('allows administrators to hide valid assignments across users and clears each cache', () => {
+        const first = addAssignment(2);
+        const second = addAssignment(3);
+        channelsJsonCache.set('user_2_live', ['cached']);
+        channelsJsonCache.set('user_3_live', ['cached']);
+        const res = response();
+
+        channelController.bulkDeleteUserChannels({
+            body: { ids: [first.assignmentId, second.assignmentId] },
+            user: { id: 1, is_admin: true, username: 'admin' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true, deleted: 2 });
+        expect(channelsJsonCache.has('user_2_live')).toBe(false);
+        expect(channelsJsonCache.has('user_3_live')).toBe(false);
+    });
+
+    it('rejects an administrator request containing an unknown assignment', () => {
+        const own = addAssignment(2);
+        const res = response();
+
+        channelController.bulkDeleteUserChannels({
+            body: { ids: [own.assignmentId, 999999] },
+            user: { id: 1, is_admin: true, username: 'admin' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(own.assignmentId)).toEqual({ is_hidden: 0 });
+    });
+
+    it('reports only assignments whose visibility changed', () => {
+        const visible = addAssignment(2, 0);
+        const alreadyHidden = addAssignment(2, 1);
+        const res = response();
+
+        channelController.bulkDeleteUserChannels({
+            body: { ids: [visible.assignmentId, alreadyHidden.assignmentId] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({ success: true, deleted: 1 });
+    });
+
+    it('rejects unknown bulk category IDs without deleting a valid category', () => {
+        const category = addAssignment(2).categoryId;
+        const res = response();
+
+        channelController.bulkDeleteUserCategories({
+            body: { ids: [category, 999999] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT id FROM user_categories WHERE id = ?').get(category)).toEqual({ id: category });
     });
 });
