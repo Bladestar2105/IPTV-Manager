@@ -336,10 +336,34 @@ export const updateProvider = async (req, res) => {
       );
 
       if (ownerChanged) {
+        db.prepare(`
+          UPDATE user_channels
+          SET granted_by_admin = 0,
+              authorization_revoked = 0
+          WHERE provider_channel_id IN (
+            SELECT id FROM provider_channels WHERE provider_id = ?
+          )
+            AND EXISTS (
+              SELECT 1
+              FROM user_categories cat
+              WHERE cat.id = user_channels.user_category_id
+                AND cat.user_id IS ?
+            )
+        `).run(id, nextUserId);
+
+        db.prepare(`
+          UPDATE user_channels
+          SET authorization_revoked = 0
+          WHERE granted_by_admin = 1
+            AND provider_channel_id IN (
+              SELECT id FROM provider_channels WHERE provider_id = ?
+            )
+        `).run(id);
+
         revokedAssignments = db.prepare(`
           UPDATE user_channels
-          SET is_hidden = 1
-          WHERE is_hidden = 0
+          SET authorization_revoked = 1
+          WHERE authorization_revoked = 0
             AND granted_by_admin = 0
             AND provider_channel_id IN (
               SELECT id FROM provider_channels WHERE provider_id = ?
@@ -483,7 +507,7 @@ export const deleteProvider = (req, res) => {
 export const syncProvider = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { user_id } = req.body;
+    const { user_id, allow_cross_owner, restore_revoked_assignments } = req.body;
 
     if (!user_id) {
       return res.status(400).json({error: 'user_id required'});
@@ -493,7 +517,11 @@ export const syncProvider = async (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    const result = await performSync(id, user_id, { mode: 'manual', allowCrossOwner: true });
+    const result = await performSync(id, user_id, {
+      mode: 'manual',
+      allowCrossOwner: allow_cross_owner === true,
+      restoreRevokedAssignments: restore_revoked_assignments === true
+    });
 
     // Also trigger EPG update
     updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
@@ -708,7 +736,11 @@ export const importCategory = async (req, res) => {
         ORDER BY original_sort_order ASC, name ASC
       `);
 
-      const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
+      const insertChannel = db.prepare(`
+        INSERT INTO user_channels
+          (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, ?, 0)
+      `);
       const channels = stmt.all(providerId, Number(category_id), streamType);
       const importedCount = channels.length;
       db.transaction(() => {
@@ -769,7 +801,11 @@ export const importCategories = async (req, res) => {
     let totalCategories = 0;
 
     const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
-    const insertChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
+    const insertChannel = db.prepare(`
+      INSERT INTO user_channels
+        (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
+      VALUES (?, ?, ?, ?, 0)
+    `);
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 
     // Pre-fetch channels for all categories being imported to avoid N+1 queries

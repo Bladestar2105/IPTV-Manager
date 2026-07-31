@@ -9,6 +9,7 @@ import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup, redactUrl, providerSourceKey } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { fetchSafe } from '../utils/network.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
@@ -46,6 +47,7 @@ function getChannel(streamId, userId) {
         pc.remote_stream_id,
         pc.name,
         pc.metadata,
+        pc.mime_type,
         p.id as provider_id,
         p.url as provider_url,
         p.username as provider_user,
@@ -152,11 +154,6 @@ function getSeriesEpisode(encodedId, userId) {
         if (episode) matches.push({ ...assignment, ...episode, remote_episode_id: decoded.remoteEpisodeId });
     }
     return matches.length === 1 ? matches[0] : null;
-}
-
-function normalizeSeriesExtension(value) {
-    const extension = String(value || '').trim().toLowerCase().replace(/^\.+/, '');
-    return /^[a-z0-9]{1,10}$/.test(extension) ? extension : 'mp4';
 }
 
 function getProviderPool(userId, providerUrl) {
@@ -1018,7 +1015,7 @@ export const proxyMovie = async (req, res) => {
 
   try {
     const streamId = Number(req.params.stream_id || 0);
-    const ext = req.params.ext;
+    const requestedExtension = req.params.ext;
 
     if (!streamId) return res.sendStatus(404);
 
@@ -1030,6 +1027,7 @@ export const proxyMovie = async (req, res) => {
     if (!channel) return res.sendStatus(404);
 
     if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
+    const ext = normalizeContainerExtension(channel.mime_type || requestedExtension);
 
     const sessionName = `${channel.name} (VOD)`;
 
@@ -1190,7 +1188,7 @@ export const proxySeries = async (req, res) => {
 
     const provider = seriesEpisode;
     const remoteEpisodeId = seriesEpisode.remote_episode_id;
-    const ext = normalizeSeriesExtension(seriesEpisode.container_extension);
+    const ext = normalizeContainerExtension(seriesEpisode.container_extension);
 
     let sessionName = episodeNameCache.get(String(epIdRaw));
     if (!sessionName) {

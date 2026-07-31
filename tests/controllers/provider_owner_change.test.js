@@ -55,7 +55,7 @@ describe('provider owner changes', () => {
     db.pragma('foreign_keys = ON');
   });
 
-  it('hides newly invalid normal assignments but preserves explicit admin grants', async () => {
+  it('revokes newly invalid normal assignments without rewriting hidden state', async () => {
     db.prepare("INSERT INTO users (id, username, password) VALUES (1, 'old-owner', 'p'), (2, 'new-owner', 'p'), (3, 'shared-user', 'p')").run();
     const providerId = db.prepare(`
       INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_enabled, max_connections)
@@ -92,9 +92,15 @@ describe('provider owner changes', () => {
 
     expect(res.json).toHaveBeenCalledWith({ success: true });
     expect(db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId).user_id).toBe(2);
-    expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(oldAssignmentId).is_hidden).toBe(1);
-    expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(newAssignmentId).is_hidden).toBe(0);
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = ?').get(grantedAssignmentId)).toEqual({ is_hidden: 0, granted_by_admin: 1 });
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = ?').get(oldAssignmentId)).toEqual({
+      is_hidden: 0, granted_by_admin: 0, authorization_revoked: 1
+    });
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = ?').get(newAssignmentId)).toEqual({
+      is_hidden: 0, granted_by_admin: 0, authorization_revoked: 0
+    });
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = ?').get(grantedAssignmentId)).toEqual({
+      is_hidden: 0, granted_by_admin: 1, authorization_revoked: 0
+    });
     expect(db.prepare('SELECT id FROM authorized_user_channels ORDER BY id').all()).toEqual([
       { id: newAssignmentId },
       { id: grantedAssignmentId },

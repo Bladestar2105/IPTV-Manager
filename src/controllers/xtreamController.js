@@ -5,6 +5,7 @@ import { getEpgPrograms, getEpgProgramsForChannels, getEpgXmlForChannels } from 
 import { channelsJsonCache } from '../services/cacheService.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
@@ -384,7 +385,7 @@ export const playerApi = async (req, res) => {
           rating_5based: ch.rating_5based || 0,
           added: ch.added || nowStr,
           category_id: String(ch.user_category_id),
-          container_extension: ch.mime_type || 'mp4',
+          container_extension: normalizeContainerExtension(ch.mime_type),
           custom_sid: null,
           direct_source: ''
         };
@@ -516,11 +517,12 @@ export const playerApi = async (req, res) => {
                       Number(ep.season ?? seasonKey) || 0,
                       Number(ep.episode_num) || 0,
                       ep.title || '',
-                      ep.container_extension || 'mp4',
+                      normalizeContainerExtension(ep.container_extension),
                       ep.info?.movie_image || ep.movie_image || ep.cover || '',
                       ep.added || ''
                     );
                     ep.id = newId;
+                    ep.container_extension = normalizeContainerExtension(ep.container_extension);
 
                     // Cache the episode name for the active streams dashboard
                     const seriesName = data.info ? data.info.name : 'Unknown Series';
@@ -823,7 +825,7 @@ export const getPlaylist = async (req, res) => {
               ep.remote_episode_id
             );
             if (!episodeId) continue;
-            let episodeUrl = seriesPrefix + episodeId + '.' + (ep.container_extension || 'mp4');
+            let episodeUrl = seriesPrefix + episodeId + '.' + normalizeContainerExtension(ep.container_extension);
             if (useTokenAuth) {
               episodeUrl += tokenParam;
             }
@@ -842,14 +844,13 @@ export const getPlaylist = async (req, res) => {
           }
           continue;
         }
-        // Episodes not synced (yet): fall through to the legacy series entry.
+        // Unsynchronized series have no playable episode identifier yet.
+        continue;
       }
 
       let streamUrl;
       if (ch.stream_type === 'movie') {
-         streamUrl = moviePrefix + streamId + '.' + (ch.mime_type || 'mp4');
-      } else if (ch.stream_type === 'series') {
-         streamUrl = seriesPrefix + streamId + '.' + (ch.mime_type || 'mp4');
+         streamUrl = moviePrefix + streamId + '.' + normalizeContainerExtension(ch.mime_type);
       } else {
          streamUrl = livePrefix + streamId + '.' + (output === 'hls' ? 'm3u8' : 'ts');
       }
@@ -967,6 +968,7 @@ export const playerChannelsJson = async (req, res) => {
         pc.logo,
         pc.epg_channel_id,
         pc.remote_stream_id,
+        pc.provider_id,
         pc.stream_type,
         pc.tv_archive,
         pc.tv_archive_duration,
@@ -976,7 +978,8 @@ export const playerChannelsJson = async (req, res) => {
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
         map.epg_channel_id as manual_epg_id,
-        p.use_mapped_epg_icon
+        p.use_mapped_epg_icon,
+        p.url as provider_url
       FROM user_categories cat
       JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -1003,6 +1006,27 @@ export const playerChannelsJson = async (req, res) => {
     // 📊 Impact: Significantly lowers RAM usage and speeds up response generation for player JSON payload.
     let jsonOutput = '[';
     let isFirst = true;
+    const appendItem = (item, ch) => {
+      if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
+        if (ch.plot) item.plot = ch.plot;
+        if (ch.cast) item.cast = ch.cast;
+        if (ch.director) item.director = ch.director;
+        if (ch.genre) item.genre = ch.genre;
+        if (ch.releaseDate) item.releaseDate = ch.releaseDate;
+        if (ch.rating) item.rating = ch.rating;
+        if (ch.episode_run_time) item.duration = ch.episode_run_time;
+      }
+
+      if (ch.drm_license_type || ch.drm_license_key) {
+        item.drm = {};
+        if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
+        if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
+      }
+
+      if (!isFirst) jsonOutput += ',';
+      jsonOutput += JSON.stringify(item);
+      isFirst = false;
+    };
 
     if (!isExpired) {
         // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
@@ -1010,7 +1034,16 @@ export const playerChannelsJson = async (req, res) => {
         const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
         const moviePrefix = `${host}/movie/token/auth/`;
         const seriesPrefix = `${host}/series/token/auth/`;
+        const episodesStmt = db.prepare(`
+          SELECT remote_episode_id, season, episode_num, container_extension, logo
+          FROM provider_series_episodes
+          WHERE source_key = ? AND series_remote_id = ?
+          ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
+        `);
+        const episodeAliasDb = openDbConnection();
+        const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
 
+        try {
         for (const ch of stmt.iterate(user.id)) {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
@@ -1027,17 +1060,43 @@ export const playerChannelsJson = async (req, res) => {
           }
           name = name.trim();
 
-          const containerExtension = String(ch.mime_type || '').trim().toLowerCase();
-          const isDashStream = containerExtension === 'mpd' || containerExtension === 'dash' || containerExtension === 'application/dash+xml';
+          const containerExtension = normalizeContainerExtension(
+            ch.mime_type,
+            ch.stream_type === 'live' ? 'ts' : 'mp4'
+          );
+          const isDashStream = containerExtension === 'mpd';
           let streamUrl;
           let type = 'live';
 
           if (ch.stream_type === 'movie') {
              type = 'movie';
-             streamUrl = moviePrefix + ch.user_channel_id + '.' + (containerExtension || 'mp4') + tokenParam;
+             streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
           } else if (ch.stream_type === 'series') {
-             type = 'series';
-             streamUrl = seriesPrefix + ch.user_channel_id + '.' + (containerExtension || 'mp4') + tokenParam;
+             const sourceKey = providerSourceKey(ch.provider_url);
+             for (const ep of episodesStmt.all(sourceKey, ch.remote_stream_id)) {
+               const episodeId = getOrCreateSeriesEpisodeAlias(
+                 episodeAliases,
+                 ch.user_channel_id,
+                 sourceKey,
+                 ch.remote_stream_id,
+                 ep.remote_episode_id
+               );
+               if (!episodeId) continue;
+               const extension = normalizeContainerExtension(ep.container_extension);
+               const episodeCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
+               appendItem({
+                 name: `${name} ${episodeCode}`,
+                 group,
+                 logo: ep.logo || logo,
+                 epg_id: epgId,
+                 url: seriesPrefix + episodeId + '.' + extension + tokenParam,
+                 type: 'series',
+                 container_extension: extension,
+                 tv_archive: 0,
+                 tv_archive_duration: 0
+               }, ch);
+             }
+             continue;
           } else {
              if (isDashStream) {
                  streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
@@ -1058,27 +1117,10 @@ export const playerChannelsJson = async (req, res) => {
             tv_archive_duration: ch.tv_archive_duration || 0
           };
 
-          if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
-            if (ch.plot) item.plot = ch.plot;
-            if (ch.cast) item.cast = ch.cast;
-            if (ch.director) item.director = ch.director;
-            if (ch.genre) item.genre = ch.genre;
-            if (ch.releaseDate) item.releaseDate = ch.releaseDate;
-            if (ch.rating) item.rating = ch.rating;
-            if (ch.episode_run_time) item.duration = ch.episode_run_time;
-          }
-
-          if (ch.drm_license_type || ch.drm_license_key) {
-              item.drm = {};
-              if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-              if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
-          }
-
-          if (!isFirst) {
-            jsonOutput += ',';
-          }
-          jsonOutput += JSON.stringify(item);
-          isFirst = false;
+          appendItem(item, ch);
+        }
+        } finally {
+          episodeAliasDb.close();
         }
     }
     jsonOutput += ']';
@@ -1155,7 +1197,6 @@ export const playerPlaylist = async (req, res) => {
         const livePrefix = `${host}/live/token/auth/`;
         const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
         const moviePrefix = `${host}/movie/token/auth/`;
-        const seriesPrefix = `${host}/series/token/auth/`;
 
         // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
         // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
@@ -1168,12 +1209,14 @@ export const playerPlaylist = async (req, res) => {
       const name = ch.name || 'Unknown';
 
       let streamUrl;
+      const containerExtension = normalizeContainerExtension(
+        ch.mime_type,
+        ch.stream_type === 'live' ? 'ts' : 'mp4'
+      );
       if (ch.stream_type === 'movie') {
-         streamUrl = moviePrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
-      } else if (ch.stream_type === 'series') {
-         streamUrl = seriesPrefix + ch.user_channel_id + '.' + (ch.mime_type || 'mp4') + tokenParam;
+         streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
       } else {
-         if (ch.mime_type === 'mpd') {
+         if (containerExtension === 'mpd') {
              streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
          } else {
              streamUrl = livePrefix + ch.user_channel_id + '.ts' + tokenParam;

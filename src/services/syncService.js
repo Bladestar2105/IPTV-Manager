@@ -4,6 +4,7 @@ import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory, providerSourceKey } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 
@@ -96,6 +97,10 @@ export async function performSync(providerId, userId, options = {}) {
     }
 
     const assignmentGrant = crossOwner ? 1 : 0;
+    const restoreRevokedAssignments = crossOwner && (
+      options?.restoreRevokedAssignments === true ||
+      (!isManual && hasPersistedGrant)
+    );
 
     // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
     await checkProviderExpiry(providerId);
@@ -306,23 +311,33 @@ export async function performSync(providerId, userId, options = {}) {
     }
 
     // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
-    const existingAssignments = new Set();
+    const existingAssignments = new Map();
     const maxSortMap = new Map();
 
     // Prepare statement unconditionally to avoid potential undefined issues
-    const insertUserChannel = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)');
+    const insertUserChannel = db.prepare(`
+      INSERT INTO user_channels
+        (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
+      VALUES (?, ?, ?, ?, 0)
+    `);
+    const authorizeExistingAssignment = db.prepare(`
+      UPDATE user_channels
+      SET granted_by_admin = ?, authorization_revoked = 0
+      WHERE id = ?
+    `);
     const deleteUserChannel = db.prepare('DELETE FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?');
 
     if (config && config.auto_add_channels) {
       const existingAssignmentsRows = db.prepare(`
-        SELECT uc.user_category_id, uc.provider_channel_id
+        SELECT uc.id, uc.user_category_id, uc.provider_channel_id,
+               uc.granted_by_admin, uc.authorization_revoked
         FROM user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         WHERE pc.provider_id = ?
       `).all(providerId);
 
       for (const r of existingAssignmentsRows) {
-        existingAssignments.add(`${r.user_category_id}_${r.provider_channel_id}`);
+        existingAssignments.set(`${r.user_category_id}_${r.provider_channel_id}`, r);
       }
 
       const sortRows = db.prepare(`
@@ -425,7 +440,10 @@ export async function performSync(providerId, userId, options = {}) {
           const tvArchive = Number(ch.tv_archive) === 1 ? 1 : 0;
           const tvArchiveDuration = Number(ch.tv_archive_duration) || 0;
           const streamType = ch.stream_type || 'live';
-          const mimeType = ch.container_extension || '';
+          const mimeType = normalizeContainerExtension(
+            ch.container_extension,
+            streamType === 'live' ? 'ts' : 'mp4'
+          );
 
           // Construct metadata
           let meta = {};
@@ -604,17 +622,26 @@ export async function performSync(providerId, userId, options = {}) {
               // Check if already added (Optimized in-memory check)
               const assignmentKey = `${userCatId}_${provChannelId}`;
 
-              if (!existingAssignments.has(assignmentKey)) {
+              const existingAssignment = existingAssignments.get(assignmentKey);
+              if (!existingAssignment) {
                 // Optimized sort order calculation
                 let currentMax = maxSortMap.get(userCatId);
                 if (currentMax === undefined) currentMax = -1;
                 const newSortOrder = currentMax + 1;
 
-                insertUserChannel.run(userCatId, provChannelId, newSortOrder, assignmentGrant);
+                const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, assignmentGrant);
 
                 // Update in-memory state
-                existingAssignments.add(assignmentKey);
+                existingAssignments.set(assignmentKey, {
+                  id: Number(assignmentInfo.lastInsertRowid),
+                  granted_by_admin: assignmentGrant,
+                  authorization_revoked: 0
+                });
                 maxSortMap.set(userCatId, newSortOrder);
+              } else if (!crossOwner) {
+                authorizeExistingAssignment.run(0, existingAssignment.id);
+              } else if (Number(existingAssignment.granted_by_admin) === 1 || restoreRevokedAssignments) {
+                authorizeExistingAssignment.run(1, existingAssignment.id);
               }
             }
           }
@@ -676,11 +703,10 @@ export async function performSync(providerId, userId, options = {}) {
 // value from get_series (stored in provider_channels.metadata) gates
 // refetching, so after the initial run only changed series are re-fetched.
 //
-// Episode data is stored per upstream panel (source_key = normalized provider
-// URL), not per provider row: users pointing at the same panel with their own
-// credentials share one episode catalog, so nothing is fetched or stored
-// twice. Remote episode IDs are panel-global, which is what makes the shared
-// catalog (and the providerId*OFFSET+episodeId playback encoding) valid.
+// Episode data is stored per upstream panel and series. Playable URLs use a
+// persistent compact alias bound to the exact authorized series assignment;
+// a raw series assignment ID is never treated as an episode ID. Legacy IDs
+// remain usable only when they resolve to one authorized cached episode.
 
 const EPISODE_SYNC_CONCURRENCY = 3;
 const EPISODE_SYNC_RETRY_AGE = 7 * 86400; // re-check series lacking last_modified weekly
@@ -701,7 +727,7 @@ export function parseSeriesInfoEpisodes(data) {
         season: Number(ep.season) || 0,
         episode_num: Number(ep.episode_num) || 0,
         title: ep.title ? String(ep.title) : '',
-        container_extension: ep.container_extension ? String(ep.container_extension) : 'mp4',
+        container_extension: normalizeContainerExtension(ep.container_extension),
         logo: (ep.info && (ep.info.movie_image || ep.info.cover_big)) || '',
         added: ep.added ? String(ep.added) : ''
       });
@@ -850,6 +876,7 @@ export async function syncSeriesEpisodes(providerId) {
     };
     await Promise.all(Array.from({ length: Math.min(EPISODE_SYNC_CONCURRENCY, queue.length) }, () => worker()));
 
+    if (processed > 0) clearChannelsCache();
     console.info(`✅ Episode sync completed for provider ${provider.name}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
     return { synced: processed, failed, total: queue.length };
   } finally {

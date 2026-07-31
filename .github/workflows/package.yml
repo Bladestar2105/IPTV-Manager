@@ -47,6 +47,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
   build-docker:
+    needs: validate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,7 +81,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   release-package:
-    needs: build-docker
+    needs:
+      - validate
+      - build-docker
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

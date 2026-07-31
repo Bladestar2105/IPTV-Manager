@@ -7,6 +7,7 @@ import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { BCRYPT_ROUNDS } from '../config/constants.js';
 import { providerSourceKey } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 
 const getClonedProviderChannelName = (channel) => {
   if (typeof channel.name === 'string' && channel.name.trim()) return channel.name;
@@ -240,7 +241,7 @@ export const createUser = async (req, res) => {
                             ch.tv_archive,
                             ch.tv_archive_duration,
                             ch.metadata,
-                            ch.mime_type,
+                            normalizeContainerExtension(ch.mime_type, ch.stream_type === 'live' ? 'ts' : 'mp4'),
                             ch.rating,
                             ch.rating_5based,
                             ch.added,
@@ -325,8 +326,10 @@ export const createUser = async (req, res) => {
                 // We need to iterate over source user's categories to find channels
                 // Or simply select all user_channels linked to source user's categories
                 const insertUserChan = db.prepare(`
-                    INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
-                    VALUES (?, ?, ?, ?, ?, 0)
+                    INSERT INTO user_channels
+                      (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
+                       granted_by_admin, authorization_revoked)
+                    VALUES (?, ?, ?, ?, ?, 0, 0)
                 `);
 
                 // Fetch all user channels for source user categories

@@ -59,7 +59,8 @@ describe('sync authorization regression', () => {
       CREATE TABLE user_channels (
         id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
         sort_order INTEGER, is_hidden INTEGER DEFAULT 0,
-        granted_by_admin INTEGER NOT NULL DEFAULT 0
+        granted_by_admin INTEGER NOT NULL DEFAULT 0,
+        authorization_revoked INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE user_categories (
         id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, is_adult INTEGER,
@@ -109,15 +110,18 @@ describe('sync authorization regression', () => {
 
   it('creates same-owner scheduled assignments with a normal grant', async () => {
     configure();
+    xtreamState.channels[0].container_extension = 'ts\r\n#EXTINF:-1,Injected';
 
     const result = await performSync(1, 1, { mode: 'scheduled' });
 
     expect(result.errorMessage).toBe(null);
     expect(result.channelsAdded).toBe(1);
-    expect(memDb.prepare('SELECT granted_by_admin, is_hidden FROM user_channels').get()).toEqual({
+    expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked, is_hidden FROM user_channels').get()).toEqual({
       granted_by_admin: 0,
+      authorization_revoked: 0,
       is_hidden: 0,
     });
+    expect(memDb.prepare('SELECT mime_type FROM provider_channels').get()).toEqual({ mime_type: 'ts' });
   });
 
   it('disables an unapproved cross-owner config before network or writes', async () => {
@@ -147,7 +151,10 @@ describe('sync authorization regression', () => {
     const result = await performSync(1, 1, { mode: 'scheduled' });
 
     expect(result.errorMessage).toBe(null);
-    expect(memDb.prepare('SELECT granted_by_admin FROM user_channels').get()).toEqual({ granted_by_admin: 1 });
+    expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels').get()).toEqual({
+      granted_by_admin: 1,
+      authorization_revoked: 0,
+    });
   });
 
   it('allows a trusted manual operation without authorizing future schedules', async () => {
@@ -155,7 +162,10 @@ describe('sync authorization regression', () => {
 
     const manual = await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
     expect(manual.errorMessage).toBe(null);
-    expect(memDb.prepare('SELECT granted_by_admin FROM user_channels').get()).toEqual({ granted_by_admin: 1 });
+    expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels').get()).toEqual({
+      granted_by_admin: 1,
+      authorization_revoked: 0,
+    });
     expect(memDb.prepare('SELECT enabled, granted_by_admin FROM sync_configs WHERE id = 7').get()).toEqual({
       enabled: 0,
       granted_by_admin: 0,
@@ -179,6 +189,59 @@ describe('sync authorization regression', () => {
     expect(memDb.prepare('SELECT enabled FROM sync_configs WHERE id = 7').get()).toEqual({ enabled: 0 });
     expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
     expect(fetchSafe).not.toHaveBeenCalled();
+  });
+
+  it('an approved scheduled sync restores authorization without unhiding the assignment', async () => {
+    configure({ providerOwner: 2, grant: 1 });
+    memDb.prepare(`
+      INSERT INTO provider_channels
+        (id, provider_id, remote_stream_id, name, original_category_id, stream_type)
+      VALUES (20, 1, 101, 'Old Channel', 10, 'live')
+    `).run();
+    memDb.prepare(`
+      INSERT INTO user_channels
+        (id, user_category_id, provider_channel_id, sort_order, is_hidden,
+         granted_by_admin, authorization_revoked)
+      VALUES (30, 10, 20, 0, 1, 0, 1)
+    `).run();
+
+    const result = await performSync(1, 1, { mode: 'scheduled' });
+
+    expect(result.errorMessage).toBe(null);
+    expect(memDb.prepare(`
+      SELECT is_hidden, granted_by_admin, authorization_revoked
+      FROM user_channels WHERE id = 30
+    `).get()).toEqual({
+      is_hidden: 1,
+      granted_by_admin: 1,
+      authorization_revoked: 0,
+    });
+  });
+
+  it('requires the explicit restore flag for a manual cross-owner reconciliation', async () => {
+    configure({ providerOwner: 2, enabled: 0 });
+    memDb.prepare(`
+      INSERT INTO provider_channels
+        (id, provider_id, remote_stream_id, name, original_category_id, stream_type)
+      VALUES (20, 1, 101, 'Old Channel', 10, 'live')
+    `).run();
+    memDb.prepare(`
+      INSERT INTO user_channels
+        (id, user_category_id, provider_channel_id, authorization_revoked)
+      VALUES (30, 10, 20, 1)
+    `).run();
+
+    await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
+    expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels WHERE id = 30').get())
+      .toEqual({ granted_by_admin: 0, authorization_revoked: 1 });
+
+    await performSync(1, 1, {
+      mode: 'manual',
+      allowCrossOwner: true,
+      restoreRevokedAssignments: true,
+    });
+    expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels WHERE id = 30').get())
+      .toEqual({ granted_by_admin: 1, authorization_revoked: 0 });
   });
 
   afterAll(() => memDb.close());

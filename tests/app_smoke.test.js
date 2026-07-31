@@ -73,4 +73,12 @@ describe('application wiring smoke checks', () => {
     expect(playerHtml).toContain('vendor/bootstrap.bundle.min.js');
     expect(readRepoFile('Dockerfile')).toContain('COPY public ./public');
   });
+
+  it('blocks Docker and release jobs until validation succeeds', () => {
+    const workflow = readRepoFile('.github/workflows/package.yml');
+
+    expect(workflow).toMatch(/build-docker:\n\s+needs: validate/);
+    expect(workflow).toMatch(/release-package:\n\s+needs:\n\s+- validate\n\s+- build-docker/);
+    expect(workflow).toContain("push: ${{ github.event_name != 'pull_request' }}");
+  });
 });

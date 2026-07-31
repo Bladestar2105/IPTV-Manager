@@ -97,8 +97,9 @@ export const restoreBackup = (req, res) => {
       const insertCategory = db.prepare('INSERT INTO user_categories (id, user_id, name, sort_order, is_adult, type) VALUES (?, ?, ?, ?, ?, ?)');
       const insertChannel = db.prepare(`
         INSERT INTO user_channels
-          (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
+           granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const getProviderOwner = db.prepare(`
         SELECT p.user_id AS provider_owner_id
@@ -132,7 +133,8 @@ export const restoreBackup = (req, res) => {
           isAdmin: req.user.is_admin,
           allowExplicitAdminGrant: req.body?.allow_cross_owner === true
         });
-        const isHidden = Number(chan.is_hidden) === 1 || grant === null ? 1 : 0;
+        const isHidden = Number(chan.is_hidden) === 1 ? 1 : 0;
+        const authorizationRevoked = grant === null ? 1 : 0;
 
         insertChannel.run(
           chan.id,
@@ -141,9 +143,10 @@ export const restoreBackup = (req, res) => {
           chan.sort_order,
           chan.custom_name || '',
           isHidden,
-          grant === 1 ? 1 : 0
+          grant === 1 ? 1 : 0,
+          authorizationRevoked
         );
-        if (isHidden) stats.channels_hidden++;
+        if (isHidden || authorizationRevoked) stats.channels_hidden++;
         else stats.channels_restored++;
       }
 

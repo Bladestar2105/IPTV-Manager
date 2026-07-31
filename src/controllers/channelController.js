@@ -245,14 +245,22 @@ export const addUserChannel = (req, res) => {
     const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
     const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
 
-    const existingHidden = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ? AND is_hidden = 1').get(catId, Number(provider_channel_id));
+    const existing = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(catId, Number(provider_channel_id));
 
     let insertId;
-    if (existingHidden) {
-        db.prepare('UPDATE user_channels SET is_hidden = 0, sort_order = ?, granted_by_admin = ? WHERE id = ?').run(newSortOrder, grantedByAdmin, existingHidden.id);
-        insertId = existingHidden.id;
+    if (existing) {
+        db.prepare(`
+          UPDATE user_channels
+          SET is_hidden = 0, sort_order = ?, granted_by_admin = ?, authorization_revoked = 0
+          WHERE id = ?
+        `).run(newSortOrder, grantedByAdmin, existing.id);
+        insertId = existing.id;
     } else {
-        const info = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, granted_by_admin) VALUES (?, ?, ?, ?)').run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
+        const info = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, sort_order, granted_by_admin, authorization_revoked)
+          VALUES (?, ?, ?, ?, 0)
+        `).run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
         insertId = info.lastInsertRowid;
     }
 

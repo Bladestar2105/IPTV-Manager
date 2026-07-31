@@ -144,12 +144,16 @@ describe('Series episode sync', () => {
     it('parses array-of-seasons payloads and skips invalid entries', () => {
       const eps = parseSeriesInfoEpisodes({
         episodes: [
-          [ { id: 5, episode_num: 1, season: 1 }, { title: 'no id' } ],
+          [
+            { id: 5, episode_num: 1, season: 1, container_extension: 'mp4\r\n#EXTINF:-1,Injected' },
+            { title: 'no id' }
+          ],
           'garbage'
         ]
       });
       expect(eps).toHaveLength(1);
       expect(eps[0].remote_episode_id).toBe(5);
+      expect(eps[0].container_extension).toBe('mp4');
     });
 
     it('returns empty for missing/invalid payloads', () => {

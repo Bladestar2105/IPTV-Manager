@@ -75,7 +75,9 @@ describe('user backup restore authorization', () => {
 
     const res = restore(backupId);
 
-    expect(db.prepare('SELECT id, is_hidden, granted_by_admin FROM user_channels').get()).toEqual({ id: 200, is_hidden: 0, granted_by_admin: 0 });
+    expect(db.prepare('SELECT id, is_hidden, granted_by_admin, authorization_revoked FROM user_channels').get()).toEqual({
+      id: 200, is_hidden: 0, granted_by_admin: 0, authorization_revoked: 0
+    });
     expect(res.json).toHaveBeenCalledWith({ success: true, channels_restored: 1, channels_hidden: 0, channels_skipped: 0 });
     expect(clearChannelsCache).toHaveBeenCalledWith(1);
   });
@@ -95,11 +97,13 @@ describe('user backup restore authorization', () => {
     const backupId = createRes.json.mock.calls[0][0].id;
 
     // Administrator revokes the grant after the snapshot was created.
-    db.prepare('UPDATE user_channels SET is_hidden = 1, granted_by_admin = 0 WHERE id = 200').run();
+    db.prepare('UPDATE user_channels SET granted_by_admin = 0, authorization_revoked = 1 WHERE id = 200').run();
 
     const res = restore(backupId);
 
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({ is_hidden: 1, granted_by_admin: 0 });
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
+      is_hidden: 0, granted_by_admin: 0, authorization_revoked: 1
+    });
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toBeUndefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ channels_hidden: 1 }));
   });
@@ -114,9 +118,10 @@ describe('user backup restore authorization', () => {
 
     restore(backupId);
 
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({
-      is_hidden: 1,
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
+      is_hidden: 0,
       granted_by_admin: 0,
+      authorization_revoked: 1,
     });
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toBeUndefined();
   });
@@ -128,9 +133,10 @@ describe('user backup restore authorization', () => {
 
     restore(backupId, { id: 9, is_admin: true }, body);
 
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({
-      is_hidden: 1,
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
+      is_hidden: 0,
       granted_by_admin: 0,
+      authorization_revoked: 1,
     });
   });
 
@@ -140,7 +146,9 @@ describe('user backup restore authorization', () => {
 
     restore(backupId, { id: 9, is_admin: true }, { allow_cross_owner: true });
 
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({ is_hidden: 0, granted_by_admin: 1 });
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
+      is_hidden: 0, granted_by_admin: 1, authorization_revoked: 0
+    });
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toEqual({ id: 200 });
   });
 
@@ -150,9 +158,10 @@ describe('user backup restore authorization', () => {
 
     restore(backupId, { id: 9, is_admin: true });
 
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
       is_hidden: 0,
       granted_by_admin: 0,
+      authorization_revoked: 0,
     });
   });
 
@@ -165,7 +174,9 @@ describe('user backup restore authorization', () => {
 
     const res = restore(backupId);
 
-    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({ is_hidden: 1, granted_by_admin: 0 });
+    expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = 200').get()).toEqual({
+      is_hidden: 0, granted_by_admin: 0, authorization_revoked: 1
+    });
     expect(db.prepare('SELECT id FROM user_channels WHERE id = 201').get()).toBeUndefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ channels_hidden: 1, channels_skipped: 1 }));
   });

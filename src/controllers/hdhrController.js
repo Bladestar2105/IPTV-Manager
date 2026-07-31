@@ -1,6 +1,7 @@
 import db from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 
 export const discover = async (req, res) => {
   try {
@@ -128,7 +129,7 @@ export const auto = async (req, res) => {
 
     if (channel.stream_type === 'movie') {
         typePath = 'movie'; // maps to proxyMovie
-        ext = channel.mime_type || 'mp4';
+        ext = normalizeContainerExtension(channel.mime_type);
     }
 
     const host = getBaseUrl(req);

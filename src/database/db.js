@@ -118,7 +118,8 @@ export function initDb(isPrimary) {
       sort_order INTEGER DEFAULT 0,
       custom_name TEXT DEFAULT '',
       is_hidden INTEGER DEFAULT 0,
-      granted_by_admin INTEGER NOT NULL DEFAULT 0
+      granted_by_admin INTEGER NOT NULL DEFAULT 0,
+      authorization_revoked INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS user_backups (

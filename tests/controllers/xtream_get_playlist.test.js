@@ -120,6 +120,9 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     };
 
     getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
+    episodes[0].container_extension = 'mkv';
+    episodes[1].container_extension = 'mkv';
+    movieChannel.mime_type = 'mkv';
 
     aliasDb.prepare.mockImplementation((sql) => {
       if (sql.includes('INSERT OR IGNORE INTO series_episode_aliases')) {
@@ -181,12 +184,12 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).toContain('group-title="Serien DE",My Show S01 E01');
   });
 
-  it('falls back to the legacy series entry when no episodes are synced', async () => {
+  it('omits unsynchronized series instead of emitting a bare assignment URL', async () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
-    expect(output).toContain('tvg-name="Unsynced Show"');
-    expect(output).toContain('http://localhost/series/u/p/43.mp4');
+    expect(output).not.toContain('tvg-name="Unsynced Show"');
+    expect(output).not.toContain('/series/u/p/43.');
   });
 
   it('keeps movie entries unchanged', async () => {
@@ -205,5 +208,19 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).toContain('#EXTINF:-1,My Show S01 E01\n');
     expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
     expect(output).not.toContain('tvg-name="My Show S01 E01"');
+  });
+
+  it('cannot inject an extra playlist line through provider extensions', async () => {
+    episodes[0].container_extension = 'mp4\r\n#EXTINF:-1,Injected';
+    movieChannel.mime_type = 'mkv?token=secret';
+
+    await getPlaylist(req, res);
+
+    const output = collectOutput();
+    expect(output).toContain('/series/u/p/900000501.mp4');
+    expect(output).toContain('/movie/u/p/100.mp4');
+    expect(output).not.toContain('Injected');
+    expect(output).not.toContain('token=secret');
+    expect(output.split('\n').filter(line => line.startsWith('#EXTINF')).length).toBe(3);
   });
 });

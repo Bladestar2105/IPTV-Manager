@@ -80,18 +80,64 @@ describe('Migration Bug Regression', () => {
             `);
 
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(1);
-            expect(legacyDb.prepare('SELECT id, is_hidden, granted_by_admin FROM user_channels ORDER BY id').all()).toEqual([
-                { id: 40, is_hidden: 0, granted_by_admin: 0 },
-                { id: 41, is_hidden: 1, granted_by_admin: 0 }
+            expect(legacyDb.prepare('SELECT id, is_hidden, granted_by_admin, authorization_revoked FROM user_channels ORDER BY id').all()).toEqual([
+                { id: 40, is_hidden: 0, granted_by_admin: 0, authorization_revoked: 0 },
+                { id: 41, is_hidden: 0, granted_by_admin: 0, authorization_revoked: 1 }
             ]);
             expect(legacyDb.prepare('SELECT id FROM authorized_user_channels ORDER BY id').all()).toEqual([{ id: 40 }]);
 
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(0);
             expect(legacyDb.prepare('SELECT id FROM user_channels ORDER BY id').all()).toEqual([{ id: 40 }, { id: 41 }]);
 
-            legacyDb.prepare('UPDATE user_channels SET is_hidden = 0, granted_by_admin = 1 WHERE id = 41').run();
+            legacyDb.prepare('UPDATE user_channels SET granted_by_admin = 1, authorization_revoked = 0 WHERE id = 41').run();
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(0);
             expect(legacyDb.prepare('SELECT id FROM authorized_user_channels ORDER BY id').all()).toEqual([{ id: 40 }, { id: 41 }]);
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('preserves user-hidden state while marking an earlier pre-release revocation candidate', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE providers (id INTEGER PRIMARY KEY, user_id INTEGER);
+              CREATE TABLE provider_channels (id INTEGER PRIMARY KEY, provider_id INTEGER NOT NULL);
+              CREATE TABLE user_categories (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL);
+              CREATE TABLE user_channels (
+                id INTEGER PRIMARY KEY,
+                user_category_id INTEGER NOT NULL,
+                provider_channel_id INTEGER NOT NULL,
+                is_hidden INTEGER DEFAULT 0,
+                granted_by_admin INTEGER NOT NULL DEFAULT 0
+              );
+              INSERT INTO providers VALUES (10, 1);
+              INSERT INTO provider_channels VALUES (20, 10);
+              INSERT INTO user_categories VALUES (30, 2);
+              INSERT INTO user_channels VALUES (40, 30, 20, 1, 0);
+            `);
+
+            expect(migrateUserChannelAdminGrants(legacyDb)).toBe(1);
+            expect(legacyDb.prepare(`
+              SELECT id, is_hidden, granted_by_admin, authorization_revoked
+              FROM user_channels
+            `).get()).toEqual({
+              id: 40,
+              is_hidden: 1,
+              granted_by_admin: 0,
+              authorization_revoked: 1,
+            });
+
+            legacyDb.prepare(`
+              UPDATE user_channels
+              SET granted_by_admin = 1, authorization_revoked = 0
+              WHERE id = 40
+            `).run();
+            migrateUserChannelAdminGrants(legacyDb);
+            expect(legacyDb.prepare('SELECT id FROM authorized_user_channels').get()).toBeUndefined();
+
+            legacyDb.prepare('UPDATE user_channels SET is_hidden = 0 WHERE id = 40').run();
+            expect(legacyDb.prepare('SELECT id FROM authorized_user_channels').get()).toEqual({ id: 40 });
         } finally {
             legacyDb.close();
         }

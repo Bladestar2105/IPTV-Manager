@@ -107,10 +107,11 @@ all providers.
 
 Restore recalculates channel authorization from current category and provider
 ownership. A normal user's backup cannot recreate a historical administrator
-grant: valid cross-owner rows are restored hidden and ungranted, while missing
-references are skipped. An authenticated admin restore may deliberately create
-a current cross-owner grant only by sending `allow_cross_owner: true`; omitted
-or false values keep those rows hidden with grant `0`. The restore response
+grant: cross-owner rows are restored with `authorization_revoked = 1`, while
+their user-selected `is_hidden` value remains separate and missing references
+are skipped. An authenticated admin restore may deliberately create a current
+cross-owner grant only by sending `allow_cross_owner: true`; omitted or false
+values keep those rows revoked with grant `0`. The restore response
 includes non-sensitive `channels_restored`, `channels_hidden`, and
 `channels_skipped` counters.
 
@@ -152,6 +153,19 @@ cross-owner creates are rejected with HTTP 400, existing unapproved configs
 remain disabled, and scheduled syncs never infer approval from an owner
 mismatch. Same-owner configs are always normalized to
 `granted_by_admin = 0`.
+
+Manual cross-owner provider syncs likewise require `allow_cross_owner: true`.
+Adding `restore_revoked_assignments: true` clears only
+`authorization_revoked` on assignments covered by that approved sync and sets
+their administrator grant; it does not clear `is_hidden`. An administrator can
+explicitly restore one legacy pre-release row through the normal channel
+assignment endpoint, which clears both states for that selected channel only.
+
+Full system imports validate stored grant and revocation flags against the
+rebuilt ownership relationships. Imported cross-owner administrator grants are
+restored only when the admin import request also includes
+`allow_cross_owner: true`; otherwise their sync configs remain disabled and
+their channel assignments remain authorization-revoked.
 - `GET /api/sync-logs`
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`
@@ -207,8 +221,14 @@ extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
 `get.php` expands each series into one playlist entry per episode
 (`<Series Name> SXX EXX`) like a native Xtream panel, using episodes cached by
 the provider episode sync (see `sync_series_episodes` on sync configs). Series
-whose episodes have not been synced yet fall back to a single series-level
-entry.
+whose episodes have not been synced yet are omitted because a series assignment
+ID is not a playable episode ID. Provider synchronization populates the episode
+cache in the background; playlist requests never wait indefinitely for it.
+
+Provider-controlled container extensions are normalized when stored and again
+when a public or upstream URL is generated. Known MIME types are mapped to
+their standard suffixes, and values containing path, query, fragment, percent,
+control, or playlist-injection characters fall back to a safe extension.
 
 Expanded episodes use compact persistent alias IDs from `900,000,001` through
 `999,999,999`, safely within the signed 32-bit range and below the legacy ID
@@ -218,6 +238,12 @@ credentials, and token-authenticated share routes use the same IDs. Cached
 provider- or assignment-based legacy IDs are accepted only when they resolve to
 exactly one currently authorized series and episode, otherwise playback fails
 closed.
+
+Channel visibility requires `is_hidden = 0`, `authorization_revoked = 0`, and
+either matching provider/category ownership or `granted_by_admin = 1`.
+Ownership changes revoke ordinary assignments without changing the user's
+hidden preference. Same-owner assignments normalize to grant `0`; explicit
+cross-owner administrator assignments normalize to grant `1`.
 Clients should refresh series metadata or playlists when a stale ID is
 ambiguous. Live and movie stream IDs are unchanged.
 

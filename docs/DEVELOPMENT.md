@@ -20,7 +20,9 @@ It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
 full test suite with an isolated temporary `DATA_DIR`, runs the build command,
 and fails on high or critical production dependency vulnerabilities. The
 temporary test directory is removed even when a test fails. Pull-request Docker
-builds verify the image without logging in to the registry or publishing it.
+builds run only after validation and verify the image without logging in to the
+registry or publishing it. Tagged release archives depend on both validation
+and the Docker job, so failed lint, tests, builds, or audits block publishing.
 
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
@@ -111,6 +113,14 @@ Heavy one-time migrations should:
 - mark completion in `settings`
 - avoid repeated `VACUUM`
 - preserve existing user/provider data
+
+The channel-authorization migration preserves assignment IDs and the existing
+`is_hidden` value, adds `authorization_revoked`, and marks ungranted ownership
+mismatches as revoked. Databases that ran the earlier pre-release grant
+migration keep any rows that migration hid; an approved sync can clear only
+their authorization revocation, while an administrator must explicitly restore
+a selected channel to clear its hidden state. Re-running the migration is
+idempotent and does not infer administrator grants.
 
 ## Web Player Performance
 

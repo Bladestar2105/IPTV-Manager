@@ -7,6 +7,7 @@ import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../u
 import { calculateNextSync } from '../services/syncService.js';
 import { isIP } from 'net';
 import { clearSettingsCache, isSafeUrl, cleanIp, resolveAssignmentGrant } from '../utils/helpers.js';
+import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import si from 'systeminformation';
 import geoip from 'geoip-lite';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
@@ -545,7 +546,7 @@ export const importData = async (req, res) => {
           ch.original_sort_order,
           ch.tv_archive || 0,
           ch.tv_archive_duration || 0,
-          ch.mime_type || null,
+          normalizeContainerExtension(ch.mime_type, ch.stream_type === 'live' ? 'ts' : 'mp4'),
           ch.metadata || null,
           ch.rating || null,
           ch.rating_5based || 0,
@@ -604,7 +605,8 @@ export const importData = async (req, res) => {
             categoryOwnerId: newUserId,
             providerOwnerId: providerOwnerMap.get(newProvId),
             isAdmin: true,
-            allowExplicitAdminGrant: Number(s.granted_by_admin) === 1
+            allowExplicitAdminGrant: req.body?.allow_cross_owner === true &&
+              Number(s.granted_by_admin) === 1
           });
           insertSyncConfigStmt.run(
             newProvId,
@@ -624,8 +626,9 @@ export const importData = async (req, res) => {
       const userAssignments = importData.channels.filter(c => c.type === 'user_assignment');
       const insertUserChannel = db.prepare(`
         INSERT INTO user_channels
-          (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, granted_by_admin)
-        VALUES (?, ?, ?, ?, ?, ?)
+          (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
+           granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const ua of userAssignments) {
@@ -637,15 +640,17 @@ export const importData = async (req, res) => {
             categoryOwnerId: categoryOwnerMap.get(newUserCatId),
             providerOwnerId: providerChannelOwnerMap.get(newProvChannelId),
             isAdmin: true,
-            allowExplicitAdminGrant: Number(ua.granted_by_admin) === 1
+            allowExplicitAdminGrant: req.body?.allow_cross_owner === true &&
+              Number(ua.granted_by_admin) === 1
           });
           insertUserChannel.run(
             newUserCatId,
             newProvChannelId,
             ua.sort_order,
             ua.custom_name || '',
-            Number(ua.is_hidden) === 1 || grant === null ? 1 : 0,
-            grant === 1 ? 1 : 0
+            Number(ua.is_hidden) === 1 ? 1 : 0,
+            grant === 1 ? 1 : 0,
+            grant === null ? 1 : 0
           );
           stats.channels++;
         }

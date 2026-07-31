@@ -231,23 +231,53 @@ describe('Export/Import Regression Tests', () => {
         }
         db.prepare('PRAGMA foreign_keys = ON').run();
 
-        const resImport = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+        const failClosedImport = { status: vi.fn().mockReturnThis(), json: vi.fn() };
         await systemController.importData(
             { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD }, file: { path: tempFilePath } },
+            failClosedImport
+        );
+        expect(failClosedImport.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+        expect(db.prepare(`
+          SELECT uc.granted_by_admin, uc.authorization_revoked
+          FROM user_channels uc
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE cat.name = 'Cross granted'
+        `).get()).toEqual({ granted_by_admin: 0, authorization_revoked: 1 });
+        expect(db.prepare(`
+          SELECT sc.enabled, sc.granted_by_admin
+          FROM sync_configs sc
+          JOIN providers p ON p.id = sc.provider_id
+          WHERE p.name = 'Shared Provider'
+        `).get()).toEqual({ enabled: 0, granted_by_admin: 0 });
+
+        db.prepare('PRAGMA foreign_keys = OFF').run();
+        for (const table of ['user_channels', 'category_mappings', 'sync_configs', 'provider_channels', 'providers', 'user_categories', 'users']) {
+            db.prepare(`DELETE FROM ${table}`).run();
+        }
+        db.prepare('PRAGMA foreign_keys = ON').run();
+        fs.writeFileSync(tempFilePath, exportedBuffer);
+
+        const resImport = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+        await systemController.importData(
+            {
+              user: { is_admin: true },
+              body: { password: TEST_EXPORT_PASSWORD, allow_cross_owner: true },
+              file: { path: tempFilePath }
+            },
             resImport
         );
 
         expect(resImport.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
         const assignments = db.prepare(`
-            SELECT cat.name, uc.is_hidden, uc.granted_by_admin
+            SELECT cat.name, uc.is_hidden, uc.granted_by_admin, uc.authorization_revoked
             FROM user_channels uc
             JOIN user_categories cat ON cat.id = uc.user_category_id
             ORDER BY cat.name
         `).all();
         expect(assignments).toEqual([
-            { name: 'Cross granted', is_hidden: 0, granted_by_admin: 1 },
-            { name: 'Cross ungranted', is_hidden: 1, granted_by_admin: 0 },
-            { name: 'Same owner', is_hidden: 0, granted_by_admin: 0 },
+            { name: 'Cross granted', is_hidden: 0, granted_by_admin: 1, authorization_revoked: 0 },
+            { name: 'Cross ungranted', is_hidden: 0, granted_by_admin: 0, authorization_revoked: 1 },
+            { name: 'Same owner', is_hidden: 0, granted_by_admin: 0, authorization_revoked: 0 },
         ]);
 
         const configs = db.prepare(`
