@@ -14,6 +14,16 @@ import {
 
 const normalizeProviderBaseUrl = (url) => String(url || '').trim().replace(/\/+$/, '');
 const isHttpUrl = (url) => /^https?:\/\//i.test(url);
+const parseProviderCategoryId = value => {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
 
 const replaceDefaultEpgProviderUrl = (epgUrl, fromBase, toBase) => {
   const trimmed = String(epgUrl || '').trim();
@@ -705,9 +715,9 @@ export const importCategory = async (req, res) => {
     const providerId = Number(req.params.providerId);
     const { user_id, category_id, category_name, import_channels, type } = req.body;
     const catType = type || 'live';
-    const providerCategoryId = Number(category_id);
+    const providerCategoryId = parseProviderCategoryId(category_id);
 
-    if (!user_id || !Number.isInteger(providerCategoryId) || providerCategoryId < 0 || !category_name) {
+    if (!user_id || providerCategoryId === null || !category_name) {
       return res.status(400).json({error: 'Missing required fields'});
     }
 
@@ -854,8 +864,8 @@ export const importCategories = async (req, res) => {
     const result = db.transaction(() => {
       let maxSort = Number(db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS max_sort FROM user_categories WHERE user_id = ?').get(targetUserId).max_sort);
       for (const cat of categories) {
-        const providerCategoryId = Number(cat.id);
-        if (!Number.isInteger(providerCategoryId) || providerCategoryId < 0 || !cat.name) continue;
+        const providerCategoryId = parseProviderCategoryId(cat.id);
+        if (providerCategoryId === null || !cat.name) continue;
         const catType = cat.type || 'live';
         const existing = db.prepare(`
           SELECT cm.id, cm.user_category_id,

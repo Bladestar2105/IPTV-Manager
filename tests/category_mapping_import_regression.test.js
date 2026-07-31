@@ -150,4 +150,19 @@ describe('category import mapping lifecycle', () => {
     }), bulk);
     expect(bulk.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, channels_imported: 0 }));
   });
+
+  it('rejects blank single category IDs and skips them in bulk imports', async () => {
+    const { providerId } = addProvider();
+    const single = response();
+    await importCategory(request(providerId, {
+      user_id: 1, category_id: ' ', category_name: 'Invalid', import_channels: true, type: 'live'
+    }), single);
+    expect(single.status).toHaveBeenCalledWith(400);
+
+    const bulk = response();
+    await importCategories(request(providerId, {
+      user_id: 1, categories: [{ id: null, name: 'Invalid', import_channels: true, type: 'live' }]
+    }), bulk);
+    expect(bulk.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, categories_imported: 0 }));
+  });
 });
