@@ -53,6 +53,12 @@ Deleting a provider removes dependent channel assignments, EPG mappings, stream
 stats, sync data, category mappings, and provider icon cache entries before the
 provider row is deleted.
 
+Provider synchronization treats a complete empty response conservatively: one
+empty snapshot preserves an existing local catalog, while a second consecutive
+authoritative empty snapshot permits cleanup. Failed, invalid, or incomplete
+responses do not advance the empty-snapshot counter. A provider with no local
+rows may accept an empty catalog immediately.
+
 `POST /api/providers/bulk-url` is admin-only. It replaces matching provider
 base URLs across all users, for example `from_url: "http://provider1.com"` to
 `to_url: "http://provider2.com"`. Default provider EPG URLs under
@@ -87,6 +93,14 @@ the route category; otherwise the complete request is rejected without writes.
 Category mappings accept `null` for an explicit unmap, or a category owned by
 the mapping user with the same content type. Invalid, foreign, and mixed-type
 targets are rejected without changing the mapping.
+
+Assignments created by category synchronization are owned through
+`user_channels.mapping_id`. Retargeting a mapping moves or merges only those
+owned assignments into the validated target category; explicitly unmapping a
+mapping removes its owned assignments. Manual assignments (`mapping_id IS NULL`)
+remain unchanged. Each user category can contain at most one assignment for a
+given provider channel. Bulk category and channel requests accept at most 5,000
+IDs per request.
 
 ## EPG and Mapping
 

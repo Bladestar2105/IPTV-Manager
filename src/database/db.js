@@ -164,6 +164,16 @@ export function initDb(isPrimary) {
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
+    CREATE TABLE IF NOT EXISTS provider_sync_state (
+      provider_id INTEGER NOT NULL,
+      stream_type TEXT NOT NULL,
+      empty_snapshot_count INTEGER NOT NULL DEFAULT 0,
+      last_nonempty_count INTEGER NOT NULL DEFAULT 0,
+      last_snapshot_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (provider_id, stream_type),
+      FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS category_mappings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_id INTEGER NOT NULL,
@@ -299,6 +309,7 @@ export function initDb(isPrimary) {
             migrations.migrateAdminForcePasswordChange(db);
             migrations.migrateUserMaxConnections(db);
             migrations.migrateProviderMaxConnections(db);
+            migrations.migrateProviderSyncState(db);
             migrations.migrateCurrentStreamsProviderId(db);
             migrations.migrateCurrentStreamsLastActivity(db);
             migrations.migrateProviderLastEpgUpdate(db);
@@ -324,6 +335,12 @@ export function initDb(isPrimary) {
             }
             if (typeof migrations.migrateSeriesEpisodes === 'function') {
                 migrations.migrateSeriesEpisodes(db);
+            }
+            if (typeof migrations.migrateUserChannelMappingBackfillV1 === 'function') {
+                migrations.migrateUserChannelMappingBackfillV1(db);
+            }
+            if (typeof migrations.migrateUserChannelDeduplicationV1 === 'function') {
+                migrations.migrateUserChannelDeduplicationV1(db);
             }
             migrations.migrateStalkerTables(db);
 

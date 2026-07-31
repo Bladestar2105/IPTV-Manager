@@ -8,6 +8,96 @@ import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 
+/**
+ * Delete one provider channel without violating the dependent foreign keys.
+ * The caller owns the surrounding transaction.
+ */
+export function deleteProviderChannelCascade(database, providerId, providerChannelId) {
+  const channel = database.prepare(`
+    SELECT id
+    FROM provider_channels
+    WHERE id = ? AND provider_id = ?
+  `).get(providerChannelId, providerId);
+  if (!channel) return 0;
+
+  database.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id = ?').run(channel.id);
+  database.prepare('DELETE FROM stream_stats WHERE channel_id = ?').run(channel.id);
+  database.prepare('DELETE FROM user_channels WHERE provider_channel_id = ?').run(channel.id);
+
+  const deleted = database.prepare(
+    'DELETE FROM provider_channels WHERE id = ? AND provider_id = ?'
+  ).run(channel.id, providerId).changes;
+  if (deleted !== 1) {
+    throw new Error(`Provider channel cleanup removed ${deleted} rows instead of one`);
+  }
+  return deleted;
+}
+
+export function selectStaleProviderChannels(
+  existingChannels,
+  seenRemoteIdsByType,
+  completeStreamTypes,
+  currentTypeByRemoteId = new Map()
+) {
+  const stale = [];
+  for (const streamType of completeStreamTypes) {
+    const seenIds = seenRemoteIdsByType.get(streamType) || new Set();
+    for (const row of existingChannels) {
+      const rowType = row.stream_type || 'live';
+      const remoteId = Number(row.remote_stream_id);
+      if (rowType !== streamType || seenIds.has(remoteId)) continue;
+      // A provider may reuse a stream id while changing its stream type. The
+      // row is updated in-place; do not delete the newly retargeted channel.
+      const currentType = currentTypeByRemoteId.get(remoteId);
+      if (currentType && currentType !== streamType) continue;
+      stale.push(row);
+    }
+  }
+  return stale;
+}
+
+function updateProviderSyncState(database, providerId, streamType, snapshotCount, localCount, timestamp) {
+  const previous = database.prepare(`
+    SELECT empty_snapshot_count, last_nonempty_count
+    FROM provider_sync_state
+    WHERE provider_id = ? AND stream_type = ?
+  `).get(providerId, streamType);
+
+  let emptySnapshotCount = Number(previous?.empty_snapshot_count) || 0;
+  let lastNonemptyCount = Number(previous?.last_nonempty_count) || 0;
+  let allowCleanup = false;
+
+  if (snapshotCount > 0) {
+    emptySnapshotCount = 0;
+    lastNonemptyCount = snapshotCount;
+    allowCleanup = true;
+  } else if (localCount === 0) {
+    // An empty catalog is valid when there is nothing local to destroy.
+    emptySnapshotCount = 0;
+    allowCleanup = true;
+  } else {
+    emptySnapshotCount += 1;
+    allowCleanup = emptySnapshotCount >= 2;
+    if (!allowCleanup) {
+      console.warn(
+        `Preserving ${localCount} ${streamType} provider channel(s) after one empty snapshot for provider ${providerId}`
+      );
+    }
+  }
+
+  database.prepare(`
+    INSERT INTO provider_sync_state
+      (provider_id, stream_type, empty_snapshot_count, last_nonempty_count, last_snapshot_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(provider_id, stream_type) DO UPDATE SET
+      empty_snapshot_count = excluded.empty_snapshot_count,
+      last_nonempty_count = excluded.last_nonempty_count,
+      last_snapshot_at = excluded.last_snapshot_at
+  `).run(providerId, streamType, emptySnapshotCount, lastNonemptyCount, timestamp);
+
+  return allowCleanup;
+}
+
 function createXtreamClient(provider) {
   let baseUrl = (provider.url || '').trim();
   if (!/^https?:\/\//i.test(baseUrl)) baseUrl = 'http://' + baseUrl;
@@ -118,6 +208,7 @@ export async function performSync(providerId, userId, options = {}) {
     let allChannels = [];
     let allCategories = [];
     const completeStreamTypes = new Set();
+    const snapshotStates = new Map();
 
     // 1. Live & M3U Fallback
     try {
@@ -133,7 +224,7 @@ export async function performSync(providerId, userId, options = {}) {
           try {
              const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`, { timeout: 60000 });
              if (resp.ok) {
-                 const contentType = resp.headers.get('content-type');
+                 const contentType = resp.headers?.get?.('content-type');
                  if (contentType && contentType.includes('application/json')) {
                      liveChans = await resp.json();
                      liveFetchComplete = Array.isArray(liveChans);
@@ -204,6 +295,7 @@ export async function performSync(providerId, userId, options = {}) {
            allChannels.push(c);
          });
          if (liveFetchComplete) completeStreamTypes.add('live');
+         if (liveFetchComplete) snapshotStates.set('live', { count: liveChans.length });
        }
 
        if (!m3uMode) {
@@ -231,6 +323,7 @@ export async function performSync(providerId, userId, options = {}) {
                 allChannels.push(c);
             });
             completeStreamTypes.add('movie');
+            snapshotStates.set('movie', { count: vods.length });
          }
        } else {
          console.error(`VOD fetch failed: ${resp.status}`);
@@ -260,6 +353,7 @@ export async function performSync(providerId, userId, options = {}) {
                 allChannels.push(c);
             });
             completeStreamTypes.add('series');
+            snapshotStates.set('series', { count: series.length });
          }
        }
 
@@ -276,12 +370,9 @@ export async function performSync(providerId, userId, options = {}) {
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
     const allMappings = db.prepare(`
       SELECT cm.*,
-             CASE
-               WHEN uc.user_id = cm.user_id
-                AND COALESCE(uc.type, 'live') = COALESCE(cm.category_type, 'live')
-               THEN cm.user_category_id
-               ELSE NULL
-             END AS user_category_id
+             cm.user_category_id AS mapping_user_category_id,
+             uc.user_id AS target_user_id,
+             COALESCE(uc.type, 'live') AS target_category_type
       FROM category_mappings cm
       LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
       WHERE cm.provider_id = ? AND cm.user_id = ?
@@ -293,7 +384,27 @@ export async function performSync(providerId, userId, options = {}) {
     const mappingLookup = new Map(); // Key: "catId_type"
     for (const m of allMappings) {
       const key = `${m.provider_category_id}_${m.category_type || 'live'}`;
-      mappingLookup.set(key, m);
+      const mappingType = m.category_type || 'live';
+      const targetId = Number(m.mapping_user_category_id) || 0;
+      const targetValid = !targetId || (
+        Number(m.target_user_id) === Number(m.user_id) &&
+        (m.target_category_type || 'live') === mappingType
+      );
+      mappingLookup.set(key, {
+        ...m,
+        user_category_id: targetValid && targetId ? targetId : null,
+        target_valid: targetValid
+      });
+    }
+    const invalidMappingCount = allMappings.filter(m => {
+      const targetId = Number(m.mapping_user_category_id) || 0;
+      return targetId > 0 && (
+        Number(m.target_user_id) !== Number(m.user_id) ||
+        (m.target_category_type || 'live') !== (m.category_type || 'live')
+      );
+    }).length;
+    if (invalidMappingCount > 0) {
+      console.warn(`Ignored ${invalidMappingCount} invalid category mapping target(s) for provider ${providerId}`);
     }
 
     // Prepare channel statements
@@ -317,11 +428,12 @@ export async function performSync(providerId, userId, options = {}) {
              youtube_trailer, episode_run_time
       FROM provider_channels
       WHERE provider_id = ?
+      ORDER BY COALESCE(stream_type, 'live'), id
     `).all(providerId);
 
     const existingMap = new Map();
     for (const row of existingChannels) {
-      existingMap.set(row.remote_stream_id, row);
+      existingMap.set(Number(row.remote_stream_id), row);
     }
 
     // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
@@ -333,6 +445,7 @@ export async function performSync(providerId, userId, options = {}) {
       INSERT INTO user_channels
         (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
       VALUES (?, ?, ?, ?, ?, 0)
+      ON CONFLICT DO NOTHING
     `);
     const authorizeExistingAssignment = db.prepare(`
       UPDATE user_channels
@@ -377,12 +490,17 @@ export async function performSync(providerId, userId, options = {}) {
       const keys = [`${categoryId}_${categoryType}`];
       if (categoryType === 'live') keys.push(`${categoryId}_radio`);
       return keys.map(key => ({ key, mapping: mappingLookup.get(key) })).filter(({ key, mapping }) => {
-        if (!mapping?.user_category_id || !mapping.id) return false;
+        if (!mapping?.user_category_id || !mapping.id || mapping.target_valid === false) return false;
         const expectedType = key.endsWith('_radio') ? 'radio' : categoryType;
         return (mapping.category_type || 'live') === expectedType;
       }).map(({ mapping }) => mapping);
     };
     const seenRemoteIdsByType = new Map();
+    const currentTypeByRemoteId = new Map();
+    for (const channel of allChannels) {
+      const remoteId = Number(channel.stream_id || channel.series_id || channel.id || 0);
+      if (remoteId > 0) currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
+    }
 
     // Execute all DB operations in a single transaction
     db.transaction(() => {
@@ -661,10 +779,17 @@ export async function performSync(providerId, userId, options = {}) {
                 const newSortOrder = currentMax + 1;
 
                 const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, mappingId, assignmentGrant);
+                const assignmentId = assignmentInfo.changes === 1
+                  ? Number(assignmentInfo.lastInsertRowid)
+                  : Number(db.prepare(`
+                    SELECT id FROM user_channels
+                    WHERE user_category_id = ? AND provider_channel_id = ?
+                  `).get(userCatId, provChannelId)?.id || 0);
+                if (!assignmentId) throw new Error('Unable to resolve synchronized user-channel assignment');
 
                 // Update in-memory state
                 existingAssignments.set(assignmentKey, {
-                  id: Number(assignmentInfo.lastInsertRowid),
+                  id: assignmentId,
                   user_category_id: userCatId,
                   provider_channel_id: Number(provChannelId),
                   mapping_id: mappingId,
@@ -688,20 +813,29 @@ export async function performSync(providerId, userId, options = {}) {
         }
       }
 
-      // Remove provider entries that were confirmed absent from a complete
-      // stream-type response. Explicitly remove assignments first because
-      // legacy databases do not enforce a foreign key on user_channels.
+      const cleanupTypes = new Set();
       for (const streamType of completeStreamTypes) {
-        const seenIds = [...(seenRemoteIdsByType.get(streamType) || [])];
-        const notInSeen = seenIds.length ? ` AND remote_stream_id NOT IN (${Array(seenIds.length).fill('?').join(',')})` : '';
-        const staleRows = db.prepare(`
-          SELECT id FROM provider_channels
-          WHERE provider_id = ? AND COALESCE(stream_type, 'live') = ?${notInSeen}
-        `).all(providerId, streamType, ...seenIds);
-        for (const stale of staleRows) {
-          db.prepare('DELETE FROM user_channels WHERE provider_channel_id = ?').run(stale.id);
-          db.prepare('DELETE FROM provider_channels WHERE id = ? AND provider_id = ?').run(stale.id, providerId);
+        const snapshot = snapshotStates.get(streamType);
+        if (!snapshot) continue;
+        const localCount = existingChannels.reduce(
+          (count, row) => count + ((row.stream_type || 'live') === streamType ? 1 : 0),
+          0
+        );
+        if (updateProviderSyncState(db, providerId, streamType, snapshot.count, localCount, startTime)) {
+          cleanupTypes.add(streamType);
         }
+      }
+
+      // Calculate stale rows from the already loaded catalog and in-memory
+      // Sets. This avoids SQLite's bound-variable limit for large providers.
+      const staleRows = selectStaleProviderChannels(
+        existingChannels,
+        seenRemoteIdsByType,
+        cleanupTypes,
+        currentTypeByRemoteId
+      );
+      for (const stale of staleRows) {
+        deleteProviderChannelCascade(db, providerId, stale.id);
       }
     })();
 

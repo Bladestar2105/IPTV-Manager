@@ -2,7 +2,7 @@ import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, isAdultCategory, redactUrl, providerSourceKey, resolveAssignmentGrant } from '../utils/helpers.js';
-import { performSync, checkProviderExpiry } from '../services/syncService.js';
+import { performSync, checkProviderExpiry, deleteProviderChannelCascade } from '../services/syncService.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
@@ -484,13 +484,16 @@ export const deleteProvider = (req, res) => {
     const providerRow = db.prepare('SELECT url FROM providers WHERE id = ?').get(id);
 
     db.transaction(() => {
-      db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
-      db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
-      db.prepare('DELETE FROM stream_stats WHERE channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').run(id);
-      db.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(id);
+      const providerChannels = db.prepare(
+        'SELECT id FROM provider_channels WHERE provider_id = ? ORDER BY id'
+      ).all(id);
+      for (const channel of providerChannels) {
+        deleteProviderChannelCascade(db, id, channel.id);
+      }
 
       db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(id);
+      db.prepare('DELETE FROM provider_sync_state WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM category_mappings WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM provider_icon_cache WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM providers WHERE id = ?').run(id);
@@ -754,6 +757,7 @@ export const importCategory = async (req, res) => {
         INSERT INTO user_channels
           (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
         VALUES (?, ?, ?, ?, ?, 0)
+        ON CONFLICT DO NOTHING
       `);
       const channels = stmt.all(providerId, Number(category_id), streamType);
       const importedCount = channels.length;
@@ -819,6 +823,7 @@ export const importCategories = async (req, res) => {
       INSERT INTO user_channels
         (user_category_id, provider_channel_id, sort_order, mapping_id, granted_by_admin, authorization_revoked)
       VALUES (?, ?, ?, ?, ?, 0)
+      ON CONFLICT DO NOTHING
     `);
     const getMaxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?');
 

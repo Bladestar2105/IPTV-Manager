@@ -137,6 +137,22 @@ remain unowned (`NULL`) so a category move cannot delete them; only assignments
 created by an active mapping are reconciled. The migration adds the column and
 an index without changing public IDs.
 
+The versioned `user_channel_mapping_backfill_v1` migration assigns ownership to
+legacy rows only when exactly one mapping matches the provider, source
+category, category owner, and content type (including the live-to-radio rule).
+Ambiguous, unmatched, and manual rows remain unowned. The
+`user_channel_deduplication_v1` migration deterministically merges duplicate
+category/provider-channel assignments, rebinds series aliases, and then creates
+the `uq_user_channels_category_provider` unique index. Both markers make the
+migrations idempotent.
+
+Provider sync state is persisted per provider and stream type in
+`provider_sync_state`. A first complete empty snapshot with local rows is
+recorded but is not destructive; cleanup requires a second consecutive empty
+snapshot. Non-empty snapshots reset the counter, and failed or invalid fetches
+leave it unchanged. Provider deletion removes the state through its foreign-key
+cascade.
+
 ## Series Episode Cache Identity
 
 Series episode metadata is keyed by the normalized upstream panel URL. Provider

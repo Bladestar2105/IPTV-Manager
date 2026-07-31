@@ -105,6 +105,7 @@ export const restoreBackup = (req, res) => {
           (id, user_category_id, provider_channel_id, sort_order, custom_name, is_hidden,
            mapping_id, granted_by_admin, authorization_revoked)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
       `);
       const getMapping = db.prepare('SELECT id FROM category_mappings WHERE id = ? AND user_id = ?');
       const getProviderOwner = db.prepare(`

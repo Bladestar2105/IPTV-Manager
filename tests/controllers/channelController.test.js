@@ -709,4 +709,140 @@ describe('Channel Controller - createUserCategory', () => {
         expect(db.prepare('SELECT id FROM user_categories WHERE id IN (?, ?) ORDER BY id').all(own.categoryId, foreign.categoryId))
           .toEqual([{ id: own.categoryId }, { id: foreign.categoryId }]);
     });
+
+    it('retargets mapping-owned assignments and rebinds series aliases', () => {
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Mapping Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const source = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Source', 'live')").run().lastInsertRowid;
+        const target = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Target', 'live')").run().lastInsertRowid;
+        const mapping = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+          VALUES (?, 2, 77, 'Provider', ?, 'live')
+        `).run(provider, source).lastInsertRowid;
+        const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 77, 'Series', 'live')").run(provider).lastInsertRowid;
+        const assignment = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden, mapping_id)
+          VALUES (?, ?, 4, 'Custom', 1, ?)
+        `).run(source, channel, mapping).lastInsertRowid;
+        const alias = db.prepare(`
+          INSERT INTO series_episode_aliases
+            (user_channel_id, source_key, series_remote_id, remote_episode_id)
+          VALUES (?, 'mapping-source', 77, 1)
+        `).run(assignment).lastInsertRowid;
+        const res = response();
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: String(target) },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({
+            success: true, assignments_removed: 0, assignments_moved: 1, duplicates_merged: 0
+        });
+        expect(db.prepare('SELECT user_category_id, mapping_id, is_hidden, custom_name FROM user_channels WHERE id = ?').get(assignment))
+          .toEqual({ user_category_id: target, mapping_id: mapping, is_hidden: 1, custom_name: 'Custom' });
+        expect(db.prepare('SELECT id, user_channel_id FROM series_episode_aliases WHERE id = ?').get(alias))
+          .toEqual({ id: alias, user_channel_id: assignment });
+    });
+
+    it('merges a retargeted assignment into a manual target and preserves aliases', () => {
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Merge Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const source = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Mapped Source', 'live')").run().lastInsertRowid;
+        const target = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Manual Target', 'live')").run().lastInsertRowid;
+        const mapping = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+          VALUES (?, 2, 88, 'Provider', ?, 'live')
+        `).run(provider, source).lastInsertRowid;
+        const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 88, 'Channel', 'live')").run(provider).lastInsertRowid;
+        const manual = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, sort_order, custom_name, is_hidden)
+          VALUES (?, ?, 2, 'Manual name', 1)
+        `).run(target, channel).lastInsertRowid;
+        const mapped = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, sort_order, custom_name, mapping_id)
+          VALUES (?, ?, 9, 'Mapped name', ?)
+        `).run(source, channel, mapping).lastInsertRowid;
+        const alias = db.prepare(`
+          INSERT INTO series_episode_aliases
+            (user_channel_id, source_key, series_remote_id, remote_episode_id)
+          VALUES (?, 'merge-source', 88, 1)
+        `).run(mapped).lastInsertRowid;
+        const res = response();
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: String(target) },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({
+            success: true, assignments_removed: 0, assignments_moved: 0, duplicates_merged: 1
+        });
+        expect(db.prepare('SELECT id, mapping_id, is_hidden, custom_name FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(target, channel))
+          .toEqual({ id: manual, mapping_id: null, is_hidden: 1, custom_name: 'Manual name' });
+        expect(db.prepare('SELECT id, user_channel_id FROM series_episode_aliases WHERE id = ?').get(alias))
+          .toEqual({ id: alias, user_channel_id: manual });
+        expect(db.prepare('SELECT id FROM user_channels WHERE id = ?').get(mapped)).toBeUndefined();
+    });
+
+    it('removes mapping-owned cross-owner assignments on unmapping but keeps manual rows', () => {
+        const provider = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Cross Owner', 'http://provider.test', 'u', 'p', 3)").run().lastInsertRowid;
+        const category = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Shared', 'live')").run().lastInsertRowid;
+        const manualCategory = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, 'Manual', 'live')").run().lastInsertRowid;
+        const mapping = db.prepare(`
+          INSERT INTO category_mappings
+            (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+          VALUES (?, 2, 99, 'Provider', ?, 'live')
+        `).run(provider, category).lastInsertRowid;
+        const channel = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, 99, 'Channel', 'live')").run(provider).lastInsertRowid;
+        const owned = db.prepare(`
+          INSERT INTO user_channels
+            (user_category_id, provider_channel_id, mapping_id, granted_by_admin, authorization_revoked)
+          VALUES (?, ?, ?, 1, 0)
+        `).run(category, channel, mapping).lastInsertRowid;
+        const manual = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id) VALUES (?, ?)').run(manualCategory, channel).lastInsertRowid;
+        const res = response();
+
+        channelController.updateCategoryMapping({
+            params: { id: String(mapping) }, body: { user_category_id: null },
+            user: { id: 2, is_admin: false }
+        }, res);
+
+        expect(res.json).toHaveBeenCalledWith({
+            success: true, assignments_removed: 1, assignments_moved: 0, duplicates_merged: 0
+        });
+        expect(db.prepare('SELECT id FROM user_channels WHERE id = ?').get(owned)).toBeUndefined();
+        expect(db.prepare('SELECT id, mapping_id FROM user_channels WHERE id = ?').get(manual))
+          .toEqual({ id: manual, mapping_id: null });
+        expect(db.prepare('SELECT user_category_id FROM category_mappings WHERE id = ?').get(mapping))
+          .toEqual({ user_category_id: null });
+    });
+
+    it('accepts exactly 5000 bulk category IDs and rejects larger requests before writing', () => {
+        const insert = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (2, ?, 'live')");
+        const ids = [];
+        const create = db.transaction(() => {
+            for (let i = 0; i < 5000; i++) ids.push(Number(insert.run(`bulk-${i}`).lastInsertRowid));
+        });
+        create();
+        const accepted = response();
+        channelController.bulkDeleteUserCategories({
+            body: { ids }, user: { id: 1, is_admin: true, username: 'admin' }, ip: '127.0.0.1'
+        }, accepted);
+        expect(accepted.json).toHaveBeenCalledWith({ success: true, deleted: 5000 });
+
+        const own = addAssignment(2);
+        channelsJsonCache.set('user_2_live', ['cached']);
+        const rejected = response();
+        channelController.bulkDeleteUserChannels({
+            body: { ids: [own.assignmentId, ...Array.from({ length: 5000 }, (_, i) => i + 100000)] },
+            user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1'
+        }, rejected);
+        expect(rejected.status).toHaveBeenCalledWith(400);
+        expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(own.assignmentId)).toEqual({ is_hidden: 0 });
+        expect(channelsJsonCache.has('user_2_live')).toBe(true);
+    });
 });

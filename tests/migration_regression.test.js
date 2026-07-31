@@ -7,6 +7,9 @@ import {
     migrateOtpSecrets,
     migrateSeriesEpisodes,
     migrateUserChannelMappingId,
+    migrateProviderSyncState,
+    migrateUserChannelMappingBackfillV1,
+    migrateUserChannelDeduplicationV1,
     migrateUserChannelAdminGrants,
     migrateSyncConfigAdminGrants
 } from '../src/database/migrations.js';
@@ -67,6 +70,122 @@ describe('Migration Bug Regression', () => {
               .toContain('mapping_id');
             expect(legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_user_channels_mapping'").get())
               .toEqual({ name: 'idx_user_channels_mapping' });
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('creates persistent provider snapshot state idempotently', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec('CREATE TABLE providers (id INTEGER PRIMARY KEY)');
+            migrateProviderSyncState(legacyDb);
+            migrateProviderSyncState(legacyDb);
+            expect(legacyDb.prepare('PRAGMA table_info(provider_sync_state)').all().map(column => column.name))
+              .toEqual(['provider_id', 'stream_type', 'empty_snapshot_count', 'last_nonempty_count', 'last_snapshot_at']);
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('backfills only unambiguous legacy mapping ownership and records a marker', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+              CREATE TABLE providers (id INTEGER PRIMARY KEY, user_id INTEGER);
+              CREATE TABLE provider_channels (id INTEGER PRIMARY KEY, provider_id INTEGER, original_category_id INTEGER, stream_type TEXT);
+              CREATE TABLE user_categories (id INTEGER PRIMARY KEY, user_id INTEGER, type TEXT);
+              CREATE TABLE category_mappings (
+                id INTEGER PRIMARY KEY, provider_id INTEGER, user_id INTEGER,
+                provider_category_id INTEGER, provider_category_name TEXT,
+                user_category_id INTEGER, category_type TEXT
+              );
+              CREATE TABLE user_channels (
+                id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
+                mapping_id INTEGER
+              );
+              INSERT INTO providers VALUES (1, 1), (2, 9);
+              INSERT INTO provider_channels VALUES
+                (10, 1, 100, 'live'), (11, 1, 200, 'live'), (12, 2, 100, 'live'),
+                (13, 1, 300, 'live'), (14, 1, 400, 'live'), (15, 1, 500, 'live');
+              INSERT INTO user_categories VALUES
+                (20, 2, 'live'), (21, 2, 'radio'), (22, 2, 'movie'), (23, 2, 'live');
+              INSERT INTO category_mappings VALUES
+                (100, 1, 2, 100, 'Live', 20, 'live'),
+                (101, 1, 2, 200, 'Radio', 21, 'radio'),
+                (102, 1, 2, 300, 'Ambiguous A', 20, 'live'),
+                (103, 1, 2, 300, 'Ambiguous B', 20, 'live'),
+                (105, 1, 2, 400, 'Wrong type', 22, 'movie'),
+                (106, 1, 2, 500, 'Unmatched', 23, 'live'),
+                (107, 1, 2, 600, 'Cross owner', 23, 'live');
+              INSERT INTO user_channels (id, user_category_id, provider_channel_id, mapping_id) VALUES
+                (201, 20, 10, NULL), (202, 21, 11, NULL), (203, 20, 13, NULL),
+                (204, 20, 12, NULL), (205, 22, 14, NULL), (206, 23, 15, NULL);
+            `);
+
+            const result = migrateUserChannelMappingBackfillV1(legacyDb);
+            expect(result).toEqual({ assigned: 3, ambiguous: 1, unmatched: 2, skipped: false });
+            expect(legacyDb.prepare('SELECT id, mapping_id FROM user_channels ORDER BY id').all()).toEqual([
+              { id: 201, mapping_id: 100 },
+              { id: 202, mapping_id: 101 },
+              { id: 203, mapping_id: null },
+              { id: 204, mapping_id: null },
+              { id: 205, mapping_id: null },
+              { id: 206, mapping_id: 106 }
+            ]);
+            expect(legacyDb.prepare("SELECT value FROM settings WHERE key = 'user_channel_mapping_backfill_v1'").get()).toBeTruthy();
+            expect(migrateUserChannelMappingBackfillV1(legacyDb)).toEqual({ assigned: 0, ambiguous: 0, unmatched: 0, skipped: true });
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('deduplicates assignments, rebinds aliases, and creates a unique index idempotently', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.pragma('foreign_keys = ON');
+            legacyDb.exec(`
+              CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+              CREATE TABLE user_channels (
+                id INTEGER PRIMARY KEY, user_category_id INTEGER, provider_channel_id INTEGER,
+                sort_order INTEGER DEFAULT 0, custom_name TEXT DEFAULT '', is_hidden INTEGER DEFAULT 0,
+                mapping_id INTEGER, granted_by_admin INTEGER DEFAULT 0, authorization_revoked INTEGER DEFAULT 0
+              );
+              CREATE TABLE series_episode_aliases (
+                id INTEGER PRIMARY KEY,
+                user_channel_id INTEGER NOT NULL,
+                source_key TEXT NOT NULL,
+                series_remote_id INTEGER NOT NULL,
+                remote_episode_id INTEGER NOT NULL,
+                UNIQUE(user_channel_id, source_key, series_remote_id, remote_episode_id),
+                FOREIGN KEY (user_channel_id) REFERENCES user_channels(id) ON DELETE CASCADE
+              );
+              INSERT INTO user_channels VALUES
+                (1, 10, 20, 8, '', 0, 7, 1, 0),
+                (2, 10, 20, 2, 'Manual', 1, NULL, 0, 0),
+                (3, 11, 21, 9, 'Mapped', 0, 8, 0, 1),
+                (4, 11, 21, 3, '', 0, 9, 0, 0);
+              INSERT INTO series_episode_aliases (id, user_channel_id, source_key, series_remote_id, remote_episode_id) VALUES
+                (900000005, 2, 'source', 20, 1),
+                (900000006, 1, 'source', 20, 1),
+                (900000007, 1, 'source', 20, 2),
+                (900000008, 3, 'source', 21, 1);
+            `);
+
+            expect(migrateUserChannelDeduplicationV1(legacyDb)).toEqual({ merged: 2, skipped: false });
+            expect(legacyDb.prepare('SELECT id, mapping_id, is_hidden, custom_name, sort_order FROM user_channels ORDER BY id').all()).toEqual([
+              { id: 2, mapping_id: null, is_hidden: 1, custom_name: 'Manual', sort_order: 2 },
+              { id: 3, mapping_id: 8, is_hidden: 0, custom_name: 'Mapped', sort_order: 3 }
+            ]);
+            expect(legacyDb.prepare('SELECT id, user_channel_id, remote_episode_id FROM series_episode_aliases ORDER BY id').all()).toEqual([
+              { id: 900000005, user_channel_id: 2, remote_episode_id: 1 },
+              { id: 900000007, user_channel_id: 2, remote_episode_id: 2 },
+              { id: 900000008, user_channel_id: 3, remote_episode_id: 1 }
+            ]);
+            expect(legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'uq_user_channels_category_provider'").get())
+              .toEqual({ name: 'uq_user_channels_category_provider' });
+            expect(migrateUserChannelDeduplicationV1(legacyDb)).toEqual({ merged: 0, skipped: true });
         } finally {
             legacyDb.close();
         }
