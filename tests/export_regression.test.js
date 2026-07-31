@@ -261,7 +261,7 @@ describe('Export/Import Regression Tests', () => {
         await systemController.importData(
             {
               user: { is_admin: true },
-              body: { password: TEST_EXPORT_PASSWORD, allow_cross_owner: true },
+              body: { password: TEST_EXPORT_PASSWORD, allow_cross_owner: 'true' },
               file: { path: tempFilePath }
             },
             resImport

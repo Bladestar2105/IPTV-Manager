@@ -366,6 +366,8 @@ export const importData = async (req, res) => {
   let tempPath = null;
   try {
     const { password } = req.body;
+    const allowCrossOwner = req.body?.allow_cross_owner === true ||
+      req.body?.allow_cross_owner === 'true';
     if (!req.file || !password) {
       return res.status(400).json({error: 'File and password required'});
     }
@@ -605,7 +607,7 @@ export const importData = async (req, res) => {
             categoryOwnerId: newUserId,
             providerOwnerId: providerOwnerMap.get(newProvId),
             isAdmin: true,
-            allowExplicitAdminGrant: req.body?.allow_cross_owner === true &&
+            allowExplicitAdminGrant: allowCrossOwner &&
               Number(s.granted_by_admin) === 1
           });
           insertSyncConfigStmt.run(
@@ -640,7 +642,7 @@ export const importData = async (req, res) => {
             categoryOwnerId: categoryOwnerMap.get(newUserCatId),
             providerOwnerId: providerChannelOwnerMap.get(newProvChannelId),
             isAdmin: true,
-            allowExplicitAdminGrant: req.body?.allow_cross_owner === true &&
+            allowExplicitAdminGrant: allowCrossOwner &&
               Number(ua.granted_by_admin) === 1
           });
           insertUserChannel.run(
