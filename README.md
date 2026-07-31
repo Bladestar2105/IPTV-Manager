@@ -24,6 +24,7 @@
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
 - **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.
+- **Stalker/MAG (Experimental)**: MAC-authenticated live TV, movies, synchronized series, radio, EPG-backed catch-up, and tokenized playback links.
 - **Shared Links**: Create public share links with customizable slugs (short URLs) and expiration dates.
 - **Bulk Operations**: Optimized bulk category import and deletion for managing large playlists efficiently.
 - **VOD & Series Support**: Full proxy support for Movies and TV Series.
@@ -222,6 +223,32 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
 
 ### Share + Companion App Integration
 - Share companion integration guide (Xtream/M3U/EPG): `docs/SHARE_COMPANION_INTEGRATION.md`
+
+### Stalker/MAG (Experimental)
+- This is a full experimental software-client portal covering live TV, movies,
+  synchronized series episodes, radio, EPG, and EPG-backed catch-up. It does
+  not claim compatibility with hardware MAG devices.
+- Register one or more MAC addresses in the selected user's **Stalker/MAG** tab.
+- Configure the client with `http(s)://your-server/c/`.
+- Current IPTVnator builds recognize the authenticated portal flow when configured
+  with `http(s)://your-server/stalker_portal/c`.
+- An optional 4–8 digit parental PIN can be set per device. It is encrypted at
+  rest and delivered only in that device's authenticated profile; when absent,
+  the profile returns an empty parental PIN. Bulk channel lists exclude adult
+  categories, while an authenticated session can explicitly request an adult
+  category. This is client-side Stalker parental control: the server does not
+  challenge every adult `create_link` request with the PIN.
+- The portal serves live TV with EPG, movies, synchronized series episodes,
+  radio categories, and EPG-backed catch-up through the existing authenticated
+  stream proxies.
+- Bulk EPG responses clamp the requested period to 168 hours, return at most
+  500 programmes per channel and 20,000 programmes overall, and preserve empty
+  arrays for channels without returned rows. Click-through catch-up playback
+  has been validated with OTT Navigator 1.7.4.1 on Android 16 through the
+  authenticated IPTV-Manager timeshift proxy.
+- Radio categories can be created or imported from a provider's live categories.
+  MP3/AAC sources pass through directly; transport-stream radio is transcoded
+  to MP3 for software clients. A hardware-specific MAG portal UI is not included.
 
 ### HDHomeRun Emulation
 - `GET /hdhr/:token/discover.json`

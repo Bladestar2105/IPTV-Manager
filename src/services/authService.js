@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import db from '../database/db.js';
 import { decrypt, JWT_SECRET } from '../utils/crypto.js';
 import { getSetting, getCookie } from '../utils/helpers.js';
+import { expiryEpoch } from '../utils/stalker.js';
 import { isIpAllowedForUser } from './geoIpService.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE, AUTH_CACHE_CLEANUP_INTERVAL } from '../config/constants.js';
 
@@ -171,8 +172,12 @@ export async function getXtreamUser(req) {
 
   // Check token auth first (avoids logging failed attempts for placeholder credentials)
   if (token) {
+    const isStalkerToken = /^[0-9a-f]{64}$/i.test(token) && Boolean(
+      db.prepare('SELECT 1 FROM stalker_sessions WHERE token = ?').get(token)
+    );
+    if (isStalkerToken) tokenCache.delete(token);
     // 0. Check Token Cache
-    if (tokenCache.has(token)) {
+    if (!isStalkerToken && tokenCache.has(token)) {
       const cached = tokenCache.get(token);
       if (Date.now() < cached.expiry) {
         if (cached.requiredSessionId) {
@@ -197,6 +202,7 @@ export async function getXtreamUser(req) {
       const row = db.prepare('SELECT user_id, session_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
 
       let userToCache = null;
+      let stalkerRow = null;
 
       if (row) {
         const dbUser = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(row.user_id);
@@ -214,17 +220,35 @@ export async function getXtreamUser(req) {
         userToCache = dbUser;
       }
 
-      // 2. Check HDHR tokens (if not found yet and token length matches hex string)
-      if (!user && /^[0-9a-f]{32}$/i.test(token)) {
+      // 2. Check Stalker/MAG sessions
+      if (!user && !row && isStalkerToken) {
+          stalkerRow = db.prepare(`
+            SELECT ss.user_id
+            FROM stalker_sessions ss
+            JOIN stalker_devices sd ON sd.id = ss.device_id AND sd.user_id = ss.user_id
+            JOIN users u ON u.id = ss.user_id
+            WHERE ss.token = ? AND ss.expires_at > ? AND sd.enabled = 1 AND u.is_active = 1
+          `).get(token, now);
+
+          if (stalkerRow) {
+              user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(stalkerRow.user_id);
+              const userExpiry = expiryEpoch(user?.expiry_date);
+              if (userExpiry && userExpiry <= now) user = null;
+              userToCache = user;
+          }
+      }
+
+      // 3. Check HDHR tokens (if not found yet and token length matches hex string)
+      if (!user && !isStalkerToken && /^[0-9a-f]{32}$/i.test(token)) {
           // Verify we didn't fail a required session check above
-          if (!row) {
+          if (!row && !stalkerRow) {
             user = db.prepare('SELECT * FROM users WHERE hdhr_token = ? AND hdhr_enabled = 1 AND is_active = 1').get(token);
             userToCache = user;
           }
       }
 
-      // 3. Check Shared Links
-      if (!user && !row) {
+      // 4. Check Shared Links
+      if (!user && !row && !stalkerRow && !isStalkerToken) {
           const share = db.prepare('SELECT * FROM shared_links WHERE token = ?').get(token);
           if (share) {
               user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(share.user_id);
@@ -243,7 +267,7 @@ export async function getXtreamUser(req) {
       }
 
       // Cache the result
-      if (userToCache || row) {
+      if (!isStalkerToken && !stalkerRow && (userToCache || row)) {
           tokenCache.set(token, {
               user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
               requiredSessionId: requiredSessionId,

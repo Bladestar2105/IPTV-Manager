@@ -161,8 +161,8 @@ export const createUser = async (req, res) => {
                 const sourceProviders = db.prepare('SELECT * FROM providers WHERE user_id = ?').all(sourceUserId);
 
                 const insertProvider = db.prepare(`
-                    INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections, use_mapped_epg_icon)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections, use_mapped_epg_icon, timeshift_timezone)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `);
 
                 for (const prov of sourceProviders) {
@@ -179,7 +179,8 @@ export const createUser = async (req, res) => {
                         prov.backup_urls,
                         prov.user_agent,
                         prov.max_connections || 0,
-                        prov.use_mapped_epg_icon ? 1 : 0
+                        prov.use_mapped_epg_icon ? 1 : 0,
+                        prov.timeshift_timezone || null
                     );
                     providerMap[prov.id] = result.lastInsertRowid;
                 }
@@ -417,6 +418,7 @@ export const updateUser = async (req, res) => {
 
         // Security enhancement: Invalidate sessions and cached tokens
         db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
+        db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(id);
         invalidateUserTokens(id);
     }
 
@@ -445,6 +447,7 @@ export const updateUser = async (req, res) => {
     if (expiry_date !== undefined) {
         updates.push('expiry_date = ?');
         params.push(expiry_date || null);
+        db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(id);
     }
 
     if (allowed_countries !== undefined) {
@@ -535,6 +538,8 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM category_mappings WHERE user_id = ?').run(id);
 
       db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(id);
+      db.prepare('DELETE FROM stalker_devices WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM shared_links WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM user_backups WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);

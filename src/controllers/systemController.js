@@ -12,6 +12,7 @@ import si from 'systeminformation';
 import geoip from 'geoip-lite';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 import { getGeoIpUpdatePlan, reloadGeoIpData, runGeoIpUpdateProcess } from '../services/geoIpUpdateService.js';
+import { parseTimeshiftTimezone } from '../utils/timezone.js';
 
 let initialNetStats = null;
 si.networkStats().then(stats => {
@@ -399,6 +400,10 @@ export const importData = async (req, res) => {
 
     // Security validation for URLs
     for (const p of importData.providers || []) {
+        const parsedTimezone = parseTimeshiftTimezone(p.timeshift_timezone);
+        if (parsedTimezone.error) {
+            return res.status(400).json({error: 'invalid_timeshift_timezone'});
+        }
         if (p.url && !(await isSafeUrl(p.url))) {
             return res.status(400).json({error: 'invalid_url', message: `Provider URL is unsafe: ${p.url}`});
         }
@@ -494,8 +499,8 @@ export const importData = async (req, res) => {
       }
 
       const insertProviderStmt = db.prepare(`
-        INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO providers (name, url, username, password, epg_url, user_id, epg_update_interval, epg_enabled, expiry_date, backup_urls, user_agent, max_connections, timeshift_timezone)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const p of importData.providers) {
@@ -516,7 +521,8 @@ export const importData = async (req, res) => {
           p.expiry_date || null,
           p.backup_urls || null,
           p.user_agent || null,
-          p.max_connections || 0
+          p.max_connections || 0,
+          parseTimeshiftTimezone(p.timeshift_timezone).value
         );
 
         providerIdMap.set(p.id, info.lastInsertRowid);

@@ -15,6 +15,11 @@ describe('User Deletion Regression', () => {
 
         // Create temporary token
         db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run('token123_fixed', userId, Math.floor(Date.now() / 1000) + 10000);
+        const deviceId = db.prepare('INSERT INTO stalker_devices (user_id, mac) VALUES (?, ?)').run(userId, '02:00:00:00:00:01').lastInsertRowid;
+        db.prepare(`
+          INSERT INTO stalker_sessions (token, device_id, user_id, created_at, expires_at, last_seen)
+          VALUES ('stalker_delete_test', ?, ?, 1, 9999999999, 1)
+        `).run(deviceId, userId);
 
         // Mock req and res
         const req = {
@@ -42,6 +47,8 @@ describe('User Deletion Regression', () => {
         // Assert token is gone
         const token = db.prepare('SELECT * FROM temporary_tokens WHERE user_id = ?').get(userId);
         expect(token).toBeUndefined();
+        expect(db.prepare('SELECT * FROM stalker_sessions WHERE user_id = ?').get(userId)).toBeUndefined();
+        expect(db.prepare('SELECT * FROM stalker_devices WHERE user_id = ?').get(userId)).toBeUndefined();
     });
 });
 

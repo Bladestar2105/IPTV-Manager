@@ -36,6 +36,7 @@ export function initDb(isPrimary) {
       epg_update_interval INTEGER DEFAULT 86400,
       epg_enabled INTEGER DEFAULT 1,
       max_connections INTEGER DEFAULT 0,
+      timeshift_timezone TEXT,
       last_epg_update INTEGER DEFAULT 0
     );
 
@@ -322,6 +323,7 @@ export function initDb(isPrimary) {
             if (typeof migrations.migrateSeriesEpisodes === 'function') {
                 migrations.migrateSeriesEpisodes(db);
             }
+            migrations.migrateStalkerTables(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

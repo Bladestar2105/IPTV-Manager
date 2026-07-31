@@ -16,6 +16,7 @@ import xtreamRoutes from './routes/xtream.js';
 import epgRoutes from './routes/epg.js';
 import systemRoutes from './routes/system.js';
 import hdhrRoutes from './routes/hdhr.js';
+import stalkerRoutes from './routes/stalker.js';
 import proxyRoutes from './routes/proxy.js';
 import shareRoutes from './routes/shares.js';
 import backupRoutes from './routes/backups.js';
@@ -64,6 +65,7 @@ app.use('/api', apiLimiter);
 app.use('/player_api.php', apiLimiter);
 app.use('/xmltv.php', apiLimiter);
 app.use('/get.php', apiLimiter);
+app.use(['/portal.php', '/server/load.php', '/stalker_portal/server/load.php', '/c/server/load.php'], apiLimiter);
 
 // Short Link Route (before static to take precedence if name conflicts, though unlikely with /share prefix)
 app.get('/share/:slug', shareController.handleShortLink);
@@ -83,6 +85,7 @@ app.use('/api/shares', shareRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/', streamRoutes);
 app.use('/', xtreamRoutes);
+app.use('/', stalkerRoutes);
 app.use('/hdhr', hdhrRoutes);
 
 // Error Handler

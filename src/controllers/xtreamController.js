@@ -10,7 +10,10 @@ import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
-import { SERIES_EPISODE_ALIAS_MIN, SERIES_EPISODE_OFFSET } from '../utils/seriesEpisodeId.js';
+import {
+  getOrCreateSeriesEpisodeAlias,
+  prepareSeriesEpisodeAliases
+} from '../utils/seriesEpisodeId.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -41,33 +44,6 @@ const sanitizeMetadata = (val) => {
 };
 
 const encodeXtreamEpgText = (val) => val ? Buffer.from(String(val)).toString('base64') : '';
-
-const prepareSeriesEpisodeAliases = (database = db) => ({
-  insert: database.prepare(`
-    INSERT OR IGNORE INTO series_episode_aliases
-      (user_channel_id, source_key, series_remote_id, remote_episode_id)
-    VALUES (?, ?, ?, ?)
-  `),
-  select: database.prepare(`
-    SELECT id FROM series_episode_aliases
-    WHERE user_channel_id = ? AND source_key = ? AND series_remote_id = ? AND remote_episode_id = ?
-  `),
-});
-
-const getOrCreateSeriesEpisodeAlias = (statements, userChannelId, sourceKey, seriesRemoteId, remoteEpisodeId) => {
-  const values = [Number(userChannelId), String(sourceKey || ''), Number(seriesRemoteId), Number(remoteEpisodeId)];
-  if (!values[1] || !values.every((value, index) => index === 1 || (Number.isSafeInteger(value) && value > 0))) return null;
-
-  let row = statements.select.get(...values);
-  if (!row) {
-    statements.insert.run(...values);
-    row = statements.select.get(...values);
-  }
-  return row && Number.isSafeInteger(Number(row.id)) &&
-    row.id >= SERIES_EPISODE_ALIAS_MIN && row.id < SERIES_EPISODE_OFFSET
-    ? String(row.id)
-    : null;
-};
 
 const formatXtreamEpgListing = (program, epgId) => ({
   id: String(program.start),
@@ -483,7 +459,7 @@ export const playerApi = async (req, res) => {
 
         if (data.episodes) {
            const sourceKey = providerSourceKey(channel.url);
-           const episodeAliases = prepareSeriesEpisodeAliases();
+           const episodeAliases = prepareSeriesEpisodeAliases(db);
            const upsertEpisode = db.prepare(`
              INSERT INTO provider_series_episodes
                (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)

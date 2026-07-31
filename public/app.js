@@ -440,6 +440,121 @@ function copyAllXtreamCredentials(btnElement) {
     copyToClipboard(text, btnElement);
 }
 
+async function loadStalkerDevices(userId) {
+    const list = document.getElementById('stalker-device-list');
+    if (!list || !userId) return;
+    list.innerHTML = `<li class="list-group-item text-muted">${escapeHtml(t('stalkerLoadingDevices'))}</li>`;
+
+    try {
+        const devices = await fetchJSON(`/api/users/${userId}/stalker-devices`);
+        if (selectedUserId !== userId) return;
+        list.innerHTML = '';
+
+        if (devices.length === 0) {
+            list.innerHTML = `<li class="list-group-item text-muted">${escapeHtml(t('stalkerNoDevices'))}</li>`;
+            return;
+        }
+
+        devices.forEach(device => {
+            const item = document.createElement('li');
+            item.className = 'list-group-item d-flex justify-content-between align-items-center gap-2';
+
+            const details = document.createElement('div');
+            const seen = device.last_seen ? new Date(device.last_seen * 1000).toLocaleString() : t('stalkerNever');
+            const pinStatus = device.parental_pin_configured ? t('stalkerPinConfigured') : t('stalkerPinNotConfigured');
+            details.innerHTML = `<strong>${escapeHtml(device.mac)}</strong><br><small class="text-muted">${escapeHtml(t('stalkerLastSeen', { value: seen }))} · ${escapeHtml(pinStatus)}</small>`;
+
+            const actions = document.createElement('div');
+            actions.className = 'd-flex align-items-center gap-1';
+
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = device.enabled ? 'btn btn-sm btn-outline-warning' : 'btn btn-sm btn-outline-success';
+            toggle.textContent = device.enabled ? t('stalkerDisable') : t('stalkerEnable');
+            toggle.onclick = async () => {
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ enabled: !device.enabled })
+                    });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
+            };
+
+            const setPin = document.createElement('button');
+            setPin.type = 'button';
+            setPin.className = 'btn btn-sm btn-outline-primary';
+            setPin.textContent = t('stalkerSetPin');
+            const pinInput = document.createElement('input');
+            pinInput.type = 'password';
+            pinInput.inputMode = 'numeric';
+            pinInput.pattern = '[0-9]{4,8}';
+            pinInput.maxLength = 8;
+            pinInput.autocomplete = 'new-password';
+            pinInput.className = 'form-control form-control-sm';
+            pinInput.style.width = '7rem';
+            pinInput.placeholder = t('stalkerParentalPinOptional');
+            pinInput.setAttribute('aria-label', t('stalkerParentalPin'));
+            setPin.onclick = async () => {
+                if (!pinInput.value) return;
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ parental_pin: pinInput.value })
+                    });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
+            };
+
+            const clearPin = document.createElement('button');
+            clearPin.type = 'button';
+            clearPin.className = 'btn btn-sm btn-outline-secondary';
+            clearPin.textContent = t('stalkerClearPin');
+            clearPin.onclick = async () => {
+                if (!confirm(t('stalkerClearPinConfirm', { mac: device.mac }))) return;
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ parental_pin: null })
+                    });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
+            };
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-sm btn-outline-danger';
+            remove.textContent = t('stalkerDelete');
+            remove.onclick = async () => {
+                if (!confirm(t('stalkerDeleteDeviceConfirm', { mac: device.mac }))) return;
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, { method: 'DELETE' });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
+            };
+
+            actions.append(toggle, pinInput, setPin);
+            if (device.parental_pin_configured) actions.append(clearPin);
+            actions.append(remove);
+            item.append(details, actions);
+            list.appendChild(item);
+        });
+    } catch (error) {
+        list.innerHTML = `<li class="list-group-item text-danger">${escapeHtml(t('stalkerDeviceError', { error: error.message }))}</li>`;
+    }
+}
+
 function renderUserDetails(u) {
     if (selectedUserId !== u.id) {
         globalSelectedChannels.clear();
@@ -543,6 +658,13 @@ function renderUserDetails(u) {
         }
     }
 
+    const stalkerTab = document.getElementById('tab-stalker-item');
+    const canManageStalker = !!(currentUser && currentUser.is_admin);
+    if (stalkerTab) stalkerTab.classList.toggle('d-none', !canManageStalker);
+    const stalkerPortalUrl = document.getElementById('stalker-portal-url');
+    if (stalkerPortalUrl) stalkerPortalUrl.value = `${baseUrl}/c/`;
+    if (canManageStalker) loadStalkerDevices(u.id);
+
     loadUserCategories();
     loadProviders(u.id); // Refresh providers
     loadUserBackups();
@@ -553,6 +675,33 @@ function renderUserDetails(u) {
         if(provForm.user_id) provForm.user_id.value = u.id;
     }
 }
+
+document.getElementById('stalker-device-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!selectedUserId) return;
+
+    const input = document.getElementById('stalker-device-mac');
+    const pinInput = document.getElementById('stalker-device-pin');
+    const button = event.target.querySelector('button[type="submit"]');
+    setLoadingState(button, true, 'saving');
+    try {
+        await fetchJSON(`/api/users/${selectedUserId}/stalker-devices`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                mac: input.value,
+                parental_pin: pinInput.value || undefined
+            })
+        });
+        input.value = '';
+        pinInput.value = '';
+        loadStalkerDevices(selectedUserId);
+    } catch (error) {
+        alert(t('stalkerDeviceError', { error: error.message }));
+    } finally {
+        setLoadingState(button, false);
+    }
+});
 
 async function loadUsers() {
   if (!currentUser || !currentUser.is_admin) {
@@ -1019,6 +1168,7 @@ function prepareEditProvider(p) {
   form.password.value = p.plain_password || '********';
   form.epg_url.value = p.epg_url || '';
   form.user_agent.value = p.user_agent || '';
+  form.timeshift_timezone.value = p.timeshift_timezone || '';
   form.user_id.value = p.user_id || '';
   form.epg_update_interval.value = p.epg_update_interval || 86400;
   form.epg_enabled.checked = p.epg_enabled !== 0;
@@ -1536,11 +1686,12 @@ async function fetchProviderChannels(reset) {
   
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
+  const providerType = type === 'radio' ? 'live' : type;
 
   isLoadingChannels = true;
   
   try {
-    const url = `/api/providers/${providerId}/channels?type=${type}&page=${channelPage}&limit=${channelLimit}&search=${encodeURIComponent(channelSearch)}`;
+    const url = `/api/providers/${providerId}/channels?type=${providerType}&page=${channelPage}&limit=${channelLimit}&search=${encodeURIComponent(channelSearch)}`;
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
@@ -1931,6 +2082,7 @@ document.getElementById('provider-form').addEventListener('submit', async e => {
     epg_update_interval: f.epg_update_interval.value,
     epg_enabled: f.epg_enabled.checked,
     use_mapped_epg_icon: f.use_mapped_epg_icon.checked,
+    timeshift_timezone: f.timeshift_timezone.value.trim() || null,
     backup_urls: backupUrls,
     max_connections: f.max_connections.value || 0
   };

@@ -14,6 +14,7 @@ import { fetchSafe } from '../utils/network.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
+import { formatXtreamTimeshiftStart, getEffectiveTimeshiftTimezone, isSupportedEpoch } from '../utils/timezone.js';
 import {
   decodeSeriesEpisodeId,
   SERIES_EPISODE_ALIAS_MIN,
@@ -56,12 +57,17 @@ function getChannel(streamId, userId) {
         p.backup_urls,
         p.user_agent,
         p.max_connections as provider_max_connections,
+        p.timeshift_timezone,
+        pc.tv_archive,
+        pc.tv_archive_duration,
+        COALESCE(map.epg_channel_id, pc.epg_channel_id) AS epg_channel_id,
         cat.user_id as category_owner_id,
         p.user_id as provider_owner_id
       FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       JOIN providers p ON p.id = pc.provider_id
       JOIN user_categories cat ON cat.id = uc.user_category_id
+      LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       WHERE uc.id = ? AND cat.user_id = ?
     `);
     }
@@ -194,7 +200,8 @@ export function getProviderCandidates(userId, originalProvider) {
         password: originalProvider.provider_pass,
         backup_urls: originalProvider.backup_urls,
         user_agent: originalProvider.user_agent,
-        max_connections: originalProvider.provider_max_connections
+        max_connections: originalProvider.provider_max_connections,
+        timeshift_timezone: originalProvider.timeshift_timezone
     };
     const categoryOwnerId = Number(originalProvider.category_owner_id);
     const providerOwnerId = Number(originalProvider.provider_owner_id);
@@ -278,6 +285,7 @@ function applyProviderToChannel(channel, provider) {
   channel.backup_urls = provider.backup_urls;
   channel.user_agent = provider.user_agent;
   channel.provider_max_connections = provider.max_connections;
+  channel.timeshift_timezone = provider.timeshift_timezone || null;
 }
 
 async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
@@ -710,6 +718,8 @@ export const proxyLive = async (req, res) => {
     let reqExt = 'ts';
     if (req.path.endsWith('.m3u8')) reqExt = 'm3u8';
     if (req.path.endsWith('.mp4')) reqExt = 'mp4';
+    if (req.path.endsWith('.mp3')) reqExt = 'mp3';
+    if (req.path.endsWith('.aac')) reqExt = 'aac';
 
     const wantsTranscode = (req.query.transcode === 'true');
 
@@ -725,7 +735,7 @@ export const proxyLive = async (req, res) => {
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
-    const remoteExt = (reqExt === 'm3u8' && !wantsTranscode) ? 'm3u8' : 'ts';
+    const remoteExt = (!wantsTranscode && ['m3u8', 'mp3', 'aac'].includes(reqExt)) ? reqExt : 'ts';
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const remoteUrl = `${base}/live/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${remoteExt}`;
@@ -747,18 +757,16 @@ export const proxyLive = async (req, res) => {
         const upstream = result.response;
 
         const isMp4 = (reqExt === 'mp4');
-        const outputFormat = isMp4 ? 'mp4' : 'mpegts';
-        const contentType = isMp4 ? 'video/mp4' : 'video/mp2t';
+        const isMp3 = (reqExt === 'mp3');
+        const outputFormat = isMp4 ? 'mp4' : (isMp3 ? 'mp3' : 'mpegts');
+        const contentType = isMp4 ? 'video/mp4' : (isMp3 ? 'audio/mpeg' : 'video/mp2t');
 
         res.setHeader('Content-Type', contentType);
         res.setHeader('Connection', 'keep-alive');
 
-        const outputOptions = [
-            '-c:v copy',
-            '-c:a aac',
-            '-b:a 128k',
-            `-f ${outputFormat}`
-        ];
+        const outputOptions = isMp3
+          ? ['-vn', '-c:a libmp3lame', '-b:a 128k', '-f mp3']
+          : ['-c:v copy', '-c:a aac', '-b:a 128k', `-f ${outputFormat}`];
 
         if (isMp4) {
             outputOptions.push('-movflags frag_keyframe+empty_moov');
@@ -866,7 +874,10 @@ export const proxyLive = async (req, res) => {
       return;
     }
 
-    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader(
+      'Content-Type',
+      reqExt === 'mp3' ? 'audio/mpeg' : (reqExt === 'aac' ? 'audio/aac' : 'video/mp2t')
+    );
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -1393,10 +1404,18 @@ export const proxyTimeshift = async (req, res) => {
 
   try {
     const streamId = Number(req.params.stream_id || 0);
-    const duration = req.params.duration;
-    const start = req.params.start;
+    const duration = String(req.params.duration || '');
+    const start = String(req.params.start || '');
+    const durationNumber = Number(duration);
+    const epochStart = start.startsWith('epoch-') ? Number(start.slice(6)) : null;
 
     if (!streamId) return res.sendStatus(404);
+    if (!Number.isSafeInteger(durationNumber) || durationNumber <= 0 || durationNumber > 1440) return res.sendStatus(400);
+    if (start.startsWith('epoch-')) {
+      if (!isSupportedEpoch(epochStart)) return res.sendStatus(400);
+    } else if (!/^\d{4}-\d{2}-\d{2}:\d{2}-\d{2}$/.test(start)) {
+      return res.sendStatus(400);
+    }
 
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
@@ -1407,6 +1426,27 @@ export const proxyTimeshift = async (req, res) => {
 
     if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
 
+    if (epochStart !== null) {
+      const now = Math.floor(Date.now() / 1000);
+      const archiveDays = Math.min(Math.max(Number(channel.tv_archive_duration) || 0, 0), 14);
+      let archiveProgram;
+      try {
+        const { getEpgProgramsForChannels } = await import('../services/epgService.js');
+        const programs = channel.tv_archive && channel.epg_channel_id
+          ? getEpgProgramsForChannels(new Set([channel.epg_channel_id]), epochStart - 1, epochStart + durationNumber * 60 + 1, 10).get(channel.epg_channel_id) || []
+          : [];
+        archiveProgram = programs.find(program => Number(program.start) === epochStart);
+      } catch {
+        archiveProgram = null;
+      }
+      const expectedDuration = archiveProgram
+        ? Math.min(Math.max(Math.ceil((Number(archiveProgram.stop) - epochStart) / 60), 1), 1440)
+        : 0;
+      if (!channel.tv_archive || !archiveProgram || epochStart > now || epochStart < now - archiveDays * 86400 || expectedDuration !== durationNumber) {
+        return res.sendStatus(404);
+      }
+    }
+
     const sessionName = `${channel.name} (Timeshift)`;
 
     if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
@@ -1415,10 +1455,17 @@ export const proxyTimeshift = async (req, res) => {
 
     const base = channel.provider_url.replace(/\/+$/, '');
     const reqExt = req.path.endsWith('.m3u8') ? 'm3u8' : 'ts';
-    const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
+    const upstreamStart = epochStart === null
+      ? start
+      : formatXtreamTimeshiftStart(epochStart, getEffectiveTimeshiftTimezone(channel.timeshift_timezone));
+    if (!upstreamStart) {
+      streamManager.remove(connectionId);
+      return res.sendStatus(400);
+    }
+    const remoteUrl = `${base}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${durationNumber}/${upstreamStart}/${channel.remote_stream_id}.${reqExt}`;
 
     const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
-        return `${bBase}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${duration}/${start}/${channel.remote_stream_id}.${reqExt}`;
+        return `${bBase}/timeshift/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${durationNumber}/${upstreamStart}/${channel.remote_stream_id}.${reqExt}`;
     }, 'Timeshift');
 
     const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Timeshift');

@@ -108,6 +108,7 @@ describe('User clone regression', () => {
             user_agent: null,
             max_connections: 0,
             use_mapped_epg_icon: 1,
+            timeshift_timezone: 'Europe/Berlin',
           }]),
         };
       }
@@ -209,6 +210,7 @@ describe('User clone regression', () => {
     expect(providerChannelsIterate).not.toHaveBeenCalled();
     expect(insertChannelRun.mock.calls[0][2]).toBe('Channel 123');
     expect(insertProviderRun.mock.calls[0][12]).toBe(1);
+    expect(insertProviderRun.mock.calls[0][13]).toBe('Europe/Berlin');
     expect(insertSyncRun).toHaveBeenCalledWith(20, 200, 1, 'daily', 1, 1, 1);
     expect(insertUserChannelRun).toHaveBeenCalledWith(40, 30, 0, '', 0);
     expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('VALUES (?, ?, ?, ?, ?, 0, 0)'));

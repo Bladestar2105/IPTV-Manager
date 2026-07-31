@@ -412,7 +412,13 @@ export function getEpgPrograms(channelId, limit = 1000, options = {}) {
     `).iterate(channelId, now, rowLimit);
 }
 
-export function getEpgProgramsForChannels(channelIds, start, end, limitPerChannel = 500) {
+export function getEpgProgramsForChannels(
+    channelIds,
+    start,
+    end,
+    limitPerChannel = 500,
+    totalLimit = Number.POSITIVE_INFINITY
+) {
     if (!channelIds || channelIds.size === 0 || channelIds.length === 0) {
         return new Map();
     }
@@ -425,8 +431,10 @@ export function getEpgProgramsForChannels(channelIds, start, end, limitPerChanne
     const result = new Map();
     const counts = new Map();
     const BATCH_SIZE = 900;
+    let total = 0;
 
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        if (total >= totalLimit) break;
         const batch = ids.slice(i, i + BATCH_SIZE);
         const placeholders = Array(batch.length).fill('?').join(',');
         const stmt = db.prepare(`
@@ -447,6 +455,8 @@ export function getEpgProgramsForChannels(channelIds, start, end, limitPerChanne
             if (!result.has(channelId)) result.set(channelId, []);
             result.get(channelId).push(row);
             counts.set(channelId, count + 1);
+            total += 1;
+            if (total >= totalLimit) break;
         }
     }
 
