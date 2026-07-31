@@ -537,7 +537,27 @@ const translations = {
     epgEarlier: 'Earlier',
     epgNow: 'Now',
     epgLater: 'Later',
-    epgNextDay: 'Next Day'
+    epgNextDay: 'Next Day',
+
+    // Stalker/MAG
+    stalkerMag: 'Stalker/MAG',
+    stalkerExperimentalLiveTv: 'Experimental live-TV support. Register each client\'s MAC address before connecting.',
+    stalkerPortalUrl: 'Portal URL',
+    stalkerCopyPortalUrl: 'Copy portal URL',
+    stalkerDeviceMac: 'Device MAC address',
+    stalkerAddDevice: 'Add device',
+    stalkerNoDevices: 'No devices registered.',
+    stalkerLastSeen: 'Last seen: {value}',
+    stalkerNever: 'Never',
+    stalkerEnable: 'Enable',
+    stalkerDisable: 'Disable',
+    stalkerDelete: 'Delete',
+    stalkerDeleteDeviceConfirm: 'Delete device {mac}?',
+    stalkerLoadingDevices: 'Loading devices...',
+    stalkerDeviceError: 'Stalker device error: {error}',
+    stalkerPortalPageTitle: 'IPTV-Manager Stalker Portal',
+    stalkerPortalApiAvailable: 'The Stalker/MAG API is available at',
+    stalkerPortalSetup: 'Register the device MAC address in the IPTV-Manager user view, then use this /c/ URL in a Stalker-compatible client.'
   },
 
   de: {
@@ -1073,7 +1093,27 @@ const translations = {
     epgEarlier: 'Früher',
     epgNow: 'Jetzt',
     epgLater: 'Später',
-    epgNextDay: 'Nächster Tag'
+    epgNextDay: 'Nächster Tag',
+
+    // Stalker/MAG
+    stalkerMag: 'Stalker/MAG',
+    stalkerExperimentalLiveTv: 'Experimentelle Live-TV-Unterstützung. Registrieren Sie vor der Verbindung die MAC-Adresse jedes Clients.',
+    stalkerPortalUrl: 'Portal-URL',
+    stalkerCopyPortalUrl: 'Portal-URL kopieren',
+    stalkerDeviceMac: 'MAC-Adresse des Geräts',
+    stalkerAddDevice: 'Gerät hinzufügen',
+    stalkerNoDevices: 'Keine Geräte registriert.',
+    stalkerLastSeen: 'Zuletzt gesehen: {value}',
+    stalkerNever: 'Nie',
+    stalkerEnable: 'Aktivieren',
+    stalkerDisable: 'Deaktivieren',
+    stalkerDelete: 'Löschen',
+    stalkerDeleteDeviceConfirm: 'Gerät {mac} löschen?',
+    stalkerLoadingDevices: 'Geräte werden geladen...',
+    stalkerDeviceError: 'Fehler beim Stalker-Gerät: {error}',
+    stalkerPortalPageTitle: 'IPTV-Manager Stalker-Portal',
+    stalkerPortalApiAvailable: 'Die Stalker/MAG-API ist verfügbar unter',
+    stalkerPortalSetup: 'Registrieren Sie die MAC-Adresse des Geräts in der IPTV-Manager-Benutzeransicht und verwenden Sie anschließend diese /c/-URL in einem Stalker-kompatiblen Client.'
   },
 
   fr: {
@@ -1609,7 +1649,27 @@ const translations = {
     epgEarlier: 'Plus tôt',
     epgNow: 'Maintenant',
     epgLater: 'Plus tard',
-    epgNextDay: 'Jour suivant'
+    epgNextDay: 'Jour suivant',
+
+    // Stalker/MAG
+    stalkerMag: 'Stalker/MAG',
+    stalkerExperimentalLiveTv: 'Prise en charge expérimentale de la TV en direct. Enregistrez l\'adresse MAC de chaque client avant la connexion.',
+    stalkerPortalUrl: 'URL du portail',
+    stalkerCopyPortalUrl: 'Copier l\'URL du portail',
+    stalkerDeviceMac: 'Adresse MAC de l\'appareil',
+    stalkerAddDevice: 'Ajouter un appareil',
+    stalkerNoDevices: 'Aucun appareil enregistré.',
+    stalkerLastSeen: 'Dernière activité : {value}',
+    stalkerNever: 'Jamais',
+    stalkerEnable: 'Activer',
+    stalkerDisable: 'Désactiver',
+    stalkerDelete: 'Supprimer',
+    stalkerDeleteDeviceConfirm: 'Supprimer l\'appareil {mac} ?',
+    stalkerLoadingDevices: 'Chargement des appareils...',
+    stalkerDeviceError: 'Erreur de l\'appareil Stalker : {error}',
+    stalkerPortalPageTitle: 'Portail Stalker IPTV-Manager',
+    stalkerPortalApiAvailable: 'L\'API Stalker/MAG est disponible à l\'adresse',
+    stalkerPortalSetup: 'Enregistrez l\'adresse MAC de l\'appareil dans la vue utilisateur d\'IPTV-Manager, puis utilisez cette URL /c/ dans un client compatible Stalker.'
   },
 
   el: {
@@ -2145,7 +2205,27 @@ const translations = {
     epgEarlier: 'Νωρίτερα',
     epgNow: 'Τώρα',
     epgLater: 'Αργότερα',
-    epgNextDay: 'Επόμενη ημέρα'
+    epgNextDay: 'Επόμενη ημέρα',
+
+    // Stalker/MAG
+    stalkerMag: 'Stalker/MAG',
+    stalkerExperimentalLiveTv: 'Πειραματική υποστήριξη ζωντανής τηλεόρασης. Καταχωρίστε τη διεύθυνση MAC κάθε πελάτη πριν από τη σύνδεση.',
+    stalkerPortalUrl: 'URL πύλης',
+    stalkerCopyPortalUrl: 'Αντιγραφή URL πύλης',
+    stalkerDeviceMac: 'Διεύθυνση MAC συσκευής',
+    stalkerAddDevice: 'Προσθήκη συσκευής',
+    stalkerNoDevices: 'Δεν έχουν καταχωριστεί συσκευές.',
+    stalkerLastSeen: 'Τελευταία εμφάνιση: {value}',
+    stalkerNever: 'Ποτέ',
+    stalkerEnable: 'Ενεργοποίηση',
+    stalkerDisable: 'Απενεργοποίηση',
+    stalkerDelete: 'Διαγραφή',
+    stalkerDeleteDeviceConfirm: 'Διαγραφή συσκευής {mac};',
+    stalkerLoadingDevices: 'Φόρτωση συσκευών...',
+    stalkerDeviceError: 'Σφάλμα συσκευής Stalker: {error}',
+    stalkerPortalPageTitle: 'Πύλη Stalker IPTV-Manager',
+    stalkerPortalApiAvailable: 'Το API Stalker/MAG είναι διαθέσιμο στη διεύθυνση',
+    stalkerPortalSetup: 'Καταχωρίστε τη διεύθυνση MAC της συσκευής στην προβολή χρήστη του IPTV-Manager και έπειτα χρησιμοποιήστε αυτή τη διεύθυνση /c/ σε έναν συμβατό πελάτη Stalker.'
   }
 };
 

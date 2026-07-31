@@ -443,7 +443,7 @@ function copyAllXtreamCredentials(btnElement) {
 async function loadStalkerDevices(userId) {
     const list = document.getElementById('stalker-device-list');
     if (!list || !userId) return;
-    list.innerHTML = '<li class="list-group-item text-muted">Loading...</li>';
+    list.innerHTML = `<li class="list-group-item text-muted">${escapeHtml(t('stalkerLoadingDevices'))}</li>`;
 
     try {
         const devices = await fetchJSON(`/api/users/${userId}/stalker-devices`);
@@ -451,7 +451,7 @@ async function loadStalkerDevices(userId) {
         list.innerHTML = '';
 
         if (devices.length === 0) {
-            list.innerHTML = '<li class="list-group-item text-muted">No devices registered.</li>';
+            list.innerHTML = `<li class="list-group-item text-muted">${escapeHtml(t('stalkerNoDevices'))}</li>`;
             return;
         }
 
@@ -460,8 +460,8 @@ async function loadStalkerDevices(userId) {
             item.className = 'list-group-item d-flex justify-content-between align-items-center gap-2';
 
             const details = document.createElement('div');
-            const seen = device.last_seen ? new Date(device.last_seen * 1000).toLocaleString() : 'never';
-            details.innerHTML = `<strong>${escapeHtml(device.mac)}</strong><br><small class="text-muted">Last seen: ${escapeHtml(seen)}</small>`;
+            const seen = device.last_seen ? new Date(device.last_seen * 1000).toLocaleString() : t('stalkerNever');
+            details.innerHTML = `<strong>${escapeHtml(device.mac)}</strong><br><small class="text-muted">${escapeHtml(t('stalkerLastSeen', { value: seen }))}</small>`;
 
             const actions = document.createElement('div');
             actions.className = 'btn-group btn-group-sm';
@@ -469,24 +469,32 @@ async function loadStalkerDevices(userId) {
             const toggle = document.createElement('button');
             toggle.type = 'button';
             toggle.className = device.enabled ? 'btn btn-outline-warning' : 'btn btn-outline-success';
-            toggle.textContent = device.enabled ? 'Disable' : 'Enable';
+            toggle.textContent = device.enabled ? t('stalkerDisable') : t('stalkerEnable');
             toggle.onclick = async () => {
-                await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ enabled: !device.enabled })
-                });
-                loadStalkerDevices(userId);
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ enabled: !device.enabled })
+                    });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
             };
 
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.className = 'btn btn-outline-danger';
-            remove.textContent = 'Delete';
+            remove.textContent = t('stalkerDelete');
             remove.onclick = async () => {
-                if (!confirm(`Delete device ${device.mac}?`)) return;
-                await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, { method: 'DELETE' });
-                loadStalkerDevices(userId);
+                if (!confirm(t('stalkerDeleteDeviceConfirm', { mac: device.mac }))) return;
+                try {
+                    await fetchJSON(`/api/users/${userId}/stalker-devices/${device.id}`, { method: 'DELETE' });
+                    loadStalkerDevices(userId);
+                } catch (error) {
+                    alert(t('stalkerDeviceError', { error: error.message }));
+                }
             };
 
             actions.append(toggle, remove);
@@ -494,7 +502,7 @@ async function loadStalkerDevices(userId) {
             list.appendChild(item);
         });
     } catch (error) {
-        list.innerHTML = `<li class="list-group-item text-danger">${escapeHtml(error.message)}</li>`;
+        list.innerHTML = `<li class="list-group-item text-danger">${escapeHtml(t('stalkerDeviceError', { error: error.message }))}</li>`;
     }
 }
 
@@ -635,7 +643,7 @@ document.getElementById('stalker-device-form').addEventListener('submit', async 
         input.value = '';
         loadStalkerDevices(selectedUserId);
     } catch (error) {
-        alert(error.message);
+        alert(t('stalkerDeviceError', { error: error.message }));
     } finally {
         setLoadingState(button, false);
     }

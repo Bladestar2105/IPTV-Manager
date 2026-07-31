@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>IPTV-Manager Stalker Portal</title>
+  <title data-i18n="stalkerPortalPageTitle">IPTV-Manager Stalker Portal</title>
   <style>
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #10141c; color: #f3f6fa; font: 18px/1.5 sans-serif; }
     main { max-width: 42rem; margin: 2rem; padding: 2rem; border: 1px solid #344054; border-radius: .75rem; background: #1b2230; }
@@ -13,9 +13,11 @@
 </head>
 <body>
   <main>
-    <h1>IPTV-Manager Stalker Portal</h1>
-    <p>The Stalker/MAG API is available at <code>/server/load.php</code>.</p>
-    <p>Register the device MAC address in the IPTV-Manager user view, then use this <code>/c/</code> URL in a Stalker-compatible client.</p>
+    <h1 data-i18n="stalkerPortalPageTitle">IPTV-Manager Stalker Portal</h1>
+    <p><span data-i18n="stalkerPortalApiAvailable">The Stalker/MAG API is available at</span> <code>/server/load.php</code>.</p>
+    <p data-i18n="stalkerPortalSetup">Register the device MAC address in the IPTV-Manager user view, then use this /c/ URL in a Stalker-compatible client.</p>
   </main>
+  <script src="../i18n.js"></script>
+  <script src="portal.js"></script>
 </body>
 </html>

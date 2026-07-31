@@ -217,7 +217,7 @@
                        <button class="nav-link" id="tab-hdhr-btn" data-bs-toggle="tab" data-bs-target="#tab-hdhr" type="button" role="tab" aria-controls="tab-hdhr" aria-selected="false" data-i18n-label="hdhomerun" data-i18n="hdhomerun">HDHomeRun</button>
                     </li>
                     <li class="nav-item d-none" id="tab-stalker-item" role="presentation">
-                       <button class="nav-link" id="tab-stalker-btn" data-bs-toggle="tab" data-bs-target="#tab-stalker" type="button" role="tab" aria-controls="tab-stalker" aria-selected="false">Stalker/MAG</button>
+                       <button class="nav-link" id="tab-stalker-btn" data-bs-toggle="tab" data-bs-target="#tab-stalker" type="button" role="tab" aria-controls="tab-stalker" aria-selected="false" data-i18n="stalkerMag">Stalker/MAG</button>
                     </li>
                  </ul>
 
@@ -400,18 +400,18 @@
                     <!-- Stalker/MAG Tab -->
                     <div class="tab-pane fade" id="tab-stalker" role="tabpanel" aria-labelledby="tab-stalker-btn">
                        <div class="alert alert-info small">
-                          Experimental live-TV support. Register each client's MAC address before connecting.
+                          <span data-i18n="stalkerExperimentalLiveTv">Experimental live-TV support. Register each client's MAC address before connecting.</span>
                        </div>
                        <div class="mb-3">
-                          <label class="form-label small fw-bold" for="stalker-portal-url">Portal URL</label>
+                          <label class="form-label small fw-bold" for="stalker-portal-url" data-i18n="stalkerPortalUrl">Portal URL</label>
                           <div class="input-group input-group-sm">
                              <input type="text" class="form-control" id="stalker-portal-url" readonly>
-                             <button class="btn btn-outline-secondary" data-copy-target="stalker-portal-url" aria-label="Copy portal URL" title="Copy portal URL"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
+                             <button class="btn btn-outline-secondary" data-copy-target="stalker-portal-url" data-i18n-label="stalkerCopyPortalUrl" data-i18n-title="stalkerCopyPortalUrl" aria-label="Copy portal URL" title="Copy portal URL"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                           </div>
                        </div>
                        <form id="stalker-device-form" class="input-group input-group-sm mb-3">
-                          <input id="stalker-device-mac" class="form-control" autocomplete="off" placeholder="00:1A:79:00:00:00" aria-label="Device MAC address" required>
-                          <button class="btn btn-primary" type="submit">Add device</button>
+                          <input id="stalker-device-mac" class="form-control" autocomplete="off" placeholder="00:1A:79:00:00:00" data-i18n-label="stalkerDeviceMac" aria-label="Device MAC address" required>
+                          <button class="btn btn-primary" type="submit" data-i18n="stalkerAddDevice">Add device</button>
                        </form>
                        <ul id="stalker-device-list" class="list-group small"></ul>
                     </div>

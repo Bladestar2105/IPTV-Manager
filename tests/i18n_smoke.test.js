@@ -22,4 +22,33 @@ describe('i18n smoke checks', () => {
       expect(missing, `${locale} missing keys`).toEqual([]);
     });
   });
+
+  it('keeps the complete Stalker/MAG UI localized', () => {
+    const translations = loadTranslations();
+    const stalkerKeys = [
+      'stalkerMag',
+      'stalkerExperimentalLiveTv',
+      'stalkerPortalUrl',
+      'stalkerCopyPortalUrl',
+      'stalkerDeviceMac',
+      'stalkerAddDevice',
+      'stalkerNoDevices',
+      'stalkerLastSeen',
+      'stalkerNever',
+      'stalkerEnable',
+      'stalkerDisable',
+      'stalkerDelete',
+      'stalkerDeleteDeviceConfirm',
+      'stalkerLoadingDevices',
+      'stalkerDeviceError',
+      'stalkerPortalPageTitle',
+      'stalkerPortalApiAvailable',
+      'stalkerPortalSetup'
+    ];
+
+    Object.entries(translations).forEach(([locale, values]) => {
+      const missing = stalkerKeys.filter(key => !values[key]);
+      expect(missing, `${locale} missing Stalker/MAG keys`).toEqual([]);
+    });
+  });
 });

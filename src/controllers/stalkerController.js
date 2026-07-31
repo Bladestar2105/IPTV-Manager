@@ -1,11 +1,13 @@
 import crypto from 'crypto';
 import db from '../database/db.js';
 import { getEpgPrograms } from '../services/epgService.js';
+import { invalidateUserTokens } from '../services/authService.js';
 import { isIpAllowedForUser } from '../services/geoIpService.js';
 import { getBaseUrl, getCookie } from '../utils/helpers.js';
-import { normalizeMac } from '../utils/stalker.js';
+import { expiryEpoch, normalizeMac } from '../utils/stalker.js';
 
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
+const ACTIVITY_UPDATE_INTERVAL_SECONDS = 60;
 const PAGE_SIZE = 100;
 const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -27,18 +29,6 @@ function getRequestToken(req, params) {
   const match = authorization.match(/^Bearer\s+(.+)$/i);
   if (match) return match[1].trim();
   return String(value(params, 'token') || value(params, 'access_token') || '').trim();
-}
-
-function expiryEpoch(value) {
-  if (!value) return null;
-
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) {
-    return Math.floor(numeric > 1e12 ? numeric / 1000 : numeric);
-  }
-
-  const parsed = Date.parse(String(value));
-  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
 }
 
 function authorizationFailed(res) {
@@ -90,6 +80,7 @@ function createSession(req, params, res) {
       WHERE id = ?
     `).run(serialNumber, deviceUid, model, req.ip || null, now, device.id);
   })();
+  invalidateUserTokens(device.user_id);
 
   return js(res, {
     token,
@@ -103,8 +94,9 @@ function getSession(req, params) {
 
   const now = Math.floor(Date.now() / 1000);
   const session = db.prepare(`
-    SELECT ss.token, ss.expires_at,
+    SELECT ss.token, ss.expires_at, ss.last_seen AS session_last_seen,
            sd.id AS device_id, sd.mac, sd.model, sd.serial_number, sd.device_uid,
+           sd.last_seen AS device_last_seen,
            u.id AS user_id, u.username, u.expiry_date, u.allowed_countries, u.is_active
     FROM stalker_sessions ss
     JOIN stalker_devices sd ON sd.id = ss.device_id
@@ -118,8 +110,16 @@ function getSession(req, params) {
   const userExpiry = expiryEpoch(session.expiry_date);
   if ((userExpiry && userExpiry <= now) || !isIpAllowedForUser(req.ip, session)) return null;
 
-  db.prepare('UPDATE stalker_sessions SET last_seen = ? WHERE token = ?').run(now, token);
-  db.prepare('UPDATE stalker_devices SET last_ip = ?, last_seen = ? WHERE id = ?').run(req.ip || null, now, session.device_id);
+  const oldestActivity = Math.min(
+    Number(session.session_last_seen) || 0,
+    Number(session.device_last_seen) || 0
+  );
+  if (now - oldestActivity >= ACTIVITY_UPDATE_INTERVAL_SECONDS) {
+    db.transaction(() => {
+      db.prepare('UPDATE stalker_sessions SET last_seen = ? WHERE token = ?').run(now, token);
+      db.prepare('UPDATE stalker_devices SET last_ip = ?, last_seen = ? WHERE id = ?').run(req.ip || null, now, session.device_id);
+    })();
+  }
   return session;
 }
 
@@ -173,13 +173,14 @@ function getGenres(session) {
   ];
 }
 
-function getOrderedList(session, params) {
+function getOrderedList(session, params, paginated = true) {
   const requestedGenre = Number(value(params, 'genre'));
   const genreId = Number.isSafeInteger(requestedGenre) && requestedGenre > 0 ? requestedGenre : null;
   const requestedPage = Number(value(params, 'p'));
   const page = Number.isSafeInteger(requestedPage) && requestedPage >= 0
     ? Math.min(requestedPage, 1_000_000)
     : 0;
+  const offset = paginated ? page * PAGE_SIZE : 0;
   const whereGenre = genreId ? ' AND cat.id = ?' : '';
   const bindings = genreId ? [session.user_id, genreId] : [session.user_id];
 
@@ -202,18 +203,18 @@ function getOrderedList(session, params) {
     WHERE cat.user_id = ? AND cat.type = 'live' AND pc.stream_type = 'live'
     ${whereGenre}
     ORDER BY cat.sort_order, uc.sort_order, pc.original_sort_order, pc.name
-    LIMIT ? OFFSET ?
-  `).all(...bindings, PAGE_SIZE, page * PAGE_SIZE);
+    ${paginated ? 'LIMIT ? OFFSET ?' : ''}
+  `).all(...bindings, ...(paginated ? [PAGE_SIZE, offset] : []));
 
   return {
     total_items: String(total),
-    max_page_items: PAGE_SIZE,
+    max_page_items: paginated ? PAGE_SIZE : total,
     selected_item: 0,
-    cur_page: page,
+    cur_page: paginated ? page : 0,
     data: channels.map((channel, index) => ({
       id: String(channel.id),
       name: channel.custom_name || channel.name,
-      number: String(page * PAGE_SIZE + index + 1),
+      number: String(offset + index + 1),
       tv_genre_id: String(channel.category_id),
       logo: channel.logo || '',
       cmd: `ffmpeg http://localhost/ch/${channel.id}_`,
@@ -331,9 +332,8 @@ export function portal(req, res) {
 
   if (type === 'itv') {
     if (action === 'get_genres') return js(res, getGenres(session));
-    if (action === 'get_ordered_list' || action === 'get_all_channels') {
-      return js(res, getOrderedList(session, params));
-    }
+    if (action === 'get_ordered_list') return js(res, getOrderedList(session, params));
+    if (action === 'get_all_channels') return js(res, getOrderedList(session, params, false));
     if (action === 'get_short_epg') return js(res, getShortEpg(session, params));
     if (action === 'create_link') return js(res, createLink(req, session, params));
   }

@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import db from '../database/db.js';
 import { decrypt, JWT_SECRET } from '../utils/crypto.js';
 import { getSetting, getCookie } from '../utils/helpers.js';
+import { expiryEpoch } from '../utils/stalker.js';
 import { isIpAllowedForUser } from './geoIpService.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS, AUTH_CACHE_TTL, AUTH_CACHE_MAX_SIZE, AUTH_CACHE_CLEANUP_INTERVAL } from '../config/constants.js';
 
@@ -227,6 +228,8 @@ export async function getXtreamUser(req) {
 
           if (stalkerRow) {
               user = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(stalkerRow.user_id);
+              const userExpiry = expiryEpoch(user?.expiry_date);
+              if (userExpiry && userExpiry <= now) user = null;
               userToCache = user;
           }
       }
@@ -260,7 +263,7 @@ export async function getXtreamUser(req) {
       }
 
       // Cache the result
-      if (userToCache || row || stalkerRow) {
+      if (!stalkerRow && (userToCache || row)) {
           tokenCache.set(token, {
               user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
               requiredSessionId: requiredSessionId,

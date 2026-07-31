@@ -1118,6 +1118,21 @@ export function migrateStalkerTables(db) {
       CREATE INDEX IF NOT EXISTS idx_stalker_sessions_expiry
         ON stalker_sessions(expires_at);
     `);
+
+    const hasAdminGrant = db.prepare('PRAGMA table_info(user_channels)')
+      .all()
+      .some(column => column.name === 'granted_by_admin');
+    db.exec(`
+      DROP VIEW IF EXISTS authorized_user_channels;
+      CREATE VIEW authorized_user_channels AS
+      SELECT uc.*
+      FROM user_channels uc
+      JOIN user_categories cat ON cat.id = uc.user_category_id
+      JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+      JOIN providers p ON p.id = pc.provider_id
+      WHERE uc.is_hidden = 0
+        AND (${hasAdminGrant ? 'p.user_id = cat.user_id OR uc.granted_by_admin = 1' : 'p.user_id = cat.user_id'})
+    `);
   });
 
   migrate();

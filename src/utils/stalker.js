@@ -12,3 +12,15 @@ export function normalizeMac(value) {
   if (!/^[0-9a-f]{12}$/i.test(compact)) return null;
   return compact.toUpperCase().match(/.{2}/g).join(':');
 }
+
+export function expiryEpoch(value) {
+  if (!value) return null;
+
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return Math.floor(numeric > 1e12 ? numeric / 1000 : numeric);
+  }
+
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+}
