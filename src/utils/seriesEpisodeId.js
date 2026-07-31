@@ -1,16 +1,5 @@
+export const SERIES_EPISODE_ALIAS_MIN = 900_000_000;
 export const SERIES_EPISODE_OFFSET = 1_000_000_000;
-
-export function encodeSeriesEpisodeId(userChannelId, remoteEpisodeId) {
-  const assignmentId = Number(userChannelId);
-  const episodeId = Number(remoteEpisodeId);
-  const encoded = assignmentId * SERIES_EPISODE_OFFSET + episodeId;
-
-  if (!Number.isSafeInteger(assignmentId) || assignmentId <= 0 ||
-      !Number.isSafeInteger(episodeId) || episodeId <= 0 || episodeId >= SERIES_EPISODE_OFFSET ||
-      !Number.isSafeInteger(encoded)) return null;
-
-  return String(encoded);
-}
 
 export function decodeSeriesEpisodeId(value) {
   const encoded = Number(value);

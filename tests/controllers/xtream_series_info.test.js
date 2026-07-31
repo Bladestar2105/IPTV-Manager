@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDb, upsertEpisode } = vi.hoisted(() => ({
+const { mockDb, upsertEpisode, insertAlias, selectAlias } = vi.hoisted(() => ({
   upsertEpisode: { run: vi.fn() },
+  insertAlias: { run: vi.fn() },
+  selectAlias: { get: vi.fn() },
   mockDb: {
     prepare: vi.fn(),
     transaction: vi.fn(callback => (...args) => callback(...args)),
   },
 }));
 
-vi.mock('../../src/database/db.js', () => ({ default: mockDb }));
+vi.mock('../../src/database/db.js', () => ({
+  default: mockDb,
+  openDbConnection: vi.fn(() => ({ prepare: mockDb.prepare, close: vi.fn() })),
+}));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: vi.fn() }));
 vi.mock('../../src/services/epgService.js', () => ({
   getEpgPrograms: vi.fn(),
@@ -56,9 +61,14 @@ describe('Xtream get_series_info episode authorization', () => {
     };
     res = { json: vi.fn() };
     getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
+    let aliasExists = false;
+    insertAlias.run.mockImplementation(() => { aliasExists = true; });
+    selectAlias.get.mockImplementation(() => aliasExists ? { id: 900000321 } : undefined);
     getChannel = vi.fn((seriesId, userId) => seriesId === 42 && userId === 1 ? channel : undefined);
     mockDb.prepare.mockImplementation(sql => {
       if (sql.includes('FROM authorized_user_channels uc')) return { get: getChannel };
+      if (sql.includes('INSERT OR IGNORE INTO series_episode_aliases')) return insertAlias;
+      if (sql.includes('SELECT id FROM series_episode_aliases')) return selectAlias;
       if (sql.includes('INSERT INTO provider_series_episodes')) return upsertEpisode;
       throw new Error(`Unexpected SQL: ${sql}`);
     });
@@ -76,16 +86,20 @@ describe('Xtream get_series_info episode authorization', () => {
     });
   });
 
-  it('emits assignment-bound IDs and persists the exact episode relationship', async () => {
+  it('emits compact persistent aliases and persists the exact episode relationship', async () => {
     await playerApi(req, res);
 
     const payload = res.json.mock.calls[0][0];
     expect(payload.info.name).toBe('Custom Series');
     expect(payload.episodes[1]).toHaveLength(1);
-    expect(payload.episodes[1][0].id).toBe('42000000123');
+    expect(payload.episodes[1][0].id).toBe('900000321');
+    expect(Number(payload.episodes[1][0].id)).toBeLessThan(2 ** 31);
+    expect(insertAlias.run).toHaveBeenCalledWith(42, 'source:http://panel.test', 555, 123);
     expect(upsertEpisode.run).toHaveBeenCalledWith(
       'source:http://panel.test', 555, 123, 1, 1, 'Pilot', 'mkv', '', '10'
     );
+    expect(mockDb.prepare.mock.calls.find(([sql]) => sql.includes('INSERT INTO provider_series_episodes'))[0])
+      .toContain('ON CONFLICT(source_key, series_remote_id, remote_episode_id)');
     expect(mockDb.transaction).toHaveBeenCalledTimes(1);
     expect(mockDb.prepare.mock.calls[0][0]).toContain("pc.stream_type = 'series'");
   });

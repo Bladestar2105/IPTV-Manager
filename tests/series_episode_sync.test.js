@@ -93,7 +93,7 @@ describe('Series episode sync', () => {
         container_extension TEXT DEFAULT 'mp4',
         logo TEXT DEFAULT '',
         added TEXT DEFAULT '',
-        UNIQUE(source_key, remote_episode_id)
+        UNIQUE(source_key, series_remote_id, remote_episode_id)
       );
       CREATE TABLE provider_series_state (
         source_key TEXT NOT NULL,
@@ -207,6 +207,27 @@ describe('Series episode sync', () => {
 
       // Only ONE copy of the episode exists
       expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(1);
+    });
+
+    it('keeps reused remote episode IDs separate across series', async () => {
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'Show One', 'series', '{"last_modified":"1000"}'),
+               (1, 556, 'Show Two', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1 }]
+      }));
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(2);
+      expect(memDb.prepare(`
+        SELECT series_remote_id, remote_episode_id
+        FROM provider_series_episodes
+        ORDER BY series_remote_id
+      `).all()).toEqual([
+        { series_remote_id: 555, remote_episode_id: 100 },
+        { series_remote_id: 556, remote_episode_id: 100 },
+      ]);
     });
 
     it('skips unchanged series and prunes episodes of removed series', async () => {

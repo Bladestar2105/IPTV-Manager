@@ -62,8 +62,8 @@ describe('user backup restore authorization', () => {
     VALUES (1, 'snapshot', 1, ?, ?, ?)
   `).run(data.userCategories?.length || 0, data.userChannels?.length || 0, JSON.stringify(data)).lastInsertRowid;
 
-  const restore = (backupId, user = { id: 1, is_admin: false }) => {
-    const req = { params: { userId: '1', id: String(backupId) }, user };
+  const restore = (backupId, user = { id: 1, is_admin: false }, body = {}) => {
+    const req = { params: { userId: '1', id: String(backupId) }, user, body };
     const res = response();
     restoreBackup(req, res);
     return res;
@@ -121,11 +121,24 @@ describe('user backup restore authorization', () => {
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toBeUndefined();
   });
 
+  it.each([undefined, false])('keeps an admin-restored cross-owner assignment hidden without explicit approval (%s)', (allowCrossOwner) => {
+    const providerChannelId = addProviderChannel(2);
+    const backupId = addBackup(backupData(1, { provider_channel_id: providerChannelId, granted_by_admin: 1 }));
+    const body = allowCrossOwner === undefined ? {} : { allow_cross_owner: allowCrossOwner };
+
+    restore(backupId, { id: 9, is_admin: true }, body);
+
+    expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({
+      is_hidden: 1,
+      granted_by_admin: 0,
+    });
+  });
+
   it('allows an admin to deliberately restore a valid cross-owner assignment', () => {
     const providerChannelId = addProviderChannel(2);
     const backupId = addBackup(backupData(1, { provider_channel_id: providerChannelId, granted_by_admin: 0 }));
 
-    restore(backupId, { id: 9, is_admin: true });
+    restore(backupId, { id: 9, is_admin: true }, { allow_cross_owner: true });
 
     expect(db.prepare('SELECT is_hidden, granted_by_admin FROM user_channels WHERE id = 200').get()).toEqual({ is_hidden: 0, granted_by_admin: 1 });
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toEqual({ id: 200 });

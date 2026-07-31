@@ -790,8 +790,7 @@ export async function syncSeriesEpisodes(providerId) {
       INSERT INTO provider_series_episodes
         (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source_key, remote_episode_id) DO UPDATE SET
-        series_remote_id = excluded.series_remote_id,
+      ON CONFLICT(source_key, series_remote_id, remote_episode_id) DO UPDATE SET
         season = excluded.season,
         episode_num = excluded.episode_num,
         title = excluded.title,
@@ -800,7 +799,7 @@ export async function syncSeriesEpisodes(providerId) {
         added = excluded.added
     `);
     const selectExistingEpisodes = db.prepare('SELECT remote_episode_id FROM provider_series_episodes WHERE source_key = ? AND series_remote_id = ?');
-    const deleteEpisode = db.prepare('DELETE FROM provider_series_episodes WHERE source_key = ? AND remote_episode_id = ?');
+    const deleteEpisode = db.prepare('DELETE FROM provider_series_episodes WHERE source_key = ? AND series_remote_id = ? AND remote_episode_id = ?');
     const upsertState = db.prepare(`
       INSERT INTO provider_series_state (source_key, series_remote_id, last_modified, synced_at)
       VALUES (?, ?, ?, ?)
@@ -816,7 +815,7 @@ export async function syncSeriesEpisodes(providerId) {
         keep.add(ep.remote_episode_id);
       }
       for (const row of selectExistingEpisodes.all(sourceKey, sid)) {
-        if (!keep.has(Number(row.remote_episode_id))) deleteEpisode.run(sourceKey, row.remote_episode_id);
+        if (!keep.has(Number(row.remote_episode_id))) deleteEpisode.run(sourceKey, sid, row.remote_episode_id);
       }
       upsertState.run(sourceKey, sid, lastModified, Math.floor(Date.now() / 1000));
     });

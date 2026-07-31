@@ -13,7 +13,11 @@ import { fetchSafe } from '../utils/network.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
-import { decodeSeriesEpisodeId } from '../utils/seriesEpisodeId.js';
+import {
+  decodeSeriesEpisodeId,
+  SERIES_EPISODE_ALIAS_MIN,
+  SERIES_EPISODE_OFFSET
+} from '../utils/seriesEpisodeId.js';
 
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
@@ -27,7 +31,8 @@ const stmts = {
     updateStat: null,
     updateStatTimeOnly: null,
     insertStat: null,
-    getSeriesAssignment: null,
+    getSeriesAlias: null,
+    getLegacySeriesAssignments: null,
     getSeriesEpisode: null,
     getProviderPool: null
 };
@@ -79,21 +84,9 @@ function insertStat(channelId, lastViewed) {
 }
 
 function getSeriesEpisode(encodedId, userId) {
-    const decoded = decodeSeriesEpisodeId(encodedId);
-    if (!decoded) return null;
+    const publicId = Number(encodedId);
+    if (!Number.isSafeInteger(publicId) || publicId <= 0) return null;
 
-    if (!stmts.getSeriesAssignment) {
-        stmts.getSeriesAssignment = db.prepare(`
-          SELECT p.*, uc.id AS user_channel_id,
-                 pc.remote_stream_id AS series_remote_id,
-                 COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
-          FROM authorized_user_channels uc
-          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-          JOIN providers p ON p.id = pc.provider_id
-          JOIN user_categories cat ON cat.id = uc.user_category_id
-          WHERE uc.id = ? AND cat.user_id = ? AND pc.stream_type = 'series'
-        `);
-    }
     if (!stmts.getSeriesEpisode) {
         stmts.getSeriesEpisode = db.prepare(`
           SELECT season, episode_num, title, container_extension, logo
@@ -102,15 +95,68 @@ function getSeriesEpisode(encodedId, userId) {
         `);
     }
 
-    const assignment = stmts.getSeriesAssignment.get(decoded.assignmentId, userId);
-    if (!assignment) return null;
+    if (publicId >= SERIES_EPISODE_ALIAS_MIN && publicId < SERIES_EPISODE_OFFSET) {
+        if (!stmts.getSeriesAlias) {
+            stmts.getSeriesAlias = db.prepare(`
+              SELECT a.source_key AS episode_source_key, a.remote_episode_id,
+                     p.*, uc.id AS user_channel_id,
+                     pc.remote_stream_id AS series_remote_id,
+                     COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
+              FROM series_episode_aliases a
+              JOIN authorized_user_channels uc ON uc.id = a.user_channel_id
+              JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+              JOIN providers p ON p.id = pc.provider_id
+              JOIN user_categories cat ON cat.id = uc.user_category_id
+              WHERE a.id = ? AND cat.user_id = ? AND pc.stream_type = 'series'
+                AND pc.remote_stream_id = a.series_remote_id
+            `);
+        }
 
-    const episode = stmts.getSeriesEpisode.get(
-      providerSourceKey(assignment.url),
-      assignment.series_remote_id,
-      decoded.remoteEpisodeId
-    );
-    return episode ? { ...assignment, ...episode, remote_episode_id: decoded.remoteEpisodeId } : null;
+        const assignment = stmts.getSeriesAlias.get(publicId, userId);
+        if (!assignment || providerSourceKey(assignment.url) !== assignment.episode_source_key) return null;
+        const episode = stmts.getSeriesEpisode.get(
+          assignment.episode_source_key,
+          assignment.series_remote_id,
+          assignment.remote_episode_id
+        );
+        return episode ? { ...assignment, ...episode } : null;
+    }
+    if (publicId < SERIES_EPISODE_OFFSET) return null;
+
+    const decoded = decodeSeriesEpisodeId(publicId);
+    if (!decoded) return null;
+    if (!stmts.getLegacySeriesAssignments) {
+        stmts.getLegacySeriesAssignments = db.prepare(`
+          SELECT p.*, uc.id AS user_channel_id,
+                 pc.remote_stream_id AS series_remote_id,
+                 COALESCE(NULLIF(uc.custom_name, ''), pc.name) AS series_name
+          FROM authorized_user_channels uc
+          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+          JOIN providers p ON p.id = pc.provider_id
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE (uc.id = ? OR p.id = ?) AND cat.user_id = ? AND pc.stream_type = 'series'
+        `);
+    }
+
+    const matches = [];
+    for (const assignment of stmts.getLegacySeriesAssignments.all(
+      decoded.assignmentId,
+      decoded.assignmentId,
+      userId
+    )) {
+        const episode = stmts.getSeriesEpisode.get(
+          providerSourceKey(assignment.url),
+          assignment.series_remote_id,
+          decoded.remoteEpisodeId
+        );
+        if (episode) matches.push({ ...assignment, ...episode, remote_episode_id: decoded.remoteEpisodeId });
+    }
+    return matches.length === 1 ? matches[0] : null;
+}
+
+function normalizeSeriesExtension(value) {
+    const extension = String(value || '').trim().toLowerCase().replace(/^\.+/, '');
+    return /^[a-z0-9]{1,10}$/.test(extension) ? extension : 'mp4';
 }
 
 function getProviderPool(userId, providerUrl) {
@@ -1134,9 +1180,6 @@ export const proxySeries = async (req, res) => {
 
   try {
     const epIdRaw = req.params.episode_id;
-    const ext = req.params.ext;
-
-    if (!decodeSeriesEpisodeId(epIdRaw)) return res.sendStatus(404);
 
     const user = await getXtreamUser(req);
     if (!user) return res.sendStatus(401);
@@ -1147,6 +1190,7 @@ export const proxySeries = async (req, res) => {
 
     const provider = seriesEpisode;
     const remoteEpisodeId = seriesEpisode.remote_episode_id;
+    const ext = normalizeSeriesExtension(seriesEpisode.container_extension);
 
     let sessionName = episodeNameCache.get(String(epIdRaw));
     if (!sessionName) {

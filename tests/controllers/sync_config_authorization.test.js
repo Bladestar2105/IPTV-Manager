@@ -83,19 +83,17 @@ describe('sync config administrator authorization', () => {
     });
   });
 
-  it('stores a declined cross-owner config disabled and ungranted', () => {
+  it.each([undefined, false])('rejects a cross-owner config unless approval is exactly true (%s)', (allowCrossOwner) => {
     const req = {
       user: { is_admin: true },
-      body: { provider_id: 10, user_id: 2, enabled: true, allow_cross_owner: false },
+      body: { provider_id: 10, user_id: 2, enabled: true, allow_cross_owner: allowCrossOwner },
     };
     const res = response();
 
     createSyncConfig(req, res);
 
-    expect(memDb.prepare('SELECT enabled, granted_by_admin FROM sync_configs').get()).toEqual({
-      enabled: 0,
-      granted_by_admin: 0,
-    });
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(memDb.prepare('SELECT id FROM sync_configs').get()).toBeUndefined();
   });
 
   it('cannot enable an unapproved cross-owner config without explicit approval', () => {

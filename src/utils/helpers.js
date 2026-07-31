@@ -232,7 +232,7 @@ export function redactUrl(url) {
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
     // 4. Redact credentials in query strings while preserving key casing
-    redacted = redacted.replace(/([?&])(password|token)=[^&]*/gi, '$1$2=********');
+    redacted = redacted.replace(/([?&])(password|token|access_token|mac)=[^&]*/gi, '$1$2=********');
 
     return redacted;
   } catch (e) {

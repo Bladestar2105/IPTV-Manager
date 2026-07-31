@@ -27,31 +27,50 @@ vi.mock('../../src/services/streamManager.js', () => ({
 }));
 vi.mock('../../src/services/authService.js');
 vi.mock('../../src/database/db.js', () => {
+  const seriesAssignment = (overrides = {}) => ({
+    id: 1,
+    user_id: 1,
+    url: 'http://upstream.com',
+    username: 'puser',
+    password: 'ppass',
+    max_connections: 10,
+    backup_urls: null,
+    user_agent: 'TestAgent',
+    user_channel_id: 1,
+    series_remote_id: 55,
+    series_name: 'Test Series',
+    ...overrides,
+  });
   return {
     default: {
       prepare: vi.fn((query) => {
-        if (query.includes("WHERE uc.id = ? AND cat.user_id = ? AND pc.stream_type = 'series'")) {
+        if (query.includes('FROM series_episode_aliases a')) {
           return {
-            get: vi.fn((assignmentId, userId) => assignmentId === 1 && userId === 1 ? {
-              id: 1,
-              user_id: 1,
-              url: 'http://upstream.com',
-              username: 'puser',
-              password: 'ppass',
-              max_connections: 10,
-              backup_urls: null,
-              user_agent: 'TestAgent',
-              user_channel_id: 1,
-              series_remote_id: 55,
-              series_name: 'Test Series',
-            } : undefined),
+            get: vi.fn((aliasId, userId) => aliasId === 900000321 && userId === 1
+              ? seriesAssignment({ episode_source_key: 'http://upstream.com', remote_episode_id: 1 })
+              : undefined),
+          };
+        }
+        if (query.includes('(uc.id = ? OR p.id = ?)')) {
+          return {
+            all: vi.fn((assignmentId, _providerId, userId) => {
+              if (userId !== 1) return [];
+              if (assignmentId === 1) return [seriesAssignment()];
+              if (assignmentId === 7) {
+                return [
+                  seriesAssignment(),
+                  seriesAssignment({ id: 2, user_channel_id: 2, series_remote_id: 56 }),
+                ];
+              }
+              return [];
+            }),
           };
         }
         if (query.includes('FROM provider_series_episodes')) {
           return {
             get: vi.fn((sourceKey, seriesRemoteId, remoteEpisodeId) =>
-              sourceKey === 'http://upstream.com' && seriesRemoteId === 55 && remoteEpisodeId === 1
-                ? { season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', logo: '' }
+              sourceKey === 'http://upstream.com' && [55, 56].includes(seriesRemoteId) && remoteEpisodeId === 1
+                ? { season: 1, episode_num: 1, title: 'Pilot', container_extension: '.MKV', logo: '' }
                 : undefined),
           };
         }
@@ -264,9 +283,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
   });
 
-  it('should proxy MKV series range requests without browser auto-transcode', async () => {
-    req.params = { episode_id: '1000000001', ext: 'mkv' };
-    req.path = '/series/user/pass/1000000001.mkv';
+  it('uses the stored MKV extension when the public series suffix differs', async () => {
+    req.params = { episode_id: '900000321', ext: 'mp4' };
+    req.path = '/series/user/pass/900000321.mp4';
     req.headers = {
       range: 'bytes=300-400',
       'user-agent': 'Mozilla/5.0 Firefox/140',
@@ -293,7 +312,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
     await streamController.proxySeries(req, res);
 
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("pc.stream_type = 'series'"));
+    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM series_episode_aliases a'));
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM provider_series_episodes'));
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining('/series/puser/ppass/1.mkv'),
@@ -304,6 +323,28 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 300-400/1000');
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+  });
+
+  it('resolves a stale provider-based episode ID only when it has one exact match', async () => {
+    req.params = { episode_id: '1000000001', ext: 'mp4' };
+    req.headers = { range: 'bytes=0-10' };
+    res.headersSent = false;
+
+    await streamController.proxySeries(req, res);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/series/puser/ppass/1.mkv'),
+      expect.any(Object)
+    );
+  });
+
+  it('fails closed when a stale provider-based episode ID matches multiple series', async () => {
+    req.params = { episode_id: '7000000001', ext: 'mkv' };
+
+    await streamController.proxySeries(req, res);
+
+    expect(res.sendStatus).toHaveBeenCalledWith(404);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -332,7 +373,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
   });
 
   it('allows a share guest only for the explicitly shared series', async () => {
-    req.params = { episode_id: '1000000001', ext: 'mkv' };
+    req.params = { episode_id: '900000321', ext: 'mkv' };
     req.headers = { range: 'bytes=0-10' };
     res.headersSent = false;
     authService.getXtreamUser.mockResolvedValue({

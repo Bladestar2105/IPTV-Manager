@@ -2,7 +2,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Database from 'better-sqlite3';
 import db, { initDb } from '../src/database/db.js';
 import { encrypt, decrypt } from '../src/utils/crypto.js';
-import { migrateProviderPasswords, migrateOtpSecrets, migrateUserChannelAdminGrants, migrateSyncConfigAdminGrants } from '../src/database/migrations.js';
+import {
+    migrateProviderPasswords,
+    migrateOtpSecrets,
+    migrateSeriesEpisodes,
+    migrateUserChannelAdminGrants,
+    migrateSyncConfigAdminGrants
+} from '../src/database/migrations.js';
 
 describe('Migration Bug Regression', () => {
     beforeAll(() => {
@@ -70,6 +76,7 @@ describe('Migration Bug Regression', () => {
               INSERT INTO user_categories (id, user_id) VALUES (30, 1), (31, 2);
               INSERT INTO user_channels (id, user_category_id, provider_channel_id)
                 VALUES (40, 30, 20), (41, 31, 20);
+              CREATE VIEW authorized_user_channels AS SELECT * FROM user_channels;
             `);
 
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(1);
@@ -85,6 +92,57 @@ describe('Migration Bug Regression', () => {
             legacyDb.prepare('UPDATE user_channels SET is_hidden = 0, granted_by_admin = 1 WHERE id = 41').run();
             expect(migrateUserChannelAdminGrants(legacyDb)).toBe(0);
             expect(legacyDb.prepare('SELECT id FROM authorized_user_channels ORDER BY id').all()).toEqual([{ id: 40 }, { id: 41 }]);
+        } finally {
+            legacyDb.close();
+        }
+    });
+
+    it('rebuilds the episode cache with series-scoped uniqueness exactly once', () => {
+        const legacyDb = new Database(':memory:');
+        try {
+            legacyDb.exec(`
+              CREATE TABLE sync_configs (id INTEGER PRIMARY KEY);
+              CREATE TABLE provider_series_episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_key TEXT NOT NULL,
+                series_remote_id INTEGER NOT NULL,
+                remote_episode_id INTEGER NOT NULL,
+                UNIQUE(source_key, remote_episode_id)
+              );
+              CREATE TABLE provider_series_state (
+                source_key TEXT NOT NULL,
+                series_remote_id INTEGER NOT NULL,
+                PRIMARY KEY (source_key, series_remote_id)
+              );
+              INSERT INTO provider_series_episodes
+                (source_key, series_remote_id, remote_episode_id)
+              VALUES ('source', 10, 7);
+            `);
+
+            migrateSeriesEpisodes(legacyDb);
+            expect(legacyDb.prepare('SELECT COUNT(*) AS count FROM provider_series_episodes').get().count).toBe(0);
+
+            legacyDb.prepare(`
+              INSERT INTO provider_series_episodes
+                (source_key, series_remote_id, remote_episode_id)
+              VALUES ('source', 10, 7), ('source', 11, 7)
+            `).run();
+            migrateSeriesEpisodes(legacyDb);
+
+            expect(legacyDb.prepare(`
+              SELECT series_remote_id, remote_episode_id
+              FROM provider_series_episodes
+              ORDER BY series_remote_id
+            `).all()).toEqual([
+                { series_remote_id: 10, remote_episode_id: 7 },
+                { series_remote_id: 11, remote_episode_id: 7 }
+            ]);
+            expect(legacyDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'series_episode_aliases'").get()).toBeTruthy();
+            expect(legacyDb.prepare(`
+              INSERT INTO series_episode_aliases
+                (user_channel_id, source_key, series_remote_id, remote_episode_id)
+              VALUES (1, 'source', 10, 7)
+            `).run().lastInsertRowid).toBe(900000001);
         } finally {
             legacyDb.close();
         }

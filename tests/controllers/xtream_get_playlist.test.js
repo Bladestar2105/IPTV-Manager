@@ -1,16 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
-const { mockDb } = vi.hoisted(() => {
+const { mockDb, aliasDb } = vi.hoisted(() => {
   return {
     mockDb: {
       prepare: vi.fn(),
+    },
+    aliasDb: {
+      prepare: vi.fn(),
+      close: vi.fn(),
     },
   };
 });
 
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
+  openDbConnection: vi.fn(() => aliasDb),
 }));
 
 vi.mock('node-fetch', () => ({
@@ -116,6 +121,20 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
     getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
 
+    aliasDb.prepare.mockImplementation((sql) => {
+      if (sql.includes('INSERT OR IGNORE INTO series_episode_aliases')) {
+        return { run: vi.fn() };
+      }
+      if (sql.includes('SELECT id FROM series_episode_aliases')) {
+        return {
+          get: vi.fn((_userChannelId, _sourceKey, _seriesRemoteId, remoteEpisodeId) => ({
+            id: remoteEpisodeId === 123 ? 900000501 : 900000502,
+          })),
+        };
+      }
+      throw new Error(`Unexpected alias SQL: ${sql}`);
+    });
+
     mockDb.prepare.mockImplementation((sql) => {
       if (sql.includes('provider_series_episodes')) {
         return {
@@ -136,7 +155,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
   const collectOutput = () => res.write.mock.calls.map((c) => c[0]).join('');
 
-  it('expands series into one entry per episode with encoded episode IDs', async () => {
+  it('expands series into one entry per episode with compact aliases', async () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
@@ -147,9 +166,9 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).toContain(',My Show S01 E01\n');
     expect(output).toContain('tvg-name="My Show S01 E02"');
 
-    // Encoded episode URL: userChannelId * 1e9 + remote_episode_id
-    expect(output).toContain('http://localhost/series/u/p/42000000123.mkv');
-    expect(output).toContain('http://localhost/series/u/p/42000000124.mkv');
+    expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
+    expect(output).toContain('http://localhost/series/u/p/900000502.mkv');
+    expect(aliasDb.close).toHaveBeenCalledTimes(1);
 
     // No series-level URL for the expanded series
     expect(output).not.toContain('/series/u/p/42.');
@@ -184,7 +203,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
     const output = collectOutput();
     expect(output).toContain('#EXTINF:-1,My Show S01 E01\n');
-    expect(output).toContain('http://localhost/series/u/p/42000000123.mkv');
+    expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
     expect(output).not.toContain('tvg-name="My Show S01 E01"');
   });
 });

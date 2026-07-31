@@ -713,8 +713,11 @@ export const createSyncConfig = (req, res) => {
       categoryOwnerId: userId,
       providerOwnerId: provider.user_id,
       isAdmin: true,
-      allowExplicitAdminGrant: allow_cross_owner !== false
+      allowExplicitAdminGrant: allow_cross_owner === true
     });
+    if (grantedByAdmin === null) {
+      return res.status(400).json({error: 'allow_cross_owner=true is required for a cross-owner sync config'});
+    }
 
     const nextSync = calculateNextSync(sync_interval || 'daily');
 
@@ -724,7 +727,7 @@ export const createSyncConfig = (req, res) => {
     `).run(
       providerId,
       userId,
-      grantedByAdmin === null ? 0 : (enabled ? 1 : 0),
+      enabled ? 1 : 0,
       sync_interval || 'daily',
       nextSync,
       auto_add_categories ? 1 : 0,

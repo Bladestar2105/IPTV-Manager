@@ -1,5 +1,5 @@
 import zlib from 'zlib';
-import db from '../database/db.js';
+import db, { openDbConnection } from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels, getEpgXmlForChannels } from '../services/epgService.js';
 import { channelsJsonCache } from '../services/cacheService.js';
@@ -9,7 +9,7 @@ import { fetchSafe } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
-import { encodeSeriesEpisodeId } from '../utils/seriesEpisodeId.js';
+import { SERIES_EPISODE_ALIAS_MIN, SERIES_EPISODE_OFFSET } from '../utils/seriesEpisodeId.js';
 
 const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -40,6 +40,33 @@ const sanitizeMetadata = (val) => {
 };
 
 const encodeXtreamEpgText = (val) => val ? Buffer.from(String(val)).toString('base64') : '';
+
+const prepareSeriesEpisodeAliases = (database = db) => ({
+  insert: database.prepare(`
+    INSERT OR IGNORE INTO series_episode_aliases
+      (user_channel_id, source_key, series_remote_id, remote_episode_id)
+    VALUES (?, ?, ?, ?)
+  `),
+  select: database.prepare(`
+    SELECT id FROM series_episode_aliases
+    WHERE user_channel_id = ? AND source_key = ? AND series_remote_id = ? AND remote_episode_id = ?
+  `),
+});
+
+const getOrCreateSeriesEpisodeAlias = (statements, userChannelId, sourceKey, seriesRemoteId, remoteEpisodeId) => {
+  const values = [Number(userChannelId), String(sourceKey || ''), Number(seriesRemoteId), Number(remoteEpisodeId)];
+  if (!values[1] || !values.every((value, index) => index === 1 || (Number.isSafeInteger(value) && value > 0))) return null;
+
+  let row = statements.select.get(...values);
+  if (!row) {
+    statements.insert.run(...values);
+    row = statements.select.get(...values);
+  }
+  return row && Number.isSafeInteger(Number(row.id)) &&
+    row.id >= SERIES_EPISODE_ALIAS_MIN && row.id < SERIES_EPISODE_OFFSET
+    ? String(row.id)
+    : null;
+};
 
 const formatXtreamEpgListing = (program, epgId) => ({
   id: String(program.start),
@@ -455,12 +482,12 @@ export const playerApi = async (req, res) => {
 
         if (data.episodes) {
            const sourceKey = providerSourceKey(channel.url);
+           const episodeAliases = prepareSeriesEpisodeAliases();
            const upsertEpisode = db.prepare(`
              INSERT INTO provider_series_episodes
                (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(source_key, remote_episode_id) DO UPDATE SET
-               series_remote_id = excluded.series_remote_id,
+             ON CONFLICT(source_key, series_remote_id, remote_episode_id) DO UPDATE SET
                season = excluded.season,
                episode_num = excluded.episode_num,
                title = excluded.title,
@@ -474,7 +501,13 @@ export const playerApi = async (req, res) => {
                 if (!Array.isArray(episodes)) continue;
                 data.episodes[seasonKey] = episodes.filter(ep => {
                     const originalId = Number(ep.id);
-                    const newId = encodeSeriesEpisodeId(channel.user_channel_id, originalId);
+                    const newId = getOrCreateSeriesEpisodeAlias(
+                      episodeAliases,
+                      channel.user_channel_id,
+                      sourceKey,
+                      remoteSeriesId,
+                      originalId
+                    );
                     if (!newId) return false;
                     upsertEpisode.run(
                       sourceKey,
@@ -747,12 +780,15 @@ export const getPlaylist = async (req, res) => {
       WHERE source_key = ? AND series_remote_id = ?
       ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
     `);
+    const episodeAliasDb = openDbConnection();
+    const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
     const sourceKeyByProviderId = new Map(
       db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, providerSourceKey(p.url)])
     );
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
+    try {
     for (const ch of stmt.iterate(...params)) {
       const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
       const logo = ch.logo || '';
@@ -772,13 +808,20 @@ export const getPlaylist = async (req, res) => {
       finalName = finalName.trim();
 
       if (ch.stream_type === 'series') {
-        const episodes = episodesStmt.all(sourceKeyByProviderId.get(ch.provider_id) || '', ch.remote_stream_id);
+        const sourceKey = sourceKeyByProviderId.get(ch.provider_id) || '';
+        const episodes = episodesStmt.all(sourceKey, ch.remote_stream_id);
         if (episodes.length > 0) {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
             const epLogo = ep.logo ? sanitizeM3uTag(ep.logo) : safeLogo;
-            const episodeId = encodeSeriesEpisodeId(ch.user_channel_id, ep.remote_episode_id);
+            const episodeId = getOrCreateSeriesEpisodeAlias(
+              episodeAliases,
+              ch.user_channel_id,
+              sourceKey,
+              ch.remote_stream_id,
+              ep.remote_episode_id
+            );
             if (!episodeId) continue;
             let episodeUrl = seriesPrefix + episodeId + '.' + (ep.container_extension || 'mp4');
             if (useTokenAuth) {
@@ -825,6 +868,9 @@ export const getPlaylist = async (req, res) => {
           res.write(buffer);
           buffer = '';
       }
+    }
+    } finally {
+      episodeAliasDb.close();
     }
 
     if (buffer.length > 0) {

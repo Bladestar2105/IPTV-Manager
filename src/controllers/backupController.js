@@ -130,7 +130,7 @@ export const restoreBackup = (req, res) => {
           categoryOwnerId: userId,
           providerOwnerId: provider.provider_owner_id,
           isAdmin: req.user.is_admin,
-          allowExplicitAdminGrant: true
+          allowExplicitAdminGrant: req.body?.allow_cross_owner === true
         });
         const isHidden = Number(chan.is_hidden) === 1 || grant === null ? 1 : 0;
 

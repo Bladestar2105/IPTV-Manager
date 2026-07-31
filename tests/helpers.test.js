@@ -247,6 +247,9 @@ describe('redactUrl', () => {
     expect(redactUrl('/api/test?PASSWORD=secret')).toBe('/api/test?PASSWORD=********');
     expect(redactUrl('/api/test?token=jwt-secret')).toBe('/api/test?token=********');
     expect(redactUrl('/api/test?TOKEN=jwt-secret')).toBe('/api/test?TOKEN=********');
+    expect(redactUrl('/api/test?access_token=jwt-secret')).toBe('/api/test?access_token=********');
+    expect(redactUrl('/api/test?ACCESS_TOKEN=jwt-secret')).toBe('/api/test?ACCESS_TOKEN=********');
+    expect(redactUrl('/api/test?mac=00:11:22:33:44:55')).toBe('/api/test?mac=********');
   });
 
   it('should return non-string inputs as-is', () => {
@@ -263,8 +266,8 @@ describe('redactUrl', () => {
   });
 
   it('should handle multiple redactions in one URL', () => {
-    const mixedUrl = '/live/user/pass/1.ts?password=secret&token=123';
-    expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=********');
+    const mixedUrl = '/live/user/pass/1.ts?password=secret&token=123&ACCESS_TOKEN=456&mac=00:11&safe=%ZZ';
+    expect(redactUrl(mixedUrl)).toBe('/live/user/********/1.ts?password=********&token=********&ACCESS_TOKEN=********&mac=********&safe=%ZZ');
   });
 });
 
