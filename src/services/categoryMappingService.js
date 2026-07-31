@@ -147,9 +147,42 @@ export function reconcileMappingAssignments(database, mapping, targetId, { mappi
   let assignmentsMoved = 0;
   let duplicatesMerged = 0;
   for (const assignment of ownedAssignments) {
-    if (Number(assignment.user_category_id) === Number(targetId)) continue;
+    const mappingValid = isValidMapping(mapping.id, {
+      ...assignment,
+      user_category_id: targetId
+    });
+    if (Number(assignment.user_category_id) === Number(targetId)) {
+      if (!mappingValid) {
+        update.run(
+          assignment.user_category_id,
+          assignment.sort_order,
+          assignment.custom_name || '',
+          Number(assignment.is_hidden) === 1 ? 1 : 0,
+          'legacy',
+          null,
+          Number(assignment.granted_by_admin) === 1 ? 1 : 0,
+          Number(assignment.authorization_revoked) === 1 ? 1 : 0,
+          assignment.id
+        );
+      }
+      continue;
+    }
     const targetRows = findTarget.all(targetId, assignment.provider_channel_id);
     if (targetRows.length === 0) {
+      if (!mappingValid) {
+        update.run(
+          assignment.user_category_id,
+          assignment.sort_order,
+          assignment.custom_name || '',
+          Number(assignment.is_hidden) === 1 ? 1 : 0,
+          'legacy',
+          null,
+          Number(assignment.granted_by_admin) === 1 ? 1 : 0,
+          Number(assignment.authorization_revoked) === 1 ? 1 : 0,
+          assignment.id
+        );
+        continue;
+      }
       if (update.run(
         targetId,
         assignment.sort_order,
