@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply the reliability/performance fixes discovered by the audit, reduce EPG batch allocations, cache repeated Xtream episode lookups in both playlist variants, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, split oversized controller modules, reduce EPG batch allocations, cache repeated Xtream episode lookups in both playlist variants, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, reusable EPG batch buffers, request-local Xtream episode caches, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add compatibility facades for split Xtream and stream controllers, scheduler-local in-flight state, reusable EPG batch buffers, request-local Xtream episode caches, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -14,7 +14,7 @@
 - Do not add dependencies or change the SQLite schema.
 - Use npm and isolate database-touching tests with DATA_DIR.
 - Do not stage databases, secrets, caches, uploads, or temporary files.
-- Do not broaden the refactor into stream proxy handlers, authentication, imports, or migrations. The approved synchronization change is limited to extracting provider catalog retrieval and normalization from `performSync`.
+- Preserve stream proxy handlers, authentication, imports, and migrations while splitting their files structurally; do not change their runtime contracts or data behavior.
 
 ---
 
@@ -476,10 +476,65 @@ keep alias generation and URL construction per user channel.
 
 Run the focused playlist tests, ESLint, the full isolated suite, and diff checks.
 
-### Task 13: Verify the complete focused change
+### Task 13: Split the Xtream player API controller
 
 **Files:**
-- Test: all files changed in Tasks 1–12
+- Create: src/controllers/xtreamControllerUtils.js
+- Create: src/controllers/xtreamPlayerApiController.js
+- Modify: src/controllers/xtreamController.js
+- Test: all existing Xtream controller suites
+
+**Interfaces:**
+- Consumes: the existing Xtream routes, database queries, authentication, EPG services, and episode aliases.
+- Produces: the same named controller exports through a compatibility facade; player API logic and shared helpers live in focused modules.
+
+- [x] **Step 1: Characterize Xtream controller behavior**
+
+Run the existing Xtream controller and M3U security suites before editing.
+
+- [x] **Step 2: Move player API and shared helpers**
+
+Move `playerApi` into its own controller and shared query/response helpers into
+the utility module; preserve the original controller exports for routes/tests.
+
+- [x] **Step 3: Re-run Xtream coverage and lint**
+
+Run all existing Xtream suites, the M3U security suite, ESLint, and diff checks.
+
+### Task 14: Split the stream controller helper layer
+
+**Files:**
+- Create: src/controllers/streamControllerHelpers.js
+- Modify: src/controllers/streamController.js
+- Modify: tests/controllers/streamController_perf.test.js
+- Test: stream proxy, SSRF, provider-limit, and user-limit suites
+
+**Interfaces:**
+- Consumes: the existing prepared statements, session reservation, FFmpeg, failover, and cleanup helpers.
+- Produces: the same proxy handlers and helper exports while keeping endpoint implementations in the controller.
+
+- [x] **Step 1: Characterize stream controller behavior**
+
+Run the existing stream, SSRF, provider-limit, and user-limit suites before editing.
+
+- [x] **Step 2: Move helper/session/FFmpeg code**
+
+Move the prepared statements and reusable helper layer into a focused module;
+keep proxy handlers and public exports available from the original controller.
+
+- [x] **Step 3: Update implementation-level test ownership**
+
+Point the FFmpeg option source check at the new helper module without weakening
+the assertions or changing runtime behavior.
+
+- [x] **Step 4: Re-run stream coverage and lint**
+
+Run the focused stream suites, ESLint, and diff checks.
+
+### Task 15: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–14
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.
