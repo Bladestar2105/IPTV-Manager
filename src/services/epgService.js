@@ -96,8 +96,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         const processBatches = () => {
             if (channelBatch.length > 0 || programBatch.length > 0) {
                 processBatchTx(channelBatch, programBatch);
-                channelBatch = [];
-                programBatch = [];
+                channelBatch.length = 0;
+                programBatch.length = 0;
             }
         };
 

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply the reliability/performance fixes discovered by the audit, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, reduce EPG batch allocations, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, reusable EPG batch buffers, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -407,10 +407,33 @@ shape.
 Run lint, the full isolated test suite, build, and whitespace checks after the
 change.
 
-### Task 10: Verify the complete focused change
+### Task 10: Reuse EPG import batch buffers
 
 **Files:**
-- Test: all files changed in Tasks 1–9
+- Modify: src/services/epgService.js
+- Test: tests/epg_streaming.test.js, tests/services/epg_service.test.js
+
+**Interfaces:**
+- Consumes: the existing streaming XML parser and synchronous SQLite batch transaction.
+- Produces: the same channel/program inserts while clearing batch arrays in place instead of allocating replacements after every flush.
+
+- [x] **Step 1: Characterize EPG streaming behavior**
+
+Run the streaming and service EPG tests before editing.
+
+- [x] **Step 2: Reuse completed batch buffers**
+
+Clear the arrays after the synchronous transaction without changing batch size,
+insert order, parser events, or error handling.
+
+- [x] **Step 3: Re-run EPG coverage and the isolated suite**
+
+Run the focused EPG tests, ESLint, the full isolated suite, and build checks.
+
+### Task 11: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–10
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.
