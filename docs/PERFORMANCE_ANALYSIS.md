@@ -32,11 +32,13 @@ stream hash and scan the returned active sessions. Their cost is therefore
 simple and consistent with the SQLite fallback, but it should be measured at
 realistic session counts before adding more indexes or scripting.
 
-The large synchronization, import, proxy, authentication, and EPG parsing
-paths remain high-complexity areas. They were intentionally not structurally
-refactored in this audit because they combine provider compatibility, streaming,
-authentication, and data-migration behavior. Any future split should be driven
-by a focused profile and covered by path-specific regression tests.
+The provider catalog fetch and normalization part of synchronization is now
+isolated from the persistence transaction in `fetchProviderCatalog`. The
+remaining synchronization reconciliation, import, proxy, authentication, and
+EPG parsing paths remain high-complexity areas because they combine provider
+compatibility, streaming, authentication, and data-migration behavior. Further
+splits should be driven by a focused profile and covered by path-specific
+regression tests.
 
 ## Recommended measurement path
 

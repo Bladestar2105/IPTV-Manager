@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply two low-risk reliability/performance fixes discovered by the audit and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, isolate the provider catalog fetch from synchronization persistence, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state and a conditional Redis secondary-index delete; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, and a private provider-catalog fetch helper; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -14,7 +14,7 @@
 - Do not add dependencies or change the SQLite schema.
 - Use npm and isolate database-touching tests with DATA_DIR.
 - Do not stage databases, secrets, caches, uploads, or temporary files.
-- Do not refactor performSync, stream proxy handlers, authentication, imports, or migrations.
+- Do not broaden the refactor into stream proxy handlers, authentication, imports, or migrations. The approved synchronization change is limited to extracting provider catalog retrieval and normalization from `performSync`.
 
 ---
 
@@ -311,10 +311,35 @@ rtk grep -R -n -E 'Proposed Optimization|in-memory tracking|docker-compose up -d
 
 Expected: no stale proposal/fallback wording remains and each new variable/command appears in the intended references.
 
-### Task 6: Verify the complete focused change
+### Task 6: Isolate provider catalog retrieval from synchronization persistence
 
 **Files:**
-- Test: all files changed in Tasks 1–5
+- Modify: src/services/syncService.js
+- Test: existing synchronization regression and performance suites
+
+**Interfaces:**
+- Consumes: the existing Xtream client, safe fetch path, M3U parser, and provider credentials.
+- Produces: a private `fetchProviderCatalog()` helper returning the same normalized channels, categories, completeness, and snapshot state consumed by `performSync()`.
+
+- [x] **Step 1: Characterize current synchronization behavior**
+
+Run the synchronization regression, category-update, performance, and scheduler
+tests before editing.
+
+- [x] **Step 2: Extract catalog retrieval without changing persistence logic**
+
+Move live/M3U fallback, VOD, and series retrieval/normalization into the helper;
+leave the transaction, mappings, stale-channel cleanup, cache invalidation, and
+sync logging in `performSync()`.
+
+- [x] **Step 3: Re-run synchronization coverage**
+
+Run the same focused synchronization suites after the extraction.
+
+### Task 7: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–6
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.
