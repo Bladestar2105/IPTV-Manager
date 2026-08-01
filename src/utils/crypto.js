@@ -75,7 +75,7 @@ export function decrypt(text) {
     }
 
     return null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }

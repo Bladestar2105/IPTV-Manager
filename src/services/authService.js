@@ -28,7 +28,7 @@ export async function preventTimingAttack(password) {
              // Fallback if hash not ready (rare race condition on startup)
              await bcrypt.hash(password || 'dummy', BCRYPT_ROUNDS);
         }
-    } catch (e) {
+    } catch {
         // Ignore errors during dummy check
     }
 }
@@ -93,7 +93,9 @@ export async function authUser(username, password) {
     }
 
     if (isValid) {
-      const { password, otp_secret, ...safeUser } = user;
+      const safeUser = { ...user };
+      delete safeUser.password;
+      delete safeUser.otp_secret;
       // Convert force_password_change to boolean
       if (safeUser.force_password_change !== undefined) {
           safeUser.force_password_change = !!safeUser.force_password_change;
@@ -258,7 +260,7 @@ export async function getXtreamUser(req) {
                   user.share_end = share.end_time;
                   try {
                       user.allowed_channels = JSON.parse(share.channels);
-                  } catch (e) {
+                  } catch {
                       user.allowed_channels = [];
                   }
                   userToCache = user;

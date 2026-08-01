@@ -46,6 +46,38 @@ describe('ChannelMatcher', () => {
         expect(result.epgChannel.id).toBe('12');
     });
 
+    it('matches digits with multilingual written and Roman channel numbers', () => {
+        const localizedMatcher = new ChannelMatcher([
+            { id: 'rtl.de', name: 'RTL' },
+            { id: 'rtlzwei.de', name: 'RTLZWEI' },
+            { id: 'kabeleins.de', name: 'Kabel Eins' },
+            { id: 'france2.fr', name: 'France Deux' },
+            { id: 'canal2.es', name: 'Canal Dos' },
+            { id: 'ert2.gr', name: 'ΕΡΤ Δύο' },
+            { id: 'rossiya1.ru', name: 'Россия Один' },
+            { id: 'alarabiya2.sa', name: 'العربية اثنان' },
+            { id: 'cctv2.cn', name: 'CCTV二' },
+            { id: 'starplus2.in', name: 'Star Plus दो' }
+        ]);
+
+        for (const [name, providedId, expectedId] of [
+            ['RTL II HEVC', 'RTL2.de', 'rtlzwei.de'],
+            ['KABEL 1 HEVC', 'Kabel1.de', 'kabeleins.de'],
+            ['FR: France 2 HD', null, 'france2.fr'],
+            ['ES: Canal 2 HD', null, 'canal2.es'],
+            ['GR: ΕΡΤ 2 HD', null, 'ert2.gr'],
+            ['RU: Россия 1 HD', null, 'rossiya1.ru'],
+            ['SA: العربية 2 HD', null, 'alarabiya2.sa'],
+            ['CN: CCTV 2 HD', null, 'cctv2.cn'],
+            ['IN: Star Plus 2 HD', null, 'starplus2.in']
+        ]) {
+            expect(localizedMatcher.match(name, providedId).epgChannel.id).toBe(expectedId);
+            expect(localizedMatcher.suggest(name, providedId)[0].epgChannel.id).toBe(expectedId);
+        }
+
+        expect(matcher.match('UK: BBC 1').epgChannel.id).toBe('14');
+    });
+
     it('handles zero-padded numbers correctly', () => {
         const result = matcher.match('DAZN 01');
         expect(result.epgChannel.id).toBe('12');

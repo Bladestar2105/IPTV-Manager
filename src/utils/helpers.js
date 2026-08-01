@@ -115,7 +115,7 @@ export function isSafeUrl(urlStr) {
 
     // Allow domain names (DNS resolution happens later in fetchSafe via httpAgent)
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -183,7 +183,7 @@ export function getSetting(db, key, defaultValue) {
     const value = row ? row.value : defaultValue;
     settingsCache.set(key, value);
     return value;
-  } catch (e) {
+  } catch {
     return defaultValue;
   }
 }
@@ -235,7 +235,7 @@ export function redactUrl(url) {
     redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&]*/gi, '$1$2=********');
 
     return redacted;
-  } catch (e) {
+  } catch {
     return '[redacted]';
   }
 }

@@ -34,7 +34,8 @@
     "otplib": "^13.4.1",
     "qrcode": "^1.5.4",
     "redis": "^6.0.0",
-    "systeminformation": "^5.31.7"
+    "systeminformation": "^5.31.7",
+    "to-numbers": "^1.1.0"
   },
   "devDependencies": {
     "eslint": "^10.4.1",

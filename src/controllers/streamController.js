@@ -628,7 +628,7 @@ export const proxyMpd = async (req, res) => {
               const urlObj = new URL(meta.original_url);
               const basePath = urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1);
               upstreamUrl = new URL(relativePath, urlObj.origin + basePath).toString();
-            } catch(e) {
+            } catch {
               return res.sendStatus(400);
             }
         }
@@ -788,14 +788,14 @@ export const proxyLive = async (req, res) => {
 
         streamManager.localStreams.set(connectionId, {
           destroy: () => {
-            try { command.kill('SIGKILL'); } catch(e) {}
-            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
-            try { if (!res.destroyed) res.destroy(); } catch(e) {}
+            try { command.kill('SIGKILL'); } catch {}
+            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch {}
+            try { if (!res.destroyed) res.destroy(); } catch {}
           }
         });
 
         attachResponseCleanup(req, res, () => {
-          try { command.kill('SIGKILL'); } catch(e) {}
+          try { command.kill('SIGKILL'); } catch {}
           cleanup();
         });
         return;
@@ -849,7 +849,7 @@ export const proxyLive = async (req, res) => {
           const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
-        } catch (e) {
+        } catch {
           return match;
         }
       }).replace(/URI="([^"]+)"/g, (match, p1) => {
@@ -859,7 +859,7 @@ export const proxyLive = async (req, res) => {
           const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
           const encrypted = encrypt(JSON.stringify(payload));
           return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
-        } catch (e) {
+        } catch {
           return match;
         }
       });
@@ -891,8 +891,8 @@ export const proxyLive = async (req, res) => {
 
     streamManager.localStreams.set(connectionId, {
       destroy: () => {
-        try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
-        try { if (!res.destroyed) res.destroy(); } catch(e) {}
+        try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch {}
+        try { if (!res.destroyed) res.destroy(); } catch {}
       }
     });
 
@@ -955,7 +955,7 @@ export const proxySegment = async (req, res) => {
                 if (basePayload.h) Object.assign(headers, basePayload.h);
                 if (basePayload.s === false) isOriginSafe = false;
             }
-        } catch(e) {}
+        } catch {}
     }
 
     if (req.query.data) {
@@ -972,7 +972,7 @@ export const proxySegment = async (req, res) => {
             if (payload.s !== undefined) {
                  if (payload.s === false) isOriginSafe = false;
             }
-        } catch(e) {
+        } catch {
             return res.sendStatus(400);
         }
     }
@@ -1123,7 +1123,7 @@ export const proxyMovie = async (req, res) => {
             const successfulUrl = result.successfulUrl || remoteUrl;
 
             // Release the initial probe connection immediately so it doesn't count against provider limits
-            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch(e) {}
+            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
             // For VOD/MKV, ffmpeg needs to probe. It is much more reliable to let ffmpeg read the URL natively.
             // Convert headers object to an array of strings for FFmpeg -headers option
@@ -1149,7 +1149,7 @@ export const proxyMovie = async (req, res) => {
             command.pipe(res, { end: true });
 
             attachResponseCleanup(req, res, () => {
-                try { command.kill('SIGKILL'); } catch(e) {}
+                try { command.kill('SIGKILL'); } catch {}
                 cleanup();
             });
             return;
@@ -1192,8 +1192,8 @@ export const proxyMovie = async (req, res) => {
 
         streamManager.localStreams.set(connectionId, {
           destroy: () => {
-            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
-            try { if (!res.destroyed) res.destroy(); } catch(e) {}
+            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch {}
+            try { if (!res.destroyed) res.destroy(); } catch {}
           }
         });
 
@@ -1299,7 +1299,7 @@ export const proxySeries = async (req, res) => {
             const successfulUrl = result.successfulUrl || remoteUrl;
 
             // Release the initial probe connection immediately so it doesn't count against provider limits
-            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch(e) {}
+            try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
             // For Series/MKV, ffmpeg needs to probe. Let ffmpeg read the URL natively.
             const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
@@ -1324,7 +1324,7 @@ export const proxySeries = async (req, res) => {
             command.pipe(res, { end: true });
 
             attachResponseCleanup(req, res, () => {
-                try { command.kill('SIGKILL'); } catch(e) {}
+                try { command.kill('SIGKILL'); } catch {}
                 cleanup();
             });
             return;
@@ -1366,8 +1366,8 @@ export const proxySeries = async (req, res) => {
 
         streamManager.localStreams.set(connectionId, {
           destroy: () => {
-            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
-            try { if (!res.destroyed) res.destroy(); } catch(e) {}
+            try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch {}
+            try { if (!res.destroyed) res.destroy(); } catch {}
           }
         });
 
@@ -1523,7 +1523,7 @@ export const proxyTimeshift = async (req, res) => {
           const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
           const encrypted = encrypt(JSON.stringify(payload));
           return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
-        } catch (e) {
+        } catch {
           return match;
         }
       });
@@ -1553,8 +1553,8 @@ export const proxyTimeshift = async (req, res) => {
 
     streamManager.localStreams.set(connectionId, {
       destroy: () => {
-        try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch(e) {}
-        try { if (!res.destroyed) res.destroy(); } catch(e) {}
+        try { if (upstream.body && !upstream.body.destroyed) upstream.body.destroy(); } catch {}
+        try { if (!res.destroyed) res.destroy(); } catch {}
       }
     });
 

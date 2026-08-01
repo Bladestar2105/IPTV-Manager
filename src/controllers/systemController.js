@@ -389,7 +389,7 @@ export const importData = async (req, res) => {
     let compressed;
     try {
       compressed = decryptWithPassword(encryptedData, password);
-    } catch (e) {
+    } catch {
       return res.status(400).json({error: 'Decryption failed. Wrong password?'});
     }
 
@@ -398,7 +398,7 @@ export const importData = async (req, res) => {
       // Security: Use maxOutputLength to prevent Zip Bomb / DoS attacks
       // Limit to 200MB of uncompressed JSON data
       jsonStr = zlib.gunzipSync(compressed, { maxOutputLength: 200 * 1024 * 1024 }).toString('utf8');
-    } catch (e) {
+    } catch {
       return res.status(400).json({error: 'Decompression failed or file too large.'});
     }
 
@@ -430,7 +430,7 @@ export const importData = async (req, res) => {
                 } else {
                     urls = JSON.parse(p.backup_urls);
                 }
-            } catch (e) {
+            } catch {
                 if (typeof p.backup_urls === 'string') urls = p.backup_urls.split('\n');
             }
 
@@ -772,7 +772,7 @@ export const importData = async (req, res) => {
     res.status(500).json({error: e.message});
   } finally {
     if (tempPath) {
-      try { await fs.promises.unlink(tempPath); } catch(e) {}
+      try { await fs.promises.unlink(tempPath); } catch {}
     }
   }
 };

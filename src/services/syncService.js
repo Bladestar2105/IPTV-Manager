@@ -231,7 +231,7 @@ export async function performSync(providerId, userId, options = {}) {
                      liveFetchComplete = Array.isArray(liveChans);
                  }
              }
-          } catch(e) {}
+          } catch {}
        }
 
        // M3U Fallback if Xtream failed or empty
@@ -609,7 +609,7 @@ export async function performSync(providerId, userId, options = {}) {
               try {
                   const existing = typeof ch.metadata === 'string' ? JSON.parse(ch.metadata) : ch.metadata;
                   meta = { ...existing };
-              } catch(e) {}
+              } catch {}
           }
 
           // Extract values for columns (prioritize direct fields, fall back to metadata)

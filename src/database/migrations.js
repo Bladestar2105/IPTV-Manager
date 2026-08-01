@@ -189,7 +189,7 @@ export function migrateChannelsSchemaV3(db) {
                         row.id
                     );
                     updated++;
-                } catch (e) {
+                } catch {
                     // Ignore parsing errors
                 }
             }
@@ -356,7 +356,7 @@ export function migrateOptimizeDatabase(db) {
                  updateStmt.run(JSON.stringify(meta), row.id);
                  updatedCount++;
                }
-            } catch(e) { /* ignore parse errors */ }
+            } catch { /* ignore parse errors */ }
          }
        })();
 

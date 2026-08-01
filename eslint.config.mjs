@@ -14,7 +14,7 @@ export default [
         },
         rules: {
             "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
-            "no-console": ["warn", { allow: ["warn", "error", "info"] }],
+            "no-console": ["warn", { allow: ["warn", "error", "info", "log", "debug"] }],
             "no-undef": "error",
         },
     },

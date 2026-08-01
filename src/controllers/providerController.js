@@ -94,7 +94,7 @@ export const getProviders = (req, res) => {
           if (p.backup_urls) {
               backupUrls = JSON.parse(p.backup_urls);
           }
-      } catch (e) { /* ignore */ }
+      } catch { /* ignore */ }
 
       return {
         ...p,
@@ -133,7 +133,7 @@ export const createProvider = async (req, res) => {
         } else if (typeof backup_urls === 'string') {
             try {
                 urls = JSON.parse(backup_urls);
-            } catch (e) {
+            } catch {
                 urls = backup_urls.split('\n');
             }
         }
@@ -178,7 +178,7 @@ export const createProvider = async (req, res) => {
         if (resp.ok) {
           finalEpgUrl = discoveredUrl;
         }
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -280,7 +280,7 @@ export const updateProvider = async (req, res) => {
         } else if (typeof backup_urls === 'string') {
             try {
                 urls = JSON.parse(backup_urls);
-            } catch (e) {
+            } catch {
                 urls = backup_urls.split('\n');
             }
         }
@@ -316,7 +316,7 @@ export const updateProvider = async (req, res) => {
         const usrToUse = username.trim();
         const discoveredUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(usrToUse)}&password=${encodeURIComponent(pwdToUse)}`;
         finalEpgUrl = discoveredUrl;
-       } catch(e) {}
+       } catch {}
     }
 
     // Auto-fetch max_connections if not provided or 0

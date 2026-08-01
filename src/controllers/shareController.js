@@ -126,7 +126,7 @@ export const getShares = (req, res) => {
     const baseUrl = getBaseUrl(req);
     const result = shares.map(s => {
         let count = 0;
-        try { count = JSON.parse(s.channels).length; } catch(e) {}
+        try { count = JSON.parse(s.channels).length; } catch {}
         return {
             ...s,
             link: `${baseUrl}/player.html?token=${encodeURIComponent(s.token)}`,

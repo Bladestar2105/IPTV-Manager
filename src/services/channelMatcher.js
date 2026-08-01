@@ -1,4 +1,5 @@
 import ISO6391 from 'iso-639-1';
+import { LOCALES as NUMBER_LOCALES, ToNumbers } from 'to-numbers';
 
 // Optimization: Pre-compile regex patterns to avoid re-compilation on every match
 const CHANNEL_NAME_PATTERNS = [
@@ -93,8 +94,95 @@ const LANGUAGE_MAP = (() => {
   map['co'] = 'co'; // Colombia
   map['pe'] = 'pe'; // Peru
 
+  // EPG IDs commonly end in country codes rather than language codes.
+  for (const localeCode of Object.keys(NUMBER_LOCALES)) {
+    const country = localeCode.split('-')[1]?.toLowerCase();
+    if (country && !Object.prototype.hasOwnProperty.call(map, country)) {
+      map[country] = country;
+    }
+  }
+  map['gb'] = 'uk';
+
   return map;
 })();
+
+function normalizeNumberAlias(value) {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+const NUMBER_ALIASES_BY_TAG = (() => {
+  const aliasesByTag = new Map();
+  const globalAliases = new Map();
+
+  const addAlias = (aliases, word, value) => {
+    const current = aliases.get(word);
+    if (current === undefined) aliases.set(word, value);
+    else if (current !== value) aliases.set(word, null);
+  };
+
+  for (const localeCode of Object.keys(NUMBER_LOCALES)) {
+    const [language, country] = localeCode.toLowerCase().split('-');
+    const tags = language === country ? [language] : [language, country];
+    const config = new ToNumbers({ localeCode }).getParserConfig();
+
+    for (const source of [config.wordToNumber, config.formalWordToNumber]) {
+      if (!source) continue;
+
+      for (const [word, value] of source) {
+        // ponytail: Written channel numbers are capped at 20; use validated locale parsing if higher names appear.
+        if (!Number.isInteger(value) || value < 0 || value > 20) continue;
+        const alias = normalizeNumberAlias(word);
+        if (!alias) continue;
+
+        addAlias(globalAliases, alias, value);
+        for (const tag of tags) {
+          if (!aliasesByTag.has(tag)) aliasesByTag.set(tag, new Map());
+          addAlias(aliasesByTag.get(tag), alias, value);
+        }
+      }
+    }
+  }
+
+  // Existing EPG data uses .uk while locale data uses en-GB.
+  aliasesByTag.set('uk', aliasesByTag.get('gb'));
+  aliasesByTag.set('*', new Map([...globalAliases].filter(([word, value]) => {
+    return value !== null && [...word.replace(/\s/gu, '')].length >= 3;
+  })));
+
+  return aliasesByTag;
+})();
+
+function normalizeWrittenNumberSuffix(value, language) {
+  const aliases = NUMBER_ALIASES_BY_TAG.get(language) || NUMBER_ALIASES_BY_TAG.get('*');
+  const parts = value
+    .normalize('NFKC')
+    .replace(/([\p{Script=Latin}\p{N}])(?=(?!\p{Script=Latin})[\p{L}\p{M}])/gu, '$1 ')
+    .split(/[^\p{L}\p{M}\p{N}]+/u)
+    .filter(Boolean);
+
+  for (let index = 0; index < parts.length; index++) {
+    const alias = parts.slice(index).join(' ').toLowerCase();
+    const number = aliases.get(alias);
+    if (number !== undefined && number !== null) {
+      return [...parts.slice(0, index), number].join(' ');
+    }
+  }
+
+  return parts.join(' ');
+}
+
+const ROMAN_NUMERALS = ' i ii iii iv v vi vii viii ix x xi xii xiii xiv xv xvi xvii xviii xix xx'.split(' ');
+const ROMAN_NUMERAL_PATTERN = new RegExp(`(^|[\\s._|:/-]+)(${ROMAN_NUMERALS.slice(1).reverse().join('|')})\\s*$`, 'iu');
+
+const COMPACT_NUMBER_ALIASES = new Map([
+  ['kabeleins', 'kabel1'],
+  ['rtlii', 'rtl2'],
+  ['rtlzwei', 'rtl2']
+]);
 
 // Helper functions for bit signature optimization
 function popcount(n) {
@@ -201,7 +289,8 @@ export class ChannelMatcher {
         }
 
         if (name && lang) {
-          const baseName = this.normalizeBaseName(name);
+          const language = this.normalizeLanguage(lang) || this.normalizeLanguage(idLang);
+          const baseName = this.normalizeBaseName(name, language);
           const numbers = this.extractNumbers(baseName);
     // Optimization: Skip intermediate Set creation for bigrams
     // Use signature popcount as proxy for bigram count (consistent with scoring)
@@ -211,7 +300,7 @@ export class ChannelMatcher {
 
           return {
             baseName: baseName,
-            language: this.normalizeLanguage(lang) || this.normalizeLanguage(idLang),
+            language: language,
             signature: sig,
             signaturePopcount: popcount,
             // Use popcount as proxy for bigramCount to avoid Set allocation in findBestSimilarity
@@ -225,7 +314,8 @@ export class ChannelMatcher {
     }
 
     // Kein Sprachcode gefunden
-    const baseName = this.normalizeBaseName(original);
+    const language = this.normalizeLanguage(idLang);
+    const baseName = this.normalizeBaseName(original, language);
     const numbers = this.extractNumbers(baseName);
 
     // Optimization: Skip intermediate Set creation
@@ -235,7 +325,7 @@ export class ChannelMatcher {
 
     return {
       baseName: baseName,
-      language: this.normalizeLanguage(idLang),
+      language: language,
       signature: sig,
       signaturePopcount: popcount,
       bigramCount: popcount,
@@ -266,7 +356,7 @@ export class ChannelMatcher {
   /**
    * Normalisiert Channel-Basisnamen (ohne Sprache)
    */
-  normalizeBaseName(name) {
+  normalizeBaseName(name, language = null) {
     let base = name
       .toLowerCase()
       .replace(/\b(?:hd|fhd|uhd|qhd|sd|fd|2k|4k|8k|1080p|720p|hevc|hq|lq|h\.?264|h\.?265|m3u8|50fps|60fps|unknown|unk|slow|dead|backup|rec)\b/gi, '') // Qualität / Status / Rec
@@ -275,7 +365,15 @@ export class ChannelMatcher {
       .replace(/\braw\b/gi, '') // "RAW" entfernen
       .replace(/\s+plus|\s*\+/gi, ' plus') // "+" normalisieren
       .replace(/\b(?:ucl|uel|uecl|cl|el|pl|f1|spfl|spl)\b/gi, '') // Sport Events/Ligen
-      .replace(/[^\w\s]/g, '') // Sonderzeichen (keeps numbers)
+      .trim();
+
+    base = normalizeWrittenNumberSuffix(base, language);
+
+    base = base
+      .replace(ROMAN_NUMERAL_PATTERN, (match, separator, numeral) => {
+        return `${separator}${ROMAN_NUMERALS.indexOf(numeral.toLowerCase())}`;
+      })
+      .replace(/[^\p{L}\p{M}\p{N}_\s]/gu, '') // Sonderzeichen entfernen, Unicode-Namen erhalten
       .replace(/^the\s+/gi, '') // Startwort "The" entfernen ("The History Channel" -> "history channel")
       .replace(/\s+(?:network|channel|tv)\s*$/gi, '') // Typische Suffixe entfernen
       .trim();
@@ -286,7 +384,7 @@ export class ChannelMatcher {
     // Remove all spaces AFTER stripping leading zeros, otherwise \b word boundary won't work correctly for zeros
     base = base.replace(/\s+/g, '');
 
-    return base;
+    return COMPACT_NUMBER_ALIASES.get(base) || base;
   }
 
   /**
@@ -302,12 +400,12 @@ export class ChannelMatcher {
           epgChannel: exactEpgIdMatch,
           confidence: 1.0,
           method: 'exact_tvg_id',
-          parsed: this.parseChannelName(iptvChannelName)
+          parsed: this.parseChannelName(iptvChannelName, providedEpgId)
         };
       }
     }
 
-    const parsed = this.parseChannelName(iptvChannelName);
+    const parsed = this.parseChannelName(iptvChannelName, providedEpgId);
 
     const iptvNumsString = parsed.numbersString;
 
@@ -516,7 +614,7 @@ export class ChannelMatcher {
    * Returns top N candidate matches for a given channel name.
    */
   suggest(iptvChannelName, providedEpgId = null, limit = 10) {
-    const parsed = this.parseChannelName(iptvChannelName);
+    const parsed = this.parseChannelName(iptvChannelName, providedEpgId);
     const iptvNumsString = parsed.numbersString;
 
     let allCandidates = [];

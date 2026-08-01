@@ -112,7 +112,7 @@ export const getEpgNow = async (req, res) => {
        try {
          const token = authHeader.split(' ')[1];
          user = jwt.verify(token, JWT_SECRET);
-       } catch(e) {}
+       } catch {}
     }
     if (!user) {
        user = await getXtreamUser(req);
@@ -139,7 +139,7 @@ export const getEpgSchedule = async (req, res) => {
        try {
          const token = authHeader.split(' ')[1];
          user = jwt.verify(token, JWT_SECRET);
-       } catch(e) {}
+       } catch {}
     }
     if (!user) {
        user = await getXtreamUser(req);

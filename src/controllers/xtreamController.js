@@ -401,7 +401,7 @@ export const playerApi = async (req, res) => {
              try {
                  const parsed = JSON.parse(ch.backdrop_path);
                  if (Array.isArray(parsed)) backdrop_path = parsed;
-             } catch(e){}
+             } catch{}
         }
 
         const displayName = ch.custom_name ? ch.custom_name : ch.name;

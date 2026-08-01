@@ -34,7 +34,7 @@ export const getUsers = (req, res) => {
         if (req.user.is_admin && u.plain_password) {
             try {
                 plainPassword = decrypt(u.plain_password);
-            } catch (err) {
+            } catch {
                 // ignore
             }
         }

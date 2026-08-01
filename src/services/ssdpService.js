@@ -120,7 +120,7 @@ function sendNotify(socket, user, localIp) {
         ].join('\r\n');
 
         const message = Buffer.from(notify);
-        socket.send(message, 0, message.length, SSDP_PORT, SSDP_ADDRESS, (err) => {
+        socket.send(message, 0, message.length, SSDP_PORT, SSDP_ADDRESS, () => {
             // Suppress errors (often EHOSTUNREACH if no route)
         });
     });
@@ -192,7 +192,7 @@ export function startSSDP() {
 
         socket.on('error', (err) => {
             console.error(`SSDP Socket Error:\n${err.stack}`);
-            try { socket.close(); } catch(e) {}
+            try { socket.close(); } catch {}
         });
 
         // Initial cache population before socket binding

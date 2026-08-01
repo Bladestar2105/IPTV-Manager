@@ -8,7 +8,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import { CACHE_DIR } from '../config/constants.js';
 import { fetchSafe } from '../utils/network.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getLogoCacheHash, registerProviderCachedIcon, getProviderCachedIcon } from '../services/logoResolver.js';
+import { getLogoCacheHash, registerProviderCachedIcon } from '../services/logoResolver.js';
 
 const router = express.Router();
 
@@ -97,7 +97,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
         else if (ext === '.svg') contentType = 'image/svg+xml';
         else if (ext === '.avif') contentType = 'image/avif';
         else if (ext === '.png') contentType = 'image/png';
-      } catch (err) {
+      } catch {
         // Ignore URL parsing errors, keep fallback
       }
 
@@ -105,7 +105,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
       res.setHeader('Cache-Control', 'public, max-age=86400');
       fs.createReadStream(filePath).pipe(res);
       return;
-    } catch (e) {
+    } catch {
       // File does not exist, proceed to fetch
     }
 
@@ -248,7 +248,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
             if (fs.existsSync(tempPath)) {
                 await fs.promises.unlink(tempPath);
             }
-        } catch (e) {}
+        } catch {}
     }
 
   } catch (error) {
