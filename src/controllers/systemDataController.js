@@ -87,7 +87,9 @@ export const exportData = (req, res) => {
          JOIN user_categories cat ON cat.id = uc.user_category_id
          WHERE cat.user_id IN (${userPlaceholders})
        `).all(...userIds);
-       exportData.channels.push(...userChannels.map(uc => ({...uc, type: 'user_assignment'})));
+       for (const userChannel of userChannels) {
+          exportData.channels.push({...userChannel, type: 'user_assignment'});
+       }
     }
 
     const jsonStr = JSON.stringify(exportData);
