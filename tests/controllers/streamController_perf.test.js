@@ -712,7 +712,7 @@ Input #0, matroska,webm, from 'movie.mkv':
   });
 
   it('should map selected VOD audio and subtitle tracks through ffmpeg', () => {
-    const source = fs.readFileSync(path.join(process.cwd(), 'src/controllers/streamController.js'), 'utf8');
+    const source = fs.readFileSync(path.join(process.cwd(), 'src/controllers/streamControllerHelpers.js'), 'utf8');
 
     expect(source).toContain('function buildVodOutputOptions(req)');
     expect(source).toContain('req.query.audio_track');

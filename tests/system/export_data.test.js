@@ -183,6 +183,32 @@ describe('systemController.exportData', () => {
     expect(exportData.categories).toHaveLength(1);
   });
 
+  it('should export large assignment sets without spreading rows into a call', () => {
+    req.body.user_id = 1;
+    const mockUser = { id: 1, username: 'user1' };
+    const mockUserChannels = Array.from({ length: 130_000 }, (_, index) => ({
+      id: index + 1,
+      user_category_id: 400
+    }));
+    zlib.gzipSync.mockReturnValue(Buffer.from('gzipped'));
+
+    db.prepare.mockImplementation((query) => {
+      const q = query.toLowerCase();
+      if (q.includes('from users where id = ?')) return { get: vi.fn().mockReturnValue(mockUser) };
+      if (q.includes('select uc.*') && q.includes('from user_channels uc')) {
+        return { all: vi.fn().mockReturnValue(mockUserChannels) };
+      }
+      return { all: vi.fn().mockReturnValue([]) };
+    });
+
+    systemController.exportData(req, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(500);
+    expect(res.send).toHaveBeenCalled();
+    const exportData = JSON.parse(zlib.gzipSync.mock.calls[0][0]);
+    expect(exportData.channels).toHaveLength(mockUserChannels.length);
+  });
+
   it('should use original password if decryption fails', () => {
     req.body.user_id = 1;
     const mockUser = { id: 1, username: 'user1' };

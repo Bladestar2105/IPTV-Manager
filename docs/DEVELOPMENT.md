@@ -9,6 +9,8 @@
   - `npm run lint`
   - `npm test`
   - `npm run build`
+  - `npm run test:playwright:smoke` (requires a running app and browser runtime;
+    not part of the default CI validation job)
 
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.

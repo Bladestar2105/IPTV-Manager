@@ -5,7 +5,9 @@ import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
 let syncInterval = null;
+let epgInterval = null;
 const runningSyncs = new Set();
+const runningEpgUpdates = new Set();
 
 export function startSyncScheduler() {
   if (syncInterval) clearInterval(syncInterval);
@@ -33,10 +35,11 @@ export function startSyncScheduler() {
 }
 
 export function startEpgScheduler() {
+  if (epgInterval) clearInterval(epgInterval);
   const failedUpdates = new Map();
 
   // Check every minute
-  setInterval(async () => {
+  epgInterval = setInterval(async () => {
     const now = Math.floor(Date.now() / 1000);
 
     // 1. Custom Sources
@@ -44,10 +47,15 @@ export function startEpgScheduler() {
       const sources = db.prepare('SELECT * FROM epg_sources WHERE enabled = 1 AND is_updating = 0').all();
       for (const source of sources) {
         if (source.last_update + source.update_interval <= now) {
+          const updateKey = `custom:${source.id}`;
+          if (runningEpgUpdates.has(updateKey)) continue;
+          runningEpgUpdates.add(updateKey);
           try {
             await updateEpgSource(source.id);
           } catch (e) {
             console.error(`Scheduled EPG update failed for ${source.name}:`, e.message);
+          } finally {
+            runningEpgUpdates.delete(updateKey);
           }
         }
       }
@@ -66,6 +74,9 @@ export function startEpgScheduler() {
         const lastUpdate = provider.last_epg_update || 0;
 
         if (lastUpdate + interval <= now) {
+          const updateKey = `provider:${provider.id}`;
+          if (runningEpgUpdates.has(updateKey)) continue;
+          runningEpgUpdates.add(updateKey);
           try {
             console.debug(`🔄 Starting scheduled EPG update for provider ${provider.name}`);
 
@@ -83,6 +94,8 @@ export function startEpgScheduler() {
           } catch (e) {
             console.error(`Scheduled EPG update failed for ${provider.name}:`, e.message);
             failedUpdates.set(provider.id, now);
+          } finally {
+            runningEpgUpdates.delete(updateKey);
           }
         }
       }
