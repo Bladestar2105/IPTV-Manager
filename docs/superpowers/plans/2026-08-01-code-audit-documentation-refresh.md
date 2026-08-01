@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply the reliability/performance fixes discovered by the audit, simplify export assembly, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, direct export row assembly, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -382,10 +382,35 @@ mapping as the only required row transformation.
 
 Run the export suite, ESLint, and whitespace checks after the change.
 
-### Task 9: Verify the complete focused change
+### Task 9: Cache repeated statistics channel lookups
 
 **Files:**
-- Test: all files changed in Tasks 1–8
+- Modify: src/controllers/systemController.js
+- Test: the isolated full suite
+
+**Interfaces:**
+- Consumes: the existing active-stream list and prepared channel lookup.
+- Produces: the same statistics payload while avoiding duplicate SQLite reads for identical provider/channel pairs during one request.
+
+- [x] **Step 1: Identify the request-local N+1 read**
+
+Confirm the active-stream mapping performs one prepared query per stream even
+when multiple streams reference the same channel.
+
+- [x] **Step 2: Add a request-local cache**
+
+Cache both found and missing channel rows without changing the SQL or response
+shape.
+
+- [x] **Step 3: Run the complete isolated suite**
+
+Run lint, the full isolated test suite, build, and whitespace checks after the
+change.
+
+### Task 10: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–9
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.

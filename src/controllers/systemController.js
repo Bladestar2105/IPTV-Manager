@@ -1010,12 +1010,18 @@ export const getStatistics = async (req, res) => {
       LEFT JOIN providers p ON p.id = pc.provider_id
       WHERE pc.name = ? AND pc.provider_id = ? LIMIT 1
     `);
+    const channelCache = new Map();
 
     const streams = allStreams.map(s => {
       // Find logo if possible (for Active Streams)
       let logo = null;
       if (s.channel_name && s.provider_id) {
-          const ch = getChannelStmt.get(s.channel_name, s.provider_id);
+          const cacheKey = `${s.provider_id}:${s.channel_name}`;
+          let ch = channelCache.get(cacheKey);
+          if (!channelCache.has(cacheKey)) {
+            ch = getChannelStmt.get(s.channel_name, s.provider_id) || null;
+            channelCache.set(cacheKey, ch);
+          }
           if (ch) {
             logo = ch.logo;
             // Try to resolve EPG logo if provider has use_mapped_epg_icon enabled
