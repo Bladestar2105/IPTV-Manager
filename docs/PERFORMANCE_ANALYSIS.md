@@ -1,40 +1,53 @@
-# Performance Analysis: SQLite vs Redis for Stream Tracking
+# Performance Analysis: Active Stream Tracking
 
-## Current Architecture (SQLite)
-The application currently uses a SQLite table `current_streams` to track active sessions. This enables the multi-process cluster to share state.
+## Current implementation
 
-### Workload Profile
-- **Stream Type:** HLS (HTTP Live Streaming)
-- **Behavior:** Clients poll the playlist URL (`.m3u8`) every ~6 seconds.
-- **Logic:**
-  1.  **Cleanup:** `DELETE FROM current_streams WHERE user_id = ? AND ip = ?` (Enforce single session per IP)
-  2.  **Add:** `INSERT OR REPLACE INTO current_streams ...`
+`StreamManager` uses Redis when `REDIS_URL` is configured and the connection
+succeeds. Otherwise it uses SQLite. Both backends track active sessions and
+apply the same connection-limit semantics.
 
-### Write Load
-For **N** concurrent users:
-- **Writes/sec** ≈ (2 * N) / 6
-- **100 Users:** ~33 writes/sec
-- **1,000 Users:** ~333 writes/sec
-- **10,000 Users:** ~3,333 writes/sec
+### SQLite fallback
 
-### Bottleneck
-SQLite, even in WAL (Write-Ahead Logging) mode, serializes write transactions. On standard SSDs, SQLite can handle 1,000-5,000 writes per second.
-- **Limit:** At **~2,000-3,000 concurrent users**, the database write lock may become a bottleneck, causing API latency for all other endpoints (login, EPG, etc.).
-- **Latency:** Disk I/O (fsync) is the primary latency factor.
+- Sessions are stored in `current_streams`.
+- Prepared statements handle add, remove, cleanup, same-session lookup, counts,
+  activity updates, and worker cleanup.
+- The database has indexes for user/IP and provider lookups.
+- Runtime stream rows are ephemeral and are cleared during primary database
+  initialization.
 
-## Proposed Optimization (Redis)
-Implementing Redis as an optional backend for `StreamManager`.
+### Redis backend
 
-### Benefits
-1.  **In-Memory Speed:** Redis operations are sub-millisecond and do not block on disk I/O.
-2.  **Concurrency:** Redis handles high write throughput (100k+ ops/sec) effortlessly.
-3.  **Scalability:** Allows the application to scale to 10k+ users without database locking issues.
+- `iptv:streams` stores session JSON by stream ID.
+- `iptv:user_idx:<user_id>:<ip>` stores the current stream ID for the user/IP
+  secondary index.
+- Removing a stream deletes the secondary index only when it still points to
+  that stream, then removes the stream hash entry. This prevents an older
+  cleanup from deleting a newer session's index.
 
-### Implementation Strategy
-- **Key Structure:**
-  - `iptv:streams`: Hash map of `{ connectionId: JSON }`
-  - `iptv:user_index:<userId>:<ip>`: String pointing to `connectionId` (Secondary index for fast cleanup)
-- **Fallback:** Keep SQLite implementation as the default for ease of use in smaller deployments.
+## Measured hotspots
 
-### Conclusion
-Implementing Redis is **highly recommended** for high-scale deployments, while SQLite remains sufficient for personal or small-group usage (<500 users).
+The Redis implementations of provider counts and active-session checks read the
+stream hash and scan the returned active sessions. Their cost is therefore
+`O(n)` in the number of active Redis entries for each check. This is currently
+simple and consistent with the SQLite fallback, but it should be measured at
+realistic session counts before adding more indexes or scripting.
+
+The large synchronization, import, proxy, authentication, and EPG parsing
+paths remain high-complexity areas. They were intentionally not structurally
+refactored in this audit because they combine provider compatibility, streaming,
+authentication, and data-migration behavior. Any future split should be driven
+by a focused profile and covered by path-specific regression tests.
+
+## Recommended measurement path
+
+1. Record stream-count lookup latency and event-loop delay at representative
+   active-session counts for both backends.
+2. If Redis hash scans dominate, evaluate a maintained per-provider/per-user
+   index or an atomic Redis script. Add concurrency tests before changing the
+   key model.
+3. If SQLite write contention is observed, capture lock wait time and request
+   latency first, then compare the same workload with Redis.
+
+No fixed user-count threshold is claimed here: the useful limit depends on
+client polling cadence, active-session count, hardware, provider latency, and
+deployment topology.

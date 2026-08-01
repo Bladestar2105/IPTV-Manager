@@ -99,7 +99,7 @@ describe('documentation smoke checks', () => {
       'POST /api/geoip/update',
       'POST /api/shares',
       'GET /share/:slug',
-      'GET /api/proxy/image',
+      'GET /api/proxy/image?url=<url>&provider_id=<id>',
       'DELETE /api/proxy/picons',
       'GET /cpp',
       'GET /player_api.php',

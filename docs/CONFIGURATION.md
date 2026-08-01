@@ -44,7 +44,8 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 ## Stream Tracking
 
 - `REDIS_URL`: Optional Redis connection URL for active stream tracking across
-  workers or instances. Without Redis, in-memory tracking is used.
+  workers or instances. When Redis is unavailable or not configured, the
+  SQLite `current_streams` table is used instead.
 - `STREAM_MAX_AGE_MS`: Hard safety cap for stale stream sessions. Defaults to
   `86400000` (24 hours).
 - `STREAM_INACTIVITY_TIMEOUT_MS`: Inactivity timeout for stream sessions.

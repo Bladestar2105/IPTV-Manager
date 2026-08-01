@@ -90,5 +90,15 @@ describe('StreamManager Smart Limits', () => {
       expect(await streamManager.isSessionActive(1, '1.1.1.1', 'Channel B', 100)).toBe(false);
       expect(await streamManager.isSessionActive(2, '1.1.1.1', 'Channel A', 100)).toBe(false);
     });
+
+    it('does not delete a newer Redis user index when removing an old stream', async () => {
+      mockRedis.hGet.mockResolvedValue(JSON.stringify({ user_id: 1, ip: '1.1.1.1' }));
+      mockRedis.get.mockResolvedValue('new-stream');
+
+      await streamManager.remove('old-stream');
+
+      expect(mockRedis.hDel).toHaveBeenCalledWith('iptv:streams', 'old-stream');
+      expect(mockRedis.del).not.toHaveBeenCalled();
+    });
   });
 });

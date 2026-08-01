@@ -179,6 +179,11 @@ are deterministic; authorization is recalculated fail-closed. The optional
 - `GET /api/client-logs`
 - `POST /api/client-logs`
 - `DELETE /api/client-logs`
+
+`POST /api/client-logs` accepts unauthenticated client log submissions and is
+protected by the client-log rate limiter. `GET` and `DELETE` require an admin
+JWT.
+
 - `GET /api/security/logs`
 - `DELETE /api/security/logs`
 - `GET /api/security/blocked`
@@ -264,7 +269,7 @@ logs.
 
 ## Proxy
 
-- `GET /api/proxy/image`
+- `GET /api/proxy/image?url=<url>&provider_id=<id>` (`provider_id` optional)
 - `DELETE /api/proxy/picons`
 
 ## Xtream and Player Compatibility

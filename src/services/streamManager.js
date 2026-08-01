@@ -135,16 +135,15 @@ class StreamManager {
 
     if (this.redis) {
       try {
-        // We need to remove the user index too, but we don't have user_id/ip here easily without fetching first.
-        // Optimization: Just remove the stream. The user index will just point to a non-existent stream, which is fine,
-        // or will be overwritten next time.
-        // Ideally we fetch, delete index, delete stream.
         const json = await this.redis.hGet(REDIS_KEY_STREAMS, id);
         if (json) {
           const data = JSON.parse(json);
-          await this.redis.del(`${REDIS_PREFIX_USER}${data.user_id}:${data.ip}`);
-          await this.redis.hDel(REDIS_KEY_STREAMS, id);
+          const indexKey = `${REDIS_PREFIX_USER}${data.user_id}:${data.ip}`;
+          if (await this.redis.get(indexKey) === id) {
+            await this.redis.del(indexKey);
+          }
         }
+        await this.redis.hDel(REDIS_KEY_STREAMS, id);
       } catch (e) {
         console.error('Redis Remove Error:', e);
       }

@@ -42,7 +42,7 @@
 
 ### Performance
 - **🔥 Multi-Core Optimization**: Node.js Clustering utilizes all CPU cores.
-- **⚡ Optional Redis**: High-performance tracking for active streams (recommended for >500 users).
+- **⚡ Optional Redis**: Shared active-stream tracking across workers or instances.
 - **🧵 Worker Threads**: Offloads CPU-intensive tasks like EPG mapping.
 - **⚡ Optimized Channel Matching**: Fast channel matching algorithms using bitwise signatures.
 - **⚡ Optimized Database Schema**: Optimized indices for faster streaming performance and EPG updates.
@@ -73,7 +73,7 @@ For production environments, it is strongly recommended to set `NODE_ENV=product
         environment:
           - DATA_DIR=/data
     ```
-2.  Run `docker-compose up -d`.
+2.  Run `docker compose up -d`.
 3.  Access at `http://localhost:3000`.
 
 ## 🔧 Bare Metal / Manual Installation (Debian/Ubuntu)
@@ -103,6 +103,12 @@ sudo ./scripts/update.sh
 3.  Configure: `cp .env.example .env` (edit as needed)
 4.  Run: `npm start`
 
+Runtime databases, secrets, uploads, and caches are stored under `DATA_DIR`.
+Local runs use the repository root by default; the Docker example uses
+`/data`. Set `REDIS_URL` to use Redis for active stream tracking across
+workers or instances. Without Redis, the server uses the SQLite
+`current_streams` table.
+
 ### Proxmox LXC Installation
 For Proxmox VE users, you can easily deploy an LXC container running IPTV-Manager.
 Run the following command directly on your **Proxmox Host Shell**:
@@ -115,6 +121,8 @@ chmod +x proxmox.sh
 ### Development
 - **Linting**: `npm run lint`
 - **Testing**: `npm test`
+- **Build check**: `npm run build`
+- **Browser smoke test**: `npm run test:playwright:smoke`
 - **Developer notes**: `docs/DEVELOPMENT.md`
 - **Configuration reference**: `docs/CONFIGURATION.md`
 - **API reference**: `docs/API_REFERENCE.md`
