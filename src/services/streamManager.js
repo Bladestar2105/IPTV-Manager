@@ -1,6 +1,11 @@
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
+const REDIS_DELETE_INDEX_IF_MATCH_SCRIPT = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0`;
 const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 2 * 60 * 1000);
 const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 * 1000);
 
@@ -139,9 +144,10 @@ class StreamManager {
         if (json) {
           const data = JSON.parse(json);
           const indexKey = `${REDIS_PREFIX_USER}${data.user_id}:${data.ip}`;
-          if (await this.redis.get(indexKey) === id) {
-            await this.redis.del(indexKey);
-          }
+          await this.redis.eval(REDIS_DELETE_INDEX_IF_MATCH_SCRIPT, {
+            keys: [indexKey],
+            arguments: [String(id)]
+          });
         }
         await this.redis.hDel(REDIS_KEY_STREAMS, id);
       } catch (e) {

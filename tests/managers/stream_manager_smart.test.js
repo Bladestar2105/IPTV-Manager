@@ -51,7 +51,7 @@ describe('StreamManager Smart Limits', () => {
         hSet: vi.fn(),
         set: vi.fn(),
         hGet: vi.fn(),
-        del: vi.fn(),
+        eval: vi.fn(),
         hDel: vi.fn(),
         hGetAll: vi.fn(),
         get: vi.fn()
@@ -91,14 +91,20 @@ describe('StreamManager Smart Limits', () => {
       expect(await streamManager.isSessionActive(2, '1.1.1.1', 'Channel A', 100)).toBe(false);
     });
 
-    it('does not delete a newer Redis user index when removing an old stream', async () => {
+    it('uses an atomic compare-and-delete for the Redis user index', async () => {
       mockRedis.hGet.mockResolvedValue(JSON.stringify({ user_id: 1, ip: '1.1.1.1' }));
-      mockRedis.get.mockResolvedValue('new-stream');
 
       await streamManager.remove('old-stream');
 
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining("redis.call('GET', KEYS[1])"),
+        {
+          keys: ['iptv:user_idx:1:1.1.1.1'],
+          arguments: ['old-stream']
+        }
+      );
       expect(mockRedis.hDel).toHaveBeenCalledWith('iptv:streams', 'old-stream');
-      expect(mockRedis.del).not.toHaveBeenCalled();
+      expect(mockRedis.get).not.toHaveBeenCalled();
     });
   });
 });
