@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
-const { mockDb } = vi.hoisted(() => {
+const { mockDb, mockEpgDb } = vi.hoisted(() => {
   return {
     mockDb: {
       prepare: vi.fn(),
+    },
+    mockEpgDb: {
+      prepare: vi.fn(() => ({ all: vi.fn(() => []) })),
     },
   };
 });
@@ -12,6 +15,10 @@ const { mockDb } = vi.hoisted(() => {
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
   openDbConnection: vi.fn(() => ({ prepare: mockDb.prepare, close: vi.fn() })),
+}));
+
+vi.mock('../../src/database/epgDb.js', () => ({
+  default: mockEpgDb,
 }));
 
 vi.mock('node-fetch', () => ({
