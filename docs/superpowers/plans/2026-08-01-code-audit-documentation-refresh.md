@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply the reliability/performance fixes discovered by the audit, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, simplify export assembly, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, direct export row assembly, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -359,10 +359,33 @@ HTTP controller while preserving the existing 400 responses and cleanup path.
 
 Run the export regression suite and ESLint after the extraction.
 
-### Task 8: Verify the complete focused change
+### Task 8: Remove redundant export array copying
 
 **Files:**
-- Test: all files changed in Tasks 1–7
+- Modify: src/controllers/systemController.js
+- Test: tests/system/export_data.test.js
+
+**Interfaces:**
+- Consumes: the same export queries and decrypted provider credentials.
+- Produces: the same encrypted export format while assigning query results directly instead of copying unchanged rows one by one.
+
+- [x] **Step 1: Characterize export behavior**
+
+Run `tests/system/export_data.test.js` before editing.
+
+- [x] **Step 2: Preserve only required transformations**
+
+Assign unchanged query result arrays directly and keep the user-assignment
+mapping as the only required row transformation.
+
+- [x] **Step 3: Re-run export coverage and lint**
+
+Run the export suite, ESLint, and whitespace checks after the change.
+
+### Task 9: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–8
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.

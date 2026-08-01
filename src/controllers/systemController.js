@@ -269,26 +269,26 @@ export const exportData = (req, res) => {
        const providerIds = [];
        for (const p of providers) {
           p.password = decrypt(p.password) || p.password;
-          exportData.providers.push(p);
           providerIds.push(p.id);
        }
+       exportData.providers = providers;
 
        if (providerIds.length > 0) {
           // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
           const provPlaceholders = Array(providerIds.length).fill('?').join(',');
 
           const channels = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
-          for (const c of channels) exportData.channels.push(c);
+          exportData.channels = channels;
 
           const mappings = db.prepare(`SELECT * FROM category_mappings WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
-          for (const m of mappings) exportData.mappings.push(m);
+          exportData.mappings = mappings;
 
           const syncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
-          for (const s of syncs) exportData.sync_configs.push(s);
+          exportData.sync_configs = syncs;
        }
 
        const categories = db.prepare(`SELECT * FROM user_categories WHERE user_id IN (${userPlaceholders})`).all(...userIds);
-       for (const c of categories) exportData.categories.push(c);
+       exportData.categories = categories;
 
        const userChannels = db.prepare(`
          SELECT uc.*
@@ -296,7 +296,7 @@ export const exportData = (req, res) => {
          JOIN user_categories cat ON cat.id = uc.user_category_id
          WHERE cat.user_id IN (${userPlaceholders})
        `).all(...userIds);
-       for (const uc of userChannels) exportData.channels.push({...uc, type: 'user_assignment'});
+       exportData.channels.push(...userChannels.map(uc => ({...uc, type: 'user_assignment'})));
     }
 
     const jsonStr = JSON.stringify(exportData);
