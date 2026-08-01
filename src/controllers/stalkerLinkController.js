@@ -2,14 +2,13 @@ import db from '../database/db.js';
 import { getEpgProgramsForChannels } from '../services/epgService.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
+import { MAX_ARCHIVE_DAYS } from '../utils/stalker.js';
 import {
   getOrCreateSeriesEpisodeAlias,
   prepareSeriesEpisodeAliases
 } from '../utils/seriesEpisodeId.js';
 import { value, contentConfig } from './stalkerContentController.js';
 import { archiveProgramId } from './stalkerEpgController.js';
-
-const MAX_ARCHIVE_DAYS = 14;
 
 function emptyLink() {
   return { id: 0, cmd: '', streamer_id: 0, link_id: 0, load: 0, error: 'nothing_to_play' };

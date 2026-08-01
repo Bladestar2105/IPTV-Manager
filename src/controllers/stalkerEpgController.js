@@ -1,10 +1,9 @@
 import db from '../database/db.js';
 import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgService.js';
-import { formatStalkerDateTime } from '../utils/stalker.js';
+import { formatStalkerDateTime, MAX_ARCHIVE_DAYS } from '../utils/stalker.js';
 import { value } from './stalkerContentController.js';
 
 const MAX_EPG_PERIOD_HOURS = 168;
-const MAX_ARCHIVE_DAYS = 14;
 const MAX_EPG_PROGRAMS_PER_CHANNEL = 500;
 const MAX_EPG_PROGRAMS_PER_RESPONSE = 20_000;
 const EPG_PROGRAMS_PER_HOUR = 4;
@@ -188,4 +187,3 @@ export function getEpgInfo(session, params) {
 
   return { data };
 }
-
