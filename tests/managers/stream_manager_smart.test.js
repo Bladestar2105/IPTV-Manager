@@ -10,7 +10,7 @@ describe('StreamManager Smart Limits', () => {
       mockStmt = {
         get: vi.fn(),
         run: vi.fn(),
-        all: vi.fn()
+        all: vi.fn().mockReturnValue([])
       };
       mockDb = {
         prepare: vi.fn().mockReturnValue(mockStmt)

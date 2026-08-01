@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 
 const { TEST_DB_DIR } = vi.hoisted(() => {
@@ -34,18 +34,26 @@ vi.mock('../../src/utils/crypto.js', () => {
 
 // Import modules AFTER mocking
 import db, { initDb } from '../../src/database/db.js';
+import epgDb, { initEpgDb } from '../../src/database/epgDb.js';
 import * as channelController from '../../src/controllers/channelController.js';
 import { channelsJsonCache } from '../../src/services/cacheService.js';
 
 describe('Channel Controller - createUserCategory', () => {
+    beforeAll(() => {
+        initEpgDb();
+    });
+
     afterAll(() => {
         db.close();
+        epgDb.close();
         fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
     });
 
     beforeEach(() => {
         // Clear DB
         initDb(true);
+        epgDb.prepare('DELETE FROM epg_programs').run();
+        epgDb.prepare('DELETE FROM epg_channels').run();
         const tables = ['user_channels', 'category_mappings', 'user_categories', 'provider_channels', 'providers', 'users', 'admin_users'];
         db.pragma('foreign_keys = OFF');
         tables.forEach(t => db.prepare(`DELETE FROM ${t}`).run());
