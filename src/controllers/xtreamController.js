@@ -1016,6 +1016,7 @@ export const playerChannelsJson = async (req, res) => {
           WHERE source_key = ? AND series_remote_id = ?
           ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
         `);
+        const seriesEpisodesCache = new Map();
         const episodeAliasDb = openDbConnection();
         const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
 
@@ -1049,7 +1050,17 @@ export const playerChannelsJson = async (req, res) => {
              streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
           } else if (ch.stream_type === 'series') {
              const sourceKey = providerSourceKey(ch.provider_url);
-             for (const ep of episodesStmt.all(sourceKey, ch.remote_stream_id)) {
+             let episodesBySeries = seriesEpisodesCache.get(sourceKey);
+             if (!episodesBySeries) {
+               episodesBySeries = new Map();
+               seriesEpisodesCache.set(sourceKey, episodesBySeries);
+             }
+             let episodes = episodesBySeries.get(ch.remote_stream_id);
+             if (episodes === undefined) {
+               episodes = episodesStmt.all(sourceKey, ch.remote_stream_id);
+               episodesBySeries.set(ch.remote_stream_id, episodes);
+             }
+             for (const ep of episodes) {
                const episodeId = getOrCreateSeriesEpisodeAlias(
                  episodeAliases,
                  ch.user_channel_id,
