@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import multer from 'multer';
@@ -57,5 +57,20 @@ describe('Error Handling Middleware', () => {
         expect(res.status).toBe(413);
         expect(res.headers['content-type']).toMatch(/json/);
         expect(res.body).toEqual({ error: 'Payload too large' });
+    });
+
+    it('should only log unexpected errors as server errors', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await request(app).get('/error');
+        expect(consoleError).toHaveBeenCalledOnce();
+
+        consoleError.mockClear();
+        await request(app).get('/multer-error');
+        await request(app).get('/multer-other-error');
+        await request(app).get('/body-parser-error');
+
+        expect(consoleError).not.toHaveBeenCalled();
+        consoleError.mockRestore();
     });
 });

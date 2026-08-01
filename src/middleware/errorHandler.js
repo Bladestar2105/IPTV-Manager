@@ -1,9 +1,8 @@
 import multer from 'multer';
 
 export const errorHandler = (err, req, res, next) => {
-  console.error(err.stack);
-
   if (res.headersSent) {
+    console.error(err.stack);
     return next(err);
   }
 
@@ -19,5 +18,6 @@ export const errorHandler = (err, req, res, next) => {
   }
 
   // Default to 500
+  console.error(err.stack);
   res.status(500).json({ error: 'Internal Server Error' });
 };
