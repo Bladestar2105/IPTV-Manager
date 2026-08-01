@@ -662,7 +662,7 @@ function renderUserDetails(u) {
     const canManageStalker = !!(currentUser && currentUser.is_admin);
     if (stalkerTab) stalkerTab.classList.toggle('d-none', !canManageStalker);
     const stalkerPortalUrl = document.getElementById('stalker-portal-url');
-    if (stalkerPortalUrl) stalkerPortalUrl.value = `${baseUrl}/c/`;
+    if (stalkerPortalUrl) stalkerPortalUrl.value = `${baseUrl}/stalker_portal/c/`;
     if (canManageStalker) loadStalkerDevices(u.id);
 
     loadUserCategories();

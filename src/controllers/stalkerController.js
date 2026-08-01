@@ -3,6 +3,7 @@ import db from '../database/db.js';
 import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgService.js';
 import { invalidateUserTokens } from '../services/authService.js';
 import { isIpAllowedForUser } from '../services/geoIpService.js';
+import { syncSeriesEpisode } from '../services/syncService.js';
 import { decrypt } from '../utils/crypto.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { getBaseUrl, getCookie, providerSourceKey } from '../utils/helpers.js';
@@ -297,8 +298,10 @@ function mapContentItem(type, channel, number) {
     genres_str: channel.genre || '',
     rating_imdb: channel.rating || '',
     rating_kinopoisk: channel.rating || '',
+    censored: channel.is_adult ? 1 : 0,
+    lock: channel.is_adult ? 1 : 0,
     has_files: type === 'vod' ? 1 : 0,
-    is_series: 0
+    is_series: type === 'series' ? 1 : 0
   };
   return details;
 }
@@ -366,14 +369,14 @@ function getOrderedList(session, params, type = 'itv', { paginated = true, exclu
   };
 }
 
-function getSeriesSeasons(session, params) {
+async function getSeriesSeasons(session, params) {
   const seriesId = Number(value(params, 'movie_id'));
   if (!Number.isSafeInteger(seriesId) || seriesId <= 0) return [];
 
   const series = db.prepare(`
     SELECT uc.id, uc.custom_name, pc.remote_stream_id, pc.name, pc.logo,
            pc.plot, pc."cast" AS actors, pc.director, pc.genre, pc.releaseDate,
-           pc.rating, p.url AS provider_url
+           pc.rating, pc.provider_id, p.url AS provider_url
     FROM authorized_user_channels uc
     JOIN user_categories cat ON cat.id = uc.user_category_id
     JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -383,12 +386,21 @@ function getSeriesSeasons(session, params) {
   if (!series) return [];
 
   const sourceKey = providerSourceKey(series.provider_url);
-  const episodes = db.prepare(`
+  const episodeQuery = db.prepare(`
     SELECT remote_episode_id, season, episode_num
     FROM provider_series_episodes
     WHERE source_key = ? AND series_remote_id = ?
     ORDER BY season, episode_num, remote_episode_id
-  `).all(sourceKey, series.remote_stream_id);
+  `);
+  let episodes = episodeQuery.all(sourceKey, series.remote_stream_id);
+  if (episodes.length === 0) {
+    try {
+      await syncSeriesEpisode(series.provider_id, series.remote_stream_id);
+      episodes = episodeQuery.all(sourceKey, series.remote_stream_id);
+    } catch (error) {
+      console.warn(`Episode fetch failed for series ${series.remote_stream_id}: ${error.message}`);
+    }
+  }
 
   const seasons = new Map();
   for (const episode of episodes) {
@@ -765,7 +777,7 @@ function mainInfo(session) {
   };
 }
 
-export function portal(req, res) {
+export async function portal(req, res) {
   const params = getParams(req);
   const type = String(value(params, 'type') || '').toLowerCase();
   const action = String(value(params, 'action') || '').toLowerCase();
@@ -809,7 +821,7 @@ export function portal(req, res) {
     }
     if (action === 'get_ordered_list') {
       if (type === 'series' && value(params, 'movie_id')) {
-        return js(res, getSeriesSeasons(session, params));
+        return js(res, await getSeriesSeasons(session, params));
       }
       return js(res, getOrderedList(session, params, type));
     }

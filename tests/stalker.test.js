@@ -570,6 +570,10 @@ describe('Stalker/MAG portal flow', () => {
     const portal = await request(app).get('/c/');
     expect(portal.status).toBe(200);
     expect(portal.text).toContain('data-i18n="stalkerPortalPageTitle"');
+
+    const canonicalPortal = await request(app).get('/stalker_portal/c/');
+    expect(canonicalPortal.status).toBe(200);
+    expect(canonicalPortal.text).toContain('data-i18n="stalkerPortalPageTitle"');
   });
 
   it('returns protocol-compatible short and batched EPG data', async () => {
@@ -906,6 +910,7 @@ describe('Stalker/MAG portal flow', () => {
         category: adultMovieCategoryId
       });
     expect(adultVod.body.js.data.map(item => item.id)).toEqual([String(adultMovieChannelId)]);
+    expect(adultVod.body.js.data[0]).toMatchObject({ censored: 1, lock: 1 });
 
     const movieLink = await request(app)
       .get('/server/load.php')
@@ -932,7 +937,7 @@ describe('Stalker/MAG portal flow', () => {
       id: String(seriesChannelId),
       name: 'Fixture Series',
       has_files: 0,
-      is_series: 0
+      is_series: 1
     });
 
     const seasons = await request(app)

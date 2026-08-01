@@ -362,6 +362,7 @@ repopulates it with series-scoped keys.
 - `GET|POST /stalker_portal/server/load.php`
 - `GET|POST /c/server/load.php`
 - `GET /c/`
+- `GET /stalker_portal/c/` (canonical portal URL)
 
 The public compatibility endpoints implement MAC handshake/session
 authentication plus `do_auth`, `get_profile`, `get_modules`, `get_localization`,
@@ -383,8 +384,9 @@ request with the PIN. Profile timezone and `get_time` use the same server
 timezone.
 
 Content types are `itv` (live TV), `vod` (movies), `series`, and `radio`.
-Series listings expose episodes already synchronized into
-`provider_series_episodes`; ambiguous duplicate season/episode numbers are not
+Series listings expose episodes synchronized into `provider_series_episodes`;
+when a selected series has not reached the background sync yet, its episodes
+are fetched on demand. Ambiguous duplicate season/episode numbers are not
 published. Radio categories use live provider channels and can be created or
 imported from the normal category-management UI. MP3/AAC radio sources pass
 through directly; other radio sources use the authenticated MP3 transcode path.

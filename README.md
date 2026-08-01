@@ -229,16 +229,19 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
   synchronized series episodes, radio, EPG, and EPG-backed catch-up. It does
   not claim compatibility with hardware MAG devices.
 - Register one or more MAC addresses in the selected user's **Stalker/MAG** tab.
-- Configure the client with `http(s)://your-server/c/`.
-- Current IPTVnator builds recognize the authenticated portal flow when configured
-  with `http(s)://your-server/stalker_portal/c`.
+- Configure the client with the canonical portal URL
+  `http(s)://your-server/stalker_portal/c/`. Compatible clients derive the API
+  endpoint `http(s)://your-server/stalker_portal/server/load.php` from it.
+- Simple/legacy clients may continue to use `http(s)://your-server/c/` and
+  `/portal.php`; the existing compatibility aliases remain available.
 - An optional 4–8 digit parental PIN can be set per device. It is encrypted at
   rest and delivered only in that device's authenticated profile; when absent,
   the profile returns an empty parental PIN. Bulk channel lists exclude adult
   categories, while an authenticated session can explicitly request an adult
   category. This is client-side Stalker parental control: the server does not
   challenge every adult `create_link` request with the PIN.
-- The portal serves live TV with EPG, movies, synchronized series episodes,
+- The portal serves live TV with EPG, movies, series episodes synchronized in
+  the background or fetched when a series is opened,
   radio categories, and EPG-backed catch-up through the existing authenticated
   stream proxies.
 - Bulk EPG responses clamp the requested period to 168 hours, return at most
