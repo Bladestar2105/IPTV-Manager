@@ -758,6 +758,7 @@ export const getPlaylist = async (req, res) => {
       WHERE source_key = ? AND series_remote_id = ?
       ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
     `);
+    const seriesEpisodesCache = new Map();
     const episodeAliasDb = openDbConnection();
     const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
     const sourceKeyByProviderId = new Map(
@@ -787,7 +788,16 @@ export const getPlaylist = async (req, res) => {
 
       if (ch.stream_type === 'series') {
         const sourceKey = sourceKeyByProviderId.get(ch.provider_id) || '';
-        const episodes = episodesStmt.all(sourceKey, ch.remote_stream_id);
+        let episodesBySeries = seriesEpisodesCache.get(sourceKey);
+        if (!episodesBySeries) {
+          episodesBySeries = new Map();
+          seriesEpisodesCache.set(sourceKey, episodesBySeries);
+        }
+        let episodes = episodesBySeries.get(ch.remote_stream_id);
+        if (episodes === undefined) {
+          episodes = episodesStmt.all(sourceKey, ch.remote_stream_id);
+          episodesBySeries.set(ch.remote_stream_id, episodes);
+        }
         if (episodes.length > 0) {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;

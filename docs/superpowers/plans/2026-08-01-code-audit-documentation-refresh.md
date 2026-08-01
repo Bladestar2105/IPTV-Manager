@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply the reliability/performance fixes discovered by the audit, reduce EPG batch allocations, cache repeated Xtream episode lookups, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, reduce EPG batch allocations, cache repeated Xtream episode lookups in both playlist variants, simplify export assembly, cache repeated statistics lookups, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, reusable EPG batch buffers, a request-local Xtream episode cache, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, reusable EPG batch buffers, request-local Xtream episode caches, a conditional Redis secondary-index delete, direct export row assembly, a request-local statistics lookup cache, and private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -453,10 +453,33 @@ keep alias generation keyed by the user channel.
 
 Run the focused Xtream test, ESLint, the full isolated suite, and diff checks.
 
-### Task 12: Verify the complete focused change
+### Task 12: Cache repeated M3U episode lookups
 
 **Files:**
-- Test: all files changed in Tasks 1–11
+- Modify: src/controllers/xtreamController.js
+- Test: tests/controllers/xtream_get_playlist.test.js, tests/controllers/xtream_share_compat.test.js
+
+**Interfaces:**
+- Consumes: the existing M3U series-episode query and per-user-channel alias generation.
+- Produces: the same playlist stream while reusing immutable episode rows for repeated provider/series pairs during one request.
+
+- [x] **Step 1: Characterize playlist behavior**
+
+Run the playlist and share-compatibility tests before editing.
+
+- [x] **Step 2: Cache only episode query results**
+
+Cache found and empty episode arrays by provider source and remote series ID;
+keep alias generation and URL construction per user channel.
+
+- [x] **Step 3: Re-run playlist coverage and the isolated suite**
+
+Run the focused playlist tests, ESLint, the full isolated suite, and diff checks.
+
+### Task 13: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–12
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.
