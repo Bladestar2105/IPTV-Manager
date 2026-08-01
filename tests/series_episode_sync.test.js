@@ -65,7 +65,7 @@ const seriesInfoResponse = (episodesBySeason) => ({
 const SOURCE = 'http://prov.example:80';
 
 describe('Series episode sync', () => {
-  let parseSeriesInfoEpisodes, syncSeriesEpisodes;
+  let parseSeriesInfoEpisodes, syncSeriesEpisode, syncSeriesEpisodes;
 
   beforeAll(async () => {
     memDb.exec(`
@@ -111,6 +111,7 @@ describe('Series episode sync', () => {
 
     const mod = await import('../src/services/syncService.js');
     parseSeriesInfoEpisodes = mod.parseSeriesInfoEpisodes;
+    syncSeriesEpisode = mod.syncSeriesEpisode;
     syncSeriesEpisodes = mod.syncSeriesEpisodes;
   });
 
@@ -163,6 +164,50 @@ describe('Series episode sync', () => {
   });
 
   describe('syncSeriesEpisodes', () => {
+    it('fetches one selected series without waiting for the bulk sync', async () => {
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'Test Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({
+        '1': [{ id: 100, episode_num: 1, season: 1, container_extension: 'mkv' }]
+      }));
+
+      const result = await syncSeriesEpisode(1, 555);
+
+      expect(result).toEqual({ synced: 1, failed: 0, episodes: 1 });
+      expect(fetchSafeMock).toHaveBeenCalledTimes(1);
+      expect(fetchSafeMock.mock.calls[0][0]).toContain('action=get_series_info&series_id=555');
+      expect(memDb.prepare(`
+        SELECT source_key, series_remote_id, remote_episode_id
+        FROM provider_series_episodes
+      `).get()).toEqual({
+        source_key: SOURCE,
+        series_remote_id: 555,
+        remote_episode_id: 100
+      });
+    });
+
+    it('deduplicates overlapping bulk and selected-series fetches', async () => {
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'Test Show', 'series', '{"last_modified":"1000"}')`).run();
+      let releaseFetch;
+      fetchSafeMock.mockImplementation(() => new Promise(resolve => {
+        releaseFetch = () => resolve(seriesInfoResponse({
+          '1': [{ id: 100, episode_num: 1, season: 1 }]
+        }));
+      }));
+
+      const bulk = syncSeriesEpisodes(1);
+      await vi.waitFor(() => expect(fetchSafeMock).toHaveBeenCalledTimes(1));
+      const selected = syncSeriesEpisode(1, 555);
+      expect(fetchSafeMock).toHaveBeenCalledTimes(1);
+      releaseFetch();
+
+      const [bulkResult, selectedResult] = await Promise.all([bulk, selected]);
+      expect(bulkResult.synced).toBe(1);
+      expect(selectedResult).toEqual({ synced: 1, failed: 0, episodes: 1 });
+      expect(fetchSafeMock).toHaveBeenCalledTimes(1);
+    });
+
     it('fetches and stores episodes for new series under the source key', async () => {
       memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
         VALUES (1, 555, 'Test Show', 'series', '{"last_modified":"1000"}')`).run();

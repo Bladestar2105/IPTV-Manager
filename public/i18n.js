@@ -567,7 +567,7 @@ const translations = {
     stalkerDeviceError: 'Stalker device error: {error}',
     stalkerPortalPageTitle: 'IPTV-Manager Stalker Portal',
     stalkerPortalApiAvailable: 'The Stalker/MAG API is available at',
-    stalkerPortalSetup: 'Register the device MAC address in the IPTV-Manager user view, then use this /c/ URL in a Stalker-compatible client.'
+    stalkerPortalSetup: 'Register the device MAC address in the IPTV-Manager user view, then use the /stalker_portal/c/ URL in a Stalker-compatible client.'
   },
 
   de: {
@@ -1133,7 +1133,7 @@ const translations = {
     stalkerDeviceError: 'Fehler beim Stalker-Gerät: {error}',
     stalkerPortalPageTitle: 'IPTV-Manager Stalker-Portal',
     stalkerPortalApiAvailable: 'Die Stalker/MAG-API ist verfügbar unter',
-    stalkerPortalSetup: 'Registrieren Sie die MAC-Adresse des Geräts in der IPTV-Manager-Benutzeransicht und verwenden Sie anschließend diese /c/-URL in einem Stalker-kompatiblen Client.'
+    stalkerPortalSetup: 'Registrieren Sie die MAC-Adresse des Geräts in der IPTV-Manager-Benutzeransicht und verwenden Sie anschließend die URL /stalker_portal/c/ in einem Stalker-kompatiblen Client.'
   },
 
   fr: {
@@ -1699,7 +1699,7 @@ const translations = {
     stalkerDeviceError: 'Erreur de l\'appareil Stalker : {error}',
     stalkerPortalPageTitle: 'Portail Stalker IPTV-Manager',
     stalkerPortalApiAvailable: 'L\'API Stalker/MAG est disponible à l\'adresse',
-    stalkerPortalSetup: 'Enregistrez l\'adresse MAC de l\'appareil dans la vue utilisateur d\'IPTV-Manager, puis utilisez cette URL /c/ dans un client compatible Stalker.'
+    stalkerPortalSetup: 'Enregistrez l\'adresse MAC de l\'appareil dans la vue utilisateur d\'IPTV-Manager, puis utilisez l\'URL /stalker_portal/c/ dans un client compatible Stalker.'
   },
 
   el: {
@@ -2265,7 +2265,7 @@ const translations = {
     stalkerDeviceError: 'Σφάλμα συσκευής Stalker: {error}',
     stalkerPortalPageTitle: 'Πύλη Stalker IPTV-Manager',
     stalkerPortalApiAvailable: 'Το API Stalker/MAG είναι διαθέσιμο στη διεύθυνση',
-    stalkerPortalSetup: 'Καταχωρίστε τη διεύθυνση MAC της συσκευής στην προβολή χρήστη του IPTV-Manager και έπειτα χρησιμοποιήστε αυτή τη διεύθυνση /c/ σε έναν συμβατό πελάτη Stalker.'
+    stalkerPortalSetup: 'Καταχωρίστε τη διεύθυνση MAC της συσκευής στην προβολή χρήστη του IPTV-Manager και έπειτα χρησιμοποιήστε τη διεύθυνση /stalker_portal/c/ σε έναν συμβατό πελάτη Stalker.'
   }
 };
 

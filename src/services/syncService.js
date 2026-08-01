@@ -907,6 +907,7 @@ const EPISODE_SYNC_CONCURRENCY = 3;
 const EPISODE_SYNC_RETRY_AGE = 7 * 86400; // re-check series lacking last_modified weekly
 
 const episodeSyncLocks = new Set();
+const episodeSyncRequests = new Map();
 
 export function parseSeriesInfoEpisodes(data) {
   const episodes = [];
@@ -929,6 +930,103 @@ export function parseSeriesInfoEpisodes(data) {
     }
   }
   return episodes;
+}
+
+function createSeriesEpisodeWriter(sourceKey) {
+  const upsertEpisode = db.prepare(`
+    INSERT INTO provider_series_episodes
+      (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_key, series_remote_id, remote_episode_id) DO UPDATE SET
+      season = excluded.season,
+      episode_num = excluded.episode_num,
+      title = excluded.title,
+      container_extension = excluded.container_extension,
+      logo = excluded.logo,
+      added = excluded.added
+  `);
+  const selectExistingEpisodes = db.prepare('SELECT remote_episode_id FROM provider_series_episodes WHERE source_key = ? AND series_remote_id = ?');
+  const deleteEpisode = db.prepare('DELETE FROM provider_series_episodes WHERE source_key = ? AND series_remote_id = ? AND remote_episode_id = ?');
+  const upsertState = db.prepare(`
+    INSERT INTO provider_series_state (source_key, series_remote_id, last_modified, synced_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(source_key, series_remote_id) DO UPDATE SET
+      last_modified = excluded.last_modified,
+      synced_at = excluded.synced_at
+  `);
+
+  return db.transaction((sid, lastModified, episodes) => {
+    const keep = new Set();
+    for (const ep of episodes) {
+      upsertEpisode.run(sourceKey, sid, ep.remote_episode_id, ep.season, ep.episode_num, ep.title, ep.container_extension, ep.logo, ep.added);
+      keep.add(ep.remote_episode_id);
+    }
+    for (const row of selectExistingEpisodes.all(sourceKey, sid)) {
+      if (!keep.has(Number(row.remote_episode_id))) deleteEpisode.run(sourceKey, sid, row.remote_episode_id);
+    }
+    upsertState.run(sourceKey, sid, lastModified, Math.floor(Date.now() / 1000));
+  });
+}
+
+async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, applySeries) {
+  const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_info&series_id=${sid}`, { timeout: 30000 });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  // Error payloads (auth failures etc.) carry neither episodes nor info;
+  // skip instead of wiping previously synced episodes.
+  if (!data || typeof data !== 'object' || (!data.episodes && !data.info)) return null;
+  const episodes = parseSeriesInfoEpisodes(data);
+  applySeries(sid, lastModified, episodes);
+  return episodes.length;
+}
+
+function fetchSeriesEpisodesOnce(sourceKey, sid, fetcher) {
+  const requestKey = `${sourceKey}:${sid}`;
+  if (episodeSyncRequests.has(requestKey)) return episodeSyncRequests.get(requestKey);
+  const request = Promise.resolve().then(fetcher)
+    .finally(() => episodeSyncRequests.delete(requestKey));
+  episodeSyncRequests.set(requestKey, request);
+  return request;
+}
+
+export async function syncSeriesEpisode(providerId, seriesRemoteId) {
+  const sid = Number(seriesRemoteId);
+  if (!Number.isSafeInteger(sid) || sid <= 0) return { error: 'Invalid series ID' };
+
+  const series = db.prepare(`
+    SELECT p.*, pc.metadata
+    FROM providers p
+    JOIN provider_channels pc ON pc.provider_id = p.id
+    WHERE p.id = ? AND pc.remote_stream_id = ? AND pc.stream_type = 'series'
+  `).get(providerId, sid);
+  if (!series) return { error: 'Series not found' };
+
+  let lastModified = '';
+  try {
+    const metadata = JSON.parse(series.metadata || '{}');
+    if (metadata.original_url) return { skipped: true };
+    if (metadata.last_modified !== undefined && metadata.last_modified !== null) {
+      lastModified = String(metadata.last_modified);
+    }
+  } catch { /* ignore malformed metadata */ }
+
+  const sourceKey = providerSourceKey(series.url);
+  if (!sourceKey) return { error: 'Provider has no URL' };
+  const password = decrypt(series.password);
+  const baseUrl = series.url.replace(/\/+$/, '');
+  const authParams = `username=${encodeURIComponent(series.username)}&password=${encodeURIComponent(password)}`;
+  const episodeCount = await fetchSeriesEpisodesOnce(sourceKey, sid, () =>
+    fetchSeriesEpisodes(
+      baseUrl,
+      authParams,
+      sid,
+      lastModified,
+      createSeriesEpisodeWriter(sourceKey)
+    )
+  );
+  if (episodeCount === null) return { synced: 0, failed: 1 };
+  if (episodeCount > 0) clearChannelsCache();
+  return { synced: 1, failed: 0, episodes: episodeCount };
 }
 
 export async function syncSeriesEpisodes(providerId) {
@@ -1007,39 +1105,7 @@ export async function syncSeriesEpisodes(providerId) {
     }
     console.info(`📺 Episode sync for provider ${provider.name}: ${queue.length}/${seriesRows.length} series to update`);
 
-    const upsertEpisode = db.prepare(`
-      INSERT INTO provider_series_episodes
-        (source_key, series_remote_id, remote_episode_id, season, episode_num, title, container_extension, logo, added)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source_key, series_remote_id, remote_episode_id) DO UPDATE SET
-        season = excluded.season,
-        episode_num = excluded.episode_num,
-        title = excluded.title,
-        container_extension = excluded.container_extension,
-        logo = excluded.logo,
-        added = excluded.added
-    `);
-    const selectExistingEpisodes = db.prepare('SELECT remote_episode_id FROM provider_series_episodes WHERE source_key = ? AND series_remote_id = ?');
-    const deleteEpisode = db.prepare('DELETE FROM provider_series_episodes WHERE source_key = ? AND series_remote_id = ? AND remote_episode_id = ?');
-    const upsertState = db.prepare(`
-      INSERT INTO provider_series_state (source_key, series_remote_id, last_modified, synced_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(source_key, series_remote_id) DO UPDATE SET
-        last_modified = excluded.last_modified,
-        synced_at = excluded.synced_at
-    `);
-
-    const applySeries = db.transaction((sid, lastModified, episodes) => {
-      const keep = new Set();
-      for (const ep of episodes) {
-        upsertEpisode.run(sourceKey, sid, ep.remote_episode_id, ep.season, ep.episode_num, ep.title, ep.container_extension, ep.logo, ep.added);
-        keep.add(ep.remote_episode_id);
-      }
-      for (const row of selectExistingEpisodes.all(sourceKey, sid)) {
-        if (!keep.has(Number(row.remote_episode_id))) deleteEpisode.run(sourceKey, sid, row.remote_episode_id);
-      }
-      upsertState.run(sourceKey, sid, lastModified, Math.floor(Date.now() / 1000));
-    });
+    const applySeries = createSeriesEpisodeWriter(sourceKey);
 
     let processed = 0;
     let failed = 0;
@@ -1050,15 +1116,11 @@ export async function syncSeriesEpisodes(providerId) {
       while (cursor < queue.length) {
         const item = queue[cursor++];
         try {
-          const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_info&series_id=${item.sid}`, { timeout: 30000 });
-          if (!resp.ok) { failed++; continue; }
-          const data = await resp.json();
-          // Error payloads (auth failures etc.) carry neither episodes nor info;
-          // skip instead of wiping previously synced episodes.
-          if (!data || typeof data !== 'object' || (!data.episodes && !data.info)) { failed++; continue; }
-          const episodes = parseSeriesInfoEpisodes(data);
-          applySeries(item.sid, item.lastModified, episodes);
-          episodeCount += episodes.length;
+          const count = await fetchSeriesEpisodesOnce(sourceKey, item.sid, () =>
+            fetchSeriesEpisodes(baseUrl, authParams, item.sid, item.lastModified, applySeries)
+          );
+          if (count === null) { failed++; continue; }
+          episodeCount += count;
           processed++;
           if (processed % 250 === 0) {
             console.info(`📺 Episode sync progress (${sourceKey}): ${processed}/${queue.length} series`);

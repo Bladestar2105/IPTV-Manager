@@ -71,6 +71,7 @@ app.use(['/portal.php', '/server/load.php', '/stalker_portal/server/load.php', '
 app.get('/share/:slug', shareController.handleShortLink);
 
 // Static Files
+app.use('/stalker_portal/c', express.static(path.join(__dirname, '../public/c')));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Routes
