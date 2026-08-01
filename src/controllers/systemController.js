@@ -372,6 +372,64 @@ export const updateGeoIpDatabase = async (req, res) => {
   }
 };
 
+async function decodeImportFile(tempPath, password) {
+  const encryptedData = await fs.promises.readFile(tempPath);
+
+  let compressed;
+  try {
+    compressed = decryptWithPassword(encryptedData, password);
+  } catch {
+    return { error: { error: 'Decryption failed. Wrong password?' } };
+  }
+
+  let jsonStr;
+  try {
+    // Security: Use maxOutputLength to prevent Zip Bomb / DoS attacks
+    // Limit to 200MB of uncompressed JSON data
+    jsonStr = zlib.gunzipSync(compressed, { maxOutputLength: 200 * 1024 * 1024 }).toString('utf8');
+  } catch {
+    return { error: { error: 'Decompression failed or file too large.' } };
+  }
+
+  return { data: JSON.parse(jsonStr) };
+}
+
+async function validateImportedProviders(providers) {
+  for (const provider of providers) {
+    const parsedTimezone = parseTimeshiftTimezone(provider.timeshift_timezone);
+    if (parsedTimezone.error) return { error: 'invalid_timeshift_timezone' };
+
+    if (provider.url && !(await isSafeUrl(provider.url))) {
+      return { error: 'invalid_url', message: `Provider URL is unsafe: ${provider.url}` };
+    }
+    if (provider.epg_url && !(await isSafeUrl(provider.epg_url))) {
+      return { error: 'invalid_url', message: `EPG URL is unsafe: ${provider.epg_url}` };
+    }
+
+    if (provider.backup_urls) {
+      let urls = [];
+      try {
+        urls = Array.isArray(provider.backup_urls)
+          ? provider.backup_urls
+          : JSON.parse(provider.backup_urls);
+      } catch {
+        if (typeof provider.backup_urls === 'string') urls = provider.backup_urls.split('\n');
+      }
+
+      if (Array.isArray(urls)) {
+        for (const url of urls) {
+          const trimmed = url.trim();
+          if (trimmed && !(await isSafeUrl(trimmed))) {
+            return { error: 'invalid_url', message: `Backup URL is unsafe: ${trimmed}` };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export const importData = async (req, res) => {
   if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
   let tempPath = null;
@@ -384,25 +442,10 @@ export const importData = async (req, res) => {
     }
 
     tempPath = req.file.path;
-    const encryptedData = await fs.promises.readFile(tempPath);
+    const decoded = await decodeImportFile(tempPath, password);
+    if (decoded.error) return res.status(400).json(decoded.error);
 
-    let compressed;
-    try {
-      compressed = decryptWithPassword(encryptedData, password);
-    } catch {
-      return res.status(400).json({error: 'Decryption failed. Wrong password?'});
-    }
-
-    let jsonStr;
-    try {
-      // Security: Use maxOutputLength to prevent Zip Bomb / DoS attacks
-      // Limit to 200MB of uncompressed JSON data
-      jsonStr = zlib.gunzipSync(compressed, { maxOutputLength: 200 * 1024 * 1024 }).toString('utf8');
-    } catch {
-      return res.status(400).json({error: 'Decompression failed or file too large.'});
-    }
-
-    const importData = JSON.parse(jsonStr);
+    const importData = decoded.data;
 
     if (!Array.isArray(importData.users)) {
       return res.status(400).json({error: 'Invalid export file format'});
@@ -410,40 +453,8 @@ export const importData = async (req, res) => {
     const trustedModernFormat = Number(importData.version) === 2 &&
       Number(importData.assignment_provenance_version) === 1;
 
-    // Security validation for URLs
-    for (const p of importData.providers || []) {
-        const parsedTimezone = parseTimeshiftTimezone(p.timeshift_timezone);
-        if (parsedTimezone.error) {
-            return res.status(400).json({error: 'invalid_timeshift_timezone'});
-        }
-        if (p.url && !(await isSafeUrl(p.url))) {
-            return res.status(400).json({error: 'invalid_url', message: `Provider URL is unsafe: ${p.url}`});
-        }
-        if (p.epg_url && !(await isSafeUrl(p.epg_url))) {
-            return res.status(400).json({error: 'invalid_url', message: `EPG URL is unsafe: ${p.epg_url}`});
-        }
-        if (p.backup_urls) {
-            let urls = [];
-            try {
-                if (Array.isArray(p.backup_urls)) {
-                    urls = p.backup_urls;
-                } else {
-                    urls = JSON.parse(p.backup_urls);
-                }
-            } catch {
-                if (typeof p.backup_urls === 'string') urls = p.backup_urls.split('\n');
-            }
-
-            if (Array.isArray(urls)) {
-                for (const u of urls) {
-                    const trimmed = u.trim();
-                    if (trimmed && !(await isSafeUrl(trimmed))) {
-                        return res.status(400).json({error: 'invalid_url', message: `Backup URL is unsafe: ${trimmed}`});
-                    }
-                }
-            }
-        }
-    }
+    const providerValidationError = await validateImportedProviders(importData.providers || []);
+    if (providerValidationError) return res.status(400).json(providerValidationError);
 
     const stats = {
       users_imported: 0,

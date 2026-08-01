@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax (- [ ]) for tracking.
 
-**Goal:** Apply the reliability/performance fixes discovered by the audit, isolate the provider catalog fetch from synchronization persistence, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
+**Goal:** Apply the reliability/performance fixes discovered by the audit, isolate provider catalog fetching and import input preparation from their controllers, and synchronize user and maintainer documentation with the current IPTV-Manager implementation.
 
-**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, and a private provider-catalog fetch helper; update documentation from verified package, source, route, Docker, and workflow behavior.
+**Architecture:** Keep the existing Express routes, SQLite schema, Redis key layout, and service boundaries. Add scheduler-local in-flight state, a conditional Redis secondary-index delete, private provider-catalog and import-preparation helpers; update documentation from verified package, source, route, Docker, and workflow behavior.
 
 **Tech Stack:** Node.js 24+, Express 5, better-sqlite3, Redis client, Vitest 4, ESLint 10, Markdown.
 
@@ -336,10 +336,33 @@ sync logging in `performSync()`.
 
 Run the same focused synchronization suites after the extraction.
 
-### Task 7: Verify the complete focused change
+### Task 7: Isolate import decoding and provider validation
 
 **Files:**
-- Test: all files changed in Tasks 1–6
+- Modify: src/controllers/systemController.js
+- Test: tests/export_regression.test.js
+
+**Interfaces:**
+- Consumes: the existing encrypted export format, decompression limits, URL safety checks, and timezone validation.
+- Produces: private helpers for archive decoding and provider validation; import responses and transaction behavior remain unchanged.
+
+- [x] **Step 1: Characterize import/export behavior**
+
+Run `tests/export_regression.test.js` before editing.
+
+- [x] **Step 2: Extract input preparation**
+
+Move encrypted archive decoding and provider URL/timezone validation out of the
+HTTP controller while preserving the existing 400 responses and cleanup path.
+
+- [x] **Step 3: Re-run import coverage and lint**
+
+Run the export regression suite and ESLint after the extraction.
+
+### Task 8: Verify the complete focused change
+
+**Files:**
+- Test: all files changed in Tasks 1–7
 
 **Interfaces:**
 - Consumes: modified scheduler, stream manager, tests, and documentation.
