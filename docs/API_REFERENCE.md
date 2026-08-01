@@ -232,11 +232,12 @@ assignments are merged with the same deterministic policy as backup restore;
 `stats.channels` counts unique inserted assignments and `channels_merged` and
 `channels_skipped` report the corresponding outcomes.
 
-Radio categories are user-facing mappings of live provider channels. A live
-provider category may be mapped to both live and radio user categories, and
-automatic synchronization maintains both mappings independently. The same
-provider channel record is reused while each user-facing mapping has its own
-`user_channels` assignment.
+Radio categories are user-facing mappings of live provider channels. Xtream
+providers expose live, VOD, and series streams, not a separate standard radio
+stream/category action. A live provider category may be mapped to both live
+and radio user categories, and automatic synchronization maintains both
+mappings independently. The same provider channel record is reused while each
+user-facing mapping has its own `user_channels` assignment.
 - `GET /api/sync-logs`
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`

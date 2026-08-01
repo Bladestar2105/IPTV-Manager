@@ -249,7 +249,8 @@ The full route inventory is maintained in `docs/API_REFERENCE.md`.
   arrays for channels without returned rows. Click-through catch-up playback
   has been validated with OTT Navigator 1.7.4.1 on Android 16 through the
   authenticated IPTV-Manager timeshift proxy.
-- Radio categories can be created or imported from a provider's live categories.
+- Radio categories can be created or imported from a provider's live categories;
+  Xtream has no separate standard radio stream type.
   MP3/AAC sources pass through directly; transport-stream radio is transcoded
   to MP3 for software clients. A hardware-specific MAG portal UI is not included.
 

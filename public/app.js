@@ -1245,8 +1245,30 @@ async function handleProviderBulkUrlUpdate(e) {
 }
 
 // === Category Management ===
-async function loadUserCategories() {
+async function moveListItemToPosition({ids, itemId, position, url, payloadKey, reload}) {
+  const requested = Number(position);
+  const currentIndex = ids.indexOf(Number(itemId));
+  if (!Number.isInteger(requested) || requested < 1 || currentIndex < 0) return false;
+
+  const targetIndex = Math.min(requested - 1, ids.length - 1);
+  if (targetIndex === currentIndex) return true;
+
+  const reordered = ids.slice();
+  reordered.splice(currentIndex, 1);
+  reordered.splice(targetIndex, 0, Number(itemId));
+
+  await fetchJSON(url, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({[payloadKey]: reordered})
+  });
+  await reload();
+  return true;
+}
+
+async function loadUserCategories(preserveSelection = false) {
   if (!selectedUserId) return;
+  const categoryToKeep = preserveSelection ? selectedCategoryId : null;
   renderLoadingList('category-list');
   const cats = await fetchJSON(`/api/users/${selectedUserId}/categories`);
   const list = document.getElementById('category-list');
@@ -1275,7 +1297,9 @@ async function loadUserCategories() {
       return;
   }
 
-  filtered.forEach(c => {
+  const categoryIds = filtered.map(category => Number(category.id));
+
+  filtered.forEach((c, index) => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
     li.dataset.id = c.id;
@@ -1296,6 +1320,37 @@ async function loadUserCategories() {
     checkbox.onclick = (e) => { e.stopPropagation(); updateCatBulkDeleteBtn(); };
     checkDiv.appendChild(checkbox);
     li.appendChild(checkDiv);
+
+    const positionInput = document.createElement('input');
+    positionInput.type = 'number';
+    positionInput.className = 'form-control form-control-sm me-2';
+    positionInput.style.width = '4rem';
+    positionInput.style.flex = '0 0 4rem';
+    positionInput.min = '1';
+    positionInput.max = String(categoryIds.length);
+    positionInput.value = String(index + 1);
+    positionInput.title = t('sortPosition');
+    positionInput.setAttribute('aria-label', t('sortPosition'));
+    positionInput.onclick = (e) => e.stopPropagation();
+    positionInput.onchange = async () => {
+      const previous = index + 1;
+      try {
+        const moved = await moveListItemToPosition({
+          ids: categoryIds,
+          itemId: c.id,
+          position: positionInput.value,
+          url: `/api/users/${selectedUserId}/categories/reorder`,
+          payloadKey: 'category_ids',
+          reload: () => loadUserCategories(true)
+        });
+        if (!moved) positionInput.value = String(previous);
+      } catch (e) {
+        positionInput.value = String(previous);
+        alert(t('errorPrefix') + ' ' + e.message);
+        loadUserCategories();
+      }
+    };
+    li.appendChild(positionInput);
 
     // Drag Handle
     const dragHandle = document.createElement('span');
@@ -1377,6 +1432,15 @@ async function loadUserCategories() {
     
     list.appendChild(li);
   });
+
+  if (categoryToKeep && filtered.some(category => Number(category.id) === Number(categoryToKeep))) {
+    const selectedLi = Array.from(list.children).find(li => Number(li.dataset.id) === Number(categoryToKeep));
+    if (selectedLi) {
+      selectedCategoryId = categoryToKeep;
+      selectedLi.classList.add('active');
+      await loadUserCategoryChannels();
+    }
+  }
   
   // Sortable initialisieren
   initCategorySortable();
@@ -1686,6 +1750,7 @@ async function fetchProviderChannels(reset) {
   
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
+  // Xtream providers expose radio sources through their live stream list.
   const providerType = type === 'radio' ? 'live' : type;
 
   isLoadingChannels = true;
@@ -1870,6 +1935,8 @@ function renderUserCategoryChannels() {
     return;
   }
   
+  const channelIds = userCategoryChannelsData.map(channel => Number(channel.user_channel_id));
+
   filteredChans.forEach(ch => {
     const li = document.createElement('li');
     li.className = 'list-group-item d-flex justify-content-between align-items-center';
@@ -1900,6 +1967,37 @@ function renderUserCategoryChannels() {
     };
     checkDiv.appendChild(checkbox);
     li.appendChild(checkDiv);
+
+    const positionInput = document.createElement('input');
+    positionInput.type = 'number';
+    positionInput.className = 'form-control form-control-sm me-2';
+    positionInput.style.width = '4rem';
+    positionInput.style.flex = '0 0 4rem';
+    positionInput.min = '1';
+    positionInput.max = String(channelIds.length);
+    positionInput.value = String(channelIds.indexOf(Number(ch.user_channel_id)) + 1);
+    positionInput.title = t('sortPosition');
+    positionInput.setAttribute('aria-label', t('sortPosition'));
+    positionInput.onclick = (e) => e.stopPropagation();
+    positionInput.onchange = async () => {
+      const previous = channelIds.indexOf(Number(ch.user_channel_id)) + 1;
+      try {
+        const moved = await moveListItemToPosition({
+          ids: channelIds,
+          itemId: ch.user_channel_id,
+          position: positionInput.value,
+          url: `/api/user-categories/${selectedCategoryId}/channels/reorder`,
+          payloadKey: 'channel_ids',
+          reload: loadUserCategoryChannels
+        });
+        if (!moved) positionInput.value = String(previous);
+      } catch (e) {
+        positionInput.value = String(previous);
+        alert(t('errorPrefix') + ' ' + e.message);
+        loadUserCategoryChannels();
+      }
+    };
+    li.appendChild(positionInput);
 
     // Drag Handle
     const dragHandle = document.createElement('span');
@@ -2789,7 +2887,9 @@ document.addEventListener('DOMContentLoaded', () => {
           loadUserCategories();
           // Sync channel filter
           const type = e.target.value;
-          const channelRadio = document.querySelector(`.channel-type-filter[value="${type}"]`);
+          // Xtream has no provider radio stream type; radio categories use live sources.
+          const channelType = type === 'radio' ? 'live' : type;
+          const channelRadio = document.querySelector(`.channel-type-filter[value="${channelType}"]`);
           if (channelRadio) {
               channelRadio.checked = true;
               loadProviderChannels();
