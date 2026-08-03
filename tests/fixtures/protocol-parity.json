@@ -1,5 +1,5 @@
 {
-  "fixtureVersion": 1,
+  "fixtureVersion": 2,
   "live": [
     {
       "id": "live-news-1",
@@ -7,6 +7,7 @@
       "categoryId": "10",
       "categoryTitle": "News",
       "groupId": "live-10",
+      "epgId": "fixture.same",
       "authorized": true,
       "adult": false
     },
@@ -16,6 +17,7 @@
       "categoryId": "12",
       "categoryTitle": "News Duplicate",
       "groupId": "live-12",
+      "epgId": "fixture.same",
       "authorized": true,
       "adult": false
     },
@@ -25,6 +27,7 @@
       "categoryId": "11",
       "categoryTitle": "Adult",
       "groupId": "live-11",
+      "epgId": "fixture.adult",
       "authorized": true,
       "adult": true
     },
@@ -119,12 +122,28 @@
       "url": "https://fixture.test/live/42.ts?quality=sd&token=two"
     },
     {
+      "type": "live",
+      "tvgId": "fixture.adult",
+      "groupId": "live-11",
+      "groupTitle": "Adult",
+      "name": "Fixture Adult Live",
+      "url": "https://fixture.test/live/43.ts?token=adult"
+    },
+    {
       "type": "movie",
       "tvgId": "",
       "groupId": "movie-20",
       "groupTitle": "Same Name",
       "name": "Fixture Movie",
       "url": "https://fixture.test/movie/200.mp4?expires=1"
+    },
+    {
+      "type": "movie",
+      "tvgId": "",
+      "groupId": "movie-21",
+      "groupTitle": "Adult Movies",
+      "name": "Fixture Adult Movie",
+      "url": "https://fixture.test/movie/201.mp4?token=adult"
     },
     {
       "type": "series",
@@ -144,4 +163,3 @@
     }
   ]
 }
-
