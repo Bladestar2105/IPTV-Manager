@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+const parityFixture = JSON.parse(
+  readFileSync(new URL('../fixtures/protocol-parity.json', import.meta.url), 'utf8'),
+);
+const playableSeries = parityFixture.series.find(({ id }) => id === 'series-playable');
+const unsynchronizedSeries = parityFixture.series.find(({ id }) => id === 'series-unsynchronized');
+const fixtureMovie = parityFixture.movies.find(({ id }) => id === 'movie-1');
 
 // Mock dependencies
 const { mockDb, aliasDb } = vi.hoisted(() => {
@@ -64,13 +72,13 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     user_channel_id: 42,
     custom_name: null,
     user_category_id: 9,
-    name: 'My Show',
+    name: playableSeries.name,
     logo: 'series.png',
     epg_channel_id: '',
     manual_epg_id: null,
     stream_type: 'series',
     mime_type: 'mp4',
-    category_name: 'Serien DE',
+    category_name: playableSeries.categoryTitle,
     provider_id: 7,
     remote_stream_id: 555,
   };
@@ -78,7 +86,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
   const seriesWithoutEpisodes = {
     ...seriesWithEpisodes,
     user_channel_id: 43,
-    name: 'Unsynced Show',
+    name: unsynchronizedSeries.name,
     remote_stream_id: 556,
   };
 
@@ -86,13 +94,13 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     user_channel_id: 100,
     custom_name: null,
     user_category_id: 5,
-    name: 'Movie A',
+    name: fixtureMovie.name,
     logo: 'movie.png',
     epg_channel_id: '',
     manual_epg_id: null,
     stream_type: 'movie',
     mime_type: 'mkv',
-    category_name: 'Filme',
+    category_name: fixtureMovie.categoryTitle,
     provider_id: 7,
     remote_stream_id: 900,
   };
@@ -165,9 +173,9 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(mockDb.prepare.mock.calls.some(([sql]) => sql.includes('JOIN authorized_user_channels uc'))).toBe(true);
 
     // Episode entries with SXX EXX naming
-    expect(output).toContain('tvg-name="My Show S01 E01"');
-    expect(output).toContain(',My Show S01 E01\n');
-    expect(output).toContain('tvg-name="My Show S01 E02"');
+    expect(output).toContain(`tvg-name="${playableSeries.name} S01 E01"`);
+    expect(output).toContain(`,${playableSeries.name} S01 E01\n`);
+    expect(output).toContain(`tvg-name="${playableSeries.name} S01 E02"`);
 
     expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
     expect(output).toContain('http://localhost/series/u/p/900000502.mkv');
@@ -181,14 +189,15 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output.match(/tvg-logo="series\.png"/g).length).toBeGreaterThanOrEqual(1);
 
     // Category preserved on episode entries
-    expect(output).toContain('group-title="Serien DE",My Show S01 E01');
+    expect(output).toContain(`group-title="${playableSeries.categoryTitle}",${playableSeries.name} S01 E01`);
+    expect(output).toContain('group-id="9"');
   });
 
   it('omits unsynchronized series instead of emitting a bare assignment URL', async () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
-    expect(output).not.toContain('tvg-name="Unsynced Show"');
+    expect(output).not.toContain(`tvg-name="${unsynchronizedSeries.name}"`);
     expect(output).not.toContain('/series/u/p/43.');
   });
 
@@ -196,7 +205,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
-    expect(output).toContain('tvg-name="Movie A"');
+    expect(output).toContain(`tvg-name="${fixtureMovie.name}"`);
     expect(output).toContain('http://localhost/movie/u/p/100.mkv');
   });
 
@@ -205,7 +214,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     await getPlaylist(req, res);
 
     const output = collectOutput();
-    expect(output).toContain('#EXTINF:-1,My Show S01 E01\n');
+    expect(output).toContain(`#EXTINF:-1,${playableSeries.name} S01 E01\n`);
     expect(output).toContain('http://localhost/series/u/p/900000501.mkv');
     expect(output).not.toContain('tvg-name="My Show S01 E01"');
   });
@@ -222,5 +231,12 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).not.toContain('Injected');
     expect(output).not.toContain('token=secret');
     expect(output.split('\n').filter(line => line.startsWith('#EXTINF')).length).toBe(3);
+  });
+
+  it('uses the sanitized fixture without expanding the protocol contract', () => {
+    expect(parityFixture.live.filter(({ authorized }) => authorized)).toHaveLength(3);
+    expect(parityFixture.live.filter(({ authorized }) => !authorized)).toHaveLength(1);
+    expect(parityFixture.series.find(({ id }) => id === 'series-unsynchronized').episodes).toHaveLength(0);
+    expect(parityFixture.playlist.filter(({ tvgId }) => tvgId === 'fixture.same')).toHaveLength(2);
   });
 });
