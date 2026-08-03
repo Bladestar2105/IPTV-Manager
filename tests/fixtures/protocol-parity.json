@@ -1,0 +1,165 @@
+{
+  "fixtureVersion": 2,
+  "live": [
+    {
+      "id": "live-news-1",
+      "name": "Fixture News",
+      "categoryId": "10",
+      "categoryTitle": "News",
+      "groupId": "live-10",
+      "epgId": "fixture.same",
+      "authorized": true,
+      "adult": false
+    },
+    {
+      "id": "live-news-1",
+      "name": "Fixture News duplicate",
+      "categoryId": "12",
+      "categoryTitle": "News Duplicate",
+      "groupId": "live-12",
+      "epgId": "fixture.same",
+      "authorized": true,
+      "adult": false
+    },
+    {
+      "id": "live-adult-1",
+      "name": "Fixture Adult Live",
+      "categoryId": "11",
+      "categoryTitle": "Adult",
+      "groupId": "live-11",
+      "epgId": "fixture.adult",
+      "authorized": true,
+      "adult": true
+    },
+    {
+      "id": "live-hidden-1",
+      "name": "Fixture Hidden",
+      "categoryId": "10",
+      "categoryTitle": "News",
+      "groupId": "live-10",
+      "authorized": false,
+      "adult": false
+    }
+  ],
+  "movies": [
+    {
+      "id": "movie-1",
+      "name": "Fixture Movie",
+      "categoryId": "20",
+      "categoryTitle": "Movies",
+      "groupId": "movie-20",
+      "authorized": true,
+      "adult": false
+    },
+    {
+      "id": "movie-adult-1",
+      "name": "Fixture Adult Movie",
+      "categoryId": "21",
+      "categoryTitle": "Adult Movies",
+      "groupId": "movie-21",
+      "authorized": true,
+      "adult": true
+    },
+    {
+      "id": "movie-unauthorized-1",
+      "name": "Fixture Unauthorized Movie",
+      "categoryId": "20",
+      "categoryTitle": "Movies",
+      "groupId": "movie-20",
+      "authorized": false,
+      "adult": false
+    }
+  ],
+  "series": [
+    {
+      "id": "series-playable",
+      "name": "Fixture Series",
+      "categoryId": "30",
+      "categoryTitle": "Shows",
+      "groupId": "series-30",
+      "authorized": true,
+      "episodes": [
+        { "id": "episode-1", "season": 1, "episode": 1 },
+        { "id": "episode-2", "season": 1, "episode": 2 }
+      ]
+    },
+    {
+      "id": "series-unsynchronized",
+      "name": "Fixture Unsynchronized Series",
+      "categoryId": "30",
+      "categoryTitle": "Shows",
+      "groupId": "series-30",
+      "authorized": true,
+      "episodes": []
+    },
+    {
+      "id": "series-unauthorized",
+      "name": "Fixture Unauthorized Series",
+      "categoryId": "30",
+      "categoryTitle": "Shows",
+      "groupId": "series-30",
+      "authorized": false,
+      "episodes": [
+        { "id": "episode-unauthorized", "season": 1, "episode": 1 }
+      ]
+    }
+  ],
+  "playlist": [
+    {
+      "type": "live",
+      "tvgId": "fixture.same",
+      "groupId": "live-10",
+      "groupTitle": "Same Name",
+      "name": "Fixture HD S01E01",
+      "url": "https://fixture.test/live/42.ts?quality=hd&token=one"
+    },
+    {
+      "type": "live",
+      "tvgId": "fixture.same",
+      "groupId": "live-10",
+      "groupTitle": "Same Name",
+      "name": "Fixture SD S01E01",
+      "url": "https://fixture.test/live/42.ts?quality=sd&token=two"
+    },
+    {
+      "type": "live",
+      "tvgId": "fixture.adult",
+      "groupId": "live-11",
+      "groupTitle": "Adult",
+      "name": "Fixture Adult Live",
+      "url": "https://fixture.test/live/43.ts?token=adult"
+    },
+    {
+      "type": "movie",
+      "tvgId": "",
+      "groupId": "movie-20",
+      "groupTitle": "Same Name",
+      "name": "Fixture Movie",
+      "url": "https://fixture.test/movie/200.mp4?expires=1"
+    },
+    {
+      "type": "movie",
+      "tvgId": "",
+      "groupId": "movie-21",
+      "groupTitle": "Adult Movies",
+      "name": "Fixture Adult Movie",
+      "url": "https://fixture.test/movie/201.mp4?token=adult"
+    },
+    {
+      "type": "series",
+      "tvgId": "",
+      "groupId": "series-30",
+      "groupTitle": "Same Name",
+      "name": "Fixture Series S01E01 Pilot",
+      "url": "https://fixture.test/series/fixture-s01e01.mp4?token=one"
+    },
+    {
+      "type": "series",
+      "tvgId": "",
+      "groupId": "series-30",
+      "groupTitle": "Same Name",
+      "name": "Fixture Series S02E01 Extra",
+      "url": "https://fixture.test/series/fixture-s02e01.mp4?token=two"
+    }
+  ]
+}
