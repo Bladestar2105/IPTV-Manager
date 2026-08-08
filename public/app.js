@@ -1562,11 +1562,13 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
     epgMappingMode = 'provider';
     currentMappingChannelId = null;
   }
-  channelPage = 1;
-  channelSearch = '';
-  channelTotal = 0;
-  isLoadingChannels = false;
-  providerCategories = [];
+  if (!preserveUserState) {
+    channelPage = 1;
+    channelSearch = '';
+    channelTotal = 0;
+    isLoadingChannels = false;
+    providerCategories = [];
+  }
 
   const section = document.getElementById('provider-section');
   if (section) section.classList.add('d-none');
@@ -1579,18 +1581,18 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
   const providerList = document.getElementById('provider-list');
   if (providerList) providerList.innerHTML = '';
   const channelList = document.getElementById('provider-channel-list');
-  if (channelList) channelList.innerHTML = '';
+  if (channelList && !preserveUserState) channelList.innerHTML = '';
   const categoryList = document.getElementById('provider-categories-list');
-  if (categoryList) categoryList.innerHTML = '';
+  if (categoryList && !preserveUserState) categoryList.innerHTML = '';
   const searchInput = document.getElementById('provider-channel-search');
-  if (searchInput) {
+  if (searchInput && !preserveUserState) {
     searchInput.value = '';
     searchInput.disabled = true;
   }
   const searchClear = document.getElementById('provider-channel-search-clear');
-  if (searchClear) searchClear.classList.add('d-none');
+  if (searchClear && !preserveUserState) searchClear.classList.add('d-none');
   const categorySearch = document.getElementById('category-import-search');
-  if (categorySearch) categorySearch.value = '';
+  if (categorySearch && !preserveUserState) categorySearch.value = '';
   const bulkFrom = document.getElementById('provider-bulk-url-from');
   if (bulkFrom) bulkFrom.value = '';
   const bulkTo = document.getElementById('provider-bulk-url-to');
@@ -1603,7 +1605,7 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
   const saveProviderButton = document.getElementById('save-provider-btn');
   if (saveProviderButton) saveProviderButton.textContent = t('addProvider');
   const availableHeader = document.getElementById('available-channels-header');
-  if (availableHeader) availableHeader.textContent = t('available', {count: 0});
+  if (availableHeader && !preserveUserState) availableHeader.textContent = t('available', {count: 0});
   if (!preserveUserState) updateChannelProviderSelect([]);
   updateStatsCounters('providers', 0);
 

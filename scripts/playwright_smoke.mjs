@@ -291,6 +291,9 @@ async function run() {
     await grantedUserPage.locator('#channel-provider-select').selectOption(String(providerId));
     await grantedUserPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true})
       .waitFor({state: 'visible', timeout: 15000});
+    if (await grantedUserPage.locator('#provider-channel-search').isDisabled()) {
+      throw new Error('Provider catalog search must remain usable after permission refresh');
+    }
     await assertHidden(grantedUserPage.locator('#provider-section'), 'Revoked users must lose the Provider section after catalog refresh');
 
     const deniedProviderMapping = await grantedUserPage.evaluate(async ({providerId}) => {
