@@ -8,10 +8,26 @@ const configuredDataDir = process.env.DATA_DIR;
 const smokeDataDir = configuredDataDir || mkdtempSync(join(tmpdir(), 'iptv-manager-playwright-'));
 process.env.DATA_DIR = smokeDataDir;
 
-const { default: app } = await import('../src/app.js');
-const { default: db, initDb } = await import('../src/database/db.js');
-const { initEpgDb } = await import('../src/database/epgDb.js');
-const { encrypt } = await import('../src/utils/crypto.js');
+let app;
+let db;
+let initDb;
+let initEpgDb;
+let encrypt;
+
+function cleanupSmokeData() {
+  try { db?.close(); } catch {}
+  if (!configuredDataDir) rmSync(smokeDataDir, {recursive: true, force: true});
+}
+
+try {
+  ({ default: db, initDb } = await import('../src/database/db.js'));
+  ({ initEpgDb } = await import('../src/database/epgDb.js'));
+  ({ encrypt } = await import('../src/utils/crypto.js'));
+  ({ default: app } = await import('../src/app.js'));
+} catch (error) {
+  cleanupSmokeData();
+  throw error;
+}
 
 async function waitForLoginModal(page) {
   await page.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
@@ -280,7 +296,7 @@ async function run() {
     }
     try { await browser?.close(); } catch {}
     if (server?.listening) await new Promise((resolve) => server.close(resolve));
-    if (!configuredDataDir) rmSync(smokeDataDir, {recursive: true, force: true});
+    cleanupSmokeData();
   }
 }
 
