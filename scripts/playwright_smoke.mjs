@@ -13,9 +13,17 @@ const { default: db, initDb } = await import('../src/database/db.js');
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const { encrypt } = await import('../src/utils/crypto.js');
 
-async function login(page, baseUrl, username, password) {
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-  await page.locator('#login-modal').waitFor({ state: 'visible', timeout: 15000 });
+async function waitForLoginModal(page) {
+  await page.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
+  await page.waitForFunction(() => {
+    const modal = document.getElementById('login-modal');
+    return modal?.classList.contains('show') && modal.getAttribute('aria-modal') === 'true';
+  }, undefined, {timeout: 15000});
+}
+
+async function login(page, baseUrl, username, password, {reload = true} = {}) {
+  if (reload) await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await waitForLoginModal(page);
   await page.locator('#login-username').fill(username);
   await page.locator('#login-password').fill(password);
   await page.locator('#login-btn').click();
@@ -24,11 +32,19 @@ async function login(page, baseUrl, username, password) {
 }
 
 async function assertVisible(locator, message) {
-  if (!(await locator.isVisible())) throw new Error(message);
+  try {
+    await locator.waitFor({state: 'visible', timeout: 15000});
+  } catch {
+    throw new Error(message);
+  }
 }
 
 async function assertHidden(locator, message) {
-  if (await locator.isVisible()) throw new Error(message);
+  try {
+    await locator.waitFor({state: 'hidden', timeout: 15000});
+  } catch {
+    throw new Error(message);
+  }
 }
 
 async function run() {
@@ -180,17 +196,35 @@ async function run() {
     await adminPage.locator('#channel-provider-select').selectOption(String(providerId));
     await adminPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true})
       .waitFor({state: 'visible', timeout: 15000});
+    await adminPage.locator('#nav-epg-mapping').click();
+    await adminPage.locator(`#epg-mapping-provider-select option[value="${providerId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await adminPage.locator('#epg-mapping-provider-select').selectOption(String(providerId));
+    await adminPage.locator('#epg-mapping-tbody').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
     await adminPage.locator('[data-action="action-logout"]').click();
-    await adminPage.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
-    await login(adminPage, baseUrl, userUsername, userPassword);
+    await waitForLoginModal(adminPage);
+    await login(adminPage, baseUrl, userUsername, userPassword, {reload: false});
     await assertHidden(adminPage.locator('#provider-section'), 'Logout must clear provider access UI');
+    await assertHidden(adminPage.locator('#epg-mapping-provider-container'), 'Logout must clear provider EPG UI');
+    if (await adminPage.locator(`#epg-mapping-provider-select option[value="${providerId}"]`).count()) {
+      throw new Error('Provider EPG options leaked into the next normal-user session');
+    }
     if (await adminPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true}).count()) {
       throw new Error('Provider catalog leaked into the next normal-user session');
     }
+    await adminPage.locator('#nav-epg-mapping').click();
+    await adminPage.locator(`#epg-mapping-category-select option[value="${liveFixture.categoryId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await adminPage.locator('#epg-mapping-category-select').selectOption(String(liveFixture.categoryId));
+    await adminPage.locator('#epg-mapping-tbody').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
 
     await adminPage.locator('[data-action="action-logout"]').click();
-    await adminPage.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
-    await login(adminPage, baseUrl, adminUsername, adminPassword);
+    await waitForLoginModal(adminPage);
+    await login(adminPage, baseUrl, adminUsername, adminPassword, {reload: false});
+    await adminPage.locator('#nav-dashboard').click();
+    await adminPage.locator('#view-dashboard').waitFor({state: 'visible', timeout: 15000});
     await assertVisible(adminPage.locator('#user-section'), 'Admins must see User Management after relogin');
     await userRow.waitFor({state: 'visible', timeout: 15000});
     await userRow.locator('button[aria-label="Edit User"]').click();
