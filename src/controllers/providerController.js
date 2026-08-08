@@ -50,10 +50,6 @@ const fetchProviderDetails = async (url, username, password) => {
 
 export const getProviders = (req, res) => {
   try {
-    if (!req.user.is_admin && !req.user.provider_access) {
-      return res.status(403).json({error: 'Access denied'});
-    }
-
     let { user_id } = req.query;
 
     if (!req.user.is_admin) {
@@ -73,7 +69,12 @@ export const getProviders = (req, res) => {
     }
 
     const providers = db.prepare(query).all(...params);
+    const canViewProviderDetails = req.user.is_admin || Number(req.user.provider_access) === 1;
     const safeProviders = providers.map(p => {
+      if (!canViewProviderDetails) {
+        return {id: p.id, name: p.name, user_id: p.user_id};
+      }
+
       let lastUpdate = p.last_epg_update || 0;
 
       let plainPassword = null;

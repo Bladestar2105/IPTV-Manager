@@ -5,10 +5,6 @@ import { isAdultCategory } from '../utils/helpers.js';
 
 export const getProviderChannels = (req, res) => {
   try {
-    if (!req.user.is_admin && !req.user.provider_access) {
-      return res.status(403).json({error: 'Access denied'});
-    }
-
     const { type, page, limit, search } = req.query;
     const providerId = Number(req.params.id);
 
@@ -67,10 +63,6 @@ export const getProviderChannels = (req, res) => {
 
 export const getProviderCategories = async (req, res) => {
   try {
-    if (!req.user.is_admin && !req.user.provider_access) {
-      return res.status(403).json({error: 'Access denied'});
-    }
-
     const id = Number(req.params.id);
     const type = req.query.type || 'live'; // 'live', 'movie', 'series'
 

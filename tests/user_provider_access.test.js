@@ -109,7 +109,7 @@ describe('per-user upstream provider visibility', () => {
     expect(db.prepare('SELECT provider_access FROM users WHERE id = ?').get(userId).provider_access).toBe(1);
   });
 
-  it('denies provider list access when provider access is disabled', () => {
+  it('returns owned provider options without exposing provider details', () => {
     db.prepare('UPDATE users SET provider_access = 0 WHERE id = ?').run(userId);
     const res = response();
 
@@ -118,11 +118,11 @@ describe('per-user upstream provider visibility', () => {
       query: {}
     }, res);
 
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Access denied' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual([{id: providerId, name: 'Visible Provider', user_id: userId}]);
   });
 
-  it('denies provider channel access when provider access is disabled', () => {
+  it('returns owned provider channels for list editing without provider access', () => {
     const res = response();
 
     providerCatalogController.getProviderChannels({
@@ -131,8 +131,10 @@ describe('per-user upstream provider visibility', () => {
       query: {}
     }, res);
 
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Access denied' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual([
+      expect.objectContaining({id: providerChannelId, name: 'Visible Channel'})
+    ]);
   });
 
   it('denies provider EPG mapping access when provider access is disabled', () => {

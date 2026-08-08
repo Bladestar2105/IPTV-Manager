@@ -110,6 +110,11 @@ async function run() {
     return {type, categoryName, categoryId, channelName, providerChannelId, userChannelId};
   });
   const liveFixture = listFixtures[0];
+  const providerOnlyChannelName = `Playwright Available Channel ${Date.now()}`;
+  db.prepare(`
+    INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type)
+    VALUES (?, ?, ?, 'live')
+  `).run(providerId, 2001, providerOnlyChannelName);
 
   server = app.listen(0);
   await new Promise((resolve, reject) => {
@@ -145,17 +150,28 @@ async function run() {
     await login(page, baseUrl, userUsername, userPassword);
     await assertHidden(page.locator('#user-section'), 'Regular users must not see User Management');
     await assertHidden(page.locator('#provider-section'), 'Provider section must be hidden by default');
-    const deniedResponse = await page.evaluate(async () => {
+    const providerResponse = await page.evaluate(async () => {
       const token = localStorage.getItem('jwt_token');
       const response = await fetch('/api/providers', {headers: {Authorization: `Bearer ${token}`}});
-      return response.status;
+      return {status: response.status, body: await response.json()};
     });
-    if (deniedResponse !== 403) throw new Error(`Expected provider API denial, got ${deniedResponse}`);
+    if (providerResponse.status !== 200) throw new Error(`Expected provider options, got ${providerResponse.status}`);
+    if (providerResponse.body.some(provider => 'url' in provider || 'username' in provider || 'epg_url' in provider)) {
+      throw new Error('Provider details must stay hidden when provider access is disabled');
+    }
     await assertVisible(page.locator('#user-details-content'), 'Regular users must retain list editing details');
     const category = page.locator('#category-list').getByText(liveFixture.categoryName, {exact: true});
     await category.waitFor({state: 'visible', timeout: 15000});
     await category.click();
     await page.locator('#user-channel-list').getByText(liveFixture.channelName, {exact: true}).waitFor({state: 'visible', timeout: 15000});
+    await page.locator(`#channel-provider-select option[value="${providerId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await page.locator('#channel-provider-select').selectOption(String(providerId));
+    const availableChannel = page.locator('#provider-channel-list li').filter({hasText: providerOnlyChannelName});
+    await availableChannel.waitFor({state: 'visible', timeout: 15000});
+    await availableChannel.getByRole('button').click();
+    await page.locator('#user-channel-list').getByText(providerOnlyChannelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
     for (const fixture of listFixtures.slice(1)) {
       await page.locator(`label[for="cat-filter-${fixture.type}"]`).click();
       const typeCategory = page.locator('#category-list').getByText(fixture.categoryName, {exact: true});
@@ -270,20 +286,25 @@ async function run() {
     }, {userId});
     if (revokeStatus !== 200) throw new Error(`Provider access revoke failed: ${revokeStatus}`);
 
-    const deniedCatalog = await grantedUserPage.evaluate(async ({providerId}) => {
+    const deniedProviderMapping = await grantedUserPage.evaluate(async ({providerId}) => {
       try {
-        await window.fetchJSON(`/api/providers/${providerId}/channels?type=live`);
+        await window.fetchJSON(`/api/mapping/${providerId}`);
         return {message: 'unexpected success', token: Boolean(localStorage.getItem('jwt_token'))};
       } catch (error) {
         return {message: error.message, token: Boolean(localStorage.getItem('jwt_token'))};
       }
     }, {providerId});
-    if (deniedCatalog.message !== 'Access denied' || !deniedCatalog.token) {
-      throw new Error(`Provider denial must preserve the login session: ${JSON.stringify(deniedCatalog)}`);
+    if (deniedProviderMapping.message !== 'Access denied' || !deniedProviderMapping.token) {
+      throw new Error(`Provider permission refresh must preserve the login session: ${JSON.stringify(deniedProviderMapping)}`);
     }
     await assertHidden(grantedUserPage.locator('#login-modal'), 'Provider denial must not show the login modal');
     await assertHidden(grantedUserPage.locator('#provider-section'), 'Revoked users must lose the Provider section');
     await assertVisible(grantedUserPage.locator('#user-details-content'), 'Provider denial must preserve list editing');
+    await grantedUserPage.locator(`#channel-provider-select option[value="${providerId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await grantedUserPage.locator('#channel-provider-select').selectOption(String(providerId));
+    await grantedUserPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
     await grantedUserPage.locator('#nav-epg-mapping').click();
     await grantedUserPage.locator(`#epg-mapping-category-select option[value="${liveFixture.categoryId}"]`)
       .waitFor({state: 'attached', timeout: 15000});

@@ -1032,20 +1032,27 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
 async function loadProviders(filterUserId = null) {
   const canViewProviders = currentUser && (currentUser.is_admin || Number(currentUser.provider_access) === 1);
   const section = document.getElementById('provider-section');
+  const requestGeneration = sessionGeneration;
+  const providers = await fetchJSON('/api/providers');
+  if (requestGeneration !== sessionGeneration || !currentUser) return;
+
+  updateChannelProviderSelect(providers);
+
   if (!canViewProviders) {
-    clearSessionSensitiveState({preserveUserState: true});
+    updateStatsCounters('providers', 0);
+    if (section) section.classList.add('d-none');
+    const userSection = document.getElementById('user-section');
+    if (userSection) {
+      userSection.classList.remove('col-md-6');
+      userSection.classList.add('col-md-12');
+    }
     return;
   }
 
-  const requestGeneration = sessionGeneration;
-  const providers = await fetchJSON('/api/providers');
-  if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
   updateStatsCounters('providers', providers.length);
 
   const list = document.getElementById('provider-list');
   list.innerHTML = '';
-
-  updateChannelProviderSelect(providers);
 
   const targetUserId = filterUserId || selectedUserId;
   const userSection = document.getElementById('user-section');
@@ -1594,7 +1601,7 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
   if (saveProviderButton) saveProviderButton.textContent = t('addProvider');
   const availableHeader = document.getElementById('available-channels-header');
   if (availableHeader) availableHeader.textContent = t('available', {count: 0});
-  updateChannelProviderSelect([]);
+  if (!preserveUserState) updateChannelProviderSelect([]);
   updateStatsCounters('providers', 0);
 
   if (!preserveUserState) {
@@ -1682,7 +1689,7 @@ async function loadProviderCategories() {
   try {
     const requestGeneration = sessionGeneration;
     const categories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
-    if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
     providerCategories = categories;
     renderProviderCategories();
   } catch (e) {
@@ -1934,7 +1941,7 @@ async function fetchProviderChannels(reset) {
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
-    if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
 
     // Handle Response (supports new object structure and legacy array)
     let channels = [];
