@@ -25,6 +25,8 @@ function response() {
 describe('per-user upstream provider visibility', () => {
   let userId;
   let providerId;
+  let providerChannelId;
+  let categoryId;
 
   beforeAll(() => {
     initDb(true);
@@ -41,10 +43,19 @@ describe('per-user upstream provider visibility', () => {
     `).run('Visible Provider', 'http://provider.example', 'upstream', encrypt('secret'), userId);
     providerId = Number(provider.lastInsertRowid);
 
-    db.prepare(`
+    providerChannelId = Number(db.prepare(`
       INSERT INTO provider_channels (provider_id, remote_stream_id, name)
       VALUES (?, ?, ?)
-    `).run(providerId, 1, 'Visible Channel');
+    `).run(providerId, 1, 'Visible Channel').lastInsertRowid);
+
+    categoryId = Number(db.prepare(`
+      INSERT INTO user_categories (user_id, name, type)
+      VALUES (?, 'Visible List', 'live')
+    `).run(userId).lastInsertRowid);
+    db.prepare(`
+      INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, assignment_origin)
+      VALUES (?, ?, 0, 'manual')
+    `).run(categoryId, providerChannelId);
   });
 
   it('defaults provider access to disabled', () => {
@@ -109,7 +120,52 @@ describe('per-user upstream provider visibility', () => {
     expect(res.body).toEqual({ error: 'Access denied' });
   });
 
-  it('denies provider category mapping access when provider access is disabled', () => {
+  it('keeps own category mapping and EPG mapping editable without provider access', async () => {
+    const categoryMappingRes = response();
+    channelController.getCategoryMappings({
+      user: { id: userId, is_admin: false, provider_access: 0 },
+      params: { providerId, userId }
+    }, categoryMappingRes);
+    expect(categoryMappingRes.statusCode).toBe(200);
+
+    const mappingRes = response();
+    await epgMappingController.manualMapping({
+      user: { id: userId, is_admin: false, provider_access: 0, username: 'user' },
+      body: { provider_channel_id: providerChannelId, epg_channel_id: 'visible-epg-channel' },
+      ip: '127.0.0.1'
+    }, mappingRes);
+    expect(mappingRes.statusCode).toBe(200);
+    expect(db.prepare('SELECT epg_channel_id FROM epg_channel_mappings WHERE provider_channel_id = ?').get(providerChannelId))
+      .toEqual({ epg_channel_id: 'visible-epg-channel' });
+
+    const deleteRes = response();
+    await epgMappingController.deleteMapping({
+      user: { id: userId, is_admin: false, provider_access: 0 },
+      params: { id: providerChannelId }
+    }, deleteRes);
+    expect(deleteRes.statusCode).toBe(200);
+  });
+
+  it('keeps provider category mapping updates available without provider access', () => {
+    const mappingId = Number(db.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, category_type)
+      VALUES (?, ?, 1, 'Visible Category', 'live')
+    `).run(providerId, userId).lastInsertRowid);
+    const res = response();
+
+    channelController.updateCategoryMapping({
+      user: { id: userId, is_admin: false, provider_access: 0 },
+      params: { id: mappingId },
+      body: { user_category_id: categoryId }
+    }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(db.prepare('SELECT user_category_id FROM category_mappings WHERE id = ?').get(mappingId))
+      .toEqual({ user_category_id: categoryId });
+  });
+
+  it('keeps provider category mapping reads available without provider access', () => {
     const res = response();
 
     channelController.getCategoryMappings({
@@ -117,8 +173,10 @@ describe('per-user upstream provider visibility', () => {
       params: { providerId, userId }
     }, res);
 
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Access denied' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider_id: providerId, user_id: userId })
+    ]));
   });
 
   it('returns owned providers after an admin grants access', () => {

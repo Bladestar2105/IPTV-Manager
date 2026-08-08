@@ -155,6 +155,11 @@ all providers.
 Provider-scoped mapping reads require the same provider ownership and
 `provider_access` permission as provider catalog reads.
 
+Category-scoped EPG mapping remains available to normal users without
+`provider_access`; it is limited to their own categories and authorized
+channels. This also applies to manual mapping, reset, auto-mapping, and
+category-mapping edits.
+
 ## User Backups
 
 - `GET /api/users/:userId/backups`

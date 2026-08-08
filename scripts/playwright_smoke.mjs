@@ -66,7 +66,7 @@ async function run() {
       INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, assignment_origin)
       VALUES (?, ?, 0, 'manual')
     `).run(categoryId, providerChannelId).lastInsertRowid);
-    return {type, categoryName, categoryId, channelName, userChannelId};
+    return {type, categoryName, categoryId, channelName, providerChannelId, userChannelId};
   });
   const liveFixture = listFixtures[0];
 
@@ -144,6 +144,24 @@ async function run() {
       throw new Error(`Regular user list editing failed: ${listEditStatuses.join(', ')}`);
     }
 
+    await assertVisible(page.locator('#nav-epg-mapping'), 'Regular users must retain EPG Mapping');
+    await page.locator('#nav-epg-mapping').click();
+    await page.locator(`#epg-mapping-category-select option[value="${liveFixture.categoryId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await page.locator('#epg-mapping-category-select').selectOption(String(liveFixture.categoryId));
+    await page.locator('#epg-mapping-tbody').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
+    const mappingStatuses = await page.evaluate(async ({providerChannelId}) => {
+      const token = localStorage.getItem('jwt_token');
+      const response = await fetch('/api/mapping/manual', {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: JSON.stringify({provider_channel_id: providerChannelId, epg_channel_id: 'playwright-epg-channel'})
+      });
+      return response.status;
+    }, liveFixture);
+    if (mappingStatuses !== 200) throw new Error(`Regular user EPG mapping failed: ${mappingStatuses}`);
+
     await login(adminPage, baseUrl, adminUsername, adminPassword);
     await assertVisible(adminPage.locator('#user-section'), 'Admins must see User Management');
     const userRow = adminPage.locator('#user-list li').filter({hasText: userUsername});
@@ -161,6 +179,7 @@ async function run() {
     await login(grantedUserPage, baseUrl, userUsername, userPassword);
     await assertHidden(grantedUserPage.locator('#user-section'), 'Regular users must not see User Management after grant');
     await assertVisible(grantedUserPage.locator('#provider-section'), 'Granted users must see the Provider section');
+    await assertVisible(grantedUserPage.locator('#nav-epg-mapping'), 'Granted users must retain EPG Mapping');
     await grantedUserPage.locator('#provider-list').getByText(providerName).waitFor({state: 'visible', timeout: 15000});
   } finally {
     await page.close();
