@@ -1,11 +1,19 @@
-import { describe, expect, it, beforeAll } from 'vitest';
-import db, { initDb } from '../src/database/db.js';
-import * as userController from '../src/controllers/userController.js';
-import * as providerController from '../src/controllers/providerController.js';
-import * as providerCatalogController from '../src/controllers/providerCatalogController.js';
-import * as epgMappingController from '../src/controllers/epgMappingController.js';
-import * as channelController from '../src/controllers/channelController.js';
-import { encrypt } from '../src/utils/crypto.js';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const configuredDataDir = process.env.DATA_DIR;
+const testDataDir = configuredDataDir || mkdtempSync(join(tmpdir(), 'iptv-manager-provider-access-'));
+process.env.DATA_DIR = testDataDir;
+
+const { default: db, initDb } = await import('../src/database/db.js');
+const userController = await import('../src/controllers/userController.js');
+const providerController = await import('../src/controllers/providerController.js');
+const providerCatalogController = await import('../src/controllers/providerCatalogController.js');
+const epgMappingController = await import('../src/controllers/epgMappingController.js');
+const channelController = await import('../src/controllers/channelController.js');
+const { encrypt } = await import('../src/utils/crypto.js');
 
 function response() {
   return {
@@ -193,4 +201,9 @@ describe('per-user upstream provider visibility', () => {
       expect.objectContaining({ id: providerId, name: 'Visible Provider' })
     ]));
   });
+});
+
+afterAll(() => {
+  db.close();
+  if (!configuredDataDir) rmSync(testDataDir, {recursive: true, force: true});
 });
