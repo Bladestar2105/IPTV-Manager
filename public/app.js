@@ -1030,11 +1030,14 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
 
 // === Provider Management ===
 async function loadProviders(filterUserId = null) {
-  const canViewProviders = currentUser && (currentUser.is_admin || Number(currentUser.provider_access) === 1);
   const section = document.getElementById('provider-section');
   const requestGeneration = sessionGeneration;
   const providers = await fetchJSON('/api/providers');
   if (requestGeneration !== sessionGeneration || !currentUser) return;
+  if (!currentUser.is_admin) await refreshCurrentUserPermissions();
+  if (requestGeneration !== sessionGeneration || !currentUser) return;
+
+  const canViewProviders = currentUser.is_admin || Number(currentUser.provider_access) === 1;
 
   updateChannelProviderSelect(providers);
 
@@ -1690,6 +1693,8 @@ async function loadProviderCategories() {
     const requestGeneration = sessionGeneration;
     const categories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
     if (requestGeneration !== sessionGeneration || !currentUser) return;
+    if (!currentUser.is_admin) await refreshCurrentUserPermissions();
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
     providerCategories = categories;
     renderProviderCategories();
   } catch (e) {
@@ -1941,6 +1946,8 @@ async function fetchProviderChannels(reset) {
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
+    if (!currentUser.is_admin) await refreshCurrentUserPermissions();
     if (requestGeneration !== sessionGeneration || !currentUser) return;
 
     // Handle Response (supports new object structure and legacy array)

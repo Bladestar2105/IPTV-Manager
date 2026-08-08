@@ -286,6 +286,13 @@ async function run() {
     }, {userId});
     if (revokeStatus !== 200) throw new Error(`Provider access revoke failed: ${revokeStatus}`);
 
+    await grantedUserPage.locator(`#channel-provider-select option[value="${providerId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await grantedUserPage.locator('#channel-provider-select').selectOption(String(providerId));
+    await grantedUserPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
+    await assertHidden(grantedUserPage.locator('#provider-section'), 'Revoked users must lose the Provider section after catalog refresh');
+
     const deniedProviderMapping = await grantedUserPage.evaluate(async ({providerId}) => {
       try {
         await window.fetchJSON(`/api/mapping/${providerId}`);
@@ -300,11 +307,6 @@ async function run() {
     await assertHidden(grantedUserPage.locator('#login-modal'), 'Provider denial must not show the login modal');
     await assertHidden(grantedUserPage.locator('#provider-section'), 'Revoked users must lose the Provider section');
     await assertVisible(grantedUserPage.locator('#user-details-content'), 'Provider denial must preserve list editing');
-    await grantedUserPage.locator(`#channel-provider-select option[value="${providerId}"]`)
-      .waitFor({state: 'attached', timeout: 15000});
-    await grantedUserPage.locator('#channel-provider-select').selectOption(String(providerId));
-    await grantedUserPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true})
-      .waitFor({state: 'visible', timeout: 15000});
     await grantedUserPage.locator('#nav-epg-mapping').click();
     await grantedUserPage.locator(`#epg-mapping-category-select option[value="${liveFixture.categoryId}"]`)
       .waitFor({state: 'attached', timeout: 15000});
