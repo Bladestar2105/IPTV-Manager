@@ -89,6 +89,7 @@ export function initDb(isPrimary) {
       password TEXT NOT NULL,
       plain_password TEXT,
       is_active INTEGER DEFAULT 1,
+      provider_access INTEGER DEFAULT 0,
       max_connections INTEGER DEFAULT 0,
       expiry_date INTEGER,
       allowed_countries TEXT,
@@ -295,6 +296,7 @@ export function initDb(isPrimary) {
             migrations.migrateUserCategoriesType(db);
             migrations.migrateOtpSchema(db);
             migrations.migrateWebUiAccess(db);
+            migrations.migrateUserProviderAccess(db);
             migrations.migrateProviderPasswords(db);
             migrations.migrateOptimizeDatabase(db);
             migrations.checkIsAdultColumn(db);

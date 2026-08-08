@@ -416,6 +416,15 @@ export const getCategoryMappings = (req, res) => {
     if (!req.user.is_admin && req.user.id !== userId) {
         return res.status(403).json({error: 'Access denied'});
     }
+    if (!req.user.is_admin && !req.user.provider_access) {
+        return res.status(403).json({error: 'Access denied'});
+    }
+    if (!req.user.is_admin) {
+        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(Number(req.params.providerId));
+        if (!provider || provider.user_id !== req.user.id) {
+            return res.status(403).json({error: 'Access denied'});
+        }
+    }
 
     const mappings = db.prepare(`
       SELECT cm.*, uc.name as user_category_name

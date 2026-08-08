@@ -926,6 +926,7 @@ function showEditUserModal(user) {
   // Checkbox handling: default to true if undefined/null (legacy users), else use value
   const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
   document.getElementById('edit-user-webui-access').checked = webuiAccess;
+  document.getElementById('edit-user-provider-access').checked = user.provider_access === 1;
   document.getElementById('edit-user-hdhr-enabled').checked = (user.hdhr_enabled === 1);
 
   // Set selected countries
@@ -949,6 +950,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const maxConnections = document.getElementById('edit-user-max-connections').value;
   const expiryDate = document.getElementById('edit-user-expiry-date').value;
   const webuiAccess = document.getElementById('edit-user-webui-access').checked;
+  const providerAccess = document.getElementById('edit-user-provider-access').checked;
   const hdhrEnabled = document.getElementById('edit-user-hdhr-enabled').checked;
   const notes = document.getElementById('edit-user-notes').value;
 
@@ -958,6 +960,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const body = {
       username,
       webui_access: webuiAccess,
+      provider_access: providerAccess,
       hdhr_enabled: hdhrEnabled,
       max_connections: maxConnections,
       expiry_date: expiryDate ? expiryDate : null,
@@ -984,6 +987,15 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
 
 // === Provider Management ===
 async function loadProviders(filterUserId = null) {
+  const canViewProviders = currentUser && (currentUser.is_admin || Number(currentUser.provider_access) === 1);
+  const section = document.getElementById('provider-section');
+  if (!canViewProviders) {
+    if (section) section.classList.add('d-none');
+    updateStatsCounters('providers', 0);
+    updateChannelProviderSelect([]);
+    return;
+  }
+
   const providers = await fetchJSON('/api/providers');
   updateStatsCounters('providers', providers.length);
 
@@ -993,7 +1005,6 @@ async function loadProviders(filterUserId = null) {
   updateChannelProviderSelect(providers);
 
   const targetUserId = filterUserId || selectedUserId;
-  const section = document.getElementById('provider-section');
   const userSection = document.getElementById('user-section');
   if (section) {
       if (targetUserId || (currentUser && currentUser.is_admin)) {
@@ -4508,6 +4519,12 @@ async function checkAuthentication() {
 function applyPermissions() {
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
+    const userSection = document.getElementById('user-section');
+    if (userSection) userSection.classList.toggle('d-none', !isAdmin);
+
+    const providerSection = document.getElementById('provider-section');
+    const canViewProviders = isAdmin || Number(currentUser.provider_access) === 1;
+    if (providerSection) providerSection.classList.toggle('d-none', !canViewProviders);
 
     // Hide EPG "Only used" checkbox for non-admins
     const onlyUsedContainer = document.getElementById('only-used-container');

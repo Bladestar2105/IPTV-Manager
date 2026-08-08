@@ -60,7 +60,7 @@ describe('Export/Import Regression Tests', () => {
 
     it('should export and import correctly (standard workflow)', async () => {
         // 1. Create User
-        const userRes = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run('testuser_std', 'userpass');
+        const userRes = db.prepare('INSERT INTO users (username, password, provider_access) VALUES (?, ?, 1)').run('testuser_std', 'userpass');
         const userId = userRes.lastInsertRowid;
 
         // 2. Create Provider with Encrypted Password
@@ -120,6 +120,7 @@ describe('Export/Import Regression Tests', () => {
         const importedUser = db.prepare('SELECT * FROM users WHERE username = ?').get('testuser_std');
         const importedProvider = db.prepare('SELECT * FROM providers WHERE user_id = ?').get(importedUser.id);
 
+        expect(importedUser.provider_access).toBe(1);
         const decryptedImportedPass = decrypt(importedProvider.password);
         expect(decryptedImportedPass).toBe(TEST_PROVIDER_PASSWORD);
         expect(importedProvider.timeshift_timezone).toBe('Europe/Berlin');

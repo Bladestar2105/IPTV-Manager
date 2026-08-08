@@ -31,6 +31,10 @@ Stalker device create/update payloads accept an optional `parental_pin` containi
 4–8 digits. An empty or `null` value clears it. Device responses never contain
 the PIN or its encrypted value and expose only `parental_pin_configured`.
 
+User create/update payloads accept an optional `provider_access` boolean. It is
+disabled by default and controls whether the normal user may view their
+upstream providers and provider catalog.
+
 Deleting a user removes user-owned providers and dependent runtime/configuration
 rows first, including provider icon cache entries, share links, temporary
 tokens, user backups, sync data, categories, channels, and mappings. This keeps
@@ -68,6 +72,9 @@ Provider create/update payloads accept an optional `timeshift_timezone` IANA
 name (for example `Europe/Berlin` or `UTC`). Empty or null uses the server
 runtime timezone; invalid names are rejected. Provider export/import and user
 provider cloning preserve this setting.
+
+Normal users receive only their own providers and provider catalog when
+`provider_access` is enabled; otherwise these provider endpoints return `403`.
 
 ## Categories and Channels
 
@@ -144,6 +151,9 @@ this endpoint for timeline data after rendering the channel list.
 Poll `GET /api/mapping/jobs/:id` for `status`, `progress`, and `matched`.
 Admins may pass `all_providers: true` to auto-map or reset EPG mappings across
 all providers.
+
+Provider-scoped mapping reads require the same provider ownership and
+`provider_access` permission as provider catalog reads.
 
 ## User Backups
 

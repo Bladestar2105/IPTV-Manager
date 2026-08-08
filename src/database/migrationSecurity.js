@@ -41,6 +41,20 @@ export function migrateWebUiAccess(db) {
   }
 }
 
+export function migrateUserProviderAccess(db) {
+  try {
+    const userTable = db.prepare("PRAGMA table_info(users)").all();
+    const userCols = userTable.map(c => c.name);
+
+    if (!userCols.includes('provider_access')) {
+      db.exec('ALTER TABLE users ADD COLUMN provider_access INTEGER DEFAULT 0');
+      console.log('✅ DB Migration: provider_access column added to users');
+    }
+  } catch (e) {
+    console.error('Provider Access Schema migration error:', e);
+  }
+}
+
 export function migrateProviderPasswords(db) {
   try {
     const providers = db.prepare('SELECT * FROM providers').all();

@@ -50,6 +50,10 @@ const fetchProviderDetails = async (url, username, password) => {
 
 export const getProviders = (req, res) => {
   try {
+    if (!req.user.is_admin && !req.user.provider_access) {
+      return res.status(403).json({error: 'Access denied'});
+    }
+
     let { user_id } = req.query;
 
     if (!req.user.is_admin) {
@@ -557,4 +561,3 @@ export const syncProvider = async (req, res) => {
     res.status(500).json({error: e.message});
   }
 };
-
