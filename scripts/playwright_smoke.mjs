@@ -32,8 +32,15 @@ async function assertHidden(locator, message) {
 }
 
 async function run() {
-  initDb(true);
-  initEpgDb();
+  let server;
+  let browser;
+  let page;
+  let adminPage;
+  let grantedUserPage;
+
+  try {
+    initDb(true);
+    initEpgDb();
 
   const adminUsername = `pw_admin_${Date.now()}`;
   const userUsername = `pw_user_${Date.now()}`;
@@ -72,7 +79,7 @@ async function run() {
   });
   const liveFixture = listFixtures[0];
 
-  const server = app.listen(0);
+  server = app.listen(0);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -82,12 +89,11 @@ async function run() {
   const port = typeof address === 'object' && address ? address.port : 3000;
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  const adminPage = await browser.newPage();
-  const grantedUserPage = await browser.newPage();
+  browser = await chromium.launch({ headless: true });
+  page = await browser.newPage();
+  adminPage = await browser.newPage();
+  grantedUserPage = await browser.newPage();
 
-  try {
     const response = await page.goto(baseUrl, { waitUntil: 'networkidle', timeout: 15000 });
     if (!response || response.status() >= 400) {
       throw new Error(`Unexpected response status: ${response ? response.status() : 'no response'}`);
@@ -203,11 +209,11 @@ async function run() {
     await assertVisible(grantedUserPage.locator('#nav-epg-mapping'), 'Granted users must retain EPG Mapping');
     await grantedUserPage.locator('#provider-list').getByText(providerName).waitFor({state: 'visible', timeout: 15000});
   } finally {
-    await page.close();
-    await adminPage.close();
-    await grantedUserPage.close();
-    await browser.close();
-    await new Promise((resolve) => server.close(resolve));
+    for (const currentPage of [page, adminPage, grantedUserPage]) {
+      try { await currentPage?.close(); } catch {}
+    }
+    try { await browser?.close(); } catch {}
+    if (server?.listening) await new Promise((resolve) => server.close(resolve));
     if (!configuredDataDir) rmSync(smokeDataDir, {recursive: true, force: true});
   }
 }
