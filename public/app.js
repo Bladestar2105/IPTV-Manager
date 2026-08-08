@@ -1701,6 +1701,12 @@ async function loadProviderCategories() {
     renderProviderCategories();
   } catch (e) {
     console.error(' Error:', e);
+    if (e.message === 'Access denied') {
+      providerCategories = [];
+      list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
+      try { await loadProviders(selectedUserId); } catch {}
+      return;
+    }
     list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
   }
 }
@@ -1967,6 +1973,23 @@ async function fetchProviderChannels(reset) {
 
   } catch(e) {
     isLoadingChannels = false;
+    if (e.message === 'Access denied') {
+        channelPage = 1;
+        channelSearch = '';
+        channelTotal = 0;
+        list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
+        const searchInput = document.getElementById('provider-channel-search');
+        if (searchInput) {
+            searchInput.value = '';
+            searchInput.disabled = true;
+        }
+        const searchClear = document.getElementById('provider-channel-search-clear');
+        if (searchClear) searchClear.classList.add('d-none');
+        const availableHeader = document.getElementById('available-channels-header');
+        if (availableHeader) availableHeader.textContent = t('available', {count: 0});
+        try { await loadProviders(selectedUserId); } catch {}
+        return;
+    }
     if (reset) {
         list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
     }

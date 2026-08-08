@@ -310,6 +310,61 @@ async function run() {
     await assertHidden(grantedUserPage.locator('#login-modal'), 'Provider denial must not show the login modal');
     await assertHidden(grantedUserPage.locator('#provider-section'), 'Revoked users must lose the Provider section');
     await assertVisible(grantedUserPage.locator('#user-details-content'), 'Provider denial must preserve list editing');
+
+    const ownershipChangeStatus = await adminPage.evaluate(async ({providerId}) => {
+      const token = localStorage.getItem('jwt_token');
+      const response = await fetch(`/api/providers/${providerId}`, {
+        method: 'PUT',
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          name: 'Reassigned Playwright Provider',
+          url: 'http://provider.example',
+          username: 'upstream',
+          password: 'secret',
+          epg_url: 'http://provider.example/epg.xml',
+          user_id: null,
+          epg_enabled: false,
+          max_connections: 1
+        })
+      });
+      return response.status;
+    }, {providerId});
+    if (ownershipChangeStatus !== 200) throw new Error(`Provider ownership change failed: ${ownershipChangeStatus}`);
+
+    const ownershipDeniedResponse = grantedUserPage.waitForResponse(response =>
+      response.url().includes(`/api/providers/${providerId}/channels`) && response.status() === 403
+    );
+    await grantedUserPage.locator('#channel-provider-select').evaluate((select, value) => {
+      select.value = String(value);
+      select.dispatchEvent(new Event('change', {bubbles: true}));
+    }, providerId);
+    await ownershipDeniedResponse;
+    await grantedUserPage.locator(`#channel-provider-select option[value="${providerId}"]`)
+      .waitFor({state: 'detached', timeout: 15000});
+    if (await grantedUserPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true}).count()) {
+      throw new Error('Ownership denial must clear stale provider catalog rows');
+    }
+
+    const restoreOwnershipStatus = await adminPage.evaluate(async ({providerId, userId}) => {
+      const token = localStorage.getItem('jwt_token');
+      const response = await fetch(`/api/providers/${providerId}`, {
+        method: 'PUT',
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          name: 'Playwright Provider',
+          url: 'http://provider.example',
+          username: 'upstream',
+          password: 'secret',
+          epg_url: 'http://provider.example/epg.xml',
+          user_id: userId,
+          epg_enabled: false,
+          max_connections: 1
+        })
+      });
+      return response.status;
+    }, {providerId, userId});
+    if (restoreOwnershipStatus !== 200) throw new Error(`Provider ownership restore failed: ${restoreOwnershipStatus}`);
+
     await grantedUserPage.locator('#nav-epg-mapping').click();
     await grantedUserPage.locator(`#epg-mapping-category-select option[value="${liveFixture.categoryId}"]`)
       .waitFor({state: 'attached', timeout: 15000});
