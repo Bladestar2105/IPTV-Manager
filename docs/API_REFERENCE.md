@@ -78,7 +78,9 @@ provider cloning preserve this setting.
 Normal users receive only their own provider names/options and provider catalog
 rows. With `provider_access` disabled, `GET /api/providers` omits connection
 details and the provider management box is hidden; own provider catalog and
-category-import operations remain available for list editing.
+category-import operations remain available for list editing. Restricted
+catalog responses omit raw stream metadata, including original URLs, HTTP
+headers, and DRM data.
 
 ## Categories and Channels
 

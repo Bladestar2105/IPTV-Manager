@@ -28,9 +28,10 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   sync, EPG, imports/exports, or database migrations.
 - `provider_access` is disabled for normal users by default and controls only
   upstream provider management and connection-details visibility. Provider
-  names/options and catalog rows remain available for list editing. It must not
-  remove a user's ability to edit their own channel, movie, series, or
-  category-scoped EPG mappings.
+  names/options and catalog rows remain available for list editing; restricted
+  catalog responses must omit raw stream URLs, HTTP headers, and DRM metadata.
+  It must not remove a user's ability to edit their own channel, movie, series,
+  or category-scoped EPG mappings.
 
 ## Package and Build Rules
 

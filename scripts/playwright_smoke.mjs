@@ -100,9 +100,19 @@ async function run() {
     `).run(userId, categoryName, type).lastInsertRowid);
     const channelName = `Playwright ${type} Channel ${Date.now()}`;
     const providerChannelId = Number(db.prepare(`
-      INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type)
-      VALUES (?, ?, ?, ?)
-    `).run(providerId, 1001 + index, channelName, type).lastInsertRowid);
+      INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      providerId,
+      1001 + index,
+      channelName,
+      type,
+      index === 0 ? JSON.stringify({
+        original_url: 'http://upstream.example/live/user:secret',
+        http_headers: {Authorization: 'Bearer header-secret'},
+        drm: {license_key: 'license-secret'}
+      }) : null
+    ).lastInsertRowid);
     const userChannelId = Number(db.prepare(`
       INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order, assignment_origin)
       VALUES (?, ?, 0, 'manual')
@@ -158,6 +168,22 @@ async function run() {
     if (providerResponse.status !== 200) throw new Error(`Expected provider options, got ${providerResponse.status}`);
     if (providerResponse.body.some(provider => 'url' in provider || 'username' in provider || 'epg_url' in provider)) {
       throw new Error('Provider details must stay hidden when provider access is disabled');
+    }
+    const restrictedCatalogResponse = await page.evaluate(async ({providerId}) => {
+      const token = localStorage.getItem('jwt_token');
+      const response = await fetch(`/api/providers/${providerId}/channels?type=live&page=1&limit=50`, {
+        headers: {Authorization: `Bearer ${token}`}
+      });
+      return {status: response.status, body: await response.json()};
+    }, {providerId});
+    if (restrictedCatalogResponse.status !== 200) {
+      throw new Error(`Expected restricted provider catalog, got ${restrictedCatalogResponse.status}`);
+    }
+    const restrictedCatalog = Array.isArray(restrictedCatalogResponse.body)
+      ? restrictedCatalogResponse.body
+      : restrictedCatalogResponse.body.channels;
+    if (!Array.isArray(restrictedCatalog) || restrictedCatalog.some(channel => 'metadata' in channel || JSON.stringify(channel).includes('secret'))) {
+      throw new Error('Provider channel metadata must stay hidden when provider access is disabled');
     }
     await assertVisible(page.locator('#user-details-content'), 'Regular users must retain list editing details');
     const category = page.locator('#category-list').getByText(liveFixture.categoryName, {exact: true});

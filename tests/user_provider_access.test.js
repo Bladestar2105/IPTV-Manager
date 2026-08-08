@@ -54,6 +54,7 @@ describe('per-user upstream provider visibility', () => {
   let providerId;
   let providerChannelId;
   let categoryId;
+  let sensitiveMetadata;
 
   beforeAll(() => {
     initDb(true);
@@ -74,6 +75,12 @@ describe('per-user upstream provider visibility', () => {
       INSERT INTO provider_channels (provider_id, remote_stream_id, name)
       VALUES (?, ?, ?)
     `).run(providerId, 1, 'Visible Channel').lastInsertRowid);
+    sensitiveMetadata = JSON.stringify({
+      original_url: 'http://upstream.example/live/user:secret',
+      http_headers: {Authorization: 'Bearer header-secret'},
+      drm: {license_key: 'license-secret'}
+    });
+    db.prepare('UPDATE provider_channels SET metadata = ? WHERE id = ?').run(sensitiveMetadata, providerChannelId);
 
     categoryId = Number(db.prepare(`
       INSERT INTO user_categories (user_id, name, type)
@@ -135,6 +142,32 @@ describe('per-user upstream provider visibility', () => {
     expect(res.body).toEqual([
       expect.objectContaining({id: providerChannelId, name: 'Visible Channel'})
     ]);
+  });
+
+  it('redacts provider channel metadata without provider access', () => {
+    const restrictedRes = response();
+
+    providerCatalogController.getProviderChannels({
+      user: { id: userId, is_admin: false, provider_access: 0 },
+      params: { id: providerId },
+      query: {}
+    }, restrictedRes);
+
+    expect(restrictedRes.statusCode).toBe(200);
+    expect(restrictedRes.body[0]).not.toHaveProperty('metadata');
+    expect(JSON.stringify(restrictedRes.body)).not.toContain('secret');
+
+    const grantedRes = response();
+    providerCatalogController.getProviderChannels({
+      user: { id: userId, is_admin: false, provider_access: 1 },
+      params: { id: providerId },
+      query: {}
+    }, grantedRes);
+
+    expect(grantedRes.statusCode).toBe(200);
+    expect(grantedRes.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({id: providerChannelId, metadata: sensitiveMetadata})
+    ]));
   });
 
   it('denies provider EPG mapping access when provider access is disabled', () => {

@@ -13,6 +13,11 @@ export const getProviderChannels = (req, res) => {
         if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
     }
 
+    const canViewChannelMetadata = req.user.is_admin || Number(req.user.provider_access) === 1;
+    const channelFields = canViewChannelMetadata
+      ? '*'
+      : 'id, provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, mime_type, rating, rating_5based, added, plot, "cast", director, genre, releaseDate, youtube_trailer, episode_run_time';
+
     if (page || limit || search) {
       const pageNum = parseInt(page) || 1;
       const limitNum = parseInt(limit) || 50;
@@ -35,7 +40,7 @@ export const getProviderChannels = (req, res) => {
       const countQuery = `SELECT COUNT(*) as count ${baseQuery}`;
       const total = db.prepare(countQuery).get(...params).count;
 
-      const dataQuery = `SELECT * ${baseQuery} ORDER BY original_sort_order ASC, name ASC LIMIT ? OFFSET ?`;
+      const dataQuery = `SELECT ${channelFields} ${baseQuery} ORDER BY original_sort_order ASC, name ASC LIMIT ? OFFSET ?`;
       const rows = db.prepare(dataQuery).all(...params, limitNum, offset);
 
       return res.json({
@@ -46,7 +51,7 @@ export const getProviderChannels = (req, res) => {
       });
     }
 
-    let query = 'SELECT * FROM provider_channels WHERE provider_id = ?';
+    let query = `SELECT ${channelFields} FROM provider_channels WHERE provider_id = ?`;
     const params = [providerId];
 
     if (type) {
