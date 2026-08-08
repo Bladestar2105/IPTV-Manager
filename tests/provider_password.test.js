@@ -65,7 +65,7 @@ describe('Provider Password Visibility', () => {
 
          // Mock req and res for Non-Admin
          const req = {
-             user: { id: userId, is_admin: false },
+         user: { id: userId, is_admin: false, provider_access: 1 },
              query: {}
          };
 

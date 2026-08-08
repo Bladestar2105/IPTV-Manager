@@ -118,6 +118,7 @@ describe('Auth Middleware - authenticateToken', () => {
             username: 'admin',
             is_active: 1,
             is_admin: true,
+            provider_access: 0,
             otp_enabled: true
         });
 
@@ -149,6 +150,7 @@ describe('Auth Middleware - authenticateToken', () => {
             username: 'user',
             is_active: 1,
             is_admin: false,
+            provider_access: 0,
             otp_enabled: false
         });
 

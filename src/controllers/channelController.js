@@ -416,7 +416,6 @@ export const getCategoryMappings = (req, res) => {
     if (!req.user.is_admin && req.user.id !== userId) {
         return res.status(403).json({error: 'Access denied'});
     }
-
     const mappings = db.prepare(`
       SELECT cm.*, uc.name as user_category_name
       FROM category_mappings cm

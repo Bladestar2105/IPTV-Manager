@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+- Added a per-user provider-access setting that hides upstream provider
+  management and catalog data from normal users by default while preserving
+  their channel, movie, series, and category-scoped EPG mapping edits.
+- Added isolated API and Playwright regression coverage for provider visibility,
+  session cleanup, and retained list editing.
 - Hardened tenant-scoped category and channel operations.
 - Validated category mapping targets before writes.
 - Preserved explicit cross-owner provider selection priority.

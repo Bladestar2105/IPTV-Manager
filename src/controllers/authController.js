@@ -118,6 +118,7 @@ export const login = async (req, res) => {
             username: user.username,
             is_active: user.is_active,
             is_admin: user.is_admin,
+            provider_access: user.provider_access ? 1 : 0,
             otp_enabled: !!user.otp_enabled,
             force_password_change: !!user.force_password_change
           },

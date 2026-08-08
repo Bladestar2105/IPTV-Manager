@@ -112,6 +112,15 @@ export const deleteMapping = async (req, res) => {
 export const getMappings = (req, res) => {
   try {
     const id = Number(req.params.providerId);
+    if (!req.user.is_admin && !req.user.provider_access) {
+      return res.status(403).json({error: 'Access denied'});
+    }
+    if (!req.user.is_admin) {
+      const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(id);
+      if (!provider || provider.user_id !== req.user.id) {
+        return res.status(403).json({error: 'Access denied'});
+      }
+    }
     const mappings = db.prepare('SELECT * FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id = ?)').all(id);
     const map = {};
     mappings.forEach(m => map[m.provider_channel_id] = m.epg_channel_id);

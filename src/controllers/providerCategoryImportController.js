@@ -10,6 +10,10 @@ import { parseProviderCategoryId } from './providerControllerUtils.js';
 
 export const importCategory = async (req, res) => {
   try {
+    if (!req.user.is_admin && !req.user.provider_access) {
+      return res.status(403).json({error: 'Access denied'});
+    }
+
     const providerId = Number(req.params.providerId);
     const { user_id, category_id, category_name, import_channels, type } = req.body;
     const catType = type || 'live';
@@ -129,6 +133,10 @@ export const importCategory = async (req, res) => {
 
 export const importCategories = async (req, res) => {
   try {
+    if (!req.user.is_admin && !req.user.provider_access) {
+      return res.status(403).json({error: 'Access denied'});
+    }
+
     const providerId = Number(req.params.providerId);
     const { user_id, categories } = req.body;
 

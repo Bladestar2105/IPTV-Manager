@@ -55,6 +55,7 @@ export function authenticateToken(req, res, next) {
         username: dbUser.username,
         is_active: dbUser.is_active,
         is_admin: !!user.is_admin,
+        provider_access: dbUser.provider_access ? 1 : 0,
         otp_enabled: !!dbUser.otp_enabled
       };
 

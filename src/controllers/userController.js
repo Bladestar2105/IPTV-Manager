@@ -26,7 +26,7 @@ export const getUsers = (req, res) => {
     // ⚡ Bolt: Replace .all().map() with .iterate() to eliminate intermediate V8 array allocation
     // 🎯 Why: Loading a massive list of users into memory, only to map it into another array, causes double memory allocation and GC pressure.
     // 📊 Impact: Lowers peak memory usage and garbage collection overhead, especially on instances with many users.
-    const stmt = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes FROM users ORDER BY id');
+    const stmt = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, provider_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes FROM users ORDER BY id');
     const result = [];
 
     for (const u of stmt.iterate()) {
@@ -45,6 +45,7 @@ export const getUsers = (req, res) => {
             plain_password: plainPassword || '********',
             is_active: u.is_active,
             webui_access: u.webui_access,
+            provider_access: u.provider_access ? 1 : 0,
             hdhr_enabled: u.hdhr_enabled,
             hdhr_token: u.hdhr_token,
             max_connections: u.max_connections || 0,
@@ -61,7 +62,7 @@ export const getUsers = (req, res) => {
 export const createUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const { username, password, webui_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date, allowed_countries, notes } = req.body;
+    const { username, password, webui_access, provider_access, hdhr_enabled, copy_from_user_id, max_connections, expiry_date, allowed_countries, notes } = req.body;
 
     // Validation
     if (!username || !password) {
@@ -142,11 +143,12 @@ export const createUser = async (req, res) => {
     // Use transaction for atomic creation + copying
     db.transaction(() => {
         // Insert user
-        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, provider_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             u,
             hashedPassword,
             encryptedPlainPassword,
             webui_access !== undefined ? (webui_access ? 1 : 0) : 1,
+            provider_access !== undefined ? (provider_access ? 1 : 0) : 0,
             isHdhrEnabled,
             hdhrToken,
             (max_connections !== undefined && max_connections !== '') ? Number(max_connections) : 0,
@@ -401,7 +403,7 @@ export const updateUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
-    const { username, password, webui_access, hdhr_enabled, max_connections, expiry_date, allowed_countries, notes } = req.body;
+    const { username, password, webui_access, provider_access, hdhr_enabled, max_connections, expiry_date, allowed_countries, notes } = req.body;
 
     // Get existing user
     const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -457,6 +459,11 @@ export const updateUser = async (req, res) => {
     if (webui_access !== undefined) {
         updates.push('webui_access = ?');
         params.push(webui_access ? 1 : 0);
+    }
+
+    if (provider_access !== undefined) {
+        updates.push('provider_access = ?');
+        params.push(provider_access ? 1 : 0);
     }
 
     if (hdhr_enabled !== undefined) {

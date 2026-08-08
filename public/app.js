@@ -77,11 +77,33 @@ async function fetchJSON(url, options = {}) {
   
   const res = await fetch(url, options);
   
-  // Handle token expiration
+  // Handle expired sessions separately from permission denials.
   if (res.status === 401 || res.status === 403) {
-    removeToken();
-    showLoginModal();
-    throw new Error('Authentication required');
+    let errorData = null;
+    try {
+      errorData = await res.clone().json();
+    } catch {}
+
+    const authenticationFailure = res.status === 401 || [
+      'Invalid or expired token',
+      'User is inactive or deleted',
+      'Token revoked (password changed)',
+      'WebUI access revoked',
+      'Access denied from your region'
+    ].includes(errorData?.error);
+
+    if (authenticationFailure) {
+      clearSessionSensitiveState();
+      removeToken();
+      showLoginModal();
+      throw new Error('Authentication required');
+    }
+
+    clearSessionSensitiveState({preserveUserState: true});
+    await refreshCurrentUserPermissions();
+    const error = new Error(errorData?.message || errorData?.error || `HTTP ${res.status}`);
+    error.response = errorData;
+    throw error;
   }
   
   if (!res.ok) {
@@ -97,6 +119,24 @@ async function fetchJSON(url, options = {}) {
     }
   }
   return res.json();
+}
+
+async function refreshCurrentUserPermissions() {
+  const token = getToken();
+  if (!token || isTokenExpired()) return;
+
+  try {
+    const response = await fetch('/api/verify-token', {
+      headers: {Authorization: `Bearer ${token}`}
+    });
+    if (!response.ok || getToken() !== token) return;
+
+    const data = await response.json();
+    if (data.user && getToken() === token) {
+      currentUser = data.user;
+      applyPermissions({preserveUserState: true});
+    }
+  } catch {}
 }
 
 function getProxiedUrl(url) {
@@ -130,6 +170,7 @@ let channelLimit = 50;
 let channelSearch = '';
 let channelTotal = 0;
 let isLoadingChannels = false;
+let sessionGeneration = 0;
 let userChannelSearch = '';
 let userCategoryChannelsData = [];
 
@@ -704,6 +745,7 @@ document.getElementById('stalker-device-form').addEventListener('submit', async 
 });
 
 async function loadUsers() {
+  const requestGeneration = sessionGeneration;
   if (!currentUser || !currentUser.is_admin) {
       // If user, fake load themselves as selected
       // Note: for non-admins, API currently doesn't return hdhr_token in /verify-token response
@@ -724,6 +766,7 @@ async function loadUsers() {
 
   renderLoadingList('user-list');
   const users = await fetchJSON('/api/users');
+  if (requestGeneration !== sessionGeneration || !currentUser || !currentUser.is_admin) return;
   updateStatsCounters('users', users.length);
   const list = document.getElementById('user-list');
   list.innerHTML = '';
@@ -926,6 +969,7 @@ function showEditUserModal(user) {
   // Checkbox handling: default to true if undefined/null (legacy users), else use value
   const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
   document.getElementById('edit-user-webui-access').checked = webuiAccess;
+  document.getElementById('edit-user-provider-access').checked = user.provider_access === 1;
   document.getElementById('edit-user-hdhr-enabled').checked = (user.hdhr_enabled === 1);
 
   // Set selected countries
@@ -949,6 +993,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const maxConnections = document.getElementById('edit-user-max-connections').value;
   const expiryDate = document.getElementById('edit-user-expiry-date').value;
   const webuiAccess = document.getElementById('edit-user-webui-access').checked;
+  const providerAccess = document.getElementById('edit-user-provider-access').checked;
   const hdhrEnabled = document.getElementById('edit-user-hdhr-enabled').checked;
   const notes = document.getElementById('edit-user-notes').value;
 
@@ -958,6 +1003,7 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
   const body = {
       username,
       webui_access: webuiAccess,
+      provider_access: providerAccess,
       hdhr_enabled: hdhrEnabled,
       max_connections: maxConnections,
       expiry_date: expiryDate ? expiryDate : null,
@@ -984,7 +1030,16 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
 
 // === Provider Management ===
 async function loadProviders(filterUserId = null) {
+  const canViewProviders = currentUser && (currentUser.is_admin || Number(currentUser.provider_access) === 1);
+  const section = document.getElementById('provider-section');
+  if (!canViewProviders) {
+    clearSessionSensitiveState({preserveUserState: true});
+    return;
+  }
+
+  const requestGeneration = sessionGeneration;
   const providers = await fetchJSON('/api/providers');
+  if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
   updateStatsCounters('providers', providers.length);
 
   const list = document.getElementById('provider-list');
@@ -993,7 +1048,6 @@ async function loadProviders(filterUserId = null) {
   updateChannelProviderSelect(providers);
 
   const targetUserId = filterUserId || selectedUserId;
-  const section = document.getElementById('provider-section');
   const userSection = document.getElementById('user-section');
   if (section) {
       if (targetUserId || (currentUser && currentUser.is_admin)) {
@@ -1268,9 +1322,12 @@ async function moveListItemToPosition({ids, itemId, position, url, payloadKey, r
 
 async function loadUserCategories(preserveSelection = false) {
   if (!selectedUserId) return;
+  const requestGeneration = sessionGeneration;
+  const requestUserId = Number(selectedUserId);
   const categoryToKeep = preserveSelection ? selectedCategoryId : null;
   renderLoadingList('category-list');
-  const cats = await fetchJSON(`/api/users/${selectedUserId}/categories`);
+  const cats = await fetchJSON(`/api/users/${requestUserId}/categories`);
+  if (requestGeneration !== sessionGeneration || !currentUser || Number(selectedUserId) !== requestUserId || (!currentUser.is_admin && Number(currentUser.id) !== requestUserId)) return;
   const list = document.getElementById('category-list');
   list.innerHTML = '';
   selectedCategoryId = null;
@@ -1483,6 +1540,119 @@ function initCategorySortable() {
 // === Provider Category Import ===
 let providerCategories = [];
 
+function clearSessionSensitiveState({preserveUserState = false} = {}) {
+  if (!preserveUserState) {
+    sessionGeneration += 1;
+    userCategoryChannelsData = [];
+    userChannelSearch = '';
+    selectedCategoryId = null;
+    epgMappingChannels = [];
+    availableEpgChannels = [];
+    isLoadingEpgChannels = false;
+    epgMappingMode = 'provider';
+    currentMappingChannelId = null;
+  }
+  channelPage = 1;
+  channelSearch = '';
+  channelTotal = 0;
+  isLoadingChannels = false;
+  providerCategories = [];
+
+  const section = document.getElementById('provider-section');
+  if (section) section.classList.add('d-none');
+  const userSection = document.getElementById('user-section');
+  if (userSection) {
+    userSection.classList.remove('col-md-6');
+    userSection.classList.add('col-md-12');
+  }
+
+  const providerList = document.getElementById('provider-list');
+  if (providerList) providerList.innerHTML = '';
+  const channelList = document.getElementById('provider-channel-list');
+  if (channelList) channelList.innerHTML = '';
+  const categoryList = document.getElementById('provider-categories-list');
+  if (categoryList) categoryList.innerHTML = '';
+  const searchInput = document.getElementById('provider-channel-search');
+  if (searchInput) {
+    searchInput.value = '';
+    searchInput.disabled = true;
+  }
+  const searchClear = document.getElementById('provider-channel-search-clear');
+  if (searchClear) searchClear.classList.add('d-none');
+  const categorySearch = document.getElementById('category-import-search');
+  if (categorySearch) categorySearch.value = '';
+  const bulkFrom = document.getElementById('provider-bulk-url-from');
+  if (bulkFrom) bulkFrom.value = '';
+  const bulkTo = document.getElementById('provider-bulk-url-to');
+  if (bulkTo) bulkTo.value = '';
+  const providerForm = document.getElementById('provider-form');
+  if (providerForm) {
+    providerForm.reset();
+    if (providerForm.provider_id) providerForm.provider_id.value = '';
+  }
+  const saveProviderButton = document.getElementById('save-provider-btn');
+  if (saveProviderButton) saveProviderButton.textContent = t('addProvider');
+  const availableHeader = document.getElementById('available-channels-header');
+  if (availableHeader) availableHeader.textContent = t('available', {count: 0});
+  updateChannelProviderSelect([]);
+  updateStatsCounters('providers', 0);
+
+  if (!preserveUserState) {
+    const userCategoryList = document.getElementById('category-list');
+    if (userCategoryList) userCategoryList.innerHTML = '';
+    const userChannelList = document.getElementById('user-channel-list');
+    if (userChannelList) userChannelList.innerHTML = '';
+    const userList = document.getElementById('user-list');
+    if (userList) userList.innerHTML = '';
+    if (categorySortable) {
+      categorySortable.destroy();
+      categorySortable = null;
+    }
+    if (channelSortable) {
+      channelSortable.destroy();
+      channelSortable = null;
+    }
+    const assignedHeader = document.getElementById('assigned-channels-header');
+    if (assignedHeader) assignedHeader.textContent = t('assigned', {count: 0});
+    const chanSelectAll = document.getElementById('chan-select-all-toggle');
+    if (chanSelectAll) chanSelectAll.checked = false;
+
+    const epgProviderContainer = document.getElementById('epg-mapping-provider-container');
+    if (epgProviderContainer) epgProviderContainer.classList.add('d-none');
+    const epgCategoryContainer = document.getElementById('epg-mapping-category-container');
+    if (epgCategoryContainer) epgCategoryContainer.classList.add('d-none');
+    const epgProviderMode = document.getElementById('epg-mode-provider');
+    if (epgProviderMode) epgProviderMode.checked = true;
+    const epgCategoryMode = document.getElementById('epg-mode-category');
+    if (epgCategoryMode) epgCategoryMode.checked = false;
+    const epgProviderSelect = document.getElementById('epg-mapping-provider-select');
+    if (epgProviderSelect) epgProviderSelect.innerHTML = `<option value="">${t('selectProviderPlaceholder')}</option>`;
+    const epgAllProviders = document.getElementById('epg-all-providers');
+    if (epgAllProviders) epgAllProviders.checked = false;
+    const epgUserSelect = document.getElementById('epg-mapping-user-select');
+    if (epgUserSelect) epgUserSelect.innerHTML = '';
+    const epgCategorySelect = document.getElementById('epg-mapping-category-select');
+    if (epgCategorySelect) epgCategorySelect.innerHTML = `<option value="">${t('selectCategoryPlaceholder')}</option>`;
+    const epgTable = document.getElementById('epg-mapping-tbody');
+    if (epgTable) epgTable.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-muted">${t('select_options_to_load')}</td></tr>`;
+    const epgSearch = document.getElementById('epg-mapping-search');
+    if (epgSearch) epgSearch.value = '';
+    const epgSuggestContainer = document.getElementById('epg-suggest-container');
+    if (epgSuggestContainer) epgSuggestContainer.classList.add('d-none');
+    const epgSuggestList = document.getElementById('epg-suggest-list');
+    if (epgSuggestList) epgSuggestList.innerHTML = '';
+    const epgSelectSearch = document.getElementById('epg-select-search');
+    if (epgSelectSearch) epgSelectSearch.value = '';
+    setEpgMappingJobProgress(0, false);
+
+    for (const modalId of ['add-provider-modal', 'importCategoryModal', 'epg-select-modal']) {
+      const modalElement = document.getElementById(modalId);
+      const modal = modalElement && bootstrap.Modal.getInstance(modalElement);
+      if (modal) modal.hide();
+    }
+  }
+}
+
 async function loadProviderCategories() {
   if (!selectedUserId) {
     alert(t('pleaseSelectUserFirst'));
@@ -1510,7 +1680,10 @@ async function loadProviderCategories() {
   }
 
   try {
-    providerCategories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
+    const requestGeneration = sessionGeneration;
+    const categories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
+    if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
+    providerCategories = categories;
     renderProviderCategories();
   } catch (e) {
     console.error(' Error:', e);
@@ -1747,6 +1920,7 @@ async function fetchProviderChannels(reset) {
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
   const list = document.getElementById('provider-channel-list');
+  const requestGeneration = sessionGeneration;
   
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
@@ -1760,6 +1934,7 @@ async function fetchProviderChannels(reset) {
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
+    if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
 
     // Handle Response (supports new object structure and legacy array)
     let channels = [];
@@ -1897,11 +2072,16 @@ function renderProviderChannels(channels) {
 
 async function loadUserCategoryChannels() {
   if (!selectedCategoryId) return;
+  const requestGeneration = sessionGeneration;
+  const requestUserId = Number(selectedUserId);
+  const requestCategoryId = Number(selectedCategoryId);
   const searchInput = document.getElementById('user-channel-search');
   if (searchInput) searchInput.disabled = false;
 
   renderLoadingList('user-channel-list');
-  userCategoryChannelsData = await fetchJSON(`/api/user-categories/${selectedCategoryId}/channels`);
+  const channels = await fetchJSON(`/api/user-categories/${requestCategoryId}/channels`);
+  if (requestGeneration !== sessionGeneration || !currentUser || Number(selectedUserId) !== requestUserId || Number(selectedCategoryId) !== requestCategoryId) return;
+  userCategoryChannelsData = channels;
 
   renderUserCategoryChannels();
 }
@@ -3936,7 +4116,9 @@ function renderEpgMappingControls() {
 }
 
 async function loadEpgMappingProviders() {
+  const requestGeneration = sessionGeneration;
   const providers = await fetchJSON('/api/providers');
+  if (requestGeneration !== sessionGeneration || !currentUser || !currentUser.is_admin || epgMappingMode !== 'provider') return;
   const select = document.getElementById('epg-mapping-provider-select');
   if(!select) return;
   const currentVal = select.value;
@@ -3954,6 +4136,7 @@ async function loadEpgMappingProviders() {
 }
 
 async function loadEpgMappingUsersAndCategories() {
+    const requestGeneration = sessionGeneration;
     const userSelect = document.getElementById('epg-mapping-user-select');
     const catSelect = document.getElementById('epg-mapping-category-select');
     const isAdmin = currentUser && currentUser.is_admin;
@@ -3961,6 +4144,7 @@ async function loadEpgMappingUsersAndCategories() {
     // Populate Users if Admin
     if (isAdmin && userSelect && userSelect.children.length === 0) {
         const users = await fetchJSON('/api/users');
+        if (requestGeneration !== sessionGeneration || !currentUser || !currentUser.is_admin || epgMappingMode !== 'category') return;
         userSelect.innerHTML = `<option value="">${t('selectUserPlaceholder')}</option>`;
         users.forEach(u => {
             const opt = document.createElement('option');
@@ -3972,7 +4156,7 @@ async function loadEpgMappingUsersAndCategories() {
         // Auto-select first user or current selection logic if needed
         // For now, let admin select manually.
         userSelect.onchange = () => loadEpgCategoriesForMapping(userSelect.value);
-    } else if (!isAdmin) {
+    } else if (!isAdmin && currentUser) {
         // Non-admin: Load categories for self immediately
         loadEpgCategoriesForMapping(currentUser.id);
     }
@@ -3981,6 +4165,8 @@ async function loadEpgMappingUsersAndCategories() {
 async function loadEpgCategoriesForMapping(userId) {
     const catSelect = document.getElementById('epg-mapping-category-select');
     if (!catSelect) return;
+    const requestGeneration = sessionGeneration;
+    const requestUserId = Number(userId);
 
     catSelect.innerHTML = `<option value="">${t('loading')}</option>`;
 
@@ -3990,7 +4176,11 @@ async function loadEpgCategoriesForMapping(userId) {
     }
 
     try {
-        const cats = await fetchJSON(`/api/users/${userId}/categories`);
+        const cats = await fetchJSON(`/api/users/${requestUserId}/categories`);
+        const selectedUser = currentUser && currentUser.is_admin
+          ? Number(document.getElementById('epg-mapping-user-select')?.value)
+          : Number(currentUser?.id);
+        if (requestGeneration !== sessionGeneration || !currentUser || epgMappingMode !== 'category' || selectedUser !== requestUserId) return;
         catSelect.innerHTML = `<option value="">${t('selectCategoryPlaceholder')}</option>`;
 
         const liveCats = cats.filter(c => !c.type || c.type === 'live');
@@ -4002,6 +4192,7 @@ async function loadEpgCategoriesForMapping(userId) {
             catSelect.appendChild(opt);
         });
     } catch(e) {
+        if (requestGeneration !== sessionGeneration || !currentUser || epgMappingMode !== 'category') return;
         catSelect.innerHTML = `<option value="">${t('error')}</option>`;
     }
 }
@@ -4010,6 +4201,8 @@ async function loadEpgMappingChannels() {
   const tbody = document.getElementById('epg-mapping-tbody');
   const autoMapBtn = document.getElementById('auto-map-btn');
   const resetMapBtn = document.getElementById('reset-map-btn');
+  const requestGeneration = sessionGeneration;
+  const requestMode = epgMappingMode;
 
   // Determine source based on mode
   if (epgMappingMode === 'provider') {
@@ -4020,7 +4213,7 @@ async function loadEpgMappingChannels() {
 
       const providerSelect = document.getElementById('epg-mapping-provider-select');
       if (providerSelect) providerSelect.disabled = false;
-      const providerId = document.getElementById('epg-mapping-provider-select').value;
+      const providerId = providerSelect.value;
       if (!providerId) return; // Wait for selection
 
       renderLoadingTable('epg-mapping-tbody', 5);
@@ -4032,6 +4225,7 @@ async function loadEpgMappingChannels() {
           fetchJSON(`/api/providers/${providerId}/channels?type=live`),
           fetchJSON(`/api/mapping/${providerId}`)
         ]);
+        if (requestGeneration !== sessionGeneration || requestMode !== epgMappingMode || !currentUser?.is_admin || providerSelect.value !== providerId) return;
 
         epgMappingChannels = channels.map(ch => ({
           ...ch,
@@ -4041,6 +4235,7 @@ async function loadEpgMappingChannels() {
 
         finishLoadingMapping();
       } catch (e) {
+        if (requestGeneration !== sessionGeneration) return;
         tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</td></tr>`;
       }
   } else {
@@ -4057,6 +4252,7 @@ async function loadEpgMappingChannels() {
 
       try {
           const channels = await fetchJSON(`/api/user-categories/${catId}/channels`);
+          if (requestGeneration !== sessionGeneration || requestMode !== epgMappingMode || catSelect.value !== catId || !currentUser) return;
           epgMappingChannels = channels.map(ch => ({
               id: ch.id,
               name: ch.name,
@@ -4067,6 +4263,7 @@ async function loadEpgMappingChannels() {
 
           finishLoadingMapping();
       } catch(e) {
+          if (requestGeneration !== sessionGeneration) return;
           tbody.innerHTML = `<tr><td colspan="5" class="text-center p-4 text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</td></tr>`;
       }
   }
@@ -4196,14 +4393,20 @@ async function pollMappingJob(jobId) {
 
 async function loadAvailableEpgChannels() {
   if (isLoadingEpgChannels) return;
+  const requestGeneration = sessionGeneration;
   isLoadingEpgChannels = true;
   try {
-    availableEpgChannels = await fetchJSON('/api/epg/channels');
+    const channels = await fetchJSON('/api/epg/channels');
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
+    availableEpgChannels = channels;
   } catch (e) {
     console.error('Failed to load EPG channels', e);
-    showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    if (requestGeneration === sessionGeneration && currentUser) {
+      showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    }
   } finally {
     isLoadingEpgChannels = false;
+    if (requestGeneration !== sessionGeneration) return;
     // If modal is open, refresh the list
     const modalEl = document.getElementById('epg-select-modal');
     if (modalEl && modalEl.classList.contains('show')) {
@@ -4313,6 +4516,7 @@ async function loadEpgSuggestions(channelId) {
 
   const channel = epgMappingChannels.find(ch => ch.id === channelId);
   if (!channel) return;
+  const requestGeneration = sessionGeneration;
 
   container.classList.remove('d-none');
   list.innerHTML = `<li class="list-group-item text-center text-muted py-3">
@@ -4326,6 +4530,7 @@ async function loadEpgSuggestions(channelId) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ channel_name: channel.name, epg_id: channel.epg_id })
     });
+    if (requestGeneration !== sessionGeneration || currentMappingChannelId !== channelId || !currentUser) return;
 
     list.innerHTML = '';
 
@@ -4361,7 +4566,9 @@ async function loadEpgSuggestions(channelId) {
     });
 
   } catch (e) {
-    list.innerHTML = `<li class="list-group-item text-center text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</li>`;
+    if (requestGeneration === sessionGeneration && currentMappingChannelId === channelId && currentUser) {
+      list.innerHTML = `<li class="list-group-item text-center text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</li>`;
+    }
   }
 }
 
@@ -4505,9 +4712,26 @@ async function checkAuthentication() {
   }
 }
 
-function applyPermissions() {
+function applyPermissions({preserveUserState = false} = {}) {
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
+    const userSection = document.getElementById('user-section');
+    if (userSection) userSection.classList.toggle('d-none', !isAdmin);
+
+    const providerSection = document.getElementById('provider-section');
+    const canViewProviders = isAdmin || Number(currentUser.provider_access) === 1;
+    const shouldPreserveCategoryMapping = preserveUserState && !isAdmin && epgMappingMode === 'provider';
+    if (!canViewProviders) {
+        clearSessionSensitiveState({preserveUserState});
+        if (shouldPreserveCategoryMapping) {
+            epgMappingMode = 'category';
+            const epgModal = document.getElementById('epg-select-modal');
+            const epgModalInstance = epgModal && bootstrap.Modal.getInstance(epgModal);
+            if (epgModalInstance) epgModalInstance.hide();
+            renderEpgMappingControls();
+        }
+    }
+    if (providerSection) providerSection.classList.toggle('d-none', !canViewProviders);
 
     // Hide EPG "Only used" checkbox for non-admins
     const onlyUsedContainer = document.getElementById('only-used-container');
@@ -4703,6 +4927,8 @@ async function disableOtp() {
 }
 
 function handleLogout() {
+  clearSessionSensitiveState();
+  currentUser = null;
   removeToken();
   selectedUser = null;
   selectedUserId = null;
