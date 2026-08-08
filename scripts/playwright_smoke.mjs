@@ -1,9 +1,17 @@
 import { chromium } from 'playwright';
 import bcrypt from 'bcrypt';
-import app from '../src/app.js';
-import db, { initDb } from '../src/database/db.js';
-import { initEpgDb } from '../src/database/epgDb.js';
-import { encrypt } from '../src/utils/crypto.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const configuredDataDir = process.env.DATA_DIR;
+const smokeDataDir = configuredDataDir || mkdtempSync(join(tmpdir(), 'iptv-manager-playwright-'));
+process.env.DATA_DIR = smokeDataDir;
+
+const { default: app } = await import('../src/app.js');
+const { default: db, initDb } = await import('../src/database/db.js');
+const { initEpgDb } = await import('../src/database/epgDb.js');
+const { encrypt } = await import('../src/utils/crypto.js');
 
 async function login(page, baseUrl, username, password) {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
@@ -160,6 +168,7 @@ async function run() {
     await grantedUserPage.close();
     await browser.close();
     await new Promise((resolve) => server.close(resolve));
+    if (!configuredDataDir) rmSync(smokeDataDir, {recursive: true, force: true});
   }
 }
 
