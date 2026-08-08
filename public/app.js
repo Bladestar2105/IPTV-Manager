@@ -1685,6 +1685,7 @@ async function loadProviderCategories() {
   const modalEl = document.getElementById('importCategoryModal');
   const list = document.getElementById('provider-categories-list');
   list.innerHTML = `<li class="list-group-item text-muted">${t('loadingCategories')}</li>`;
+  const requestGeneration = sessionGeneration;
   
   if (!modalEl.classList.contains('show')) {
       const modal = new bootstrap.Modal(modalEl);
@@ -1692,16 +1693,16 @@ async function loadProviderCategories() {
   }
 
   try {
-    const requestGeneration = sessionGeneration;
     const categories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
-    if (requestGeneration !== sessionGeneration || !currentUser) return;
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
     if (!currentUser.is_admin) await refreshCurrentUserPermissions();
-    if (requestGeneration !== sessionGeneration || !currentUser) return;
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
     providerCategories = categories;
     renderProviderCategories();
   } catch (e) {
     console.error(' Error:', e);
     if (e.message === 'Access denied') {
+      select.value = '';
       providerCategories = [];
       list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
       try { await loadProviders(selectedUserId); } catch {}
@@ -1954,9 +1955,9 @@ async function fetchProviderChannels(reset) {
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
-    if (requestGeneration !== sessionGeneration || !currentUser) return;
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
     if (!currentUser.is_admin) await refreshCurrentUserPermissions();
-    if (requestGeneration !== sessionGeneration || !currentUser) return;
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
 
     // Handle Response (supports new object structure and legacy array)
     let channels = [];
@@ -1974,6 +1975,7 @@ async function fetchProviderChannels(reset) {
   } catch(e) {
     isLoadingChannels = false;
     if (e.message === 'Access denied') {
+        select.value = '';
         channelPage = 1;
         channelSearch = '';
         channelTotal = 0;
