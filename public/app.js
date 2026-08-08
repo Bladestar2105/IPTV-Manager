@@ -1030,22 +1030,32 @@ document.getElementById('edit-user-form').addEventListener('submit', async e => 
 
 // === Provider Management ===
 async function loadProviders(filterUserId = null) {
-  const canViewProviders = currentUser && (currentUser.is_admin || Number(currentUser.provider_access) === 1);
   const section = document.getElementById('provider-section');
+  const requestGeneration = sessionGeneration;
+  const providers = await fetchJSON('/api/providers');
+  if (requestGeneration !== sessionGeneration || !currentUser) return;
+  if (!currentUser.is_admin) await refreshCurrentUserPermissions();
+  if (requestGeneration !== sessionGeneration || !currentUser) return;
+
+  const canViewProviders = currentUser.is_admin || Number(currentUser.provider_access) === 1;
+
+  updateChannelProviderSelect(providers);
+
   if (!canViewProviders) {
-    clearSessionSensitiveState({preserveUserState: true});
+    updateStatsCounters('providers', 0);
+    if (section) section.classList.add('d-none');
+    const userSection = document.getElementById('user-section');
+    if (userSection) {
+      userSection.classList.remove('col-md-6');
+      userSection.classList.add('col-md-12');
+    }
     return;
   }
 
-  const requestGeneration = sessionGeneration;
-  const providers = await fetchJSON('/api/providers');
-  if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
   updateStatsCounters('providers', providers.length);
 
   const list = document.getElementById('provider-list');
   list.innerHTML = '';
-
-  updateChannelProviderSelect(providers);
 
   const targetUserId = filterUserId || selectedUserId;
   const userSection = document.getElementById('user-section');
@@ -1552,11 +1562,13 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
     epgMappingMode = 'provider';
     currentMappingChannelId = null;
   }
-  channelPage = 1;
-  channelSearch = '';
-  channelTotal = 0;
-  isLoadingChannels = false;
-  providerCategories = [];
+  if (!preserveUserState) {
+    channelPage = 1;
+    channelSearch = '';
+    channelTotal = 0;
+    isLoadingChannels = false;
+    providerCategories = [];
+  }
 
   const section = document.getElementById('provider-section');
   if (section) section.classList.add('d-none');
@@ -1569,18 +1581,18 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
   const providerList = document.getElementById('provider-list');
   if (providerList) providerList.innerHTML = '';
   const channelList = document.getElementById('provider-channel-list');
-  if (channelList) channelList.innerHTML = '';
+  if (channelList && !preserveUserState) channelList.innerHTML = '';
   const categoryList = document.getElementById('provider-categories-list');
-  if (categoryList) categoryList.innerHTML = '';
+  if (categoryList && !preserveUserState) categoryList.innerHTML = '';
   const searchInput = document.getElementById('provider-channel-search');
-  if (searchInput) {
+  if (searchInput && !preserveUserState) {
     searchInput.value = '';
     searchInput.disabled = true;
   }
   const searchClear = document.getElementById('provider-channel-search-clear');
-  if (searchClear) searchClear.classList.add('d-none');
+  if (searchClear && !preserveUserState) searchClear.classList.add('d-none');
   const categorySearch = document.getElementById('category-import-search');
-  if (categorySearch) categorySearch.value = '';
+  if (categorySearch && !preserveUserState) categorySearch.value = '';
   const bulkFrom = document.getElementById('provider-bulk-url-from');
   if (bulkFrom) bulkFrom.value = '';
   const bulkTo = document.getElementById('provider-bulk-url-to');
@@ -1593,8 +1605,8 @@ function clearSessionSensitiveState({preserveUserState = false} = {}) {
   const saveProviderButton = document.getElementById('save-provider-btn');
   if (saveProviderButton) saveProviderButton.textContent = t('addProvider');
   const availableHeader = document.getElementById('available-channels-header');
-  if (availableHeader) availableHeader.textContent = t('available', {count: 0});
-  updateChannelProviderSelect([]);
+  if (availableHeader && !preserveUserState) availableHeader.textContent = t('available', {count: 0});
+  if (!preserveUserState) updateChannelProviderSelect([]);
   updateStatsCounters('providers', 0);
 
   if (!preserveUserState) {
@@ -1673,6 +1685,7 @@ async function loadProviderCategories() {
   const modalEl = document.getElementById('importCategoryModal');
   const list = document.getElementById('provider-categories-list');
   list.innerHTML = `<li class="list-group-item text-muted">${t('loadingCategories')}</li>`;
+  const requestGeneration = sessionGeneration;
   
   if (!modalEl.classList.contains('show')) {
       const modal = new bootstrap.Modal(modalEl);
@@ -1680,13 +1693,21 @@ async function loadProviderCategories() {
   }
 
   try {
-    const requestGeneration = sessionGeneration;
     const categories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
-    if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
+    if (!currentUser.is_admin) await refreshCurrentUserPermissions();
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
     providerCategories = categories;
     renderProviderCategories();
   } catch (e) {
     console.error(' Error:', e);
+    if (e.message === 'Access denied') {
+      select.value = '';
+      providerCategories = [];
+      list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
+      try { await loadProviders(selectedUserId); } catch {}
+      return;
+    }
     list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
   }
 }
@@ -1934,7 +1955,9 @@ async function fetchProviderChannels(reset) {
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
-    if (requestGeneration !== sessionGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
+    if (!currentUser.is_admin) await refreshCurrentUserPermissions();
+    if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
 
     // Handle Response (supports new object structure and legacy array)
     let channels = [];
@@ -1951,6 +1974,24 @@ async function fetchProviderChannels(reset) {
 
   } catch(e) {
     isLoadingChannels = false;
+    if (e.message === 'Access denied') {
+        select.value = '';
+        channelPage = 1;
+        channelSearch = '';
+        channelTotal = 0;
+        list.innerHTML = `<li class="list-group-item text-muted">${t('pleaseSelectProvider')}</li>`;
+        const searchInput = document.getElementById('provider-channel-search');
+        if (searchInput) {
+            searchInput.value = '';
+            searchInput.disabled = true;
+        }
+        const searchClear = document.getElementById('provider-channel-search-clear');
+        if (searchClear) searchClear.classList.add('d-none');
+        const availableHeader = document.getElementById('available-channels-header');
+        if (availableHeader) availableHeader.textContent = t('available', {count: 0});
+        try { await loadProviders(selectedUserId); } catch {}
+        return;
+    }
     if (reset) {
         list.innerHTML = `<li class="list-group-item text-danger">${t('loadingError')}</li>`;
     }

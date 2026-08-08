@@ -32,8 +32,10 @@ Stalker device create/update payloads accept an optional `parental_pin` containi
 the PIN or its encrypted value and expose only `parental_pin_configured`.
 
 User create/update payloads accept an optional `provider_access` boolean. It is
-disabled by default and controls whether the normal user may view their
-upstream providers and provider catalog.
+disabled by default and controls whether the normal user may view provider
+connection details and the provider management box. Provider names/options and
+the user's own provider catalog remain available for editing channel, movie,
+series, and category-scoped EPG lists.
 
 Deleting a user removes user-owned providers and dependent runtime/configuration
 rows first, including provider icon cache entries, share links, temporary
@@ -73,8 +75,12 @@ name (for example `Europe/Berlin` or `UTC`). Empty or null uses the server
 runtime timezone; invalid names are rejected. Provider export/import and user
 provider cloning preserve this setting.
 
-Normal users receive only their own providers and provider catalog when
-`provider_access` is enabled; otherwise these provider endpoints return `403`.
+Normal users receive only their own provider names/options and provider catalog
+rows. With `provider_access` disabled, `GET /api/providers` omits connection
+details and the provider management box is hidden; own provider catalog and
+category-import operations remain available for list editing. Restricted
+catalog responses omit raw stream metadata, including original URLs, HTTP
+headers, and DRM data.
 
 ## Categories and Channels
 
@@ -152,8 +158,9 @@ Poll `GET /api/mapping/jobs/:id` for `status`, `progress`, and `matched`.
 Admins may pass `all_providers: true` to auto-map or reset EPG mappings across
 all providers.
 
-Provider-scoped mapping reads require the same provider ownership and
-`provider_access` permission as provider catalog reads.
+Provider-scoped mapping reads require provider ownership and the
+`provider_access` permission. Provider catalog reads used by a user's own list
+editor do not require that setting.
 
 Category-scoped EPG mapping remains available to normal users without
 `provider_access`; it is limited to their own categories and authorized

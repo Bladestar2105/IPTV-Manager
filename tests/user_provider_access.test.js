@@ -54,6 +54,7 @@ describe('per-user upstream provider visibility', () => {
   let providerId;
   let providerChannelId;
   let categoryId;
+  let sensitiveMetadata;
 
   beforeAll(() => {
     initDb(true);
@@ -74,6 +75,12 @@ describe('per-user upstream provider visibility', () => {
       INSERT INTO provider_channels (provider_id, remote_stream_id, name)
       VALUES (?, ?, ?)
     `).run(providerId, 1, 'Visible Channel').lastInsertRowid);
+    sensitiveMetadata = JSON.stringify({
+      original_url: 'http://upstream.example/live/user:secret',
+      http_headers: {Authorization: 'Bearer header-secret'},
+      drm: {license_key: 'license-secret'}
+    });
+    db.prepare('UPDATE provider_channels SET metadata = ? WHERE id = ?').run(sensitiveMetadata, providerChannelId);
 
     categoryId = Number(db.prepare(`
       INSERT INTO user_categories (user_id, name, type)
@@ -109,7 +116,7 @@ describe('per-user upstream provider visibility', () => {
     expect(db.prepare('SELECT provider_access FROM users WHERE id = ?').get(userId).provider_access).toBe(1);
   });
 
-  it('denies provider list access when provider access is disabled', () => {
+  it('returns owned provider options without exposing provider details', () => {
     db.prepare('UPDATE users SET provider_access = 0 WHERE id = ?').run(userId);
     const res = response();
 
@@ -118,11 +125,11 @@ describe('per-user upstream provider visibility', () => {
       query: {}
     }, res);
 
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Access denied' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual([{id: providerId, name: 'Visible Provider', user_id: userId}]);
   });
 
-  it('denies provider channel access when provider access is disabled', () => {
+  it('returns owned provider channels for list editing without provider access', () => {
     const res = response();
 
     providerCatalogController.getProviderChannels({
@@ -131,8 +138,36 @@ describe('per-user upstream provider visibility', () => {
       query: {}
     }, res);
 
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Access denied' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual([
+      expect.objectContaining({id: providerChannelId, name: 'Visible Channel'})
+    ]);
+  });
+
+  it('redacts provider channel metadata without provider access', () => {
+    const restrictedRes = response();
+
+    providerCatalogController.getProviderChannels({
+      user: { id: userId, is_admin: false, provider_access: 0 },
+      params: { id: providerId },
+      query: {}
+    }, restrictedRes);
+
+    expect(restrictedRes.statusCode).toBe(200);
+    expect(restrictedRes.body[0]).not.toHaveProperty('metadata');
+    expect(JSON.stringify(restrictedRes.body)).not.toContain('secret');
+
+    const grantedRes = response();
+    providerCatalogController.getProviderChannels({
+      user: { id: userId, is_admin: false, provider_access: 1 },
+      params: { id: providerId },
+      query: {}
+    }, grantedRes);
+
+    expect(grantedRes.statusCode).toBe(200);
+    expect(grantedRes.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({id: providerChannelId, metadata: sensitiveMetadata})
+    ]));
   });
 
   it('denies provider EPG mapping access when provider access is disabled', () => {

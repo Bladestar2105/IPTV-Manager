@@ -23,9 +23,10 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 
 Administrators can enable the stored `provider_access` setting separately for
 each normal user. It is disabled by default and controls only upstream provider
-management and provider catalog visibility. A user without it can still edit
-their own channel, movie, and series lists, including category-scoped EPG
-mappings. Administrators are not restricted by this setting.
+management and connection-details visibility. A user without it still receives
+their own provider names/options and catalog rows so they can edit channel,
+movie, and series lists, including category-scoped EPG mappings. Administrators
+are not restricted by this setting.
 
 ## Network and Proxy
 

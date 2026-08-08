@@ -16,7 +16,7 @@
 
 ### Core Functionality
 - **Multi-User Management**: Support for multiple users with individual channel configurations, secure login, and customizable concurrent stream limits (max connections).
-- **Per-User Provider Access**: Administrators can show or hide the upstream provider catalog per user without removing access to that user's channel, movie, series, or EPG mapping lists.
+- **Per-User Provider Access**: Administrators can show or hide the upstream provider information and management box per user without removing provider selection or access to that user's channel, movie, series, or EPG mapping lists.
 - **Provider Management**: Connect to multiple IPTV providers via Xtream Codes API with automatic connection pooling.
 - **Category Organization**: Drag & drop sorting and visual channel assignment.
 - **EPG Integration**: Comprehensive Electronic Program Guide (EPG) support with automatic updates.
