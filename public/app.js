@@ -77,12 +77,33 @@ async function fetchJSON(url, options = {}) {
   
   const res = await fetch(url, options);
   
-  // Handle token expiration
+  // Handle expired sessions separately from permission denials.
   if (res.status === 401 || res.status === 403) {
-    clearSessionSensitiveState();
-    removeToken();
-    showLoginModal();
-    throw new Error('Authentication required');
+    let errorData = null;
+    try {
+      errorData = await res.clone().json();
+    } catch {}
+
+    const authenticationFailure = res.status === 401 || [
+      'Invalid or expired token',
+      'User is inactive or deleted',
+      'Token revoked (password changed)',
+      'WebUI access revoked',
+      'Access denied from your region'
+    ].includes(errorData?.error);
+
+    if (authenticationFailure) {
+      clearSessionSensitiveState();
+      removeToken();
+      showLoginModal();
+      throw new Error('Authentication required');
+    }
+
+    clearSessionSensitiveState({preserveUserState: true});
+    await refreshCurrentUserPermissions();
+    const error = new Error(errorData?.message || errorData?.error || `HTTP ${res.status}`);
+    error.response = errorData;
+    throw error;
   }
   
   if (!res.ok) {
@@ -98,6 +119,24 @@ async function fetchJSON(url, options = {}) {
     }
   }
   return res.json();
+}
+
+async function refreshCurrentUserPermissions() {
+  const token = getToken();
+  if (!token || isTokenExpired()) return;
+
+  try {
+    const response = await fetch('/api/verify-token', {
+      headers: {Authorization: `Bearer ${token}`}
+    });
+    if (!response.ok || getToken() !== token) return;
+
+    const data = await response.json();
+    if (data.user && getToken() === token) {
+      currentUser = data.user;
+      applyPermissions({preserveUserState: true});
+    }
+  } catch {}
 }
 
 function getProxiedUrl(url) {
@@ -4673,7 +4712,7 @@ async function checkAuthentication() {
   }
 }
 
-function applyPermissions() {
+function applyPermissions({preserveUserState = false} = {}) {
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
     const userSection = document.getElementById('user-section');
@@ -4681,7 +4720,17 @@ function applyPermissions() {
 
     const providerSection = document.getElementById('provider-section');
     const canViewProviders = isAdmin || Number(currentUser.provider_access) === 1;
-    if (!canViewProviders) clearSessionSensitiveState();
+    const shouldPreserveCategoryMapping = preserveUserState && !isAdmin && epgMappingMode === 'provider';
+    if (!canViewProviders) {
+        clearSessionSensitiveState({preserveUserState});
+        if (shouldPreserveCategoryMapping) {
+            epgMappingMode = 'category';
+            const epgModal = document.getElementById('epg-select-modal');
+            const epgModalInstance = epgModal && bootstrap.Modal.getInstance(epgModal);
+            if (epgModalInstance) epgModalInstance.hide();
+            renderEpgMappingControls();
+        }
+    }
     if (providerSection) providerSection.classList.toggle('d-none', !canViewProviders);
 
     // Hide EPG "Only used" checkbox for non-admins

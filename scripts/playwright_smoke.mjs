@@ -242,6 +242,38 @@ async function run() {
     await assertVisible(grantedUserPage.locator('#provider-section'), 'Granted users must see the Provider section');
     await assertVisible(grantedUserPage.locator('#nav-epg-mapping'), 'Granted users must retain EPG Mapping');
     await grantedUserPage.locator('#provider-list').getByText(providerName).waitFor({state: 'visible', timeout: 15000});
+
+    const revokeStatus = await adminPage.evaluate(async ({userId}) => {
+      const token = localStorage.getItem('jwt_token');
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: JSON.stringify({provider_access: false})
+      });
+      return response.status;
+    }, {userId});
+    if (revokeStatus !== 200) throw new Error(`Provider access revoke failed: ${revokeStatus}`);
+
+    const deniedCatalog = await grantedUserPage.evaluate(async ({providerId}) => {
+      try {
+        await window.fetchJSON(`/api/providers/${providerId}/channels?type=live`);
+        return {message: 'unexpected success', token: Boolean(localStorage.getItem('jwt_token'))};
+      } catch (error) {
+        return {message: error.message, token: Boolean(localStorage.getItem('jwt_token'))};
+      }
+    }, {providerId});
+    if (deniedCatalog.message !== 'Access denied' || !deniedCatalog.token) {
+      throw new Error(`Provider denial must preserve the login session: ${JSON.stringify(deniedCatalog)}`);
+    }
+    await assertHidden(grantedUserPage.locator('#login-modal'), 'Provider denial must not show the login modal');
+    await assertHidden(grantedUserPage.locator('#provider-section'), 'Revoked users must lose the Provider section');
+    await assertVisible(grantedUserPage.locator('#user-details-content'), 'Provider denial must preserve list editing');
+    await grantedUserPage.locator('#nav-epg-mapping').click();
+    await grantedUserPage.locator(`#epg-mapping-category-select option[value="${liveFixture.categoryId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await grantedUserPage.locator('#epg-mapping-category-select').selectOption(String(liveFixture.categoryId));
+    await grantedUserPage.locator('#epg-mapping-tbody').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
   } finally {
     for (const currentPage of [page, adminPage, grantedUserPage]) {
       try { await currentPage?.close(); } catch {}
