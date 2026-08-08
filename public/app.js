@@ -79,6 +79,7 @@ async function fetchJSON(url, options = {}) {
   
   // Handle token expiration
   if (res.status === 401 || res.status === 403) {
+    clearProviderCatalogState();
     removeToken();
     showLoginModal();
     throw new Error('Authentication required');
@@ -130,6 +131,7 @@ let channelLimit = 50;
 let channelSearch = '';
 let channelTotal = 0;
 let isLoadingChannels = false;
+let providerCatalogGeneration = 0;
 let userChannelSearch = '';
 let userCategoryChannelsData = [];
 
@@ -990,13 +992,13 @@ async function loadProviders(filterUserId = null) {
   const canViewProviders = currentUser && (currentUser.is_admin || Number(currentUser.provider_access) === 1);
   const section = document.getElementById('provider-section');
   if (!canViewProviders) {
-    if (section) section.classList.add('d-none');
-    updateStatsCounters('providers', 0);
-    updateChannelProviderSelect([]);
+    clearProviderCatalogState();
     return;
   }
 
+  const requestGeneration = providerCatalogGeneration;
   const providers = await fetchJSON('/api/providers');
+  if (requestGeneration !== providerCatalogGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
   updateStatsCounters('providers', providers.length);
 
   const list = document.getElementById('provider-list');
@@ -1494,6 +1496,43 @@ function initCategorySortable() {
 // === Provider Category Import ===
 let providerCategories = [];
 
+function clearProviderCatalogState() {
+  providerCatalogGeneration += 1;
+  channelPage = 1;
+  channelSearch = '';
+  channelTotal = 0;
+  isLoadingChannels = false;
+  providerCategories = [];
+
+  const section = document.getElementById('provider-section');
+  if (section) section.classList.add('d-none');
+  const userSection = document.getElementById('user-section');
+  if (userSection) {
+    userSection.classList.remove('col-md-6');
+    userSection.classList.add('col-md-12');
+  }
+
+  const providerList = document.getElementById('provider-list');
+  if (providerList) providerList.innerHTML = '';
+  const channelList = document.getElementById('provider-channel-list');
+  if (channelList) channelList.innerHTML = '';
+  const categoryList = document.getElementById('provider-categories-list');
+  if (categoryList) categoryList.innerHTML = '';
+  const searchInput = document.getElementById('provider-channel-search');
+  if (searchInput) {
+    searchInput.value = '';
+    searchInput.disabled = true;
+  }
+  const searchClear = document.getElementById('provider-channel-search-clear');
+  if (searchClear) searchClear.classList.add('d-none');
+  const categorySearch = document.getElementById('category-import-search');
+  if (categorySearch) categorySearch.value = '';
+  const availableHeader = document.getElementById('available-channels-header');
+  if (availableHeader) availableHeader.textContent = t('available', {count: 0});
+  updateChannelProviderSelect([]);
+  updateStatsCounters('providers', 0);
+}
+
 async function loadProviderCategories() {
   if (!selectedUserId) {
     alert(t('pleaseSelectUserFirst'));
@@ -1521,7 +1560,9 @@ async function loadProviderCategories() {
   }
 
   try {
+    const requestGeneration = providerCatalogGeneration;
     providerCategories = await fetchJSON(`/api/providers/${providerId}/categories?type=${type}`);
+    if (requestGeneration !== providerCatalogGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
     renderProviderCategories();
   } catch (e) {
     console.error(' Error:', e);
@@ -1758,6 +1799,7 @@ async function fetchProviderChannels(reset) {
   const select = document.getElementById('channel-provider-select');
   const providerId = select.value;
   const list = document.getElementById('provider-channel-list');
+  const requestGeneration = providerCatalogGeneration;
   
   const typeRadio = document.querySelector('.channel-type-filter:checked');
   const type = typeRadio ? typeRadio.value : 'live';
@@ -1771,6 +1813,7 @@ async function fetchProviderChannels(reset) {
     const res = await fetchJSON(url);
 
     isLoadingChannels = false;
+    if (requestGeneration !== providerCatalogGeneration || !currentUser || !(currentUser.is_admin || Number(currentUser.provider_access) === 1)) return;
 
     // Handle Response (supports new object structure and legacy array)
     let channels = [];
@@ -4524,6 +4567,7 @@ function applyPermissions() {
 
     const providerSection = document.getElementById('provider-section');
     const canViewProviders = isAdmin || Number(currentUser.provider_access) === 1;
+    if (!canViewProviders) clearProviderCatalogState();
     if (providerSection) providerSection.classList.toggle('d-none', !canViewProviders);
 
     // Hide EPG "Only used" checkbox for non-admins
@@ -4720,6 +4764,8 @@ async function disableOtp() {
 }
 
 function handleLogout() {
+  clearProviderCatalogState();
+  currentUser = null;
   removeToken();
   selectedUser = null;
   selectedUserId = null;

@@ -26,6 +26,10 @@ reliability, authentication behavior, and Docker upgrade compatibility.
 - Keep API responses backward-compatible unless explicitly requested.
 - Avoid broad refactors in controllers that handle streaming, auth, provider
   sync, EPG, imports/exports, or database migrations.
+- `provider_access` is disabled for normal users by default and controls only
+  upstream provider management and catalog visibility. It must not remove a
+  user's ability to edit their own channel, movie, series, or category-scoped
+  EPG mappings.
 
 ## Package and Build Rules
 
@@ -99,3 +103,9 @@ Keep smoke coverage current for:
 - API and configuration documentation
 - Docker and runtime-data ignore rules
 - user clone/import/export/provider-sync regressions
+- normal-user provider visibility and continued channel/movie/series/EPG list
+  editing
+
+The Playwright smoke test starts its own ephemeral server and uses a temporary
+`DATA_DIR` when none is configured. Keep that isolation behavior so browser
+tests do not write to the repository's runtime database.

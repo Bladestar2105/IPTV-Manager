@@ -9,8 +9,8 @@
   - `npm run lint`
   - `npm test`
   - `npm run build`
-  - `npm run test:playwright:smoke` (requires a running app and browser runtime;
-    not part of the default CI validation job)
+  - `npm run test:playwright:smoke` (starts an ephemeral app server and requires
+    a Playwright browser runtime; not part of the default CI validation job)
 
 The Docker image and release workflow use `package-lock.json` and `npm ci`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
@@ -94,6 +94,12 @@ The npm test scripts disable Vitest file parallelism because several integration
 tests import the Express app and real SQLite databases from the same `DATA_DIR`.
 Keep this behavior unless those tests are changed to create isolated databases
 per test file.
+
+The Playwright smoke test creates and removes a temporary `DATA_DIR` when the
+variable is unset. It covers normal-user provider hiding, continued editing of
+channel/movie/series lists and category-scoped EPG mappings, and the admin
+provider-access toggle. Set `DATA_DIR` only when an existing test database is
+intentionally required.
 
 ## Docker Startup
 

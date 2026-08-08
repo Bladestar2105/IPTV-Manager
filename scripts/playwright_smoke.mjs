@@ -15,10 +15,12 @@ const { encrypt } = await import('../src/utils/crypto.js');
 
 async function login(page, baseUrl, username, password) {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await page.locator('#login-modal').waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('#login-username').fill(username);
   await page.locator('#login-password').fill(password);
   await page.locator('#login-btn').click();
   await page.locator('#main-content').waitFor({ state: 'visible', timeout: 15000 });
+  await page.locator('#login-modal').waitFor({ state: 'hidden', timeout: 15000 });
 }
 
 async function assertVisible(locator, message) {
@@ -165,6 +167,25 @@ async function run() {
     await login(adminPage, baseUrl, adminUsername, adminPassword);
     await assertVisible(adminPage.locator('#user-section'), 'Admins must see User Management');
     const userRow = adminPage.locator('#user-list li').filter({hasText: userUsername});
+    await userRow.waitFor({state: 'visible', timeout: 15000});
+    await userRow.getByText(userUsername, {exact: false}).first().click();
+    await adminPage.locator(`#channel-provider-select option[value="${providerId}"]`)
+      .waitFor({state: 'attached', timeout: 15000});
+    await adminPage.locator('#channel-provider-select').selectOption(String(providerId));
+    await adminPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true})
+      .waitFor({state: 'visible', timeout: 15000});
+    await adminPage.locator('[data-action="action-logout"]').click();
+    await adminPage.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
+    await login(adminPage, baseUrl, userUsername, userPassword);
+    await assertHidden(adminPage.locator('#provider-section'), 'Logout must clear provider access UI');
+    if (await adminPage.locator('#provider-channel-list').getByText(liveFixture.channelName, {exact: true}).count()) {
+      throw new Error('Provider catalog leaked into the next normal-user session');
+    }
+
+    await adminPage.locator('[data-action="action-logout"]').click();
+    await adminPage.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
+    await login(adminPage, baseUrl, adminUsername, adminPassword);
+    await assertVisible(adminPage.locator('#user-section'), 'Admins must see User Management after relogin');
     await userRow.waitFor({state: 'visible', timeout: 15000});
     await userRow.locator('button[aria-label="Edit User"]').click();
     if (await adminPage.locator('#edit-user-provider-access').isChecked()) {

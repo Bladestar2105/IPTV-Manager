@@ -19,6 +19,14 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 - `INITIAL_ADMIN_PASSWORD`: Optional first admin password. If omitted, a random
   password is generated and printed on first startup.
 
+## Per-User Provider Access
+
+Administrators can enable the stored `provider_access` setting separately for
+each normal user. It is disabled by default and controls only upstream provider
+management and provider catalog visibility. A user without it can still edit
+their own channel, movie, and series lists, including category-scoped EPG
+mappings. Administrators are not restricted by this setting.
+
 ## Network and Proxy
 
 - `TRUST_PROXY`: Express trust proxy setting. Use this behind a reverse proxy
