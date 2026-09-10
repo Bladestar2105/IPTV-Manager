@@ -105,7 +105,7 @@ export const getPlaylist = async (req, res) => {
     // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
     try {
     for (const ch of stmt.iterate(...params)) {
-      const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
+      const epgId = sanitizeM3uTag(ch.manual_epg_id || ch.epg_channel_id || '');
       const logo = ch.logo || '';
       const group = ch.category_name || '';
       const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
@@ -559,7 +559,7 @@ export const playerPlaylist = async (req, res) => {
       const safeGroup = sanitizeM3uTag(group);
       const safeLogo = sanitizeM3uTag(logo);
       const safeName = sanitizeM3uName(name);
-      const epgId = ch.manual_epg_id || ch.epg_channel_id || '';
+      const epgId = sanitizeM3uTag(ch.manual_epg_id || ch.epg_channel_id || '');
 
       const extraParts = [];
       if (ch.stream_type === 'movie' || ch.stream_type === 'series') {
@@ -584,8 +584,8 @@ export const playerPlaylist = async (req, res) => {
       buffer += `#EXTINF:-1 tvg-id="${epgId}" tvg-name="${safeName}" tvg-logo="${safeLogo}" group-id="${groupId}" group-title="${safeGroup}"${extra},${finalName}\n`;
 
       if (ch.drm_license_type || ch.drm_license_key) {
-          if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${ch.drm_license_type}\n`;
-          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${ch.drm_license_key}\n`;
+          if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${String(ch.drm_license_type).replace(/[\r\n]+/g, ' ')}\n`;
+          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(ch.drm_license_key).replace(/[\r\n]+/g, ' ')}\n`;
       }
 
       buffer += streamUrl + '\n';

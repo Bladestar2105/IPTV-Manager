@@ -276,8 +276,8 @@ export const importData = async (req, res) => {
 
       // ⚡ Bolt: Hoist prepared statements to prevent query recompilation inside loops
       const insertUserStmt = db.prepare(`
-        INSERT INTO users (username, password, is_active, webui_access, provider_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (username, password, is_active, webui_access, provider_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret, max_connections, expiry_date, allowed_countries, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const user of importData.users) {
@@ -311,7 +311,11 @@ export const importData = async (req, res) => {
           hdhrEnabled,
           hdhrToken,
           otpEnabled,
-          otpSecret
+          otpSecret,
+          user.max_connections ?? 0,
+          user.expiry_date ?? null,
+          user.allowed_countries ?? null,
+          user.notes ?? null
         );
 
         const newUserId = info.lastInsertRowid;

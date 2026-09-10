@@ -45,7 +45,7 @@ vi.mock('../../src/config/constants.js', () => ({
 }));
 
 // Import the controller after mocking
-import { playerPlaylist } from '../../src/controllers/xtreamController.js';
+import { getPlaylist, playerPlaylist } from '../../src/controllers/xtreamController.js';
 import { getXtreamUser } from '../../src/services/authService.js';
 
 describe('Security: M3U Injection', () => {
@@ -65,6 +65,7 @@ describe('Security: M3U Injection', () => {
       end: vi.fn(),
       status: vi.fn().mockReturnThis(),
       setHeader: vi.fn(),
+      sendStatus: vi.fn(),
     };
   });
 
@@ -107,5 +108,48 @@ describe('Security: M3U Injection', () => {
     // Also check that the original content is somewhat preserved but sanitized
     expect(output).toContain('Safe Name');
     expect(output).toContain('Malicious Channel'); // It will be there, but on the same line (hopefully)
+  });
+
+  describe.each([
+    ['get.php', getPlaylist],
+    ['player playlist', playerPlaylist],
+  ])('%s', (_name, playlist) => {
+    it.each(['epg_channel_id', 'manual_epg_id'])('keeps %s inside its M3U attribute', async (field) => {
+      getXtreamUser.mockResolvedValue({ id: 1 });
+      req.query.type = 'm3u_plus';
+      const channel = {
+        user_channel_id: 1,
+        name: 'Channel',
+        stream_type: 'live',
+        [field]: 'epg" injected="yes\r\n#EXTINF:-1,Injected\nhttps://evil.example/stream',
+      };
+      mockDb.prepare.mockReturnValue({ iterate: () => [channel], all: () => [] });
+
+      await playlist(req, res);
+
+      const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
+      expect(output).toContain('tvg-id="epg injected=yes #EXTINF:-1,Injected https://evil.example/stream"');
+      expect(output.split('\n').filter(line => line.startsWith('#EXTINF:'))).toHaveLength(1);
+      expect(output).not.toContain('\nhttps://evil.example/stream');
+      expect(res.end).toHaveBeenCalled();
+    });
+  });
+
+  it.each(['drm_license_type', 'drm_license_key'])('keeps %s on one property line without changing quotes', async (field) => {
+    getXtreamUser.mockResolvedValue({ id: 1 });
+    const channel = {
+      user_channel_id: 1,
+      name: 'Channel',
+      stream_type: 'live',
+      [field]: '{"keys":[]}\r\n#EXTINF:-1,Injected\nhttps://evil.example/stream',
+    };
+    mockDb.prepare.mockReturnValue({ iterate: () => [channel] });
+
+    await playerPlaylist(req, res);
+
+    const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
+    expect(output).toContain('={"keys":[]} #EXTINF:-1,Injected https://evil.example/stream\n');
+    expect(output.split('\n').filter(line => line.startsWith('#EXTINF:'))).toHaveLength(1);
+    expect(output).not.toContain('\nhttps://evil.example/stream');
   });
 });

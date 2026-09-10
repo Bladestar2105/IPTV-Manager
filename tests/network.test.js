@@ -47,6 +47,32 @@ describe('fetchSafe', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each(['timeout', 'caller'])('aborts when the %s cancels a request with an external signal', async (trigger) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let request;
+    let failure;
+    try {
+      helpers.isSafeUrl.mockResolvedValue(true);
+      fetch.mockImplementationOnce((_url, { signal }) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })), { once: true });
+      }));
+      request = fetchSafe('http://example.com', { signal: controller.signal, timeout: 25 })
+        .catch(error => { failure = error; });
+
+      await vi.advanceTimersByTimeAsync(0);
+      if (trigger === 'caller') controller.abort();
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(failure).toMatchObject({ name: 'AbortError' });
+      expect(controller.signal.aborted).toBe(trigger === 'caller');
+    } finally {
+      controller.abort();
+      await request;
+      vi.useRealTimers();
+    }
+  });
+
   it('should follow redirects for safe URLs', async () => {
     const initialUrl = 'http://example.com';
     const redirectUrl = 'http://example.com/redirected';

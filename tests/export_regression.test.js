@@ -60,7 +60,10 @@ describe('Export/Import Regression Tests', () => {
 
     it('should export and import correctly (standard workflow)', async () => {
         // 1. Create User
-        const userRes = db.prepare('INSERT INTO users (username, password, provider_access) VALUES (?, ?, 1)').run('testuser_std', 'userpass');
+        const userRes = db.prepare(`
+            INSERT INTO users (username, password, provider_access, max_connections, expiry_date, allowed_countries, notes)
+            VALUES (?, ?, 1, 2, 1, ?, ?)
+        `).run('testuser_std', 'userpass', '["DE"]', 'Preserve account restrictions');
         const userId = userRes.lastInsertRowid;
 
         // 2. Create Provider with Encrypted Password
@@ -121,6 +124,12 @@ describe('Export/Import Regression Tests', () => {
         const importedProvider = db.prepare('SELECT * FROM providers WHERE user_id = ?').get(importedUser.id);
 
         expect(importedUser.provider_access).toBe(1);
+        expect(importedUser).toMatchObject({
+            max_connections: 2,
+            expiry_date: 1,
+            allowed_countries: '["DE"]',
+            notes: 'Preserve account restrictions',
+        });
         const decryptedImportedPass = decrypt(importedProvider.password);
         expect(decryptedImportedPass).toBe(TEST_PROVIDER_PASSWORD);
         expect(importedProvider.timeshift_timezone).toBe('Europe/Berlin');
@@ -348,6 +357,21 @@ describe('Export/Import Regression Tests', () => {
         expect(Number(restored.mapping_id)).not.toBe(Number(sourceMappingId));
         expect(db.prepare('SELECT provider_category_id FROM category_mappings WHERE id = ?').get(restored.mapping_id))
             .toEqual({ provider_category_id: 77 });
+    });
+
+    it('uses existing defaults when an older backup omits user restrictions', async () => {
+        const data = { version: 1, users: [{ id: 1, username: 'legacy_defaults', password: 'pass' }] };
+        fs.writeFileSync(tempFilePath, encryptWithPassword(zlib.gzipSync(JSON.stringify(data)), TEST_EXPORT_PASSWORD));
+        const response = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+        await systemController.importData(
+            { user: { is_admin: true }, body: { password: TEST_EXPORT_PASSWORD }, file: { path: tempFilePath } },
+            response
+        );
+
+        expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+        expect(db.prepare('SELECT max_connections, expiry_date, allowed_countries, notes FROM users WHERE username = ?').get('legacy_defaults'))
+            .toEqual({ max_connections: 0, expiry_date: null, allowed_countries: null, notes: null });
     });
 
     it('merges duplicate assignments during system import and reports unique counts', async () => {
