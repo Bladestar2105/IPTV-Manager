@@ -11,6 +11,7 @@ import * as migrationRuntime from '../../src/database/migrationRuntime.js';
 import * as migrationAssignments from '../../src/database/migrationAssignments.js';
 import * as migrationCatalog from '../../src/database/migrationCatalog.js';
 import * as migrationStalker from '../../src/database/migrationStalker.js';
+import * as migrationAi from '../../src/database/migrationAi.js';
 
 const exportNames = (...modules) => [...new Set(modules.flatMap(module => Object.keys(module)))].sort();
 const directExports = (...names) => Object.fromEntries(names.map(name => [name, true]));
@@ -38,7 +39,8 @@ describe('module facade exports', () => {
       migrationRuntime,
       migrationAssignments,
       migrationCatalog,
-      migrationStalker
+      migrationStalker,
+      migrationAi
     ));
   });
 });

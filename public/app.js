@@ -1551,6 +1551,7 @@ function initCategorySortable() {
 let providerCategories = [];
 
 function clearSessionSensitiveState({preserveUserState = false} = {}) {
+  window.aiUI?.clear();
   if (!preserveUserState) {
     sessionGeneration += 1;
     userCategoryChannelsData = [];
@@ -3641,6 +3642,7 @@ function switchView(viewName) {
   document.getElementById('view-statistics').classList.add('d-none');
   document.getElementById('view-security').classList.add('d-none');
   document.getElementById('view-import-export').classList.add('d-none');
+  document.getElementById('view-ai').classList.add('d-none');
 
   // Stop stats interval if running
   if (statsInterval) {
@@ -3655,7 +3657,12 @@ function switchView(viewName) {
   });
 
   // Show selected view
-  if (viewName === 'dashboard') {
+  if (viewName === 'ai') {
+    document.getElementById('view-ai').classList.remove('d-none');
+    document.getElementById('nav-ai').classList.add('active');
+    document.getElementById('nav-ai').setAttribute('aria-current', 'page');
+    window.aiUI?.open();
+  } else if (viewName === 'dashboard') {
     document.getElementById('view-dashboard').classList.remove('d-none');
     document.getElementById('nav-dashboard').classList.add('active');
     document.getElementById('nav-dashboard').setAttribute('aria-current', 'page');
@@ -4754,6 +4761,7 @@ async function checkAuthentication() {
 }
 
 function applyPermissions({preserveUserState = false} = {}) {
+    window.aiUI?.syncActor();
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
     const userSection = document.getElementById('user-section');

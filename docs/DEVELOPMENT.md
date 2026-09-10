@@ -41,6 +41,7 @@ before `npm install`.
 - API route inventory: `docs/API_REFERENCE.md`.
 - Runtime environment and Docker configuration: `docs/CONFIGURATION.md`.
 - Share companion integration details: `docs/SHARE_COMPANION_INTEGRATION.md`.
+- Optional AI setup and bounds: `docs/AI_INTEGRATION.md`.
 
 Update these files when routes, environment variables, setup, Docker behavior,
 or integration behavior changes.
@@ -84,7 +85,11 @@ Common generated files:
 These are ignored by Git. Do not commit runtime databases, secrets, cache data,
 or test-generated temp directories.
 
-For local tests that should not touch the repo root, run with a temp data dir:
+Vitest automatically creates an isolated temporary `DATA_DIR` when none is
+provided and removes it on normal exit. This also applies to direct targeted
+`npm exec vitest run ...` commands. An explicit `DATA_DIR` is honored, so only
+point it at a disposable test directory, never the application's runtime data.
+For an explicitly controlled test directory:
 
 ```bash
 DATA_DIR="$(mktemp -d)" npm test
@@ -100,6 +105,44 @@ variable is unset. It covers normal-user provider hiding, continued editing of
 channel/movie/series lists and category-scoped EPG mappings, and the admin
 provider-access toggle. Set `DATA_DIR` only when an existing test database is
 intentionally required.
+
+## AI Integration Checks
+
+The optional AI service uses the existing SQLite migration chain and crypto
+helpers. Additive `ai_*` tables use `admin:<id>` / `user:<id>` owner keys because
+those account ID namespaces overlap. Account-deletion triggers remove private
+and target-user records. Normal exports/clones do not copy AI keys or history.
+No inference may run inside a database transaction or the playback/EPG path.
+Sync records successful deterministic diffs and schedules optional follow-ups
+after completion.
+
+Focused checks:
+
+```bash
+npm exec vitest run tests/ai_connections.test.js tests/ai_features.test.js tests/ai_proposals.test.js tests/ai_jobs.test.js tests/ai_api.test.js tests/ai_sync_history.test.js
+npm run test:playwright:ai
+```
+
+The AI Vitest fixtures create and remove isolated SQLite/EPG data directories.
+Connection and API/job tests use synthetic local HTTP model servers; they do
+not test a live external model. The API journey exercises actual Express
+authentication, discovery/test contracts, proposal application, idempotency and
+undo, and compares shared names/identities in M3U, Xtream and Stalker outputs.
+Domain suites exercise authorization, revocation, stale data, source evidence,
+protected positions and manual assignment semantics. Static smoke checks remain
+distinct from these real local database/API checks.
+
+`test:playwright:ai` runs the actual UI against a synthetic API: provided/own
+setup, four languages, all eight function controls, safe rendering, explicit
+apply/undo, rule previews, follow-ups, cancellation, history and session cleanup.
+It starts its own ephemeral server without touching the application's runtime
+database. `AI_UI_SCREENSHOT=/absolute/path.png` optionally saves its screenshot.
+The existing `test:playwright:smoke` continues to start an isolated real app.
+
+Run the normal lint, full test suite, build, production audit and Docker checks
+as well. A synthetic model response is not evidence of live provider accuracy,
+real stream quality or playback latency. Record the checked commit and any
+unavailable Docker/live environment in the pull request's validation section.
 
 ## Docker Startup
 

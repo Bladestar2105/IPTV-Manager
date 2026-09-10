@@ -1,0 +1,56 @@
+import express from 'express';
+import { authenticateToken } from '../middleware/auth.js';
+import * as controller from '../controllers/aiController.js';
+
+const router = express.Router();
+
+router.use((req,res,next) => {
+  res.set('Cache-Control','no-store');
+  // Player/share/query tokens cannot authorize management or billable calls.
+  if (!/^Bearer [^\s]+$/i.test(req.get('Authorization') || '')) return res.status(401).json({error:'ai_auth_required'});
+  if (!['GET','HEAD','OPTIONS'].includes(req.method)) {
+    if (req.get('Sec-Fetch-Site') === 'cross-site') return res.status(403).json({error:'ai_cross_site'});
+    const origin = req.get('Origin');
+    if (origin) {
+      let allowed = false;
+      try { allowed = new URL(origin).origin === `${req.protocol}://${req.get('host')}`; } catch {}
+      if (!allowed) return res.status(403).json({error:'ai_cross_site'});
+    }
+    if (req.method !== 'DELETE' && !req.is('application/json')) return res.status(415).json({error:'ai_json_required'});
+  }
+  next();
+});
+router.use(authenticateToken);
+
+router.get('/settings',controller.settings);
+router.put('/settings',controller.updateSettings);
+router.get('/preferences',controller.preferences);
+router.put('/preferences',controller.savePreferences);
+router.get('/connections',controller.listConnections);
+router.post('/connections',controller.createConnection);
+router.put('/connections/:id',controller.updateConnection);
+router.delete('/connections/:id',controller.deleteConnection);
+router.post('/connections/:id/discover',controller.discover);
+router.post('/connections/:id/test',controller.test);
+router.get('/jobs',controller.listJobs);
+router.post('/jobs',controller.createJob);
+router.get('/jobs/:id',controller.getJob);
+router.post('/jobs/:id/cancel',controller.cancelJob);
+router.get('/proposals/:id',controller.getProposal);
+router.post('/proposals/:id/apply',controller.applyProposal);
+router.get('/changes',controller.listChanges);
+router.get('/changes/:id',controller.getChange);
+router.post('/changes/:id/undo',controller.undoChange);
+router.get('/rules',controller.listRules);
+router.post('/rules',controller.saveRule);
+router.put('/rules/:id',controller.saveRule);
+router.delete('/rules/:id',controller.deleteRule);
+router.get('/conversations/:id',controller.getConversation);
+router.post('/conversations/:id/messages',controller.followup);
+router.delete('/conversations/:id',controller.deleteConversation);
+router.get('/enrichments/:id',controller.getEnrichment);
+router.get('/channels/:id/programs',controller.programs);
+router.get('/usage',controller.usage);
+router.delete('/history',controller.clearHistory);
+
+export default router;

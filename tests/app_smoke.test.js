@@ -22,6 +22,7 @@ describe('application wiring smoke checks', () => {
       "app.use('/api', systemRoutes)",
       "app.use('/api/shares', shareRoutes)",
       "app.use('/api/proxy', proxyRoutes)",
+      "app.use('/api/ai', aiRoutes)",
       "app.use('/', streamRoutes)",
       "app.use('/', xtreamRoutes)",
       "app.use('/', stalkerRoutes)",

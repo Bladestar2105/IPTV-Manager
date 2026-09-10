@@ -16,6 +16,7 @@ describe('documentation smoke checks', () => {
     expect(readme).toContain('docs/CONFIGURATION.md');
     expect(readme).toContain('docs/API_REFERENCE.md');
     expect(readme).toContain('docs/SHARE_COMPANION_INTEGRATION.md');
+    expect(readme).toContain('docs/AI_INTEGRATION.md');
   });
 
   it('documents bootstrapping the latest updater before bare-metal updates', () => {
@@ -130,5 +131,15 @@ describe('documentation smoke checks', () => {
     ].forEach((endpoint) => {
       expect(apiReference).toContain(`\`${endpoint}\``);
     });
+  });
+
+  it('documents every optional AI route and its operational boundaries', () => {
+    const routes=readRepoFile('src/routes/ai.js');
+    const reference=readRepoFile('docs/API_REFERENCE.md');
+    for(const [,endpoint] of routes.matchAll(/router\.(?:get|post|put|delete)\('([^']+)'/g)) {
+      expect(reference).toContain(`/api/ai${endpoint}`);
+    }
+    const guide=readRepoFile('docs/AI_INTEGRATION.md');
+    for(const boundary of ['disabled','secret.key','ENCRYPTION_KEY','512 KiB','30 days','synthetic']) expect(guide).toContain(boundary);
   });
 });

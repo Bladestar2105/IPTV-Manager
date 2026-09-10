@@ -22,6 +22,7 @@
 - **EPG Integration**: Comprehensive Electronic Program Guide (EPG) support with automatic updates.
 
 ### Advanced Features
+- **Optional AI Assistant**: Connect an OpenAI-compatible text API for list editing, name cleanup, duplicate review, EPG suggestions, sync reports, conversational search, diagnostics and description translation/summaries/tags. Changes require a preview and confirmation, with conflict-aware undo. AI is disabled by default; see [AI setup and operation](docs/AI_INTEGRATION.md).
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
 - **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.

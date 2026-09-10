@@ -1,8 +1,9 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
-import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
+import { isAdultCategory } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 import { retargetCategoryMapping } from '../services/categoryMappingService.js';
+import { createCategory, addChannel } from '../services/userListWriteService.js';
 
 const MAX_BULK_IDS = 5000;
 
@@ -40,18 +41,12 @@ export const createUserCategory = (req, res) => {
 
     const userId = Number(req.params.userId);
     if (!req.user.is_admin && req.user.id !== userId) return res.status(403).json({error: 'Access denied'});
-    const isAdult = isAdultCategory(name) ? 1 : 0;
-    const catType = type || 'live';
-
-    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
-    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
-
-    const info = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)').run(userId, name.trim(), isAdult, newSortOrder, catType);
+    const category = createCategory(db, userId, {name, type});
 
     db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'category_created', `User ${req.user.username} created category '${name.trim()}'`, Math.floor(Date.now() / 1000));
 
     clearChannelsCache(userId);
-    res.json({id: info.lastInsertRowid, is_adult: isAdult, type: catType});
+    res.json({id: category.id, is_adult: category.is_adult, type: category.type});
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 
@@ -260,51 +255,11 @@ export const addUserChannel = (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    const { provider_channel_id } = req.body;
-    if (!provider_channel_id) return res.status(400).json({error: 'channel required'});
-
-    const providerChannel = db.prepare(`
-      SELECT pc.id, p.user_id
-      FROM provider_channels pc
-      JOIN providers p ON p.id = pc.provider_id
-      WHERE pc.id = ?
-    `).get(Number(provider_channel_id));
-    if (!providerChannel) return res.status(404).json({error: 'Channel not found'});
-    const grantedByAdmin = resolveAssignmentGrant({
-      categoryOwnerId: cat.user_id,
-      providerOwnerId: providerChannel.user_id,
-      isAdmin: req.user.is_admin,
-      allowExplicitAdminGrant: true
-    });
-    if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
-
-    const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_channels WHERE user_category_id = ?').get(catId);
-    const newSortOrder = (maxSort?.max_sort ?? -1) + 1;
-
-    const existing = db.prepare('SELECT id FROM user_channels WHERE user_category_id = ? AND provider_channel_id = ?').get(catId, Number(provider_channel_id));
-
-    let insertId;
-    if (existing) {
-        db.prepare(`
-          UPDATE user_channels
-          SET is_hidden = 0, sort_order = ?, assignment_origin = 'manual', mapping_id = NULL,
-              granted_by_admin = ?, authorization_revoked = 0
-          WHERE id = ?
-        `).run(newSortOrder, grantedByAdmin, existing.id);
-        insertId = existing.id;
-    } else {
-        const info = db.prepare(`
-          INSERT INTO user_channels
-            (user_category_id, provider_channel_id, sort_order, assignment_origin, mapping_id,
-             granted_by_admin, authorization_revoked)
-          VALUES (?, ?, ?, 'manual', NULL, ?, 0)
-        `).run(catId, Number(provider_channel_id), newSortOrder, grantedByAdmin);
-        insertId = info.lastInsertRowid;
-    }
+    const result = addChannel(db, req.user, catId, req.body.provider_channel_id);
 
     clearChannelsCache(cat.user_id);
-    res.json({id: insertId});
-  } catch (e) { res.status(500).json({error: e.message}); }
+    res.json(result);
+  } catch (e) { res.status(e.status || 500).json({error: e.message}); }
 };
 
 export const reorderUserChannels = (req, res) => {

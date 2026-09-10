@@ -28,6 +28,25 @@ their own provider names/options and catalog rows so they can edit channel,
 movie, and series lists, including category-scoped EPG mappings. Administrators
 are not restricted by this setting.
 
+## Optional AI
+
+AI is configured in the **AI Assistant** Web UI, without additional environment
+variables or services. The central policy is stored in `settings.ai_policy`;
+it defaults to disabled. Administrators explicitly allow user IDs and functions,
+may share an admin connection with selected users, and can allow private user
+connections. A user must also activate their own AI preferences.
+
+Public API targets require HTTPS. `internal_targets` allows exact normalized
+base URLs (including proxy prefixes) for administrator-approved internal
+services; it never allows CIDR ranges, metadata addresses, redirects or insecure
+TLS. An approved internal endpoint may use HTTP and no key. This policy does
+not change IPTV provider/EPG networking. See [AI setup](AI_INTEGRATION.md).
+
+Connection API keys use the existing `ENCRYPTION_KEY`/`secret.key` AES-GCM
+encryption. Keep that key backed up separately from the database; access to both
+allows decryption. Ordinary user backups, clones and system exports do not
+include AI connections. Re-enter credentials and retest after importing a user.
+
 ## Network and Proxy
 
 - `TRUST_PROXY`: Express trust proxy setting. Use this behind a reverse proxy

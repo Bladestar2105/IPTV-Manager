@@ -22,6 +22,81 @@ transaction. It also clears the handling worker's credential and token caches.
 Admin password changes affect only the administrator account, even when a normal
 user has the same numeric ID.
 
+## Optional AI assistance
+
+All `/api/ai/*` routes require the current Web UI JWT in an
+`Authorization: Bearer ...` header. Query, player, Stalker and share tokens
+cannot authorize AI management. Mutations require same-origin browser requests
+and JSON bodies (DELETE does not require a body). Responses are `no-store`.
+See [setup, data boundaries and limits](AI_INTEGRATION.md).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET / PUT | `/api/ai/settings` | Read policy; administrators may change server enablement, own-connection permission, allowed users/functions and exact internal targets. |
+| GET / PUT | `/api/ai/preferences` | Personal enablement, selected connection/model, language, timezone and automatic sync-summary opt-in. |
+| GET / POST | `/api/ai/connections` | List usable connections or create an owned connection. |
+| PUT / DELETE | `/api/ai/connections/:id` | Change/delete an owned connection. `api_key` is write-only; reads return `has_key` and `editable`. |
+| POST | `/api/ai/connections/:id/discover` | Explicitly list models; no inference side effect. |
+| POST | `/api/ai/connections/:id/test` | Test `model_ids` (one to three) with bounded synthetic chat/structured-output checks. |
+| GET / POST | `/api/ai/jobs` | List up to 50 personal jobs or enqueue a feature request. |
+| GET | `/api/ai/jobs/:id` | Read status and currently authorized result. |
+| POST | `/api/ai/jobs/:id/cancel` | Best-effort cancellation without replaying a submitted request. |
+| GET | `/api/ai/proposals/:id` | Read the stored before/after actions and dependencies. |
+| POST | `/api/ai/proposals/:id/apply` | Apply selected `action_ids` and their dependencies with an `idempotency_key`. |
+| GET | `/api/ai/changes/:id` | Read the authorized change record. |
+| GET | `/api/ai/changes` | List up to 50 personal change records, including automatic rule applications; optional target `user_id`. |
+| POST | `/api/ai/changes/:id/undo` | Conditionally restore only the recorded changed fields. |
+| GET / POST | `/api/ai/rules` | List personal rules (`user_id` for administrators) or save a rule from an applied rename. |
+| PUT / DELETE | `/api/ai/rules/:id` | Update/enable or delete a confirmed literal rule. |
+| GET / DELETE | `/api/ai/conversations/:id` | Read structured search criteria or delete a conversation. |
+| POST | `/api/ai/conversations/:id/messages` | Enqueue a search follow-up for the stored target user. |
+| GET | `/api/ai/enrichments/:id` | Read the marked derived description and its current original. |
+| GET | `/api/ai/channels/:id/programs` | Select an authorized EPG description for a provider channel; optional `user_id`/`timezone`, up to 100 programs in the next 24 hours, no model request. |
+| GET | `/api/ai/usage` | Up to 200 recent request records, token counts and explicit unknown prices. |
+| DELETE | `/api/ai/history` | Cancel personal jobs and clear jobs, conversations and enrichments; retain change records and rules. |
+
+Connection fields include `name`, `base_url`, `api_key`, `shared`,
+`allowed_user_ids`, `functions`, `enabled`, `model_id` and `token_parameter`.
+Model selection requires a successful compatibility test. Shared-connection
+users cannot edit, discover or test the owner's connection or retrieve its key.
+Server policy defaults to disabled, and each user must opt in separately.
+
+Job `feature` is one of `list`, `cleanup`, `duplicates`, `epg`, `sync`,
+`search`, `diagnose`, `text`. Common inputs are `prompt`, `language`, `timezone`,
+`connection_id`, `user_id`, `category_id`, `channel_ids` (provider channel IDs),
+`selected_ids` / `pinned_ids` (user assignment IDs), and `keep_first`.
+Administrators must specify `user_id` for catalog work; omitting it is allowed
+for aggregate diagnosis. A normal user can target only their own account.
+
+For example, POST `/api/ai/jobs` with header `Idempotency-Key: cleanup-example-1`:
+
+```json
+{"feature":"cleanup","prompt":"Remove country prefixes from my channel names","language":"en","timezone":"Europe/Berlin","keep_first":10}
+```
+
+The response contains `id`, `status`, `feature` and `created_at`. Poll the job;
+statuses are `queued`, `running`, `completed`, `failed`, `cancelled`. A completed
+result may include `proposal_id`, `conversation_id`, `enrichment_id`, findings
+and coverage. Fetch a proposal before applying its chosen action IDs. Reusing
+a job idempotency key with changed input returns 409. Application does not
+repeat inference. Stale sources, revoked rights and undo conflicts reject the
+operation rather than overwriting current data.
+
+`full_list:true` raises the bounded page size. Follow `coverage.next_offset`
+with `offset`; retain the reported partial status until the requested scope has
+actually been examined. Search accepts `conversation_id` and explicit `filters`
+patches with `query`, `type`, `genre`, `language`, `region`, `start`, `end`,
+`max_duration` and `interests`. Null/empty values remove a filter. Program times
+must have an explicit UTC offset; time windows are bounded to 14 days. Text
+requests use `provider_channel_id`, `operation` and optionally an actual
+`program` reference. Sync requests may select a recorded `snapshot_id`.
+
+Errors contain a stable `code`/`error`, never upstream bodies or credentials.
+Invalid input is 400, denied access 403, missing/expired private records 404,
+stale/conflicting work 409, and rate/busy limits 429. Network/provider failures
+have safe 5xx errors. Clients should translate the code and require explicit
+retesting/selection after connection changes.
+
 ## Users
 
 - `GET /api/users`

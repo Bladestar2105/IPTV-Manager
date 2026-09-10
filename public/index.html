@@ -44,6 +44,9 @@
           <li class="nav-item">
             <a class="nav-link" href="#" data-view="import-export" id="nav-import-export" data-i18n="importExport">Import/Export</a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#" data-view="ai" id="nav-ai" data-i18n="ai_title">AI assistant</a>
+          </li>
         </ul>
         <div class="d-flex align-items-center gap-2">
           <select id="language-selector" class="form-select form-select-sm bg-dark text-light border-secondary w-auto" data-i18n-label="selectLanguage">
@@ -61,6 +64,8 @@
   </nav>
 
   <div class="container-fluid py-4 d-none" id="main-content" tabindex="-1">
+
+    <section id="view-ai" class="d-none" aria-labelledby="nav-ai"></section>
 
     <!-- View: Dashboard -->
     <div id="view-dashboard">
@@ -1493,7 +1498,9 @@
   <script src="vendor/bootstrap.bundle.min.js"></script>
   <script src="vendor/sortable.min.js"></script>
   <script src="i18n.js"></script>
+  <script src="ai-i18n.js"></script>
   <script src="app.js"></script>
+  <script src="ai.js"></script>
 
   <!-- Toast Container -->
   <div class="toast-container position-fixed bottom-0 end-0 p-3 z-1100" id="toast-container"></div>

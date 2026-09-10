@@ -634,3 +634,8 @@ select:focus-visible,
   content: " *";
   color: var(--tv-red);
 }
+/* AI results may contain long source text, but never executable markup. */
+#view-ai { max-width: 1100px; margin-inline: auto; }
+#view-ai pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; }
+#view-ai summary { cursor: pointer; }
+#view-ai [hidden] { display: none !important; }
