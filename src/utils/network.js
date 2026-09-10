@@ -30,8 +30,9 @@ export async function fetchSafe(url, options = {}, redirectCount = 0) {
   const controller = new AbortController();
   const timeout = requestTimeout || 15000; // Default 15s timeout
 
-  // Use existing signal if provided, else use our own
-  const signal = fetchOptionOverrides.signal || controller.signal;
+  const signal = fetchOptionOverrides.signal
+    ? AbortSignal.any([fetchOptionOverrides.signal, controller.signal])
+    : controller.signal;
 
   const timeoutId = setTimeout(() => {
     controller.abort();

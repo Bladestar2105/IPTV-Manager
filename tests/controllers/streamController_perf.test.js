@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { EventEmitter } from 'events';
+import { EventEmitter, once } from 'events';
+import { PassThrough } from 'stream';
 import fs from 'fs';
 import path from 'path';
 import * as streamController from '../../src/controllers/streamController.js';
@@ -339,6 +340,54 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(streamManager.add).toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+
+  it('releases an upstream that arrives after the client disconnects', async () => {
+    const { default: actualManager } = await vi.importActual('../../src/services/streamManager.js');
+    vi.spyOn(streamManager, 'add').mockImplementation(actualManager.add.bind(actualManager));
+    vi.spyOn(streamManager, 'remove').mockImplementation(actualManager.remove.bind(actualManager));
+    vi.spyOn(streamManager.localStreams, 'set').mockImplementation(actualManager.localStreams.set.bind(actualManager.localStreams));
+    const upstream = new PassThrough();
+    res = Object.assign(new PassThrough(), { setHeader: vi.fn() });
+    req = Object.assign(new EventEmitter(), { ...req, on: EventEmitter.prototype.on, path: '/live/user/pass/1.ts' });
+    let releaseFetch;
+    fetch.mockImplementationOnce(() => new Promise(resolve => { releaseFetch = resolve; }));
+    vi.useFakeTimers();
+    try {
+      const pending = streamController.proxyLive(req, res);
+      await vi.advanceTimersByTimeAsync(100);
+      const closed = once(res, 'close');
+      res.destroy();
+      await closed;
+      releaseFetch({ ok: true, status: 200, headers: { get: () => null }, body: upstream });
+      await pending;
+
+      expect(upstream.destroyed).toBe(true);
+      expect(actualManager.localStreams.size).toBe(0);
+      req.emit('aborted');
+      res.emit('finish');
+      expect(streamManager.remove).toHaveBeenCalledOnce();
+    } finally {
+      for (const id of actualManager.localStreams.keys()) await actualManager.remove(id);
+      upstream.destroy();
+      res.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    [{ aborted: true }, {}],
+    [{}, { destroyed: true }],
+    [{}, { writableFinished: true }],
+  ])('cleans up a closed request or response before listener registration', (requestState, responseState) => {
+    const closedReq = Object.assign(new EventEmitter(), requestState);
+    const closedRes = Object.assign(new EventEmitter(), responseState);
+    streamController.attachResponseCleanup(closedReq, closedRes, streamController.createSafeCleanup('closed-stream'));
+    expect(streamManager.remove).toHaveBeenCalledExactlyOnceWith('closed-stream');
+    closedReq.emit('aborted');
+    closedRes.emit('close');
+
+    expect(streamManager.remove).toHaveBeenCalledExactlyOnceWith('closed-stream');
   });
 
   it('uses the stored MKV extension when the public movie suffix differs', async () => {

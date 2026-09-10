@@ -527,6 +527,7 @@ export function attachResponseCleanup(req, res, cleanup) {
     res.on('finish', cleanup);
     res.on('error', cleanup);
   }
+  if (req?.aborted || res?.destroyed || res?.writableFinished) cleanup();
 }
 
 export function attachStreamHeartbeat(upstreamBody, connectionId) {

@@ -360,6 +360,53 @@ describe('sync authorization regression', () => {
     expect(memDb.prepare('SELECT COUNT(*) AS count FROM user_channels').get().count).toBe(0);
   });
 
+  it('reconciles bulk category moves without scanning every unrelated assignment', async () => {
+    configure();
+    memDb.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (20, 1, 'Moved', 'live')").run();
+    memDb.prepare(`
+      INSERT INTO category_mappings
+        (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, category_type)
+      VALUES (1, 1, 11, 'Moved', 20, 'live')
+    `).run();
+    const count = 120;
+    xtreamState.channels = Array.from({ length: count }, (_, index) => ({
+      ...xtreamState.channels[0], stream_id: index + 1,
+    }));
+    expect((await performSync(1, 1, { mode: 'scheduled' })).errorMessage).toBe(null);
+
+    let assignmentIdReads = 0;
+    const prepare = memDb.prepare.bind(memDb);
+    const prepareSpy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+      const statement = prepare(sql);
+      if (sql.includes('FROM user_channels uc') && sql.includes('JOIN provider_channels pc')) {
+        const all = statement.all.bind(statement);
+        statement.all = (...args) => all(...args).map(row => {
+          const channelId = row.provider_channel_id;
+          Object.defineProperty(row, 'provider_channel_id', {
+            enumerable: true,
+            get() { assignmentIdReads++; return channelId; },
+          });
+          return row;
+        });
+      }
+      return statement;
+    });
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    try {
+      xtreamState.channels = xtreamState.channels.map(channel => ({ ...channel, category_id: 11 }));
+      const result = await performSync(1, 1, { mode: 'scheduled' });
+      expect(result.errorMessage).toBe(null);
+      expect(result.channelsUpdated).toBe(count);
+      expect(memDb.prepare('SELECT user_category_id, COUNT(*) AS count FROM user_channels GROUP BY user_category_id').all())
+        .toEqual([{ user_category_id: 20, count }]);
+      expect(assignmentIdReads).toBeGreaterThan(0);
+      expect(assignmentIdReads).toBeLessThan(count * 10);
+    } finally {
+      prepareSpy.mockRestore();
+      debugSpy.mockRestore();
+    }
+  });
+
   it('removes disappeared provider channels and both mapped assignments', async () => {
     configure();
     memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (20, 1, 'Radio', 'radio', 1)").run();

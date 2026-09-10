@@ -16,6 +16,12 @@ stream, share, and HDHomeRun endpoints use their own token or credential checks.
 - `POST /api/change-password`
 - `POST /api/player/token`
 
+A normal-user password change updates the encrypted credentials used for client
+links and revokes temporary player tokens and Stalker sessions in the same
+transaction. It also clears the handling worker's credential and token caches.
+Admin password changes affect only the administrator account, even when a normal
+user has the same numeric ID.
+
 ## Users
 
 - `GET /api/users`
@@ -259,6 +265,10 @@ assignments are merged with the same deterministic policy as backup restore;
 `stats.channels` counts unique inserted assignments and `channels_merged` and
 `channels_skipped` report the corresponding outcomes.
 
+Full-system imports retain each user's connection limit, expiry date, country
+restrictions, and notes. Older exports without these fields use the existing
+defaults.
+
 Radio categories are user-facing mappings of live provider channels. Xtream
 providers expose live, VOD, and series streams, not a separate standard radio
 stream/category action. A live provider category may be mapped to both live
@@ -328,6 +338,10 @@ Provider-controlled container extensions are normalized when stored and again
 when a public or upstream URL is generated. Known MIME types are mapped to
 their standard suffixes, and values containing path, query, fragment, percent,
 control, or playlist-injection characters fall back to a safe extension.
+
+M3U exports sanitize EPG identifiers as quoted attributes and keep DRM properties
+on a single line. Quotes inside DRM values are preserved for JSON-based license
+configuration.
 
 Expanded episodes use compact persistent alias IDs from `900,000,001` through
 `999,999,999`, safely within the signed 32-bit range and below the legacy ID

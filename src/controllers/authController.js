@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import db from '../database/db.js';
-import { generateToken, preventTimingAttack, invalidateUserTokens } from '../services/authService.js';
+import { generateToken, preventTimingAttack, invalidateUserTokens, invalidateUserCache } from '../services/authService.js';
 import { isIpAllowedForUser } from '../services/geoIpService.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
@@ -282,12 +282,16 @@ export const changePassword = async (req, res) => {
     if (isAdmin) {
        db.prepare(`UPDATE ${table} SET password = ?, force_password_change = 0, token_version = token_version + 1 WHERE id = ?`).run(newPasswordStored, userId);
     } else {
-       db.prepare(`UPDATE ${table} SET password = ?, token_version = token_version + 1 WHERE id = ?`).run(newPasswordStored, userId);
+       const encryptedPlainPassword = encrypt(newPassword);
+       db.transaction(() => {
+         db.prepare('UPDATE users SET password = ?, plain_password = ?, token_version = token_version + 1 WHERE id = ?')
+           .run(newPasswordStored, encryptedPlainPassword, userId);
+         db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
+         db.prepare('DELETE FROM stalker_sessions WHERE user_id = ?').run(userId);
+       })();
+       invalidateUserTokens(userId);
+       invalidateUserCache(userId);
     }
-
-    // Security enhancement: Invalidate sessions and cached tokens
-    db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
-    invalidateUserTokens(userId);
 
     db.prepare('INSERT INTO security_logs (ip, action, details, timestamp) VALUES (?, ?, ?, ?)').run(req.ip, 'password_changed', `User ${user.username} changed their password`, Math.floor(Date.now() / 1000));
 

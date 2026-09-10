@@ -269,7 +269,7 @@ export async function performSync(providerId, userId, options = {}) {
     }
 
     // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
-    const existingAssignments = new Map();
+    const existingAssignmentsByChannel = new Map();
     const maxSortMap = new Map();
 
     // Prepare statement unconditionally to avoid potential undefined issues
@@ -304,7 +304,9 @@ export async function performSync(providerId, userId, options = {}) {
       `).all(providerId);
 
       for (const r of existingAssignmentsRows) {
-        existingAssignments.set(`${r.user_category_id}_${r.provider_channel_id}`, r);
+        const channelId = Number(r.provider_channel_id);
+        if (!existingAssignmentsByChannel.has(channelId)) existingAssignmentsByChannel.set(channelId, new Map());
+        existingAssignmentsByChannel.get(channelId).set(Number(r.user_category_id), r);
       }
 
       const sortRows = db.prepare(`
@@ -536,12 +538,12 @@ export async function performSync(providerId, userId, options = {}) {
                   .filter(Boolean)
                   .map(Number));
 
-                for (const [assignmentKey, assignment] of existingAssignments) {
-                  if (Number(assignment.provider_channel_id) !== Number(existingId) ||
-                      !oldMappingIds.has(Number(assignment.mapping_id)) ||
+                const channelAssignments = existingAssignmentsByChannel.get(Number(existingId));
+                for (const [categoryId, assignment] of channelAssignments || []) {
+                  if (!oldMappingIds.has(Number(assignment.mapping_id)) ||
                       !isTrustedMappingAssignment(assignment, assignment.mapping_id)) continue;
                   deleteMappedAssignment.run(assignment.id, assignment.mapping_id);
-                  existingAssignments.delete(assignmentKey);
+                  channelAssignments.delete(categoryId);
                   console.debug(`  🗑️ Removed mapped assignment for moved channel "${newName}"`);
                 }
               }
@@ -605,14 +607,15 @@ export async function performSync(providerId, userId, options = {}) {
           }
 
           // Auto-add to user categories if enabled
-          if (config && config.auto_add_channels) {
+          if (config && config.auto_add_channels && mappingTargets.length > 0) {
+            const channelId = Number(provChannelId);
+            const channelAssignments = existingAssignmentsByChannel.get(channelId) || new Map();
+            existingAssignmentsByChannel.set(channelId, channelAssignments);
             for (const mapping of mappingTargets) {
               const userCatId = Number(mapping.user_category_id);
               const mappingId = Number(mapping.id);
               // Check if already added (Optimized in-memory check)
-              const assignmentKey = `${userCatId}_${provChannelId}`;
-
-              const existingAssignment = existingAssignments.get(assignmentKey);
+              const existingAssignment = channelAssignments.get(userCatId);
               if (!existingAssignment) {
                 // Optimized sort order calculation
                 let currentMax = maxSortMap.get(userCatId);
@@ -630,7 +633,7 @@ export async function performSync(providerId, userId, options = {}) {
                 if (!assignmentId) throw new Error('Unable to resolve synchronized user-channel assignment');
 
                 // Update in-memory state
-                existingAssignments.set(assignmentKey, resolvedAssignment);
+                channelAssignments.set(userCatId, resolvedAssignment);
                 if (assignmentInfo.changes === 1) maxSortMap.set(userCatId, newSortOrder);
               } else {
                 if (isTrustedMappingAssignment(existingAssignment, existingAssignment.mapping_id) &&
