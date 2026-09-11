@@ -76,6 +76,10 @@ setting the successfully tested `model_id` and matching `token_parameter`
 together, then saving the personal selection. Other profile changes invalidate
 compatibility. Authentication, permission and rate errors stop a test batch;
 there is no automatic retry after a timeout or uncertain response.
+Connections expose/store at most 100 capability profiles, retaining the current
+connection and owner-personal selections plus recent tests. Evicted unselected
+models require another explicit test. Existing oversized maps are capped in
+read responses and trimmed on their next normal connection write.
 
 Error categories are `AI_AUTH_FAILED`, `AI_PERMISSION_DENIED`, `AI_RATE_LIMIT`,
 `AI_UNAVAILABLE`/`AI_TIMEOUT`, `AI_MODEL_UNAVAILABLE`,

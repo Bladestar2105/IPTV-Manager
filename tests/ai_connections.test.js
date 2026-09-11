@@ -334,6 +334,53 @@ describe('AI connection security', () => {
         expect(found.model_id).toBe('synthetic-model'); expect(ai.getPreferences(admin).model_id).toBe('synthetic-model');
         expect(JSON.stringify(found)).not.toContain('synthetic-secret');
     });
+    it('bounds repeated manual model tests while retaining both selected profiles', async () => {
+        const c=await selected();
+        await ai.testModels(admin,c.id,{model_ids:['personal-model']});
+        ai.savePreferences(admin,{model_id:'personal-model'});
+        const start=Date.now(); let now=start;
+        const date=vi.spyOn(Date,'now').mockImplementation(()=>now);
+        try {
+            // Each batch runs in a later quota window; all requests use the local fixture.
+            for(let batch=0;batch<35;batch++) {
+                now=start+(batch+1)*3600000;
+                await ai.testModels(admin,c.id,{model_ids:[0,1,2].map(index=>`history-${batch*3+index}`)});
+            }
+            const stored=JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id).data_json);
+            expect(Object.keys(stored.capabilities)).toHaveLength(100);
+            for(const model of ['synthetic-model','personal-model','history-102','history-103','history-104']) expect(stored.capabilities[model]?.chat).toBe(true);
+            expect(stored.capabilities['history-0']).toBeUndefined();
+            expect(ai.requireAiAccess(admin,'list').preferences.model_id).toBe('personal-model');
+            expect(ai.listConnections(admin)[0].model_id).toBe('synthetic-model');
+        } finally {date.mockRestore();}
+    });
+    it('bounds legacy profile responses without read-side writes and trims the row on refresh', async () => {
+        const c=await selected();
+        const row=db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id),data=JSON.parse(row.data_json);
+        for(let i=0;i<150;i++) data.capabilities[`legacy-${i}`]={id:`legacy-${i}`,chat:true,structured:false,token_parameter:'max_tokens',tested_at:Date.now()+i+1};
+        const oversized=JSON.stringify(data);
+        db.prepare('UPDATE ai_connections SET data_json=? WHERE id=?').run(oversized,c.id);
+        const visible=ai.listConnections(admin)[0];
+        expect(Object.keys(visible.capabilities)).toHaveLength(100);
+        expect(visible.capabilities['synthetic-model'].chat).toBe(true);
+        expect(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id).data_json).toBe(oversized);
+        await ai.discoverModels(admin,c.id);
+        const stored=JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id).data_json);
+        expect(Object.keys(stored.capabilities)).toHaveLength(100);
+        expect(stored.model_id).toBe('synthetic-model');
+    });
+    it('keeps the just-tested batch usable when older profile timestamps are ahead of the clock', async () => {
+        const c=await selected();
+        const data=JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id).data_json);
+        for(let i=0;i<99;i++) data.capabilities[`future-${i}`]={id:`future-${i}`,chat:true,token_parameter:'max_tokens',tested_at:Date.now()+3600000+i};
+        db.prepare('UPDATE ai_connections SET data_json=? WHERE id=?').run(JSON.stringify(data),c.id);
+        const tested=await ai.testModels(admin,c.id,{model_ids:['new-a','new-b','new-c']});
+        const profiles=ai.listConnections(admin)[0].capabilities;
+        expect(Object.keys(profiles)).toHaveLength(100);
+        for(const model of tested.models) expect(profiles[model.id]?.chat).toBe(true);
+        expect(profiles['synthetic-model'].chat).toBe(true);
+        expect(()=>ai.savePreferences(admin,{model_id:tested.recommended_model_id})).not.toThrow();
+    });
     it('rejects already-cancelled requests before network activity', async () => {
         await selected(); const count=requests.length;
         await expect(ai.runInference(admin,'list',{messages:[],schema,signal:AbortSignal.abort()})).rejects.toHaveProperty('code','AI_TIMEOUT'); expect(requests).toHaveLength(count);

@@ -61,6 +61,14 @@ attempts consume the existing local call budget and may incur provider charges.
 There is no automatic budget increase. An incomplete answer stays **unverified**,
 including when a model needs more reasoning tokens than this test allows.
 
+Each connection retains at most 100 tested model profiles. The connection's
+selected model and its owner's current personal selection are protected;
+unselected older profiles are removed as new batches are tested. Removed
+profiles can be tested again explicitly. Legacy oversized maps are bounded on
+reads without database writes, then trimmed on the next connection save,
+discovery refresh or completed test. Model IDs returned by discovery remain
+separately bounded to 500 and do not replace the selected model.
+
 Explicit chat/schema incompatibilities are recorded separately from model
 availability, authentication, permission, rate-limit and connection failures.
 Plain JSON success with rejected schema support is a usable JSON fallback.

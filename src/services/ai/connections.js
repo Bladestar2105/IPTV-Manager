@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = { enabled: false, allow_own_connections: false, allowed
 const DEFAULT_PREFERENCES = { enabled: false, connection_id: null, model_id: null, language: 'en', timezone: 'UTC', auto_sync_summary: false };
 const TEST_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false };
 const MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:/@+-]{0,199}$/;
+const MAX_MODEL_PROFILES = 100;
 const ownerKey = actor => `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
 
 function freshActor(actor) {
@@ -49,7 +50,21 @@ function functions(value, fallback) {
     if (!Array.isArray(value) || value.some(feature => !FEATURES.includes(feature))) throw aiError('AI_INVALID_INPUT');
     return [...new Set(value)];
 }
-function rowConnection(row) { return row ? { ...JSON.parse(row.data_json), id: row.id, owner_key: row.owner_key, version: row.version } : null; }
+function retainedProfiles(connection,limit=MAX_MODEL_PROFILES) {
+    const entries=Object.entries(connection.capabilities);
+    if(entries.length<=limit) return connection.capabilities;
+    const personal=db.prepare("SELECT json_extract(data_json,'$.model_id') AS model FROM ai_preferences WHERE owner_key=? AND json_extract(data_json,'$.connection_id')=?").get(connection.owner_key,connection.id)?.model;
+    const selected=new Set([connection.model_id,personal]);
+    return Object.fromEntries(entries.sort(([a,av],[b,bv])=>Number(selected.has(b))-Number(selected.has(a))
+        || (bv.tested_at||0)-(av.tested_at||0) || a.localeCompare(b)).slice(0,limit));
+}
+function rowConnection(row) {
+    if(!row) return null;
+    const connection={...JSON.parse(row.data_json),id:row.id,owner_key:row.owner_key,version:row.version};
+    // Bound legacy responses without making reads write to the database.
+    connection.capabilities=retainedProfiles(connection);
+    return connection;
+}
 function loadConnection(id) {
     if (typeof id !== 'string' || id.length > 100) throw aiError('AI_NOT_FOUND',404);
     return rowConnection(db.prepare('SELECT * FROM ai_connections WHERE id=?').get(id));
@@ -71,6 +86,7 @@ function publicConnection(connection,actor) {
     return result;
 }
 function persist(connection, expectedVersion = null) {
+    connection.capabilities=retainedProfiles(connection);
     const { id,owner_key,version,...data }=connection;
     if (expectedVersion !== null) {
         const updated=db.prepare('UPDATE ai_connections SET data_json=?,version=?,updated_at=? WHERE id=? AND version=?').run(JSON.stringify(data),version,Date.now(),id,expectedVersion);
@@ -295,6 +311,8 @@ export async function testModels(actor,id,input) {
         }
         models.push(profile);
     }
+    // Reserve room for this explicit batch even if the wall clock moved backward.
+    c.capabilities=retainedProfiles(c,MAX_MODEL_PROFILES-models.length);
     for (const profile of models) c.capabilities[profile.id]=profile;
     persist(c,c.version);
     const compatible=models.filter(model=>model.chat);
