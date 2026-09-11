@@ -49,7 +49,10 @@ try {
     } else if (/^\/channels\/\d+\/programs$/.test(path)) {
       if (delayPrograms) { programsRequested(); await new Promise(resolve => { releasePrograms = resolve; }); }
       data = {items: [{provider_channel_id: Number(path.split('/')[2]), title: 'Actual program', description: '<b>Original EPG description</b>', start: 1800000000, stop: 1800003600, local_start: '2027-01-15 20:00', timezone: 'Europe/Berlin', program: programReference}], truncated: false};
-    } else if (path === '/jobs' && method === 'POST') { jobCount++; pollCount = 0; data = {id: `j${jobCount}`, status: 'queued'}; }
+    } else if (path === '/jobs' && method === 'POST') {
+      assert.equal(Object.hasOwn(body, 'provider_id'), false, 'job requests must not send unsupported provider scope');
+      jobCount++; pollCount = 0; data = {id: `j${jobCount}`, status: 'queued'};
+    }
     else if (/^\/jobs\/j\d+$/.test(path)) {
       pollCount++;
       data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
@@ -103,6 +106,7 @@ try {
     switchView('ai');
   });
   await page.locator('#ai-connection').waitFor();
+  assert.equal(await page.locator('#ai-provider-id').count(), 0, 'unsupported provider scope must not be offered');
   assert.equal(requests.filter(r => /discover|test/.test(r.path)).length, 0, 'opening never contacts a model');
   await page.locator('details').filter({has: page.locator('#ai-policy-enabled')}).locator('summary').click();
   await page.locator('#ai-policy-enabled').check();

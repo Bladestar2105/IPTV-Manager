@@ -55,7 +55,6 @@
     fullList: ['Review the full authorized list in bounded batches (more usage)', 'Gesamten erlaubten Bestand in begrenzten Teilen prüfen (mehr Verbrauch)', 'Examiner toute la liste autorisée par lots limités (consommation accrue)', 'Έλεγχος ολόκληρης εξουσιοδοτημένης λίστας σε περιορισμένες ομάδες (περισσότερη χρήση)'],
     channelIds: ['Channel IDs (comma separated; empty = authorized scope)', 'Sender-IDs (kommagetrennt; leer = erlaubter Bestand)', 'Identifiants des chaînes (virgules ; vide = périmètre autorisé)', 'ID καναλιών (κόμματα· κενό = εξουσιοδοτημένο πεδίο)'],
     categoryId: ['Category ID (optional)', 'Kategorie-ID (optional)', 'Identifiant catégorie (facultatif)', 'ID κατηγορίας (προαιρετικό)'],
-    providerId: ['Provider ID (sync report)', 'Provider-ID (Sync-Bericht)', 'Identifiant fournisseur (rapport de synchronisation)', 'ID παρόχου (αναφορά συγχρονισμού)'],
     pinned: ['Protected list-entry IDs', 'Geschützte Listeneintrag-IDs', 'Identifiants des entrées de liste protégées', 'Προστατευμένα ID εγγραφών λίστας'],
     keepFirst: ['Keep first positions unchanged', 'Erste Positionen unverändert lassen', 'Conserver les premières positions', 'Διατήρηση πρώτων θέσεων'],
     override: ['Explicitly allow changes to protected IDs', 'Änderungen an geschützten IDs ausdrücklich erlauben', 'Autoriser explicitement les modifications des identifiants protégés', 'Ρητή άδεια αλλαγών σε προστατευμένα ID'],

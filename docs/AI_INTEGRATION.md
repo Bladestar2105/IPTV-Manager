@@ -64,7 +64,9 @@ Rules support literal prefix removal or replacement with exceptions. Save a
 rule from an applied rename, inspect its preview, then separately enable future
 use. Automatic summaries after sync have a separate personal switch. Both are
 off initially; summaries run as separate jobs, and enabled rules need no model
-call. Rules can be disabled or deleted.
+call. Rules can be disabled or deleted. Each rule stays bound to its original
+target user; create a separate rule to use a confirmed transformation for
+another user.
 
 ## Network and data boundaries
 

@@ -322,7 +322,7 @@ window.aiUI = (() => {
     const scope = node('details', box); label('summary', scope, 'scope');
     field(scope, 'full-list', 'fullList', 'checkbox', false);
     field(scope, 'channel-ids', 'channelIds'); field(scope, 'category-id', 'categoryId', 'number');
-    field(scope, 'provider-id', 'providerId', 'number'); field(scope, 'pinned', 'pinned');
+    field(scope, 'pinned', 'pinned');
     field(scope, 'keep-first', 'keepFirst', 'number', 0); field(scope, 'override', 'override');
     const language = field(scope, 'language', 'language', 'select');
     for (const [code, name] of [['en', 'English'], ['de', 'Deutsch'], ['fr', 'Français'], ['el', 'Ελληνικά']]) option(language, code, name);
@@ -396,7 +396,6 @@ window.aiUI = (() => {
     const result = {feature: value('feature'), prompt: value('prompt'), language: value('language'), timezone: value('timezone'), connection_id: value('connection'), channel_ids: ids('channel-ids'), pinned_ids: ids('pinned'), selected_ids: ids('override'), keep_first: Number(value('keep-first') || 0), full_list: checked('full-list'), offset: nextOffset};
     if (currentUser.is_admin && (value('user') || result.feature !== 'diagnose')) { result.user_id = Number(value('user')); if (!Number.isSafeInteger(result.user_id) || result.user_id <= 0) throw {code: 'AI_INVALID_INPUT'}; }
     if (value('category-id')) result.category_id = Number(value('category-id'));
-    if (value('provider-id')) result.provider_id = Number(value('provider-id'));
     if (result.feature === 'search') {
       try { result.filters = JSON.parse(value('filters') || '{}'); } catch { throw {code: 'AI_INVALID_INPUT'}; }
       if (!result.filters || Array.isArray(result.filters) || typeof result.filters !== 'object') throw {code: 'AI_INVALID_INPUT'};

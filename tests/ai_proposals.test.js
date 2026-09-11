@@ -14,7 +14,7 @@ beforeAll(async()=>{
   ({saveRule,applyRulesAfterSync}=await import('../src/services/ai/library.js'));
 });
 beforeEach(()=>{
-  for(const table of ['ai_changes','ai_proposals','ai_rules','user_channels','user_categories','provider_channels','providers','users']) db.prepare(`DELETE FROM ${table}`).run();
+  for(const table of ['ai_changes','ai_proposals','ai_rules','user_channels','user_categories','provider_channels','providers','users','admin_users']) db.prepare(`DELETE FROM ${table}`).run();
   db.exec(`INSERT INTO users(id,username,password) VALUES(711,'one','x'),(712,'two','x');
     INSERT INTO providers(id,name,url,username,password,user_id) VALUES(811,'p','https://invalid','x','x',711),(812,'p2','https://invalid','x','x',712);
     INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(911,811,1,'DE | News'),(912,811,2,'DE | Sport'),(913,812,3,'Foreign');
@@ -73,6 +73,29 @@ it('requires confirmation for declarative rules and defaults future application 
   saveRule(actor,{...input,enabled:true},rule.id);
   expect(applyRulesAfterSync(711,[912])).toEqual({applied:1});
   expect(db.prepare('SELECT custom_name,assignment_origin FROM user_channels WHERE id=1112').get()).toEqual({custom_name:'Sport',assignment_origin:'manual'});
+});
+it('rejects an administrator retargeting a rule to another user without changing its future application',()=>{
+  const admin={id:711,is_admin:true};
+  db.exec(`INSERT INTO admin_users(id,username,password) VALUES(711,'rule-admin','x');
+    UPDATE provider_channels SET name='FR | News' WHERE id=913;
+    INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(914,812,4,'FR | Sport');
+    INSERT INTO user_channels(id,user_category_id,provider_channel_id,sort_order,assignment_origin) VALUES(1114,1012,914,1,'manual');`);
+  const confirmedRename=(userId,assignmentId)=>{
+    const proposal=createProposal(admin,{feature:'cleanup',user_id:userId},[{type:'rename_channel',user_channel_id:assignmentId,value:'News'}],'Clean');
+    applyProposal(admin,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:`rule-user-${userId}`});
+    return proposal;
+  };
+  const first=confirmedRename(711,1111);
+  const rule=saveRule(admin,{proposal_id:first.id,action_id:first.actions[0].id,name:'Strip DE',operation:'strip_prefix',match:'DE | ',enabled:true});
+  const before=db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id);
+  const second=confirmedRename(712,1113);
+
+  expect(()=>saveRule(admin,{proposal_id:second.id,action_id:second.actions[0].id,name:'Strip FR',match:'FR | '},rule.id)).toThrow(/AI_INVALID_RULE/);
+  expect(db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id)).toEqual(before);
+  expect(applyRulesAfterSync(711,[912])).toEqual({applied:1});
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1112').get().custom_name).toBe('Sport');
+  expect(applyRulesAfterSync(712,[914])).toEqual({applied:0});
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1114').get().custom_name).toBe('');
 });
 it('preserves pinned positions and region variants unless explicitly selected',()=>{
   expect(()=>createProposal(actor,{...payload,pinned_ids:[1111]},[{type:'reorder_channel',user_channel_id:1111,value:5}],'')).toThrow(/AI_PROTECTED_VALUE/);
