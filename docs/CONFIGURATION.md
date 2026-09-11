@@ -36,6 +36,11 @@ it defaults to disabled. Administrators explicitly allow user IDs and functions,
 may share an admin connection with selected users, and can allow private user
 connections. A user must also activate their own AI preferences.
 
+Automatic cleanup rules recheck account and Web UI access, the applicable user
+and function allowlists, and both server and personal AI enablement before
+applying. Revoked access skips application without deleting the stored rule.
+Already confirmed literal rules do not require a model connection to run.
+
 Public API targets require HTTPS. `internal_targets` allows exact normalized
 base URLs (including proxy prefixes) for administrator-approved internal
 services; it never allows CIDR ranges, metadata addresses, redirects or insecure

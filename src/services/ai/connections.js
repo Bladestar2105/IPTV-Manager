@@ -159,11 +159,15 @@ export function saveConnection(actor,input,id=null) {
 }
 export function deleteConnection(actor,id) { owned(actor,id); db.prepare('DELETE FROM ai_connections WHERE id=? AND owner_key=?').run(id,ownerKey(actor)); return {deleted:true}; }
 
-export function requireAiAccess(actor,feature,connectionId=null) {
+export function requireAiFeatureAccess(actor,feature) {
     const policy=settings(); eligible(actor,policy);
     const prefs=preferences(actor);
     if (!policy.enabled || !prefs.enabled) throw aiError('AI_DISABLED',403);
     if (feature !== 'setup' && (!FEATURES.includes(feature) || !policy.functions.includes(feature))) throw aiError('AI_FORBIDDEN',403);
+    return {settings:policy,preferences:prefs};
+}
+export function requireAiAccess(actor,feature,connectionId=null) {
+    const {settings:policy,preferences:prefs}=requireAiFeatureAccess(actor,feature);
     const connection=loadConnection(connectionId || prefs.connection_id);
     if (!canUse(actor,connection,policy)) throw aiError('AI_FORBIDDEN',403);
     if (!connection.enabled) throw aiError('AI_DISABLED',403);

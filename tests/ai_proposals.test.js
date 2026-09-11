@@ -15,12 +15,15 @@ beforeAll(async()=>{
   ({prunePrivateRecords}=await import('../src/services/ai/context.js'));
 });
 beforeEach(()=>{
-  for(const table of ['ai_changes','ai_proposals','ai_rules','user_channels','user_categories','provider_channels','providers','users','admin_users']) db.prepare(`DELETE FROM ${table}`).run();
+  for(const table of ['ai_changes','ai_proposals','ai_rules','ai_preferences','user_channels','user_categories','provider_channels','providers','users','admin_users']) db.prepare(`DELETE FROM ${table}`).run();
   db.exec(`INSERT INTO users(id,username,password) VALUES(711,'one','x'),(712,'two','x');
     INSERT INTO providers(id,name,url,username,password,user_id) VALUES(811,'p','https://invalid','x','x',711),(812,'p2','https://invalid','x','x',712);
     INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(911,811,1,'DE | News'),(912,811,2,'DE | Sport'),(913,812,3,'Foreign');
     INSERT INTO user_categories(id,user_id,name) VALUES(1011,711,'One'),(1012,712,'Two');
     INSERT INTO user_channels(id,user_category_id,provider_channel_id,sort_order,assignment_origin,mapping_id) VALUES(1111,1011,911,0,'mapping',99),(1112,1011,912,1,'manual',NULL),(1113,1012,913,0,'manual',NULL);`);
+  db.prepare("INSERT INTO settings(key,value) VALUES('ai_policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(JSON.stringify({enabled:true,allowed_user_ids:[711,712],functions:['cleanup']}));
+  for(const owner of ['user:711','admin:711']) db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES(?,?)').run(owner,JSON.stringify({enabled:true}));
 });
 afterAll(()=>{db?.close();fs.rmSync(dir,{recursive:true,force:true});});
 const rename=()=>createProposal(actor,payload,[{type:'rename_channel',user_channel_id:1111,value:'News'}],'Clean');
@@ -74,6 +77,43 @@ it('requires confirmation for declarative rules and defaults future application 
   saveRule(actor,{...input,enabled:true},rule.id);
   expect(applyRulesAfterSync(711,[912])).toEqual({applied:1});
   expect(db.prepare('SELECT custom_name,assignment_origin FROM user_channels WHERE id=1112').get()).toEqual({custom_name:'Sport',assignment_origin:'manual'});
+});
+it.each([
+  ['Web UI access',"UPDATE users SET webui_access=0 WHERE id=711"],
+  ['AI allowlist access',"UPDATE settings SET value=json_set(value,'$.allowed_user_ids',json('[]')) WHERE key='ai_policy'"],
+  ['cleanup access',"UPDATE settings SET value=json_set(value,'$.functions',json('[\"list\"]')) WHERE key='ai_policy'"],
+  ['server AI enablement',"UPDATE settings SET value=json_set(value,'$.enabled',json('false')) WHERE key='ai_policy'"],
+  ['personal AI enablement',"UPDATE ai_preferences SET data_json=json_set(data_json,'$.enabled',json('false')) WHERE owner_key='user:711'"],
+  ['account activity',"UPDATE users SET is_active=0 WHERE id=711"],
+  ['account validity',"UPDATE users SET expiry_date=1 WHERE id=711"]
+])('skips automatic rules after %s is revoked',(_permission,revoke)=>{
+  const proposal=rename();
+  applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'revoked-rule'});
+  const rule=saveRule(actor,{proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Cleanup',operation:'strip_prefix',match:'DE | ',enabled:true});
+  const before=db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n;
+  db.exec(revoke);
+  expect(applyRulesAfterSync(711,[912])).toEqual({applied:0});
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1112').get().custom_name).toBe('');
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(before);
+  expect(db.prepare('SELECT enabled FROM ai_rules WHERE id=?').get(rule.id).enabled).toBe(1);
+});
+it('continues authorized administrator rules after skipping a revoked user rule without a model connection',()=>{
+  const first=rename();
+  applyProposal(actor,first.id,{action_ids:[first.actions[0].id],idempotency_key:'user-rule'});
+  const userRule=saveRule(actor,{proposal_id:first.id,action_id:first.actions[0].id,name:'User cleanup',operation:'strip_prefix',match:'DE | ',enabled:true});
+  db.prepare('UPDATE ai_rules SET created_at=0 WHERE id=?').run(userRule.id);
+  const admin={id:711,is_admin:true};
+  db.prepare("INSERT INTO admin_users(id,username,password) VALUES(711,'rule-admin','x')").run();
+  const second=createProposal(admin,payload,[{type:'rename_channel',user_channel_id:1112,value:'Sport'}],'Admin cleanup');
+  applyProposal(admin,second.id,{action_ids:[second.actions[0].id],idempotency_key:'admin-rule'});
+  const adminRule=saveRule(admin,{proposal_id:second.id,action_id:second.actions[0].id,name:'Admin cleanup',operation:'strip_prefix',match:'DE | ',enabled:true});
+  db.exec(`INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(914,811,4,'DE | Movies');
+    INSERT INTO user_channels(id,user_category_id,provider_channel_id,assignment_origin) VALUES(1114,1011,914,'manual');
+    UPDATE users SET webui_access=0 WHERE id=711;`);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_connections').get().n).toBe(0);
+  expect(applyRulesAfterSync(711,[914])).toEqual({applied:1});
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1114').get().custom_name).toBe('Movies');
+  expect(db.prepare("SELECT owner_key,json_extract(data_json,'$.rule_id') AS rule_id FROM ai_changes WHERE json_extract(data_json,'$.rule_id') IS NOT NULL").all()).toEqual([{owner_key:'admin:711',rule_id:adminRule.id}]);
 });
 it('rejects an administrator retargeting a rule to another user without changing its future application',()=>{
   const admin={id:711,is_admin:true};

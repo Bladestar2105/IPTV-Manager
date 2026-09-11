@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
 import { clearChannelsCache } from '../cacheService.js';
+import { requireAiFeatureAccess } from './connections.js';
 import { ownerKey, targetUser, ids, safeText, fail, checkReferences, sourceDescription, RETENTION_MS } from './context.js';
 
 function owned(table,actor,id) {
@@ -94,8 +95,13 @@ export function applyRulesAfterSync(userId,channelIds) {
   db.transaction(()=>{
     for(const row of rules) {
       const actor={id:Number(row.owner_key.split(':')[1]),is_admin:row.owner_key.startsWith('admin:')};
-      if(!db.prepare(`SELECT 1 FROM ${actor.is_admin?'admin_users':'users'} WHERE id=? AND is_active=1`).get(actor.id)) continue;
-      targetUser(actor,userId);
+      try {
+        requireAiFeatureAccess(actor,'cleanup');
+        targetUser(actor,userId);
+      } catch(error) {
+        if(error.status===403) continue;
+        throw error;
+      }
       const rule=JSON.parse(row.data_json),diffs=[];
       for(const channelId of selected) {
         const channels=db.prepare(`SELECT uc.id,uc.custom_name,pc.name FROM authorized_user_channels uc
