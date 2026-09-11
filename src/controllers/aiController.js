@@ -46,9 +46,7 @@ export const getProposal = handle(async req => {
   return getProposal(req.user,req.params.id);
 });
 export const applyProposal = handle(async req => {
-  const {getProposal,applyProposal} = await import('../services/ai/proposals.js');
-  const proposal = await getProposal(req.user,req.params.id);
-  connections.requireAiAccess(req.user,proposal.feature || 'list');
+  const {applyProposal} = await import('../services/ai/proposals.js');
   return applyProposal(req.user,req.params.id,req.body);
 });
 export const getChange = handle(async req => {
@@ -68,7 +66,7 @@ export const listRules = handle(async req => {
   return listRules(req.user,req.query.user_id);
 });
 export const saveRule = handle(async req => {
-  connections.requireAiAccess(req.user,'cleanup');
+  connections.requireAiFeatureAccess(req.user,'cleanup');
   const {saveRule} = await import('../services/ai/library.js');
   return saveRule(req.user,req.body,req.params.id || null);
 });

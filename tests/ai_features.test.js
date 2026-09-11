@@ -276,6 +276,124 @@ describe('authorized AI features', () => {
     expect(result.coverage).toMatchObject({processed:252,total:252,partial:false,next_offset:null});
     expect(new Set(seen).size).toBe(252);
   });
+  it.each([
+    ['list',{type:'assign_channel',provider_channel_id:901,category_id:2020}],
+    ['cleanup',{type:'rename_category',category_id:2020,value:'Reviewed category'}]
+  ])('rejects an owned category omitted from the %s request and permits it when supplied',async(feature,action)=>{
+    const {getProposal}=await import('../src/services/ai/proposals.js');
+    db.transaction(()=>{
+      for(let i=0;i<21;i++) db.prepare('INSERT INTO user_categories(id,user_id,name) VALUES(?,701,?)').run(2000+i,`Category ${i}`);
+    })();
+    await expect(executeFeature(user,{feature,channel_ids:[901]},{infer:async request=>{
+      const data=JSON.parse(request.messages[1].content);
+      expect(data.categories.map(category=>category.id)).not.toContain(2020);
+      return {data:{summary:'Edit categories',actions:[{type:'rename_channel',user_channel_id:1101,value:'News'},action]},model:'test'};
+    }})).rejects.toThrow(/AI_INVALID_CANDIDATE/);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+    db.prepare('UPDATE user_categories SET sort_order=-1 WHERE id=2020').run();
+    const result=await executeFeature(user,{feature,channel_ids:[901]},{infer:async request=>{
+      expect(JSON.parse(request.messages[1].content).categories.map(category=>category.id)).toContain(2020);
+      return {data:{summary:'Edit supplied category',actions:[action]},model:'test'};
+    }});
+    expect(getProposal(user,result.proposal_id).actions).toEqual([expect.objectContaining({type:action.type,category_id:2020})]);
+    expect(()=>getProposal(other,result.proposal_id)).toThrow(/AI_NOT_FOUND/);
+    db.prepare("UPDATE user_categories SET name='Changed category' WHERE id=2020").run();
+    expect(()=>getProposal(user,result.proposal_id)).toThrow(/AI_STALE_PROPOSAL/);
+  });
+  it('rejects a category supplied only to an earlier batch without persisting its earlier actions',async()=>{
+    db.transaction(()=>{
+      for(let i=0;i<21;i++) db.prepare('INSERT INTO user_categories(id,user_id,name) VALUES(?,701,?)').run(2000+i,`Category ${i}`);
+      db.prepare('UPDATE user_channels SET user_category_id=2020 WHERE id=1101').run();
+      for(let i=0;i<80;i++) db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Channel ${i}`);
+    })();
+    let calls=0;
+    await expect(executeFeature(user,{feature:'cleanup',full_list:true},{infer:async request=>{
+      const data=JSON.parse(request.messages[1].content);
+      expect(data.items.length).toBeLessThanOrEqual(80);
+      expect(JSON.stringify(request.messages).length).toBeLessThanOrEqual(64000);
+      const first=++calls===1;
+      if(first) expect(data.categories.map(category=>category.id)).toContain(2020);
+      else expect(data.categories.map(category=>category.id)).not.toContain(2020);
+      return {data:{summary:'Review batch',actions:[first?{type:'rename_channel',user_channel_id:1101,value:'News'}:
+        {type:'rename_category',category_id:2020,value:'Outside current batch'}]},model:'test'};
+    }})).rejects.toThrow(/AI_INVALID_CANDIDATE/);
+    expect(calls).toBe(2);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+  });
+  it('preserves new-category dependencies and planned-category reuse across list batches',async()=>{
+    const {getProposal}=await import('../src/services/ai/proposals.js');
+    db.transaction(()=>{
+      for(let i=0;i<80;i++) db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Channel ${i}`);
+    })();
+    const created={type:'create_category',key:'news',name:'News',category_type:'live'};
+    let calls=0;
+    const result=await executeFeature(user,{feature:'list',full_list:true},{infer:async request=>{
+      const data=JSON.parse(request.messages[1].content),first=++calls===1;
+      if(!first) expect(data.planned_categories).toEqual([created]);
+      return {data:{summary:'Organize news',actions:[...(first?[created]:[]),
+        {type:'assign_channel',provider_channel_id:data.items[0].provider_channel_id,category_key:'news'}]},model:'test'};
+    }});
+    const proposal=getProposal(user,result.proposal_id);
+    expect(calls).toBe(2);
+    expect(proposal.actions).toHaveLength(3);
+    expect(proposal.actions[0]).toMatchObject({type:'create_category',after:{name:'News'}});
+    for(const action of proposal.actions.slice(1)) expect(action).toMatchObject({type:'assign_channel',dependencies:[proposal.actions[0].id]});
+  });
+  it.each([
+    ['provider channel',{type:'assign_channel',provider_channel_id:2079,category_id:1001}],
+    ['user channel',{type:'rename_channel',user_channel_id:4079,value:'Outside current candidates'}],
+    ['category',{type:'assign_channel',provider_channel_id:901,category_id:2020}]
+  ])('rejects a sync %s omitted from the supplied current candidates',async(kind,action)=>{
+    db.transaction(()=>{
+      db.prepare("INSERT INTO user_categories(id,user_id,name) VALUES(2020,701,'Unsent category')").run();
+      for(let i=0;i<80;i++) {
+        db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Channel ${i}`);
+        db.prepare('INSERT INTO user_channels(id,user_category_id,provider_channel_id) VALUES(?,?,?)').run(4000+i,i===79?2020:1001,2000+i);
+      }
+    })();
+    db.prepare('INSERT INTO ai_sync_snapshots(id,user_id,provider_id,data_json,created_at) VALUES(?,?,?,?,?)')
+      .run('candidate-sync',701,801,JSON.stringify({complete:true,changes:[]}),Date.now());
+    await expect(executeFeature(user,{feature:'sync'},{infer:async request=>{
+      const data=JSON.parse(request.messages[1].content);
+      expect(data.candidates).toHaveLength(80);
+      expect(data.candidates.some(item=>item.provider_channel_id===2079||item.user_channel_id===4079||item.category_id===2020)).toBe(false);
+      return {data:{summary:'Review sync',actions:[{type:'rename_channel',user_channel_id:1101,value:'News'},action]},model:'test'};
+    }})).rejects.toThrow(/AI_INVALID_CANDIDATE/);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+  });
+  it('permits supplied sync IDs and a new-category dependency',async()=>{
+    const {getProposal}=await import('../src/services/ai/proposals.js');
+    db.prepare('INSERT INTO ai_sync_snapshots(id,user_id,provider_id,data_json,created_at) VALUES(?,?,?,?,?)')
+      .run('candidate-sync',701,801,JSON.stringify({complete:true,changes:[]}),Date.now());
+    const result=await executeFeature(user,{feature:'sync'},{infer:infer({summary:'Review current candidates',actions:[
+      {type:'assign_channel',provider_channel_id:901,category_id:1001},
+      {type:'rename_channel',user_channel_id:1102,value:'News SD'},
+      {type:'create_category',key:'news',name:'News',category_type:'live'},
+      {type:'assign_channel',provider_channel_id:902,category_key:'news'}
+    ]})});
+    const proposal=getProposal(user,result.proposal_id);
+    expect(proposal.actions).toHaveLength(4);
+    expect(proposal.actions[0]).toMatchObject({type:'assign_channel',provider_channel_id:901,category_id:1001});
+    expect(proposal.actions[1]).toMatchObject({type:'rename_channel',user_channel_id:1102});
+    expect(proposal.actions[3]).toMatchObject({type:'assign_channel',provider_channel_id:902,dependencies:[proposal.actions[2].id]});
+  });
+  it('rejects an EPG mapping omitted from the supplied review cases',async()=>{
+    epg.exec("INSERT INTO epg_channels(id,name,source_type,source_id,updated_at) VALUES('news','News','provider',801,1)");
+    db.transaction(()=>{
+      for(let i=0;i<80;i++) {
+        db.prepare("INSERT INTO provider_channels(id,provider_id,remote_stream_id,name,epg_channel_id) VALUES(?,801,?,'News','news')").run(2000+i,2000+i);
+        db.prepare('INSERT INTO user_channels(id,user_category_id,provider_channel_id) VALUES(?,1001,?)').run(4000+i,2000+i);
+      }
+    })();
+    await expect(executeFeature(user,{feature:'epg'},{infer:async request=>{
+      const data=JSON.parse(request.messages[1].content);
+      expect(data.cases).toHaveLength(80);
+      expect(data.cases.some(item=>item.provider_channel_id===2079)).toBe(false);
+      return {data:{summary:'Review EPG',actions:[{type:'epg_mapping',provider_channel_id:2079,epg_channel_id:'news',source_type:'provider',source_id:801}]},model:'test'};
+    }})).rejects.toThrow(/AI_INVALID_CANDIDATE/);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM epg_channel_mappings').get().n).toBe(0);
+  });
   it('checks source revocation again after inference before storing proposals',async()=>{
     await expect(executeFeature(user,{feature:'cleanup'},{infer:async()=>{
       db.prepare('UPDATE user_channels SET authorization_revoked=1 WHERE id=1101').run();

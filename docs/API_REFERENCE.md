@@ -65,6 +65,13 @@ Model selection requires a successful compatibility test. Shared-connection
 users cannot edit, discover or test the owner's connection or retrieve its key.
 Server policy defaults to disabled, and each user must opt in separately.
 
+Proposal Apply and rule POST/PUT operations do not require an available model
+connection or tested model. They make no provider request and retain current
+account, Web UI, server/personal AI and feature authorization, ownership,
+confirmation and source/conflict checks. Removing model setup does not prevent
+an authorized user from confirming stored work or disabling a confirmed rule.
+Inference and connection setup retain their connection/model permission checks.
+
 Discovery returns model IDs with a bounded `candidate` hint (`text`, `other`,
 `unknown`), without changing saved selection. A compatibility profile includes
 `chat`, `structured`, `status`, `token_parameter`, `tested_at`, and a stable
@@ -133,6 +140,9 @@ Sync `diff.counts` covers all currently authorized recorded changes. The
 `partial` describe its coverage. Revoking access to an off-preview change also
 invalidates the bound result. Stored results using the former snapshot-only
 evidence hash need a new analysis; requests are not automatically replayed.
+Proposal responses may reference only existing channel, assignment and category
+IDs supplied in that exact model request. This includes the bounded sync
+candidates and EPG review cases; ownership alone does not admit an omitted ID.
 
 Program search uses stable channel/source/start pagination. `truncated:true`
 reports unexamined rows or a capped source catalog even when there are no

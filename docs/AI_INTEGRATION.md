@@ -115,6 +115,18 @@ selected for editing. Proposals carry exact source state and dependencies.
 Stale proposals and undo conflicts require a fresh review; Undo does not
 restore a whole backup or overwrite intervening user edits.
 
+Applying a stored proposal and saving confirmed literal rules are local
+operations. They require current account/Web UI access, enabled server/personal
+AI and the relevant feature permission, but can continue after a connection or
+selected model is removed or disabled. They make no inference request. Source,
+ownership, confirmation and conflict checks still apply.
+
+Existing channel, assignment and category IDs returned by the model must belong
+to the exact request batch, even when omitted entries belong to the same user.
+Sync proposals use only their supplied current candidates, and EPG proposals
+use only their supplied channel cases and mapping candidates. Valid dependencies
+on newly proposed categories remain available.
+
 The output schema, proposal creation and Apply share a closed action contract:
 `list` allows category creation/renaming, assignment, personal renaming, hiding
 and reordering; `cleanup` allows only renaming, hiding and reordering;

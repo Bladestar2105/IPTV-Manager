@@ -56,6 +56,14 @@ function listModelItem(item,feature) {
     name:feature==='duplicates'?item.original_name:item.name,type:item.type,genre:safeText(item.genre,40)||null,
     sort_order:item.sort_order,manual_name:item.manual_name,hidden:item.hidden};
 }
+function validateProposalCandidates(actions,items,categoryIds) {
+  if(!Array.isArray(actions)||actions.length>80) fail('AI_INVALID_ACTIONS');
+  for(const action of actions) {
+    if(action.user_channel_id && !items.some(item=>item.user_channel_id===action.user_channel_id)) fail('AI_INVALID_CANDIDATE');
+    if(action.provider_channel_id && !items.some(item=>item.provider_channel_id===action.provider_channel_id)) fail('AI_INVALID_CANDIDATE');
+    if(action.category_id && !categoryIds.includes(action.category_id)) fail('AI_INVALID_CANDIDATE');
+  }
+}
 function duplicateGroups(actor,context) {
   const keys=item=>{
     const normalized=item.original_name.toLocaleLowerCase().replace(/\b(?:uhd|fhd|hd|sd|4k|8k|hevc|h264|h265)\b/g,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim();
@@ -169,11 +177,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
         batch=batch.slice(0,Math.ceil(batch.length/2));
       }
       const reply=await ask(data,proposalSchema(payload.feature),instructions);
-      if(!Array.isArray(reply.data.actions)||reply.data.actions.length>80) fail('AI_INVALID_ACTIONS');
-      for(const action of reply.data.actions) {
-        if(action.user_channel_id && !batch.some(item=>item.user_channel_id===action.user_channel_id)) fail('AI_INVALID_CANDIDATE');
-        if(action.provider_channel_id && !batch.some(item=>item.provider_channel_id===action.provider_channel_id)) fail('AI_INVALID_CANDIDATE');
-      }
+      validateProposalCandidates(reply.data.actions,data.items,data.categories.map(category=>category.id));
       actions.push(...reply.data.actions);summaries.push(safeText(reply.data.summary,1000));
       i+=batch.length;
     }
@@ -188,11 +192,12 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
     result._authorization.epg_program_evidence=evidence.program_evidence;
     const open=evidence.cases.filter(item=>item.status==='ambiguous' || (payload.selected_ids||[]).includes(item.user_channel_id));
     if(open.length) {
-      const reply=await ask({cases:open.slice(0,80),protections:protect},proposalSchema(payload.feature),'Only epg_mapping proposals, from the candidates for that exact provider_channel_id. A program gap alone does not prove a bad mapping. Uncertain cases should have no action.');
+      const reviewed=open.slice(0,80);
+      const reply=await ask({cases:reviewed,protections:protect},proposalSchema(payload.feature),'Only epg_mapping proposals, from the candidates for that exact provider_channel_id. A program gap alone does not prove a bad mapping. Uncertain cases should have no action.');
       const actions=reply.data.actions;
       if(!Array.isArray(actions)) fail('AI_INVALID_ACTIONS');
       for(const action of actions) {
-        const candidates=open.find(item=>item.provider_channel_id===action.provider_channel_id)?.candidates||[];
+        const candidates=reviewed.find(item=>item.provider_channel_id===action.provider_channel_id)?.candidates||[];
         if(!candidates.some(item=>item.id===action.epg_channel_id&&item.source_type===action.source_type&&item.source_id===action.source_id)) fail('AI_INVALID_CANDIDATE');
       }
       result.summary=safeText(reply.data.summary,2000);
@@ -232,11 +237,11 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
     if(!sync) {result.diff=null;result.findings=[{code:'sync_history_unavailable',certainty:'unknown'}];}
     else {
       result.diff=sync.diff;result._authorization.sync_snapshot_id=sync.id;result._authorization.sync_hash=sync.hash;
-      const reply=await ask({diff:sync.diff,candidates:context.items.slice(0,80)},proposalSchema(payload.feature),'Explain only the supplied successful sync diff. Counts are authoritative. Successor proposals must use supplied current candidates and need confirmation.');
+      const candidates=context.items.slice(0,80);
+      const reply=await ask({diff:sync.diff,candidates},proposalSchema(payload.feature),'Explain only the supplied successful sync diff. Counts are authoritative. Successor proposals must use supplied current candidates and need confirmation.');
       authorizeResult(actor,payload,result);
       result.summary=safeText(reply.data.summary,2000);
-      if(!Array.isArray(reply.data.actions)) fail('AI_INVALID_ACTIONS');
-      for(const action of reply.data.actions) if(action.provider_channel_id && !context.items.some(item=>item.provider_channel_id===action.provider_channel_id)) fail('AI_INVALID_CANDIDATE');
+      validateProposalCandidates(reply.data.actions,candidates,candidates.map(item=>item.category_id));
       signal?.throwIfAborted();
       if(reply.data.actions.length) result.proposal_id=createProposal(actor,{...payload,user_id:context.userId},reply.data.actions,result.summary,context.refs).id;
     }

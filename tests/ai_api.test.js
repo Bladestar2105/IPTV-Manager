@@ -29,6 +29,45 @@ afterAll(async () => {
   rmSync(dataDir, {recursive:true,force:true});
 });
 
+let fixtureIndex=0;
+async function localActionFixture() {
+  const api=await import('../src/services/ai/connections.js');
+  const proposals=await import('../src/services/ai/proposals.js');
+  const {generateToken}=await import('../src/services/authService.js');
+  const id=Number(db.prepare("INSERT INTO users(username,password) VALUES (?,'unused')").run(`local-actions-${++fixtureIndex}`).lastInsertRowid);
+  const actor={id,is_admin:false},token=generateToken(actor),base='http://127.0.0.1:1/v1';
+  api.updateAiSettings(admin,{enabled:true,allow_own_connections:true,allowed_user_ids:[id,other.id],functions:['cleanup','list'],internal_targets:[base]});
+  api.savePreferences(actor,{enabled:true});
+  const connection=api.saveConnection(actor,{name:'Stored-action fixture',base_url:base});
+  // Seed a previously tested synthetic profile; these local actions must not contact an endpoint.
+  const capabilities={fixture:{chat:true,structured:true,token_parameter:connection.token_parameter,tested_at:Date.now()}};
+  db.prepare("UPDATE ai_connections SET data_json=json_set(data_json,'$.model_id','fixture','$.capabilities',json(?)) WHERE id=?").run(JSON.stringify(capabilities),connection.id);
+  api.savePreferences(actor,{connection_id:connection.id,model_id:'fixture'});
+  api.requireAiAccess(actor,'cleanup');
+  const provider=Number(db.prepare("INSERT INTO providers(name,url,username,password,user_id) VALUES ('Local actions','https://unused.invalid','unused','unused',?)").run(id).lastInsertRowid);
+  const category=Number(db.prepare("INSERT INTO user_categories(user_id,name) VALUES (?,'Local actions')").run(id).lastInsertRowid);
+  const items=['News','Sport'].map((name,index)=>{
+    const channel=Number(db.prepare('INSERT INTO provider_channels(provider_id,remote_stream_id,name) VALUES (?,?,?)').run(provider,index+1,`Prefix | ${name}`).lastInsertRowid);
+    const assignment=Number(db.prepare("INSERT INTO user_channels(user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')").run(category,channel).lastInsertRowid);
+    return {channel,assignment,name};
+  });
+  const proposal=proposals.createProposal(actor,{feature:'cleanup'},[{type:'rename_channel',user_channel_id:items[0].assignment,value:'News'}]);
+  const selection={action_ids:[proposal.actions[0].id],idempotency_key:`local-confirm-${id}`};
+  return {api,proposals,actor,token,connection,items,proposal,selection};
+}
+
+function removeModelSetup(fixture,kind) {
+  const {api,actor,connection}=fixture;
+  if(kind==='deleted connection') api.deleteConnection(actor,connection.id);
+  if(kind==='disabled connection') api.saveConnection(actor,{enabled:false},connection.id);
+  if(kind==='missing selection') {
+    api.savePreferences(actor,{model_id:null});
+    api.saveConnection(actor,{model_id:null},connection.id);
+  }
+  if(kind==='untested model') db.prepare("UPDATE ai_connections SET data_json=json_set(data_json,'$.capabilities',json('{}')) WHERE id=?").run(connection.id);
+  expect(()=>api.requireAiAccess(actor,'cleanup')).toThrow();
+}
+
 describe('AI management boundary', () => {
   it('requires a WebUI header bearer even when a valid token is in the query', async () => {
     expect((await request(app).get('/api/ai/settings')).status).toBe(401);
@@ -183,5 +222,87 @@ describe('AI management boundary', () => {
     await request(app).get('/api/ai/changes/rule-history').auth(otherToken,{type:'bearer'}).expect(404);
     await request(app).post('/api/ai/changes/rule-history/undo').auth(userToken,{type:'bearer'}).send({}).expect(200);
     expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(assignment.id).custom_name).toBe('');
+  });
+
+  it.each(['deleted connection','disabled connection','missing selection','untested model'])('confirms a stored proposal with %s without an inference request',async kind=>{
+    const fixture=await localActionFixture();
+    const {token,proposal,selection,items}=fixture;
+    removeModelSetup(fixture,kind);
+    const usage=db.prepare('SELECT COUNT(*) AS n FROM ai_usage').get().n;
+    await request(app).get(`/api/ai/proposals/${proposal.id}`).auth(token,{type:'bearer'}).expect(200);
+    const applied=await request(app).post(`/api/ai/proposals/${proposal.id}/apply`).auth(token,{type:'bearer'}).send(selection).expect(200);
+    const repeated=await request(app).post(`/api/ai/proposals/${proposal.id}/apply`).auth(token,{type:'bearer'}).send(selection).expect(200);
+    expect(repeated.body).toEqual(applied.body);
+    expect(db.prepare('SELECT custom_name,assignment_origin FROM user_channels WHERE id=?').get(items[0].assignment)).toEqual({custom_name:'News',assignment_origin:'manual'});
+    await request(app).post(`/api/ai/changes/${applied.body.change_id}/undo`).auth(token,{type:'bearer'}).send({}).expect(200);
+    expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(items[0].assignment).custom_name).toBe('');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_usage').get().n).toBe(usage);
+  });
+
+  it.each(['deleted connection','disabled connection','missing selection','untested model'])('disables a confirmed automatic rule with %s without an inference request',async kind=>{
+    const fixture=await localActionFixture();
+    const {actor,token,proposal,selection,items}=fixture;
+    await request(app).post(`/api/ai/proposals/${proposal.id}/apply`).auth(token,{type:'bearer'}).send(selection).expect(200);
+    const rule=await request(app).post('/api/ai/rules').auth(token,{type:'bearer'}).send({proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Strip prefix',operation:'strip_prefix',match:'Prefix | ',enabled:true}).expect(200);
+    removeModelSetup(fixture,kind);
+    const usage=db.prepare('SELECT COUNT(*) AS n FROM ai_usage').get().n;
+    const {applyRulesAfterSync}=await import('../src/services/ai/library.js');
+    expect(applyRulesAfterSync(actor.id,[items[1].channel])).toEqual({applied:1});
+    const disabled=await request(app).put(`/api/ai/rules/${rule.body.id}`).auth(token,{type:'bearer'}).send({enabled:false}).expect(200);
+    expect(disabled.body.enabled).toBe(false);
+    const change=db.prepare("SELECT id FROM ai_changes WHERE user_id=? AND json_extract(data_json,'$.rule_id')=?").get(actor.id,rule.body.id);
+    await request(app).post(`/api/ai/changes/${change.id}/undo`).auth(token,{type:'bearer'}).send({}).expect(200);
+    expect(applyRulesAfterSync(actor.id,[items[1].channel])).toEqual({applied:0});
+    expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(items[1].assignment).custom_name).toBe('');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_usage').get().n).toBe(usage);
+  });
+
+  it.each(['server policy','personal preference','user allowlist','feature allowlist','Web UI access','active account'])('keeps the %s gate on local actions after model loss',async kind=>{
+    const fixture=await localActionFixture();
+    const {api,proposals,actor,token,proposal,selection,items}=fixture;
+    proposals.applyProposal(actor,proposal.id,selection);
+    const {saveRule}=await import('../src/services/ai/library.js');
+    const rule=saveRule(actor,{proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Confirmed cleanup',operation:'strip_prefix',match:'Prefix | ',enabled:true});
+    const pending=proposals.createProposal(actor,{feature:'cleanup'},[{type:'rename_channel',user_channel_id:items[1].assignment,value:'Sport'}]);
+    removeModelSetup(fixture,'deleted connection');
+    if(kind==='server policy') api.updateAiSettings(admin,{enabled:false});
+    if(kind==='personal preference') api.savePreferences(actor,{enabled:false});
+    if(kind==='user allowlist') api.updateAiSettings(admin,{allowed_user_ids:[]});
+    if(kind==='feature allowlist') api.updateAiSettings(admin,{functions:['list']});
+    if(kind==='Web UI access') db.prepare('UPDATE users SET webui_access=0 WHERE id=?').run(actor.id);
+    if(kind==='active account') db.prepare('UPDATE users SET is_active=0 WHERE id=?').run(actor.id);
+    const before=db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id);
+    const status=kind==='active account'?401:403;
+    await request(app).post(`/api/ai/proposals/${pending.id}/apply`).auth(token,{type:'bearer'}).send({action_ids:[pending.actions[0].id],idempotency_key:'revoked-local'}).expect(status);
+    await request(app).put(`/api/ai/rules/${rule.id}`).auth(token,{type:'bearer'}).send({enabled:false}).expect(status);
+    expect(db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id)).toEqual(before);
+    expect(db.prepare('SELECT status FROM ai_proposals WHERE id=?').get(pending.id).status).toBe('pending');
+    expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(items[1].assignment).custom_name).toBe('');
+  });
+
+  it.each(['source version','source authorization'])('still rejects changed %s before local Apply without a model',async kind=>{
+    const fixture=await localActionFixture();
+    const {token,proposal,selection,items}=fixture;
+    removeModelSetup(fixture,'deleted connection');
+    if(kind==='source version') db.prepare("UPDATE provider_channels SET name='Changed source' WHERE id=?").run(items[0].channel);
+    else db.prepare('UPDATE user_channels SET authorization_revoked=1 WHERE id=?').run(items[0].assignment);
+    const response=await request(app).post(`/api/ai/proposals/${proposal.id}/apply`).auth(token,{type:'bearer'}).send(selection).expect(409);
+    expect(response.body.code).toBe(kind==='source version'?'AI_STALE_SOURCE':'AI_SOURCE_UNAVAILABLE');
+    expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(items[0].assignment).custom_name).toBe('');
+    expect(db.prepare('SELECT status FROM ai_proposals WHERE id=?').get(proposal.id).status).toBe('pending');
+  });
+
+  it('preserves proposal and rule ownership after model loss',async()=>{
+    const fixture=await localActionFixture();
+    const {api,proposals,actor,proposal,selection}=fixture;
+    proposals.applyProposal(actor,proposal.id,selection);
+    const {saveRule}=await import('../src/services/ai/library.js');
+    const rule=saveRule(actor,{proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Owned cleanup',operation:'strip_prefix',match:'Prefix | ',enabled:true});
+    removeModelSetup(fixture,'deleted connection');
+    api.savePreferences(other,{enabled:true});
+    const before=db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id);
+    await request(app).post(`/api/ai/proposals/${proposal.id}/apply`).auth(otherToken,{type:'bearer'}).send(selection).expect(404);
+    await request(app).put(`/api/ai/rules/${rule.id}`).auth(otherToken,{type:'bearer'}).send({enabled:false}).expect(404);
+    expect(db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id)).toEqual(before);
   });
 });
