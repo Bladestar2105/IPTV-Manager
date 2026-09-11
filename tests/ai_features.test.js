@@ -162,6 +162,79 @@ describe('authorized AI features', () => {
     const unavailable=await executeFeature(user,{feature:'sync'}, {infer:async()=>{throw new Error('Should not run');}});
     expect(unavailable.diff).toBeNull();
   });
+  it.each([0,1000])('counts all 1500 authorized sync changes with %i revoked changes before the preview',async(revokedPrefix)=>{
+    const insertChannel=db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)');
+    const insertAssignment=db.prepare('INSERT INTO user_channels(id,user_category_id,provider_channel_id,authorization_revoked) VALUES(?,1001,?,?)');
+    const changes=[];
+    db.transaction(()=>{
+      for(let i=0;i<1500+revokedPrefix;i++) {
+        const id=2000+i,revoked=i<revokedPrefix,name=revoked?`Revoked ${i}`:`Authorized ${i}`;
+        insertChannel.run(id,id,name);insertAssignment.run(10000+i,id,Number(revoked));
+        const fields={category_id:1001,category_name:'My list',stream_type:'live'};
+        changes.push({kind:'renamed',provider_channel_id:id,user_channel_id:10000+i,
+          before:{...fields,name:`Old ${name}`},after:{...fields,name}});
+      }
+    })();
+    const foreign={kind:'renamed',provider_channel_id:903,user_channel_id:1103,
+      before:{name:'Private before'},after:{name:'Private channel'}};
+    changes.unshift(foreign);changes.push(foreign);
+    db.prepare('INSERT INTO ai_sync_snapshots(id,user_id,provider_id,data_json,created_at) VALUES(?,?,?,?,?)')
+      .run('large-sync',701,801,JSON.stringify({complete:true,changes,counts:{renamed:9999}}),Date.now());
+    let sent;
+    const result=await executeFeature(user,{feature:'sync',channel_ids:[901]},{infer:async request=>{
+      sent=JSON.parse(request.messages[1].content);
+      expect(JSON.stringify(request.messages).length).toBeLessThanOrEqual(64000);
+      return {data:{summary:'1500 authorized renames',actions:[]},model:'synthetic'};
+    }});
+    for(const diff of [sent.diff,result.diff]) {
+      expect(diff.counts).toEqual({added:0,removed:0,renamed:1500,reassigned:0});
+      expect(diff.complete).toBe(true);
+      expect(diff.changes).toHaveLength(20);
+      expect(diff.preview).toEqual({total:1500,shown:20,partial:true});
+      expect(diff.changes[0].provider_channel_id).toBe(2000+revokedPrefix);
+    }
+    expect(JSON.stringify([sent,result])).not.toMatch(/Private|Revoked/);
+  });
+  it.each(['inference','read'])('invalidates sync evidence revoked beyond the preview during %s',async(phase)=>{
+    const changes=[];
+    db.transaction(()=>{
+      for(let i=0;i<21;i++) {
+        db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Channel ${i}`);
+        db.prepare('INSERT INTO user_channels(id,user_category_id,provider_channel_id) VALUES(?,1001,?)').run(4000+i,2000+i);
+        changes.push({kind:'renamed',provider_channel_id:2000+i,user_channel_id:4000+i,
+          before:{name:`Old ${i}`},after:{name:`Channel ${i}`}});
+      }
+    })();
+    db.prepare('INSERT INTO ai_sync_snapshots(id,user_id,provider_id,data_json,created_at) VALUES(?,?,?,?,?)')
+      .run('revoke-sync',701,801,JSON.stringify({complete:true,changes}),Date.now());
+    const revoke=()=>db.prepare('UPDATE user_channels SET authorization_revoked=1 WHERE id=4020').run();
+    const payload={feature:'sync',channel_ids:[901]};
+    const generate=()=>executeFeature(user,payload,{infer:async()=>{
+      if(phase==='inference') revoke();
+      return {data:{summary:'21 renames',actions:[{type:'rename_channel',user_channel_id:1101,value:'News'}]},model:'synthetic'};
+    }});
+    if(phase==='inference') {
+      await expect(generate()).rejects.toThrow(/AI_STALE_SOURCE/);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+    } else {
+      const result=await generate();
+      expect(result.diff.counts.renamed).toBe(21);
+      expect(result.diff.changes).toHaveLength(20);
+      revoke();
+      expect(()=>authorizeResult(user,payload,JSON.parse(JSON.stringify(result)))).toThrow(/AI_STALE_SOURCE/);
+    }
+  });
+  it('retains historical sync removals only while the provider remains authorized',async()=>{
+    const changes=[{kind:'removed',provider_channel_id:2000,user_channel_id:4000,
+      before:{name:'Removed channel',category_id:1001,category_name:'My list',stream_type:'live'},after:null}];
+    db.prepare('INSERT INTO ai_sync_snapshots(id,user_id,provider_id,data_json,created_at) VALUES(?,?,?,?,?)')
+      .run('removed-sync',701,801,JSON.stringify({complete:true,changes}),Date.now());
+    const result=await executeFeature(user,{feature:'sync'}, {infer:infer({summary:'One removal',actions:[]})});
+    expect(result.diff.counts).toEqual({added:0,removed:1,renamed:0,reassigned:0});
+    expect(result.diff.changes).toEqual(changes);
+    db.prepare('UPDATE providers SET user_id=702 WHERE id=801').run();
+    expect(()=>authorizeResult(user,{feature:'sync'},result)).toThrow(/AI_SOURCE_UNAVAILABLE/);
+  });
   it('finds duplicate representatives across pages and honestly reports partial final pages',async()=>{
     db.prepare("INSERT INTO provider_channels(id,provider_id,remote_stream_id,name,stream_type) VALUES(904,801,4,'Other','live')").run();
     const result=await executeFeature(user,{feature:'duplicates',offset:1}, {infer:infer({summary:'Variants',actions:[]})});

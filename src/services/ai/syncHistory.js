@@ -90,7 +90,12 @@ export function scheduleSyncFollowups(records) {
       const {createJob} = await import('./jobs.js');
       for (const record of records) {
         try {
-          applyRulesAfterSync(record.user_id,record.added_ids);
+          for(let offset=0;offset<record.added_ids.length;offset+=5000) {
+            applyRulesAfterSync(record.user_id,record.added_ids.slice(offset,offset+5000));
+            await new Promise(resolve=>setImmediate(resolve));
+          }
+        } catch { /* Rule failures must not suppress the independent summary. */ }
+        try {
           const preferences = JSON.parse(db.prepare('SELECT data_json FROM ai_preferences WHERE owner_key = ?').get(`user:${record.user_id}`)?.data_json || '{}');
           if (preferences.enabled && preferences.auto_sync_summary === true) {
             createJob({id:record.user_id,is_admin:false},{feature:'sync',snapshot_id:record.id},`sync_${record.id}`);

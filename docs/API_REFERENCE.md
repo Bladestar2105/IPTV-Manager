@@ -128,6 +128,11 @@ patches with `query`, `type`, `genre`, `language`, `region`, `start`, `end`,
 must have an explicit UTC offset; time windows are bounded to 14 days. Text
 requests use `provider_channel_id`, `operation` and optionally an actual
 `program` reference. Sync requests may select a recorded `snapshot_id`.
+Sync `diff.counts` covers all currently authorized recorded changes. The
+`diff.changes` preview is limited to 20 rows; `diff.preview.total`, `shown` and
+`partial` describe its coverage. Revoking access to an off-preview change also
+invalidates the bound result. Stored results using the former snapshot-only
+evidence hash need a new analysis; requests are not automatically replayed.
 
 Program search uses stable channel/source/start pagination. `truncated:true`
 reports unexamined rows or a capped source catalog even when there are no

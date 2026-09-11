@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
 import { clearChannelsCache } from '../cacheService.js';
 import { requireAiFeatureAccess } from './connections.js';
-import { ownerKey, targetUser, ids, safeText, fail, checkReferences, sourceDescription, RETENTION_MS } from './context.js';
+import { ownerKey, targetUser, ids, safeText, fail, checkReferences, sourceDescription, RETENTION_MS, prunePrivateRecords } from './context.js';
 
 function owned(table,actor,id) {
   const row=db.prepare(`SELECT * FROM ${table} WHERE id=? AND owner_key=?`).get(id,ownerKey(actor));
@@ -120,6 +120,7 @@ export function applyRulesAfterSync(userId,channelIds) {
       if(diffs.length) db.prepare('INSERT INTO ai_changes(id,owner_key,user_id,data_json,status,created_at) VALUES(?,?,?,?,?,?)')
         .run(randomUUID(),row.owner_key,userId,JSON.stringify({rule_id:row.id,feature:'cleanup',diffs}),'applied',Date.now());
     }
+    if(applied) prunePrivateRecords();
   })();
   if(applied) clearChannelsCache(userId);
   return {applied};

@@ -5,17 +5,48 @@ import { join } from 'node:path';
 
 const dataDir = mkdtempSync(join(tmpdir(),'iptv-ai-sync-'));
 process.env.DATA_DIR=dataDir;
-let db,captureSyncSnapshot,recordSyncSnapshot,provider,user,category,channel,assignment;
+// Exercise real rule/snapshot domains while observing the independent job handoff.
+vi.mock('../src/services/ai/jobs.js',()=>({createJob:vi.fn()}));
+let db,captureSyncSnapshot,recordSyncSnapshot,scheduleSyncFollowups,createJob,provider,user,category,channel,assignment;
 
 beforeAll(async () => {
   const database=await import('../src/database/db.js');db=database.default;database.initDb(true);
-  ({captureSyncSnapshot,recordSyncSnapshot}=await import('../src/services/ai/syncHistory.js'));
+  ({captureSyncSnapshot,recordSyncSnapshot,scheduleSyncFollowups}=await import('../src/services/ai/syncHistory.js'));
+  ({createJob}=await import('../src/services/ai/jobs.js'));
   user=Number(db.prepare("INSERT INTO users (username,password) VALUES ('history-user','unused')").run().lastInsertRowid);
   provider=Number(db.prepare("INSERT INTO providers (name,url,username,password,user_id) VALUES ('Provider','https://upstream.invalid','secret-user','secret-key',?)").run(user).lastInsertRowid);
   category=Number(db.prepare("INSERT INTO user_categories (user_id,name) VALUES (?,'My list')").run(user).lastInsertRowid);
   channel=Number(db.prepare("INSERT INTO provider_channels (provider_id,remote_stream_id,name,metadata) VALUES (?,1,'Old channel','{\"http_headers\":\"private-key\"}')").run(provider).lastInsertRowid);
   assignment=Number(db.prepare("INSERT INTO user_channels (user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')").run(category,channel).lastInsertRowid);
 });
+
+async function followupFixture(label,count) {
+  createJob.mockClear();
+  const owner=Number(db.prepare("INSERT INTO users(username,password) VALUES (?,'unused')").run(label).lastInsertRowid);
+  const source=Number(db.prepare("INSERT INTO providers(name,url,username,password,user_id) VALUES (?,'https://sync.invalid','unused','unused',?)").run(label,owner).lastInsertRowid);
+  const list=Number(db.prepare("INSERT INTO user_categories(user_id,name) VALUES (?,'Sync list')").run(owner).lastInsertRowid);
+  const insertChannel=db.prepare('INSERT INTO provider_channels(provider_id,remote_stream_id,name) VALUES (?,?,?)');
+  const insertAssignment=db.prepare("INSERT INTO user_channels(user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')");
+  const confirmedChannel=Number(insertChannel.run(source,1,'Prefix | Confirmed').lastInsertRowid);
+  const confirmedAssignment=Number(insertAssignment.run(list,confirmedChannel).lastInsertRowid);
+  const actor={id:owner,is_admin:false};
+  db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES ('ai_policy',?)").run(JSON.stringify({enabled:true,allowed_user_ids:[owner],functions:['cleanup','sync']}));
+  db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES (?,?)').run(`user:${owner}`,JSON.stringify({enabled:true,auto_sync_summary:true}));
+  const {createProposal,applyProposal}=await import('../src/services/ai/proposals.js');
+  const {saveRule}=await import('../src/services/ai/library.js');
+  const proposal=createProposal(actor,{feature:'cleanup',user_id:owner},[{type:'rename_channel',user_channel_id:confirmedAssignment,value:'Confirmed'}],'Confirmed cleanup');
+  applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:`confirm-${owner}`});
+  const rule=saveRule(actor,{proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Prefix cleanup',operation:'strip_prefix',match:'Prefix | ',enabled:true});
+  const before=captureSyncSnapshot(source),added=[];
+  db.transaction(()=>{
+    for(let i=0;i<count;i++) {
+      const channelId=Number(insertChannel.run(source,i+2,`Prefix | Item ${i}`).lastInsertRowid);
+      added.push({channelId,id:Number(insertAssignment.run(list,channelId).lastInsertRowid)});
+    }
+  })();
+  return {actor,rule,added,records:recordSyncSnapshot(source,before)};
+}
+
 afterAll(()=>{db.close();rmSync(dataDir,{recursive:true,force:true});});
 
 describe('deterministic AI sync history',()=>{
@@ -89,4 +120,34 @@ describe('deterministic AI sync history',()=>{
       expect(db.prepare("SELECT * FROM ai_sync_snapshots WHERE id LIKE 'retained-%' ORDER BY id").all()).toEqual(controls);
     } finally { clock.mockRestore(); }
   });
+});
+
+it('processes more than 5000 added assignments and dispatches one independent summary',async()=>{
+  const fixture=await followupFixture('large-followup',5001);
+  db.prepare("UPDATE user_channels SET custom_name='Keep mine' WHERE id=?").run(fixture.added[0].id);
+  scheduleSyncFollowups(fixture.records);
+  await vi.waitFor(()=>expect(createJob).toHaveBeenCalledTimes(1),{timeout:5000});
+  expect(createJob).toHaveBeenCalledWith(fixture.actor,{feature:'sync',snapshot_id:fixture.records[0].id},`sync_${fixture.records[0].id}`);
+  const name=id=>db.prepare('SELECT custom_name,assignment_origin FROM user_channels WHERE id=?').get(id);
+  expect(name(fixture.added[0].id)).toEqual({custom_name:'Keep mine',assignment_origin:'manual'});
+  expect(name(fixture.added.at(-1).id)).toEqual({custom_name:'Item 5000',assignment_origin:'manual'});
+  const changes=db.prepare("SELECT id,data_json FROM ai_changes WHERE json_extract(data_json,'$.rule_id')=? ORDER BY rowid").all(fixture.rule.id);
+  expect(changes.map(row=>JSON.parse(row.data_json).diffs.length)).toEqual([4999,1]);
+  const {undoChange}=await import('../src/services/ai/proposals.js');
+  for(const change of changes) expect(undoChange(fixture.actor,change.id).status).toBe('undone');
+  expect(name(fixture.added[0].id).custom_name).toBe('Keep mine');
+  expect(name(fixture.added[1].id).custom_name).toBe('');
+  expect(name(fixture.added.at(-1).id).custom_name).toBe('');
+},10000);
+
+it('still dispatches the selected summary when a rule transaction fails',async()=>{
+  const fixture=await followupFixture('failed-rule-followup',1);
+  db.exec(`CREATE TRIGGER fail_rule_update BEFORE UPDATE OF custom_name ON user_channels WHEN NEW.id=${fixture.added[0].id} BEGIN SELECT RAISE(ABORT,'synthetic rule failure'); END`);
+  try {
+    scheduleSyncFollowups(fixture.records);
+    await vi.waitFor(()=>expect(createJob).toHaveBeenCalledTimes(1),{timeout:1000});
+    expect(createJob).toHaveBeenCalledWith(fixture.actor,{feature:'sync',snapshot_id:fixture.records[0].id},`sync_${fixture.records[0].id}`);
+    expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(fixture.added[0].id).custom_name).toBe('');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM ai_changes WHERE json_extract(data_json,'$.rule_id')=?").get(fixture.rule.id).n).toBe(0);
+  } finally { db.exec('DROP TRIGGER fail_rule_update'); }
 });

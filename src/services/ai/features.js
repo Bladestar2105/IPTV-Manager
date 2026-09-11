@@ -36,7 +36,7 @@ export function compactFeatureResult(result) {
       provider_channel_id:group.representative.provider_channel_id,user_channel_id:group.representative.user_channel_id,
       name:group.representative.name,type:group.representative.type}:null}));
     if(result.diff?.changes) {
-      result.diff.preview={total:result.diff.changes.length,shown:Math.min(result.diff.changes.length,20),partial:result.diff.changes.length>20};
+      result.diff.preview||={total:result.diff.changes.length,shown:Math.min(result.diff.changes.length,20),partial:result.diff.changes.length>20};
       result.diff.changes=result.diff.changes.slice(0,20);
     }
   }
@@ -92,15 +92,18 @@ function syncDiff(actor,userId,snapshotId) {
   if(!allowed) fail('AI_SOURCE_UNAVAILABLE',409);
   const data=JSON.parse(row.data_json);
   if(!data.complete || !Array.isArray(data.changes)) return null;
-  const changes=data.changes.slice(0,1000).filter(change=>{
+  const authorized=db.prepare(`SELECT 1 FROM authorized_user_channels uc JOIN user_categories cat ON cat.id=uc.user_category_id
+    WHERE uc.provider_channel_id=? AND cat.user_id=?`);
+  const changes=data.changes.filter(change=>{
     if(!change.after) return true;
-    return Boolean(db.prepare(`SELECT 1 FROM authorized_user_channels uc JOIN user_categories cat ON cat.id=uc.user_category_id
-      WHERE uc.provider_channel_id=? AND cat.user_id=?`).get(change.provider_channel_id,userId));
+    return Boolean(authorized.get(change.provider_channel_id,userId));
   }).map(change=>({kind:change.kind,provider_channel_id:change.provider_channel_id,user_channel_id:change.user_channel_id,
     before:syncFields(change.before),after:syncFields(change.after)}));
   const counts={added:0,removed:0,renamed:0,reassigned:0};
   for(const change of changes) if(Object.hasOwn(counts,change.kind)) counts[change.kind]++;
-  return {id:row.id,hash:hash(row.data_json),diff:{provider_id:row.provider_id,complete:true,counts,changes,timestamp:data.timestamp||row.created_at,partial:data.changes.length>1000}};
+  const preview={total:changes.length,shown:Math.min(changes.length,20),partial:changes.length>20};
+  return {id:row.id,hash:hash([row.data_json,changes]),diff:{provider_id:row.provider_id,complete:true,counts,
+    changes:changes.slice(0,20),preview,timestamp:data.timestamp||row.created_at,partial:preview.partial}};
 }
 function syncFields(value) {
   return value?{name:safeText(value.name,200),category_id:value.category_id,category_name:safeText(value.category_name,160),stream_type:value.stream_type}:null;
@@ -230,6 +233,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
     else {
       result.diff=sync.diff;result._authorization.sync_snapshot_id=sync.id;result._authorization.sync_hash=sync.hash;
       const reply=await ask({diff:sync.diff,candidates:context.items.slice(0,80)},proposalSchema(payload.feature),'Explain only the supplied successful sync diff. Counts are authoritative. Successor proposals must use supplied current candidates and need confirmation.');
+      authorizeResult(actor,payload,result);
       result.summary=safeText(reply.data.summary,2000);
       if(!Array.isArray(reply.data.actions)) fail('AI_INVALID_ACTIONS');
       for(const action of reply.data.actions) if(action.provider_channel_id && !context.items.some(item=>item.provider_channel_id===action.provider_channel_id)) fail('AI_INVALID_CANDIDATE');

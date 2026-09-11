@@ -1,4 +1,4 @@
-import { beforeAll,beforeEach,afterAll,it,expect } from 'vitest';
+import { beforeAll,beforeEach,afterAll,it,expect,vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -96,6 +96,34 @@ it('requires confirmation for declarative rules and defaults future application 
   saveRule(actor,{...input,enabled:true},rule.id);
   expect(applyRulesAfterSync(711,[912])).toEqual({applied:1});
   expect(db.prepare('SELECT custom_name,assignment_origin FROM user_channels WHERE id=1112').get()).toEqual({custom_name:'Sport',assignment_origin:'manual'});
+});
+it('bounds expired change history during rule-only syncs and preserves current Undo records',()=>{
+  const now=Date.now(),cutoff=now-30*86400000,clock=vi.spyOn(Date,'now').mockReturnValue(now);
+  try {
+    const proposal=rename();
+    applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'retained-history'});
+    const rule=saveRule(actor,{proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Cleanup',operation:'strip_prefix',match:'DE | ',enabled:true});
+    db.prepare("UPDATE ai_preferences SET data_json=json_set(data_json,'$.auto_sync_summary',json('false')) WHERE owner_key='user:711'").run();
+    const insert=db.prepare("INSERT INTO ai_changes(id,owner_key,user_id,data_json,status,created_at) VALUES (?,'user:711',711,'{}','applied',?)");
+    for(let i=0;i<201;i++) insert.run(`expired-rule-${i}`,cutoff-1-i);
+    insert.run('retained-cutoff',cutoff);
+    const controls=db.prepare("SELECT * FROM ai_changes WHERE id NOT LIKE 'expired-rule-%' ORDER BY id").all();
+    const remaining=[];
+    for(let i=0;i<3;i++) {
+      const channel=Number(db.prepare("INSERT INTO provider_channels(provider_id,remote_stream_id,name) VALUES (811,?,?)").run(10+i,`DE | Added ${i}`).lastInsertRowid);
+      const assignment=Number(db.prepare("INSERT INTO user_channels(user_category_id,provider_channel_id,assignment_origin) VALUES (1011,?,'manual')").run(channel).lastInsertRowid);
+      expect(applyRulesAfterSync(711,[channel])).toEqual({applied:1});
+      expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(assignment).custom_name).toBe(`Added ${i}`);
+      remaining.push(db.prepare('SELECT COUNT(*) AS n FROM ai_changes WHERE created_at<?').get(cutoff).n);
+    }
+    expect(remaining).toEqual([101,1,0]);
+    for(const row of controls) expect(db.prepare('SELECT * FROM ai_changes WHERE id=?').get(row.id)).toEqual(row);
+    const changes=db.prepare("SELECT id FROM ai_changes WHERE json_extract(data_json,'$.rule_id')=?").all(rule.id);
+    expect(changes).toHaveLength(3);
+    for(const change of changes) expect(undoChange(actor,change.id).status).toBe('undone');
+    expect(db.prepare('SELECT enabled FROM ai_rules WHERE id=?').get(rule.id).enabled).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_jobs').get().n).toBe(0);
+  } finally {clock.mockRestore();}
 });
 it.each([
   ['Web UI access',"UPDATE users SET webui_access=0 WHERE id=711"],

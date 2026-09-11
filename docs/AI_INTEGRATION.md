@@ -96,6 +96,14 @@ does not call the model. Movies and series can use their original description.
 | Diagnosis | Reads assignment, visibility, local account export filters, configured EPG mapping and recorded user-connection limits. Separates observations, possible explanations and unimplemented measurements; no repairs. Administrators may request aggregate findings without selecting a user. |
 | Text | Translates, summarizes or tags an existing description. The original remains intact and the marked AI version is invalidated when its source changes. |
 
+Sync counts cover the complete recorded difference after current authorization
+filtering. The model and UI receive at most 20 detail rows, with separate
+shown/total/partial preview metadata. Authorization changes anywhere in that
+difference invalidate the result, including changes outside the preview.
+Results stored with the earlier snapshot-only evidence hash become stale and
+require a new analysis; the underlying snapshots are preserved and no model
+request is automatically replayed.
+
 Normal users keep their existing list-editing rights with `provider_access=0`.
 AI cannot grant access, change provider URLs or security settings, delete global
 providers, or execute SQL, scripts or arbitrary tools. Applied list changes use
@@ -158,6 +166,11 @@ transformation or confirmation references requires an applied rename with both
 records still within the 30-day retention period, even before cleanup removes
 expired rows. Each rule stays bound to its original target user; create a
 separate rule to use a confirmed transformation for another user.
+Large syncs apply rules in batches of at most 5,000 new channel IDs, yielding
+between batches. Each batch retains its own transaction and conflict-protected
+Undo record. A failed rule batch stops further rule batches for that user but
+does not prevent the separately enabled summary from being requested. A failed
+summary is not automatically retried against the model.
 
 ## Network and data boundaries
 
@@ -219,6 +232,9 @@ Canceled or uncertain submitted requests are not blindly retried.
 - Snapshot cleanup after a provider sync removes up to the larger of 100 or
   the number of snapshots just inserted, so expiry cleanup keeps pace with
   syncs affecting many users. Snapshots within 30 days are preserved.
+- Automatic rule writes also run the existing bounded private-history cleanup,
+  even when automatic summaries are off. It removes up to 100 expired records
+  per table per rule batch, preserving enabled rules and current Undo records.
 
 Clear History cancels pending personal jobs and removes job history,
 conversations and enrichments. Change/undo records remain for their retention
