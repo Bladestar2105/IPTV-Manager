@@ -20,7 +20,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  for (const table of ['ai_enrichments','ai_conversations','ai_proposals','ai_changes','ai_rules','ai_sync_snapshots','epg_channel_mappings','user_channels','user_categories','provider_channels','providers','users']) db.prepare(`DELETE FROM ${table}`).run();
+  for (const table of ['ai_enrichments','ai_conversations','ai_proposals','ai_changes','ai_rules','ai_sync_snapshots','ai_preferences','epg_channel_mappings','user_channels','user_categories','provider_channels','providers','users']) db.prepare(`DELETE FROM ${table}`).run();
   epg.exec('DELETE FROM epg_programs; DELETE FROM epg_channels');
   db.exec(`INSERT INTO users(id,username,password) VALUES (701,'one','x'),(702,'two','x');
     INSERT INTO providers(id,name,url,username,password,user_id) VALUES (801,'First','https://secret.invalid/user/pass','secret','password',701),(802,'Second','https://other.invalid','other','password',702);
@@ -30,10 +30,67 @@ beforeEach(() => {
       (903,802,3,'Private channel','live','private','Other user private text','News');
     INSERT INTO user_categories(id,user_id,name) VALUES (1001,701,'My list'),(1002,702,'Private list');
     INSERT INTO user_channels(id,user_category_id,provider_channel_id,sort_order,assignment_origin) VALUES (1101,1001,901,0,'mapping'),(1102,1001,902,1,'manual'),(1103,1002,903,0,'manual');`);
+  db.prepare("INSERT INTO settings(key,value) VALUES('ai_policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(JSON.stringify({enabled:true,allowed_user_ids:[701],functions:['list','cleanup','duplicates','epg','sync']}));
+  db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES(?,?)').run('user:701',JSON.stringify({enabled:true}));
 });
 afterAll(() => { epg?.close(); db?.close(); fs.rmSync(dataDir, {recursive:true,force:true}); });
 
 describe('authorized AI features', () => {
+  it.each([
+    ['list',['create_category','rename_category','assign_channel','rename_channel','hide_channel','reorder_channel']],
+    ['cleanup',['rename_category','rename_channel','hide_channel','reorder_channel']],
+    ['duplicates',['hide_channel']],
+    ['epg',['epg_mapping']],
+    ['sync',['create_category','assign_channel','rename_channel']]
+  ])('sends a %s schema that accepts only that feature actions',async(feature,allowed)=>{
+    const {validateJson}=await import('../src/services/ai/transport.js');
+    epg.exec("INSERT INTO epg_channels(id,name,source_type,source_id,updated_at) VALUES('news','News','provider',801,1)");
+    db.prepare('INSERT INTO ai_sync_snapshots(id,user_id,provider_id,data_json,created_at) VALUES(?,?,?,?,?)')
+      .run('schema-sync',701,801,JSON.stringify({complete:true,changes:[]}),Date.now());
+    let schema;
+    await executeFeature(user,{feature,selected_ids:[1101]},{infer:async request=>{schema=request.schema;return {data:{summary:'Review',actions:[]},model:'test'};}});
+    for(const action of [
+      {type:'create_category',key:'sports',name:'Sports',category_type:'live'},
+      {type:'rename_category',category_id:1001,value:'Live'},
+      {type:'assign_channel',provider_channel_id:901,category_id:1001},
+      {type:'assign_channel',provider_channel_id:901,category_key:'sports'},
+      {type:'rename_channel',user_channel_id:1101,value:'News'},
+      {type:'hide_channel',user_channel_id:1101,value:true},
+      {type:'reorder_channel',user_channel_id:1101,value:2},
+      {type:'epg_mapping',provider_channel_id:901,epg_channel_id:'news',source_type:'provider',source_id:801}
+    ]) expect(validateJson({summary:'Review',actions:[action]},schema),action.type).toBe(allowed.includes(action.type));
+  });
+  it.each(['list','cleanup'])('rejects EPG actions returned for %s while EPG AI is disabled',async(feature)=>{
+    epg.exec("INSERT INTO epg_channels(id,name,source_type,source_id,updated_at) VALUES('news','News','provider',801,1)");
+    db.prepare("UPDATE settings SET value=json_set(value,'$.functions',json('[\"list\",\"cleanup\"]')) WHERE key='ai_policy'").run();
+    await expect(executeFeature(user,{feature},{infer:infer({summary:'Mapping',actions:[
+      {type:'epg_mapping',provider_channel_id:901,epg_channel_id:'news',source_type:'provider',source_id:801}
+    ]})})).rejects.toThrow(/AI_INVALID_ACTION/);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM epg_channel_mappings').get().n).toBe(0);
+  });
+  it.each([['list',false],['list',true],['cleanup',false],['cleanup',true]])('rejects every persisted %s action before direct Apply, including EPG selected=%s',async(feature,selectEpg)=>{
+    const {createProposal,applyProposal}=await import('../src/services/ai/proposals.js');
+    epg.exec("INSERT INTO epg_channels(id,name,source_type,source_id,updated_at) VALUES('news','News','provider',801,1)");
+    const epgResult=await executeFeature(user,{feature:'epg',channel_ids:[901],selected_ids:[1101]},{infer:infer({summary:'Possible match',actions:[
+      {type:'epg_mapping',provider_channel_id:901,epg_channel_id:'news',source_type:'provider',source_id:801}
+    ]})});
+    const stored=JSON.parse(db.prepare('SELECT data_json FROM ai_proposals WHERE id=?').get(epgResult.proposal_id).data_json);
+    const proposal=createProposal(user,{feature},[{type:'rename_channel',user_channel_id:1101,value:'News'}]);
+    const mixed=JSON.parse(db.prepare('SELECT data_json FROM ai_proposals WHERE id=?').get(proposal.id).data_json);
+    mixed.actions.push(stored.actions[0]);
+    // Reproduce a pre-fix mixed proposal independently of creation validation.
+    db.prepare('UPDATE ai_proposals SET data_json=? WHERE id=?').run(JSON.stringify(mixed),proposal.id);
+    db.prepare("UPDATE settings SET value=json_set(value,'$.functions',json('[\"list\",\"cleanup\"]')) WHERE key='ai_policy'").run();
+    const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+    const actionIds=(selectEpg?mixed.actions:proposal.actions).map(action=>action.id);
+    expect(()=>applyProposal(user,proposal.id,{action_ids:actionIds,idempotency_key:'old-mixed-proposal'})).toThrow(/AI_INVALID_ACTION/);
+    expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM epg_channel_mappings').get().n).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+    expect(db.prepare('SELECT status FROM ai_proposals WHERE id=?').get(proposal.id).status).toBe('pending');
+  });
   it('only transmits own safe current candidates and invalidates a revoked result', async () => {
     let sent;
     const result = await executeFeature(user,{feature:'list',prompt:'Organize'}, {infer:async request => { sent=JSON.stringify(request); return {data:{summary:'Ready',actions:[]},model:'synthetic'}; }});

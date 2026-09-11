@@ -22,11 +22,30 @@ beforeEach(()=>{
     INSERT INTO user_categories(id,user_id,name) VALUES(1011,711,'One'),(1012,712,'Two');
     INSERT INTO user_channels(id,user_category_id,provider_channel_id,sort_order,assignment_origin,mapping_id) VALUES(1111,1011,911,0,'mapping',99),(1112,1011,912,1,'manual',NULL),(1113,1012,913,0,'manual',NULL);`);
   db.prepare("INSERT INTO settings(key,value) VALUES('ai_policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-    .run(JSON.stringify({enabled:true,allowed_user_ids:[711,712],functions:['cleanup']}));
+    .run(JSON.stringify({enabled:true,allowed_user_ids:[711,712],functions:['list','cleanup','duplicates']}));
   for(const owner of ['user:711','admin:711']) db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES(?,?)').run(owner,JSON.stringify({enabled:true}));
 });
 afterAll(()=>{db?.close();fs.rmSync(dir,{recursive:true,force:true});});
 const rename=()=>createProposal(actor,payload,[{type:'rename_channel',user_channel_id:1111,value:'News'}],'Clean');
+it.each([
+  ['cleanup',{type:'create_category',key:'new',name:'New',category_type:'live'}],
+  ['cleanup',{type:'assign_channel',provider_channel_id:912,category_id:1011}],
+  ...['search','diagnose','text','setup','unknown','toString'].map(feature=>[feature,{type:'rename_channel',user_channel_id:1111,value:'News'}])
+])('rejects actions outside the closed %s contract before storing a proposal',(feature,action)=>{
+  expect(()=>createProposal(actor,{...payload,feature},[action])).toThrow(/AI_INVALID_ACTION/);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1111').get().custom_name).toBe('');
+});
+it('rechecks feature permission on direct confirmation after preview without a model connection',()=>{
+  const proposal=rename();
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  db.prepare("UPDATE settings SET value=json_set(value,'$.functions',json('[\"list\"]')) WHERE key='ai_policy'").run();
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'revoked-preview'})).toThrow(expect.objectContaining({code:'AI_FORBIDDEN',status:403}));
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT status FROM ai_proposals WHERE id=?').get(proposal.id).status).toBe('pending');
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_connections').get().n).toBe(0);
+});
 it('stores exact preview, preserves mapping origin, is idempotent and conditionally undoes',()=>{
   const proposal=rename();
   expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1111').get().custom_name).toBe('');

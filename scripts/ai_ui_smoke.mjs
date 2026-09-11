@@ -16,6 +16,7 @@ try {
   let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false;
+  let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}];
   let cancelGate;
   let releaseChangeA, changeARequested, delayChangeA = true, releaseUndoA, undoARequested, delayUndoA = false;
   const waitForChangeA = new Promise(resolve => { changeARequested = resolve; });
@@ -39,11 +40,11 @@ try {
       else if (method === 'DELETE') connections = [];
     } else if (path.endsWith('/discover')) {
       if (discoverFails) { status = 502; data = {code: 'AI_UNAVAILABLE'}; }
-      else data = {models: [{id: 'chat-one'}, {id: 'chat-two'}]};
+      else data = {models: discoveredModels};
     } else if (path.endsWith('/test')) {
       assert(settings.enabled && preferences.enabled, 'tests require explicit activation');
       assert(!body.model_ids.includes(undefined));
-      const models = body.model_ids.map(id => ({id, chat: true, structured: true, status: 'compatible'}));
+      const models = body.model_ids.map(id => ({id, chat: true, structured: true, status: 'compatible', token_parameter: id === 'chat-two' ? 'max_completion_tokens' : 'max_tokens'}));
       connections[0].capabilities = Object.fromEntries(models.map(model => [model.id, model]));
       data = {models, recommended_model_id: body.model_ids[0]};
     } else if (/^\/channels\/\d+\/programs$/.test(path)) {
@@ -69,7 +70,11 @@ try {
     else if (path.endsWith('/apply')) { assert.deepEqual(body.action_ids.slice(0, 2), ['a0', 'a1']); assert(body.idempotency_key.length <= 200); data = {change_id: 'change1', status: 'applied'}; }
     else if (/^\/jobs\/history/.test(path)) {
       const id = path.split('/').at(-1);
-      data = {id, status: 'completed', result: id === 'historyRead' ? {feature: 'diagnose', summary: 'Read-only result'} : {feature: 'list', summary: id, proposal_id: id}};
+      data = {id, status: 'completed', result: id === 'historyRead' ? {feature: 'diagnose', summary: 'Read-only result', findings: [
+        {code: 'local_user_connections', certainty: 'proven', value: {limit_reached: true}},
+        {code: 'new_connection_may_be_blocked', certainty: 'possible'},
+        {code: 'protocol_export_delivery', certainty: 'unknown', reason: 'not_measured'}
+      ]} : {feature: 'list', summary: id, proposal_id: id}};
     }
     else if (/^\/proposals\/history/.test(path)) {
       const id = path.split('/').at(-1);
@@ -126,6 +131,11 @@ try {
   await page.locator('#ai-discover').click();
   await page.locator('#ai-models option').first().waitFor();
   assert.equal(await page.locator('#ai-key').inputValue(), '', 'key cleared after save');
+  assert.deepEqual(await page.locator('#ai-models').evaluate(select => [...select.selectedOptions].map(option => option.value)), [], 'discovery order and model names do not imply compatibility');
+  discoveredModels = [{id: 'chat-one'}];
+  await page.locator('#ai-discover').click();
+  await page.waitForFunction(() => document.getElementById('ai-models').options.length === 1);
+  assert.deepEqual(await page.locator('#ai-models').evaluate(select => [...select.selectedOptions].map(option => option.value)), ['chat-one'], 'a sole candidate can be tested without typing its ID');
   await page.locator('#ai-models').selectOption(['chat-one']);
   await page.locator('#ai-test').click();
   await page.waitForFunction(() => document.getElementById('ai-model').value === 'chat-one');
@@ -135,6 +145,19 @@ try {
   ]);
   assert.equal(preferences.model_id, 'chat-one', 'wizard works without typing a model ID');
   assert.equal(preferences.enabled, true);
+  discoveredModels = [{id: 'image-first', candidate: 'other'}, {id: 'chat-two', candidate: 'text'}];
+  await page.locator('#ai-discover').click();
+  await page.locator('#ai-models option[value="chat-two"]').waitFor();
+  assert.equal(await page.locator('#ai-model').inputValue(), 'chat-one', 'refresh and removal preserve the saved selection');
+  assert.deepEqual(await page.locator('#ai-models').evaluate(select => [...select.selectedOptions].map(option => option.value)), ['chat-one'], 'removed selection is retained explicitly, never replaced by list order');
+  await page.locator('#ai-models').selectOption(['chat-two']);
+  await page.locator('#ai-test').click();
+  await page.waitForFunction(() => document.getElementById('ai-capabilities').textContent.includes('chat-two'));
+  assert.equal(await page.locator('#ai-model').inputValue(), 'chat-one', 'testing a candidate does not silently replace a selected model');
+  assert.equal(await page.locator('#ai-token-parameter').inputValue(), 'max_tokens', 'testing does not change an in-use parameter profile');
+  await page.locator('#ai-recommendation').click();
+  assert.equal(await page.locator('#ai-model').inputValue(), 'chat-two');
+  assert.equal(await page.locator('#ai-token-parameter').inputValue(), 'max_completion_tokens', 'explicit adoption includes the successfully tested profile');
   assert.equal(await page.evaluate(() => Object.values(localStorage).some(item => item.includes('synthetic-secret'))), false);
   discoverFails = true;
   await page.locator('#ai-discover').click();
@@ -279,6 +302,8 @@ try {
   assert.match(await page.locator('#ai-proposal').innerText(), /Proposal historyB/);
   await page.locator('#ai-history-historyRead').click();
   await page.waitForFunction(() => document.getElementById('ai-result').textContent.includes('Read-only result'));
+  for (const certainty of ['proven', 'possible', 'unknown']) assert.equal(await page.locator(`#ai-result h4[data-i18n="ai_${certainty}"]`).count(), 1, 'diagnosis separates facts, hypotheses and unknowns');
+  assert.match(await page.locator('#ai-result').innerText(), /not implemented measurements/);
   assert.equal(await page.locator('#ai-proposal').innerText(), '', 'read-only result removes earlier actionable proposal');
   await page.locator('#ai-change-ruleChange').click();
   await page.locator('#ai-undo').waitFor();
@@ -317,11 +342,14 @@ try {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path: process.env.AI_UI_SCREENSHOT});
   }
-  connections[0] = {...connections[0], shared: true, editable: false, model_id: 'chat-one'};
+  connections[0] = {...connections[0], shared: true, editable: false, model_id: 'current-admin-model'};
   preferences.connection_id = 'c1';
+  preferences.model_id = 'previous-admin-model';
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; await aiUI.open(); });
   assert.equal(await page.locator('#ai-key').count(), 0, 'borrowed setup never asks for keys');
   assert.equal(await page.locator('#ai-model').getAttribute('readonly'), '');
+  assert.equal(await page.locator('#ai-model').inputValue(), 'current-admin-model', 'shared setup uses the current administrative selection, not stale personal preferences');
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/ai/preferences') && response.request().postDataJSON()?.model_id === 'current-admin-model'), page.locator('#ai-finish').click()]);
   assert.equal(await page.locator('#ai-model-controls').isVisible(), false, 'borrowed connection cannot be tested or changed');
   await page.evaluate(() => aiUI.clear());
   assert.equal(await page.locator('#view-ai').innerText(), '', 'logout cleanup removes all AI state');

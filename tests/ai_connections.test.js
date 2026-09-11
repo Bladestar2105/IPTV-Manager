@@ -220,11 +220,119 @@ describe('AI connection security', () => {
         ai.saveConnection(admin,{model_id:'unknown-alias'},c.id);
         await expect(ai.runInference(admin,'list',{messages:[],schema})).resolves.toHaveProperty('data.ok',true); expect(requests.at(-1).body.response_format).toBeUndefined();
     });
-    it('pauses repeated failures and does not retry a rejected key against further candidates', async () => {
+    it('aborts rejected credentials without classifying them as connection outages', async () => {
         const c=configure(); reply=(_req,res)=>{res.statusCode=401;res.end('{}');};
         for(let i=0;i<3;i++) await expect(ai.testModels(admin,c.id,{model_ids:['a','b','c']})).rejects.toHaveProperty('code','AI_AUTH_FAILED');
         expect(requests).toHaveLength(3);
-        await expect(ai.discoverModels(admin,c.id)).rejects.toHaveProperty('code','AI_PAUSED'); expect(requests).toHaveLength(3);
+        await expect(ai.discoverModels(admin,c.id)).rejects.toHaveProperty('code','AI_AUTH_FAILED'); expect(requests).toHaveLength(4);
+    });
+    it('keeps a fourth chat candidate testable after three non-chat endpoint rejections', async () => {
+        const c=configure();
+        reply=(_req,res)=>{ res.statusCode=404; res.end(JSON.stringify({error:{message:'This is not a chat model and thus not supported in the v1/chat/completions endpoint.',type:'invalid_request_error',param:'model',code:null}})); };
+        const rejected=await ai.testModels(admin,c.id,{model_ids:['embedding-one','image-two','audio-three']});
+        expect(rejected.models.every(model=>!model.chat && model.status==='incompatible' && model.error_code==='AI_CAPABILITY_UNSUPPORTED')).toBe(true);
+        expect(db.prepare('SELECT error_code FROM ai_usage').all()).toEqual(Array.from({length:3},()=>({error_code:'AI_CAPABILITY_UNSUPPORTED'})));
+        reply=null;
+        const tested=await ai.testModels(admin,c.id,{model_ids:['unknown-alias']});
+        expect(tested.recommended_model_id).toBe('unknown-alias'); expect(requests).toHaveLength(5);
+        expect(requests.every(request=>request.key==='Bearer synthetic-secret' && request.url==='/proxy/v1/chat/completions')).toBe(true);
+    });
+    it('classifies schema rejection separately and retains the tested plain JSON capability', async () => {
+        const c=configure();
+        reply=(_req,res)=>{
+            if (requests.at(-1).body.response_format) { res.statusCode=400; res.end(JSON.stringify({error:{code:'unsupported_value',param:'response_format',message:"'json_schema' is not supported with this model."}})); }
+            else res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'{"ok":true}'}}]}));
+        };
+        const result=await ai.testModels(admin,c.id,{model_ids:['unknown-alias']});
+        expect(result.models[0]).toMatchObject({chat:true,structured:false,status:'json_fallback',error_code:'AI_CAPABILITY_UNSUPPORTED'});
+        expect(db.prepare("SELECT error_code FROM ai_usage WHERE status='failed'").get().error_code).toBe('AI_CAPABILITY_UNSUPPORTED');
+        ai.saveConnection(admin,{model_id:'unknown-alias'},c.id);
+        await expect(ai.runInference(admin,'list',{messages:[],schema})).resolves.toHaveProperty('data.ok',true);
+        expect(requests.at(-1).body.response_format).toBeUndefined();
+    });
+    it.each([[403,'AI_PERMISSION_DENIED'],[429,'AI_RATE_LIMIT'],[503,'AI_UNAVAILABLE']])('stops the candidate batch on HTTP %s without changing identity or provider', async (status,code) => {
+        const c=configure(); reply=(_req,res)=>{res.statusCode=status;res.end(JSON.stringify({error:{message:'synthetic-secret',code:'unsupported_parameter',param:'max_tokens'}}));};
+        await expect(ai.testModels(admin,c.id,{model_ids:['a','b','c']})).rejects.toHaveProperty('code',code);
+        expect(requests).toHaveLength(1); expect(requests[0].body.max_tokens).toBe(128);
+        expect(ai.listConnections(admin)[0]).toMatchObject({model_id:null,token_parameter:'max_tokens'});
+        expect(JSON.stringify(db.prepare('SELECT * FROM ai_usage').all())).not.toContain('synthetic-secret');
+    });
+    it('retains the circuit breaker for three actual server failures', async () => {
+        const c=configure(); reply=(_req,res)=>{res.statusCode=503;res.end('{}');};
+        for(let i=0;i<3;i++) await expect(ai.testModels(admin,c.id,{model_ids:['a']})).rejects.toHaveProperty('code','AI_UNAVAILABLE');
+        await expect(ai.testModels(admin,c.id,{model_ids:['working']})).rejects.toHaveProperty('code','AI_PAUSED');
+        expect(requests).toHaveLength(3);
+    });
+    it.each(['max_tokens','max_completion_tokens'])('probes the alternate token profile once after explicit rejection of %s', async rejected => {
+        const alternate=rejected==='max_tokens'?'max_completion_tokens':'max_tokens';
+        let c=configure(); c=ai.saveConnection(admin,{token_parameter:rejected},c.id);
+        reply=(_req,res)=>{
+            if (Object.hasOwn(requests.at(-1).body,rejected)) {
+                res.statusCode=400; res.end(JSON.stringify({error:{message:`Unsupported parameter: '${rejected}' is not supported with this model. Use '${alternate}' instead.`,type:'invalid_request_error',param:rejected,code:'unsupported_parameter'}}));
+            } else res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'{"ok":true}'}}]}));
+        };
+        const result=await ai.testModels(admin,c.id,{model_ids:['unknown-alias']});
+        expect(result.models[0]).toMatchObject({chat:true,structured:true,token_parameter:alternate,status:'compatible'});
+        expect(requests).toHaveLength(3); expect(requests.slice(1).every(request=>request.body[alternate]===128 && !Object.hasOwn(request.body,rejected))).toBe(true);
+        expect(ai.listConnections(admin)[0].token_parameter).toBe(rejected);
+        expect(()=>ai.savePreferences(admin,{model_id:'unknown-alias'})).toThrow(expect.objectContaining({code:'AI_MODEL_REQUIRED'}));
+        // Explicit adoption is the only operation that changes the connection profile.
+        c=ai.saveConnection(admin,{model_id:'unknown-alias',token_parameter:alternate},c.id);
+        expect(c).toMatchObject({model_id:'unknown-alias',token_parameter:alternate});
+        ai.savePreferences(admin,{model_id:'unknown-alias'});
+        await expect(ai.runInference(admin,'list',{messages:[],schema})).resolves.toHaveProperty('data.ok',true);
+        expect(requests.at(-1).body[alternate]).toBe(2048);
+    });
+    it('does not loop when both token profiles are explicitly rejected', async () => {
+        const c=configure(); reply=(_req,res)=>{res.statusCode=400;res.end(JSON.stringify({error:{code:'unsupported_parameter',param:requests.at(-1).body.max_tokens?'max_tokens':'max_completion_tokens'}}));};
+        const result=await ai.testModels(admin,c.id,{model_ids:['alias']});
+        expect(requests).toHaveLength(2); expect(result.models[0]).toMatchObject({chat:false,error_code:'AI_TOKEN_PARAMETER_UNSUPPORTED'});
+    });
+    it('does not change token parameters when only the supplied value is rejected', async () => {
+        const c=configure(); reply=(_req,res)=>{res.statusCode=400;res.end(JSON.stringify({error:{code:'unsupported_value',param:'max_tokens',message:'Unsupported value: max_tokens must be at least 256.'}}));};
+        const result=await ai.testModels(admin,c.id,{model_ids:['alias']});
+        expect(requests).toHaveLength(1); expect(result.models[0]).toMatchObject({chat:false,status:'unverified',token_parameter:'max_tokens'});
+    });
+    it.each(['malformed','truncated','ambiguous rejection'])('does not retry or claim incompatibility after %s output', async kind => {
+        const c=configure(); reply=(_req,res)=>{
+            if(kind==='ambiguous rejection') {res.statusCode=400;res.end(JSON.stringify({error:{message:'Invalid request'}}));}
+            else res.end(JSON.stringify({choices:[{finish_reason:kind==='truncated'?'length':'stop',message:{content:'not JSON'}}]}));
+        };
+        const result=await ai.testModels(admin,c.id,{model_ids:['alias']});
+        expect(requests).toHaveLength(1); expect(result.models[0]).toMatchObject({chat:false,status:'unverified',error_code:'AI_INVALID_RESPONSE'});
+    });
+    it('does not retry an uncertain model-test timeout with another profile or candidate', async () => {
+        const c=configure(); reply=()=>{};
+        const nativeTimeout=globalThis.setTimeout;
+        const timer=vi.spyOn(globalThis,'setTimeout').mockImplementation((callback,ms,...args)=>nativeTimeout(callback,ms===30000?20:ms,...args));
+        try {
+            await expect(ai.testModels(admin,c.id,{model_ids:['alias','other']})).rejects.toHaveProperty('code','AI_TIMEOUT');
+            expect(requests).toHaveLength(1);
+            expect(db.prepare('SELECT status,prompt_tokens,completion_tokens FROM ai_usage').get()).toEqual({status:'unknown',prompt_tokens:null,completion_tokens:null});
+        } finally { timer.mockRestore(); }
+    });
+    it('requires explicit adoption when an in-use model needs a different token profile', async () => {
+        const c=await selected(); const before=requests.length;
+        reply=(_req,res)=>{
+            if(requests.at(-1).body.max_tokens) {res.statusCode=400;res.end(JSON.stringify({error:{code:'unsupported_parameter',param:'max_tokens'}}));}
+            else res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'{"ok":true}'}}]}));
+        };
+        await ai.testModels(admin,c.id,{model_ids:['synthetic-model']});
+        expect(ai.listConnections(admin)[0]).toMatchObject({model_id:'synthetic-model',token_parameter:'max_tokens'});
+        await expect(ai.runInference(admin,'list',{messages:[],schema})).rejects.toHaveProperty('code','AI_MODEL_REQUIRED');
+        expect(requests.length-before).toBe(3);
+    });
+    it('keeps selection on discovery refresh or removal and only retains bounded candidate hints', async () => {
+        const c=await selected();
+        reply=(_req,res)=>res.end(JSON.stringify({data:[
+            {id:'image-first',architecture:{input_modalities:['text'],output_modalities:['image']},description:'synthetic-secret'},
+            {id:'unknown-alias',architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['max_tokens','response_format']},
+            {id:'gpt-chat-name-alone'}, {id:'alias-with-bad-metadata',architecture:{input_modalities:'text',output_modalities:'text'}}
+        ]}));
+        const found=await ai.discoverModels(admin,c.id);
+        expect(found.models).toEqual([{id:'image-first',candidate:'other'},{id:'unknown-alias',candidate:'text'},{id:'gpt-chat-name-alone',candidate:'unknown'},{id:'alias-with-bad-metadata',candidate:'unknown'}]);
+        expect(found.model_id).toBe('synthetic-model'); expect(ai.getPreferences(admin).model_id).toBe('synthetic-model');
+        expect(JSON.stringify(found)).not.toContain('synthetic-secret');
     });
     it('rejects already-cancelled requests before network activity', async () => {
         await selected(); const count=requests.length;

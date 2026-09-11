@@ -65,6 +65,24 @@ Model selection requires a successful compatibility test. Shared-connection
 users cannot edit, discover or test the owner's connection or retrieve its key.
 Server policy defaults to disabled, and each user must opt in separately.
 
+Discovery returns model IDs with a bounded `candidate` hint (`text`, `other`,
+`unknown`), without changing saved selection. A compatibility profile includes
+`chat`, `structured`, `status`, `token_parameter`, `tested_at`, and a stable
+`error_code` on failure. `unverified` does not mean incompatible. Tests accept
+at most three models and three requests/model (128 output tokens/request);
+one alternate token profile is allowed only after an explicit 400/422
+unsupported-parameter rejection. Adopt an alternate profile by explicitly
+setting the successfully tested `model_id` and matching `token_parameter`
+together, then saving the personal selection. Other profile changes invalidate
+compatibility. Authentication, permission and rate errors stop a test batch;
+there is no automatic retry after a timeout or uncertain response.
+
+Error categories are `AI_AUTH_FAILED`, `AI_PERMISSION_DENIED`, `AI_RATE_LIMIT`,
+`AI_UNAVAILABLE`/`AI_TIMEOUT`, `AI_MODEL_UNAVAILABLE`,
+`AI_CAPABILITY_UNSUPPORTED`, and `AI_TOKEN_PARAMETER_UNSUPPORTED`.
+`AI_PAUSED` is reserved for repeated connection outages. Error bodies from the
+upstream service are never returned.
+
 Job `feature` is one of `list`, `cleanup`, `duplicates`, `epg`, `sync`,
 `search`, `diagnose`, `text`. Common inputs are `prompt`, `language`, `timezone`,
 `connection_id`, `user_id`, `category_id`, `channel_ids` (provider channel IDs),
@@ -89,6 +107,10 @@ operation rather than overwriting current data.
 For reordering, confirm all companion moves needed to keep the affected positions
 unique within each category. Collisions reject the whole application with
 `AI_REORDER_CONFLICT` (409). Undo also rejects occupied original positions.
+Every stored action must belong to its declared feature's closed contract,
+including unselected actions. Invalid legacy proposals fail before any mutation.
+EPG mappings require `feature: "epg"`, current EPG permission and source evidence;
+list/cleanup cannot carry them. Feature revocation after preview rejects Apply.
 
 `full_list:true` raises the bounded page size. Follow `coverage.next_offset`
 with `offset`; retain the reported partial status until the requested scope has
@@ -98,6 +120,18 @@ patches with `query`, `type`, `genre`, `language`, `region`, `start`, `end`,
 must have an explicit UTC offset; time windows are bounded to 14 days. Text
 requests use `provider_channel_id`, `operation` and optionally an actual
 `program` reference. Sync requests may select a recorded `snapshot_id`.
+
+Program search uses stable channel/source/start pagination. `truncated:true`
+reports unexamined rows or a capped source catalog even when there are no
+matches. Exact completed page/budget boundaries can return `truncated:false`.
+Diagnosis accepts selected own editable hidden assignments without exposing
+foreign/revoked entries. Findings carry `certainty: proven|possible|unknown`;
+`channel_diagnostics` describes local assignment/export filters/EPG configuration,
+and `local_user_connections` describes a timestamped local session/limit snapshot.
+`explanation_unavailable:true` leaves those findings available if inference fails.
+`coverage.diagnostic_entries_shown/total/partial` describes the bounded detail
+preview. [Unimplemented diagnostic measurements](AI_INTEGRATION.md#local-diagnosis-coverage)
+remain explicit unknowns; no diagnostic domain operation mutates state.
 
 Errors contain a stable `code`/`error`, never upstream bodies or credentials.
 Invalid input is 400, denied access 403, missing/expired private records 404,

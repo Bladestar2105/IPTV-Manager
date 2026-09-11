@@ -1,25 +1,14 @@
 import db from '../../database/db.js';
 import { buildContext, ownerKey, targetUser, safeText, fail, hash, checkReferences, verifyEpg, sourceDescription, prunePrivateRecords, RETENTION_MS, iterateEditableChannels, publicChannel, reference, channelRecord, allowedEpgChannels, MAX_CANDIDATES } from './context.js';
 import { createProposal, getProposal } from './proposals.js';
+import { proposalSchema } from './proposalContract.js';
 import { getConversation, saveConversation, saveEnrichment, getEnrichment } from './library.js';
 import { validateFilters, timezoneName, searchLocally, verifyPrograms, epgEvidence, verifyEpgProgramCatalog } from './searchAndEpg.js';
+import { localDiagnosis, unknownDiagnostics } from './diagnostics.js';
 
 const string=(max=200)=>({type:'string',maxLength:max});
-const number={type:'integer',minimum:1};
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
 const nullable=schema=>({anyOf:[schema,{type:'null'}]});
-const action=properties=>object(properties);
-const actionSchema={anyOf:[
-  action({type:{const:'create_category'},key:string(80),name:string(160),category_type:{enum:['live','movie','series']}}),
-  action({type:{const:'rename_category'},category_id:number,value:string(160)}),
-  action({type:{const:'rename_channel'},user_channel_id:number,value:string(200)}),
-  action({type:{const:'hide_channel'},user_channel_id:number,value:{const:true}}),
-  action({type:{const:'reorder_channel'},user_channel_id:number,value:{type:'integer',minimum:0,maximum:1000000}}),
-  action({type:{const:'assign_channel'},provider_channel_id:number,category_id:number}),
-  action({type:{const:'assign_channel'},provider_channel_id:number,category_key:string(80)}),
-  action({type:{const:'epg_mapping'},provider_channel_id:number,epg_channel_id:string(200),source_type:{enum:['provider','custom']},source_id:number})
-]};
-const proposalSchema=object({summary:string(2000),actions:{type:'array',items:actionSchema,maxItems:80}});
 const explanationSchema=object({summary:string(2000)});
 const filterProperties={query:nullable(string()),type:nullable({enum:['live','movie','series','program']}),genre:nullable(string(100)),language:nullable(string(30)),region:nullable(string(80)),start:nullable(string(60)),end:nullable(string(60)),max_duration:nullable({type:'number',minimum:1,maximum:1440}),interests:nullable({type:'array',items:string(80),maxItems:8})};
 const searchSchema=object({summary:string(2000),filters:object(filterProperties),clear_filters:{type:'array',items:{enum:Object.keys(filterProperties)},maxItems:10}});
@@ -123,7 +112,7 @@ async function aggregateDiagnosis(actor,payload,{infer,signal}) {
     {code:'providers',certainty:'proven',value:db.prepare('SELECT COUNT(*) AS n FROM providers').get().n},
     {code:'sync_states',certainty:'proven',value:db.prepare('SELECT status,COUNT(*) AS count FROM sync_logs GROUP BY status LIMIT 20').all().map(row=>({...row,status:safeText(row.status,40)}))},
     {code:'ai_job_states',certainty:'proven',value:db.prepare('SELECT status,COUNT(*) AS count FROM ai_jobs GROUP BY status LIMIT 20').all()},
-    {code:'stream_reachability',certainty:'unknown'}
+    ...unknownDiagnostics()
   ];
   const result={feature:'diagnose',summary:'',findings,coverage:{processed:0,total:0,partial:false,next_offset:null},_authorization:{owner_key:ownerKey(actor),user_id:null,refs:[]}};
   authorizeResult(actor,payload,result);
@@ -173,10 +162,10 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
           planned_categories:actions.filter(action=>action.type==='create_category').slice(-20),
           groups:groups?.filter(group=>group.items.some(item=>batch.includes(item))).map(group=>({id:group.id,count:group.count,classification:group.classification,
             representative:group.representative?listModelItem(group.representative,'duplicates'):null,user_channel_ids:group.items.filter(item=>batchIds.has(item.user_channel_id)).map(item=>item.user_channel_id)}))};
-        if(JSON.stringify(requestFor(data,proposalSchema,instructions).messages).length<=64000||batch.length===1) break;
+        if(JSON.stringify(requestFor(data,proposalSchema(payload.feature),instructions).messages).length<=64000||batch.length===1) break;
         batch=batch.slice(0,Math.ceil(batch.length/2));
       }
-      const reply=await ask(data,proposalSchema,instructions);
+      const reply=await ask(data,proposalSchema(payload.feature),instructions);
       if(!Array.isArray(reply.data.actions)||reply.data.actions.length>80) fail('AI_INVALID_ACTIONS');
       for(const action of reply.data.actions) {
         if(action.user_channel_id && !batch.some(item=>item.user_channel_id===action.user_channel_id)) fail('AI_INVALID_CANDIDATE');
@@ -196,7 +185,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
     result._authorization.epg_program_evidence=evidence.program_evidence;
     const open=evidence.cases.filter(item=>item.status==='ambiguous' || (payload.selected_ids||[]).includes(item.user_channel_id));
     if(open.length) {
-      const reply=await ask({cases:open.slice(0,80),protections:protect},proposalSchema,'Only epg_mapping proposals, from the candidates for that exact provider_channel_id. A program gap alone does not prove a bad mapping. Uncertain cases should have no action.');
+      const reply=await ask({cases:open.slice(0,80),protections:protect},proposalSchema(payload.feature),'Only epg_mapping proposals, from the candidates for that exact provider_channel_id. A program gap alone does not prove a bad mapping. Uncertain cases should have no action.');
       const actions=reply.data.actions;
       if(!Array.isArray(actions)) fail('AI_INVALID_ACTIONS');
       for(const action of actions) {
@@ -224,23 +213,23 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
     signal?.throwIfAborted();
     result.conversation_id=saveConversation(actor,context.userId,filters,context.refs,payload.conversation_id);
   } else if(payload.feature==='diagnose') {
-    result.findings=[{code:'visible_channels',certainty:'proven',value:context.coverage.total},
-      {code:'epg_mapping_missing',certainty:'proven',value:context.items.filter(item=>item.type==='live'&&!item.epg_channel_id).length},
-      {code:'stream_reachability',certainty:'unknown'},{code:'protocol_export_delivery',certainty:'unknown'}];
+    const diagnosis=await localDiagnosis(context);
+    result.findings=diagnosis.findings;
+    Object.assign(result.coverage,diagnosis.coverage);
     const sync=syncDiff(actor,context.userId);
     if(sync) {result.findings.push({code:'last_successful_sync',certainty:'proven',value:sync.diff.timestamp});result._authorization.sync_snapshot_id=sync.id;result._authorization.sync_hash=sync.hash;}
     if(actor.is_admin) {
       const states=db.prepare('SELECT status,COUNT(*) AS count FROM ai_jobs GROUP BY status LIMIT 20').all();
       result.findings.push({code:'ai_job_states',certainty:'proven',value:states});
     }
-    try {const reply=await ask({findings:result.findings},explanationSchema,'Explain these deterministic findings and safe manual next steps. No network tests have been run. Do not claim a cause is proven unless evidence does.');result.summary=safeText(reply.data.summary,2000);}
+    try {const reply=await ask({findings:result.findings,coverage:result.coverage},explanationSchema,'Explain these deterministic local findings and safe manual next steps. Export flags cover account catalog filters only. EPG mapping reports configuration, not program delivery. Session counts describe a local snapshot, not successful playback; existing sessions may be reused at the limit. No network tests have been run. Unknown subtypes are unimplemented checks. Do not claim a cause is proven unless evidence does.');result.summary=safeText(reply.data.summary,2000);}
     catch(error) {signal?.throwIfAborted();if(error.code==='AI_STALE_SOURCE'||error.code==='AI_SOURCE_UNAVAILABLE') throw error;result.explanation_unavailable=true;}
   } else if(payload.feature==='sync') {
     const sync=syncDiff(actor,context.userId,payload.snapshot_id);
     if(!sync) {result.diff=null;result.findings=[{code:'sync_history_unavailable',certainty:'unknown'}];}
     else {
       result.diff=sync.diff;result._authorization.sync_snapshot_id=sync.id;result._authorization.sync_hash=sync.hash;
-      const reply=await ask({diff:sync.diff,candidates:context.items.slice(0,80)},proposalSchema,'Explain only the supplied successful sync diff. Counts are authoritative. Successor proposals must use supplied current candidates and need confirmation.');
+      const reply=await ask({diff:sync.diff,candidates:context.items.slice(0,80)},proposalSchema(payload.feature),'Explain only the supplied successful sync diff. Counts are authoritative. Successor proposals must use supplied current candidates and need confirmation.');
       result.summary=safeText(reply.data.summary,2000);
       if(!Array.isArray(reply.data.actions)) fail('AI_INVALID_ACTIONS');
       for(const action of reply.data.actions) if(action.provider_channel_id && !context.items.some(item=>item.provider_channel_id===action.provider_channel_id)) fail('AI_INVALID_CANDIDATE');
@@ -265,7 +254,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
   signal?.throwIfAborted();
   compactFeatureResult(result);
   authorizeResult(actor,{...payload,user_id:context.userId},result);
-  prunePrivateRecords();
+  if(payload.feature!=='diagnose') prunePrivateRecords();
   return result;
 }
 

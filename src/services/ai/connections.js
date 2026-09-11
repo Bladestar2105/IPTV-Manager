@@ -82,6 +82,10 @@ function persist(connection, expectedVersion = null) {
 function clearModelSelection(connectionId,model=null) {
     db.prepare("UPDATE ai_preferences SET data_json=json_set(data_json,'$.model_id',NULL) WHERE json_extract(data_json,'$.connection_id')=? AND (? IS NULL OR json_extract(data_json,'$.model_id')=?)").run(connectionId,model,model);
 }
+function testedProfile(connection,model) {
+    const profile=connection.capabilities[model];
+    return profile?.chat && profile.token_parameter===connection.token_parameter;
+}
 
 export function getAiSettings(actor) {
     freshActor(actor); const policy=settings();
@@ -109,7 +113,7 @@ export function savePreferences(actor,input) {
     if (input.model_id !== undefined) {
         if (input.model_id !== null) {
             const c=next.connection_id && loadConnection(next.connection_id);
-            if (!canUse(actor,c,policy) || !MODEL_ID.test(input.model_id) || !c.capabilities[input.model_id]?.chat || (c.owner_key !== ownerKey(actor) && input.model_id !== c.model_id)) throw aiError('AI_MODEL_REQUIRED');
+            if (!canUse(actor,c,policy) || !MODEL_ID.test(input.model_id) || !testedProfile(c,input.model_id) || (c.owner_key !== ownerKey(actor) && input.model_id !== c.model_id)) throw aiError('AI_MODEL_REQUIRED');
         }
         next.model_id=input.model_id;
     }
@@ -148,13 +152,16 @@ export function saveConnection(actor,input,id=null) {
         if (!['max_tokens','max_completion_tokens'].includes(input.token_parameter)) throw aiError('AI_INVALID_INPUT');
         next.token_parameter=input.token_parameter;
     }
-    const invalidated=next.base_url !== old.base_url || input.api_key !== undefined || next.token_parameter !== old.token_parameter;
+    const identityChanged=next.base_url !== old.base_url || input.api_key !== undefined;
+    const profileChanged=next.token_parameter !== old.token_parameter;
+    // A tested alternate profile is adopted only with an explicit model selection.
+    const invalidated=identityChanged || (profileChanged && !(input.model_id && testedProfile(next,input.model_id)));
     if (invalidated) { next.models=[]; next.capabilities={}; next.model_id=null; }
     if (input.model_id !== undefined && !invalidated) {
-        if (input.model_id !== null && (typeof input.model_id !== 'string' || !MODEL_ID.test(input.model_id) || !next.capabilities[input.model_id]?.chat)) throw aiError('AI_MODEL_REQUIRED');
+        if (input.model_id !== null && (typeof input.model_id !== 'string' || !MODEL_ID.test(input.model_id) || !testedProfile(next,input.model_id))) throw aiError('AI_MODEL_REQUIRED');
         next.model_id=input.model_id;
     }
-    db.transaction(()=>{ persist(next,id ? old.version : null); if(invalidated) clearModelSelection(next.id); })();
+    db.transaction(()=>{ persist(next,id ? old.version : null); if(invalidated || profileChanged) clearModelSelection(next.id); })();
     return publicConnection(next,actor);
 }
 export function deleteConnection(actor,id) { owned(actor,id); db.prepare('DELETE FROM ai_connections WHERE id=? AND owner_key=?').run(id,ownerKey(actor)); return {deleted:true}; }
@@ -166,14 +173,14 @@ export function requireAiFeatureAccess(actor,feature) {
     if (feature !== 'setup' && (!FEATURES.includes(feature) || !policy.functions.includes(feature))) throw aiError('AI_FORBIDDEN',403);
     return {settings:policy,preferences:prefs};
 }
-export function requireAiAccess(actor,feature,connectionId=null) {
+export function requireAiAccess(actor,feature,connectionId=null,{requireModel=true}={}) {
     const {settings:policy,preferences:prefs}=requireAiFeatureAccess(actor,feature);
     const connection=loadConnection(connectionId || prefs.connection_id);
     if (!canUse(actor,connection,policy)) throw aiError('AI_FORBIDDEN',403);
     if (!connection.enabled) throw aiError('AI_DISABLED',403);
     if (feature !== 'setup' && !connection.functions.includes(feature)) throw aiError('AI_FORBIDDEN',403);
     const model=connection.owner_key === ownerKey(actor) && prefs.connection_id===connection.id ? prefs.model_id || connection.model_id : connection.model_id;
-    if (feature !== 'setup' && (!model || !connection.capabilities[model]?.chat)) throw aiError('AI_MODEL_REQUIRED');
+    if (feature !== 'setup' && (requireModel || feature !== 'diagnose') && (!model || !testedProfile(connection,model))) throw aiError('AI_MODEL_REQUIRED');
     return {connection:publicConnection(connection,actor),preferences:{...prefs,model_id:model},settings:policy,owner_key:ownerKey(actor)};
 }
 
@@ -183,7 +190,7 @@ function reserve(access,feature,model) {
         // A crashed worker's reservation expires only after its strict request timeout.
         db.prepare("UPDATE ai_usage SET status='unknown' WHERE status='running' AND created_at<?").run(now-AI_TIMEOUT_MS-10000);
         const recent=db.prepare('SELECT status,error_code FROM ai_usage WHERE connection_id=? AND created_at>? ORDER BY created_at DESC,rowid DESC LIMIT 3').all(access.connection.id,now-300000);
-        if (recent.length===3 && recent.every(row=>row.status==='failed' || row.error_code==='AI_TIMEOUT')) throw aiError('AI_PAUSED',429);
+        if (recent.length===3 && recent.every(row=>['AI_UNAVAILABLE','AI_TIMEOUT'].includes(row.error_code))) throw aiError('AI_PAUSED',429);
         if (db.prepare("SELECT count(*) AS n FROM ai_usage WHERE status='running' AND (owner_key=? OR connection_id=?)").get(access.owner_key,access.connection.id).n) throw aiError('AI_BUSY',409);
         const limits=db.prepare('SELECT SUM(owner_key=?) AS owner_count,SUM(connection_id=?) AS connection_count,SUM(owner_key=? AND feature=?) AS feature_count FROM ai_usage WHERE created_at>?').get(access.owner_key,access.connection.id,access.owner_key,feature,now-3600000);
         if (limits.owner_count>=60 || limits.connection_count>=180 || limits.feature_count>=30) throw aiError('AI_RATE_LIMIT',429);
@@ -245,7 +252,13 @@ export async function discoverModels(actor,id) {
     const c=loadConnection(id);
     const result=await call(actor,'setup',id,'models',null,null,response=>{
         if (!Array.isArray(response.data) || response.data.length>500 || response.data.some(model=>!model || typeof model.id!=='string' || !MODEL_ID.test(model.id)) || new Set(response.data.map(model=>model.id)).size!==response.data.length) throw aiError('AI_INVALID_RESPONSE',502);
-        return response.data.map(({id})=>({id}));
+        // OpenRouter's documented modality metadata is a candidate hint, never a
+        // successful capability test. OpenAI-style ID-only lists remain unknown.
+        return response.data.map(model=>{
+            const modalities=[model.architecture?.input_modalities,model.architecture?.output_modalities];
+            const known=modalities.every(items=>Array.isArray(items) && items.length>0 && items.length<=20 && items.every(item=>typeof item==='string'));
+            return {id:model.id,candidate:known ? modalities.every(items=>items.includes('text')) ? 'text' : 'other' : 'unknown'};
+        });
     });
     c.models=result.data; persist(c,c.version); return publicConnection(c,actor);
 }
@@ -254,18 +267,30 @@ export async function testModels(actor,id,input) {
     if (!Array.isArray(input.model_ids) || !input.model_ids.length || input.model_ids.length>3 || new Set(input.model_ids).size!==input.model_ids.length || input.model_ids.some(model=>typeof model!=='string' || !MODEL_ID.test(model))) throw aiError('AI_INVALID_INPUT');
     const models=[];
     for (const model of input.model_ids) {
-        const profile={id:model,chat:false,structured:false,status:'failed',tested_at:Date.now(),token_parameter:c.token_parameter};
+        const profile={id:model,chat:false,structured:false,status:'unverified',tested_at:Date.now(),token_parameter:c.token_parameter};
         for (const structured of [false,true]) {
             if (structured && !profile.chat) break;
-            try {
-                const body=completionBody(c,model,[{role:'user',content:'Synthetic compatibility check: return {"ok":true}.'}],TEST_SCHEMA,structured,128);
-                const result=await call(actor,'setup',id,'chat/completions',body,null,response=>completion(response,TEST_SCHEMA));
-                if (result.data.ok!==true) throw aiError('AI_INVALID_RESPONSE',502);
-                if (structured) profile.structured=true; else profile.chat=true;
-                profile.status='compatible';
-            } catch(error) {
-                if (['AI_AUTH_FAILED','AI_RATE_LIMIT','AI_UNAVAILABLE','AI_DISABLED','AI_FORBIDDEN','AI_CONNECTION_CHANGED','AI_BUSY','AI_PAUSED','AI_TIMEOUT'].includes(error.code)) throw error;
-                profile.status=profile.chat ? 'json_fallback' : 'incompatible';
+            for (let attempt=0;attempt<(structured?1:2);attempt++) {
+                try {
+                    const body=completionBody(profile,model,[{role:'user',content:'Synthetic compatibility check: return {"ok":true}.'}],TEST_SCHEMA,structured,128);
+                    await call(actor,'setup',id,'chat/completions',body,null,response=>{
+                        const data=completion(response,TEST_SCHEMA);
+                        if (data.ok!==true) throw aiError('AI_INVALID_RESPONSE',502);
+                        return data;
+                    });
+                    if (structured) profile.structured=true; else profile.chat=true;
+                    profile.status='compatible'; delete profile.error_code;
+                    break;
+                } catch(error) {
+                    if (!['AI_MODEL_UNAVAILABLE','AI_CAPABILITY_UNSUPPORTED','AI_TOKEN_PARAMETER_UNSUPPORTED','AI_INVALID_RESPONSE','AI_RESPONSE_TOO_LARGE'].includes(error.code)) throw error;
+                    if (!structured && attempt===0 && error.code==='AI_TOKEN_PARAMETER_UNSUPPORTED' && error.parameter===profile.token_parameter) {
+                        profile.token_parameter=profile.token_parameter==='max_tokens'?'max_completion_tokens':'max_tokens';
+                        continue;
+                    }
+                    profile.error_code=error.code;
+                    profile.status=profile.chat ? 'json_fallback' : ['AI_MODEL_UNAVAILABLE','AI_CAPABILITY_UNSUPPORTED','AI_TOKEN_PARAMETER_UNSUPPORTED'].includes(error.code) ? 'incompatible' : 'unverified';
+                    break;
+                }
             }
         }
         models.push(profile);

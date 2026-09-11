@@ -68,6 +68,8 @@ window.aiUI = (() => {
   function errorKey(error) {
     const code = String(error.response?.code || error.code || '').toUpperCase();
     if (code === 'AI_DISABLED') return 'off';
+    if (code === 'AI_PERMISSION_DENIED') return 'permission';
+    if (code === 'AI_RATE_LIMIT') return 'rateLimit';
     if (/STALE|CONFLICT|CHANGED/.test(code)) return 'stale';
     if (/FORBIDDEN|DENIED|NOT_ALLOWED|ACCESS|AUTHENTICATION/.test(code)) return 'denied';
     if (/API_KEY|UNAUTHORIZED|AUTH_FAILED/.test(code)) return 'auth';
@@ -193,6 +195,7 @@ window.aiUI = (() => {
       renderModels(list(result, 'models')); status('saved');
     });
     const models = field(controls, 'models', 'models', 'select'); models.multiple = true; models.size = 4;
+    label('p', controls, 'candidateHint', 'small text-muted');
     button(controls, 'test', 'test', async () => {
       await enableSetup();
       const connection = await saveConnection();
@@ -204,12 +207,13 @@ window.aiUI = (() => {
       recommendation = result.recommended_model_id;
       renderCapabilities(result.models);
       el('recommendation').disabled = !recommendation;
-      if (result.models.filter(model => model.chat && model.status !== 'failed').length === 1 && recommendation) el('model').value = recommendation;
+      if (!value('model') && result.models.filter(model => model.chat).length === 1 && recommendation) adoptRecommendation();
       status('saved');
     });
     label('p', controls, 'evidence', 'small text-muted');
+    label('p', controls, 'profileProbe', 'small text-muted');
     node('div', controls).id = 'ai-capabilities';
-    button(controls, 'recommendation', 'recommendation', () => { if (recommendation) el('model').value = recommendation; }).disabled = true;
+    button(controls, 'recommendation', 'recommendation', adoptRecommendation).disabled = true;
     const advanced = node('details', box); label('summary', advanced, 'advanced');
     const manualModel = field(advanced, 'model', 'model', 'text', preferences.model_id || chosen()?.model_id || '');
     manualModel.addEventListener('input', () => { for (const item of el('models').options) item.selected = false; });
@@ -255,13 +259,13 @@ window.aiUI = (() => {
     } else if (connection) label('p', box, 'provided');
     el('model-controls').hidden = !canEdit || !value('connection');
     el('delete-connection').hidden = !connection || !canEdit;
-    el('model').value = connection?.model_id || '';
+    el('model').value = (canEdit && preferences.connection_id === connection?.id && preferences.model_id) || connection?.model_id || '';
     el('model').readOnly = !canEdit;
     el('token-parameter').value = connection?.token_parameter || 'max_tokens';
     el('token-parameter').disabled = !canEdit;
     renderCapabilities(Object.values(connection?.capabilities || {}));
     el('recommendation').disabled = true;
-    renderModels(connection?.models || []); destination();
+    el('models').replaceChildren(); renderModels(connection?.models || []); destination();
   }
   function destination() {
     let target = chosen()?.base_url || '';
@@ -272,21 +276,38 @@ window.aiUI = (() => {
     el('destination').textContent = target || tr('unknown');
   }
   function renderModels(models) {
+    const selected = new Set([...el('models').selectedOptions].map(item => item.value));
+    const current = value('model') || chosen()?.model_id;
+    if (!selected.size && current) selected.add(current);
+    const entries = new Map(models.map(model => [typeof model === 'string' ? model : model.id, typeof model === 'string' ? {id: model} : model]));
+    for (const id of selected) if (!entries.has(id)) entries.set(id, {id, missing: true});
+    const ordered = [...entries.values()].sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)) || Number(b.candidate === 'text') - Number(a.candidate === 'text') || a.id.localeCompare(b.id));
+    if (!selected.size) {
+      for (const model of ordered.filter(model => model.candidate === 'text').slice(0, 3)) selected.add(model.id);
+      if (ordered.length === 1 && ordered[0].candidate !== 'other') selected.add(ordered[0].id);
+    }
     el('models').replaceChildren();
-    const ordered = [...models].sort((a, b) => Number((typeof b === 'string' ? b : b.id) === chosen()?.model_id) - Number((typeof a === 'string' ? a : a.id) === chosen()?.model_id));
-    for (const [index, model] of ordered.entries()) option(el('models'), typeof model === 'string' ? model : model.id, typeof model === 'string' ? model : model.id).selected = index < 3;
+    for (const model of ordered) option(el('models'), model.id, `${model.id}${model.missing ? ` (${tr('notListed')})` : ''}`).selected = selected.has(model.id);
+  }
+  function adoptRecommendation() {
+    if (!recommendation) return;
+    el('model').value = recommendation;
+    const profile = chosen()?.capabilities?.[recommendation];
+    if (profile?.token_parameter) el('token-parameter').value = profile.token_parameter;
   }
   function renderCapabilities(models) {
     const box = el('capabilities'); box.replaceChildren();
     if (!models.length) return;
     const table = node('table', box, undefined, 'table table-sm');
     const head = node('tr', node('thead', table));
-    for (const key of ['model', 'chat', 'structured']) label('th', head, key).scope = 'col';
+    for (const key of ['model', 'chat', 'structured', 'testStatus', 'tokenParameter']) label('th', head, key).scope = 'col';
     const body = node('tbody', table);
     for (const model of models) {
       const row = node('tr', body); node('td', row, model.id);
-      label('td', row, model.chat ? 'yes' : 'no');
-      label('td', row, model.structured ? 'yes' : 'no');
+      label('td', row, model.chat ? 'yes' : model.status === 'unverified' ? 'unknown' : 'no');
+      label('td', row, model.structured ? 'yes' : model.error_code === 'AI_INVALID_RESPONSE' ? 'unknown' : 'no');
+      label('td', row, ['compatible', 'json_fallback', 'incompatible', 'unverified'].includes(model.status) ? model.status : 'unknown');
+      node('td', row, model.token_parameter || tr('unknown'));
     }
   }
   async function enableSetup() {
@@ -317,6 +338,7 @@ window.aiUI = (() => {
     const box = section('work', true);
     const select = field(box, 'feature', 'feature', 'select');
     for (const feature of features) option(select, feature, '', feature).disabled = !(settings.functions || []).includes(feature);
+    const diagnosticNote = label('p', box, 'diagnosticScope', 'small text-muted'); diagnosticNote.hidden = true;
     if (currentUser.is_admin) field(box, 'user', 'user', 'number', typeof selectedUserId !== 'undefined' ? selectedUserId || '' : '');
     field(box, 'prompt', 'prompt', 'textarea');
     const scope = node('details', box); label('summary', scope, 'scope');
@@ -340,6 +362,7 @@ window.aiUI = (() => {
     programSelect.addEventListener('change', () => { description.textContent = programSelect.value === '' ? '' : programs[Number(programSelect.value)]?.description || ''; });
     field(box, 'filters', 'filters', 'textarea', '{}');
     select.addEventListener('change', () => {
+      diagnosticNote.hidden = select.value !== 'diagnose';
       beginResult(); clearTimeout(timer); jobId = null;
       conversationId = null; filterBaseline = {}; el('filters').value = '{}'; nextOffset = 0;
       el('operation').parentElement.hidden = select.value !== 'text';
@@ -444,24 +467,34 @@ window.aiUI = (() => {
     const resultStamp = beginResult();
     const box = el('result');
     label('h3', box, 'result', 'h5');
-    node('p', box, result.summary || tr('empty'));
+    node('p', box, result.summary || tr(result.explanation_unavailable ? 'localOnly' : 'empty'));
     const coverage = result.coverage || {};
     for (const [key, shown, total] of [
       ['analyzedCount', coverage.processed, coverage.total],
       ['itemPreviewCount', coverage.items_shown, coverage.items_total],
       ['findingPreviewCount', coverage.findings_shown, coverage.findings_total],
+      ['diagnosticPreviewCount', coverage.diagnostic_entries_shown, coverage.diagnostic_entries_total],
       ['diffPreviewCount', result.diff?.preview?.shown, result.diff?.preview?.total]
     ]) {
       if (!Number.isFinite(shown) || !Number.isFinite(total)) continue;
       const count = node('p', box); label('span', count, key); node('span', count, `: ${shown} / ${total}`);
     }
     for (const key of ['items', 'findings', 'diff', 'text', 'coverage']) {
+      if (key === 'findings' && result.feature === 'diagnose' && Array.isArray(result.findings)) {
+        for (const certainty of ['proven', 'possible', 'unknown']) {
+          const findings = result.findings.filter(finding => finding.certainty === certainty);
+          if (!findings.length) continue;
+          label('h4', box, certainty, 'h6'); node('pre', box, printable(findings));
+        }
+        continue;
+      }
       if (result[key] !== undefined) node('pre', box, printable(result[key]));
     }
+    if (result.feature === 'diagnose') label('p', box, 'diagnosticScope', 'small text-muted');
     conversationId = result.conversation_id || null;
     filterBaseline = result.filters || {};
     el('filters').value = printable(filterBaseline);
-    if (result.coverage?.partial) {
+    if (coverage.partial || coverage.results_partial || coverage.epg_review_partial || coverage.diagnostic_entries_partial) {
       label('p', box, 'partial', 'alert alert-warning');
       if (Number.isInteger(result.coverage.next_offset)) button(box, 'next', 'next', () => { nextOffset = result.coverage.next_offset; return startJob(); });
     }

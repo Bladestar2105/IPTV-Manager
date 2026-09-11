@@ -65,7 +65,7 @@ export function createJob(actor, input, idempotencyKey = randomUUID()) {
   const fresh = currentActor(actor);
   const payload = normalizeInput(fresh,input);
   if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(idempotencyKey)) fail(400,'ai_invalid_idempotency_key');
-  const access = requireAiAccess(fresh,payload.feature,payload.connection_id || null);
+  const access = requireAiAccess(fresh,payload.feature,payload.connection_id || null,{requireModel:payload.feature !== 'diagnose'});
   payload.language ??= access.preferences.language;
   payload.timezone ??= access.preferences.timezone;
   const inputJson = JSON.stringify({...payload,connection_id:access.connection.id,_timeout:payload.full_list === true ? LARGE_JOB_TIMEOUT : JOB_TIMEOUT,
@@ -106,15 +106,16 @@ async function runJob(id) {
   const controller = new AbortController();
   running.set(id,controller);
   const deadline = setTimeout(() => controller.abort(),input._timeout || JOB_TIMEOUT);
-  const check = () => {
+  const check = (requireModel = job.feature !== 'diagnose') => {
     if (controller.signal.aborted) fail(409,'ai_cancelled');
     const state = db.prepare('SELECT status FROM ai_jobs WHERE id = ?').get(id);
     if (state?.status !== 'running') fail(409,'ai_cancelled');
     const fresh = currentActor(actor,input._actor_version);
     normalizeInput(fresh,input);
-    const access = requireAiAccess(fresh,job.feature,job.connection_id);
+    const access = requireAiAccess(fresh,job.feature,job.connection_id,{requireModel});
+    const model = access.preferences.model_id || access.connection.model_id;
     if (access.connection.version !== job.connection_version ||
-        (access.preferences.model_id || access.connection.model_id) !== input._model_id) fail(409,'ai_connection_changed');
+        (model !== input._model_id && (job.feature !== 'diagnose' || model))) fail(409,'ai_connection_changed');
     return fresh;
   };
   const monitor = setInterval(() => {
@@ -127,7 +128,7 @@ async function runJob(id) {
     const result = await executeFeature(actor,input,{
       signal:controller.signal,jobId:id,
       infer:async ({messages,schema}) => {
-        const fresh = check();
+        const fresh = check(true);
         db.prepare('UPDATE ai_jobs SET request_started_at = ? WHERE id = ?').run(Date.now(),id);
         const response = await runInference(fresh,job.feature,{messages,schema,signal:controller.signal,connectionId:job.connection_id});
         check();
@@ -161,7 +162,7 @@ export async function getJob(actor, id) {
   const fresh = currentActor(actor);
   const output = {id:row.id,status:row.status,feature:row.feature,created_at:row.created_at,updated_at:row.updated_at,error_code:row.error_code};
   if (row.result_json) {
-    requireAiAccess(fresh,row.feature,row.connection_id);
+    requireAiAccess(fresh,row.feature,row.connection_id,{requireModel:row.feature !== 'diagnose'});
     const {authorizeResult} = await import('./features.js');
     output.result = await authorizeResult(fresh,JSON.parse(row.input_json),JSON.parse(row.result_json));
     if (output.result && typeof output.result === 'object') delete output.result._authorization;

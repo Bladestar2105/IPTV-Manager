@@ -5,6 +5,8 @@ import { createCategory, addChannel } from '../userListWriteService.js';
 import { isAdultCategory } from '../../utils/helpers.js';
 import { ownerKey, targetUser, positiveId, ids, safeText, fail, hash, channelRecord, reference, checkReferences, verifyEpg, allowedEpgChannels, RETENTION_MS, MAX_CANDIDATES } from './context.js';
 import { verifyEpgProgramCatalog } from './searchAndEpg.js';
+import { requireAiFeatureAccess } from './connections.js';
+import { validateFeatureActions } from './proposalContract.js';
 
 const FIELDS = {rename_channel:'custom_name',hide_channel:'is_hidden',reorder_channel:'sort_order'};
 const assignmentFields=['sort_order','is_hidden','assignment_origin','mapping_id','granted_by_admin','authorization_revoked'];
@@ -41,7 +43,7 @@ function displayValues(value) {return value?Object.fromEntries(Object.entries(va
 
 export function createProposal(actor,payload,input,summary='',evidence=[],sourceEvidence=null) {
   const userId=targetUser(actor,payload.user_id);
-  if(!Array.isArray(input) || input.length>MAX_CANDIDATES) fail('AI_INVALID_ACTIONS');
+  validateFeatureActions(payload.feature,input);
   const selected=new Set(ids(payload.selected_ids));
   const pinned=new Set(ids(payload.pinned_ids));
   const keepFirst=Number(payload.keep_first||0);
@@ -49,10 +51,6 @@ export function createProposal(actor,payload,input,summary='',evidence=[],source
   const created=new Map(), seen=new Set(), sortCounts=new Map();
   const actions=[];
   for(const raw of input) {
-    if(!raw || typeof raw!=='object' || !['create_category','rename_category','assign_channel','epg_mapping',...Object.keys(FIELDS)].includes(raw.type)) fail('AI_INVALID_ACTION');
-    if(payload.feature==='epg' && raw.type!=='epg_mapping') fail('AI_INVALID_ACTION');
-    if(payload.feature==='duplicates' && raw.type!=='hide_channel') fail('AI_INVALID_ACTION');
-    if(payload.feature==='sync' && !['assign_channel','rename_channel','create_category'].includes(raw.type)) fail('AI_INVALID_ACTION');
     const action={id:randomUUID(),type:raw.type,label:safeText(raw.label||raw.type,200),dependencies:[],refs:[]};
     if(raw.type==='create_category') {
       const key=String(raw.key||'');
@@ -204,6 +202,8 @@ export function applyProposal(actor,id,{action_ids,idempotency_key}={}) {
   if(!Array.isArray(action_ids)||!action_ids.length||action_ids.length>MAX_CANDIDATES||new Set(action_ids).size!==action_ids.length||typeof idempotency_key!=='string'||!idempotency_key||idempotency_key.length>200) fail('AI_INVALID_CONFIRMATION');
   const outcome=db.transaction(()=>{
     const row=record('ai_proposals',actor,id);
+    validateFeatureActions(row.data.feature,row.data.actions);
+    requireAiFeatureAccess(actor,row.data.feature);
     if(row.status==='applied') {
       const change=record('ai_changes',actor,row.change_id);
       if(change.data.idempotency_key!==idempotency_key || !equal(change.data.action_ids,[...action_ids].sort())) fail('AI_ALREADY_APPLIED',409);

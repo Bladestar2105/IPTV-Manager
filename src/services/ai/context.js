@@ -93,16 +93,20 @@ export function checkReferences(actor, userId, refs, { version = true } = {}) {
 
 export function buildContext(actor, payload) {
   const userId = targetUser(actor, payload.user_id);
-  const editing = ['list','cleanup','duplicates'].includes(payload.feature);
   const selectedIds = ids(payload.selected_ids);
   const channelIds = ids(payload.channel_ids ?? (payload.provider_channel_id ? [payload.provider_channel_id] : []));
+  const selectedDiagnosis = payload.feature === 'diagnose' && (selectedIds.length > 0 || channelIds.length > 0);
+  const editing = ['list','cleanup','duplicates'].includes(payload.feature) || selectedDiagnosis;
   const offset = Number(payload.offset || 0);
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) fail('AI_INVALID_OFFSET');
   const params = {userId};
   const clauses = [editing
     ? `(uc.id IN (SELECT id FROM authorized_user_channels) OR (p.user_id=@userId AND uc.id IS NULL))`
     : 'uc.id IN (SELECT id FROM authorized_user_channels)'];
-  if (selectedIds.length && editing) {
+  if (selectedDiagnosis) {
+    clauses[0] = '(p.user_id=@userId OR uc.granted_by_admin=1) AND COALESCE(uc.authorization_revoked,0)=0';
+    if(selectedIds.length) clauses.push(`uc.id IN (${selectedIds.map((id,i)=>{params['selected'+i]=id;return '@selected'+i;}).join(',')})`);
+  } else if (selectedIds.length && editing) {
     clauses[0] = `(${clauses[0]} OR (uc.id IN (${selectedIds.map((id,i)=> {params['selected'+i]=id;return '@selected'+i;}).join(',')}) AND uc.authorization_revoked=0 AND (p.user_id=@userId OR uc.granted_by_admin=1)))`;
   }
   if (channelIds.length) clauses.push(`pc.id IN (${channelIds.map((id,i)=>{params['id'+i]=id;return '@id'+i;}).join(',')})`);
@@ -112,6 +116,7 @@ export function buildContext(actor, payload) {
   const limit=payload.full_list===true?MAX_CANDIDATES:240;
   const rows = db.prepare(`${sql} ORDER BY pc.id,uc.id LIMIT @limit OFFSET @offset`).all({...params,limit,offset});
   if (channelIds.some(id => !rows.some(row => row.provider_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
+  if (selectedDiagnosis && selectedIds.some(id => !rows.some(row => row.user_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
   const categories = db.prepare('SELECT id,name,type,sort_order,is_adult FROM user_categories WHERE user_id=? ORDER BY sort_order,id LIMIT 500').all(userId)
     .map(row=>({...row,name:safeText(row.name,160)}));
   const refs = rows.map(row=>reference(row,editing,Boolean(row.is_hidden)));

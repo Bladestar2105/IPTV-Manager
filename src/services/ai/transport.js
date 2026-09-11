@@ -14,6 +14,9 @@ export function aiError(code, status = 400) {
         AI_DISABLED: 'AI is disabled.', AI_FORBIDDEN: 'AI access is not permitted.',
         AI_TARGET_BLOCKED: 'The API target is not permitted.', AI_INVALID_INPUT: 'Invalid AI settings or input.',
         AI_AUTH_FAILED: 'The API rejected the configured credentials.', AI_REDIRECT_BLOCKED: 'API redirects are not permitted.',
+        AI_PERMISSION_DENIED: 'The configured API identity lacks permission for this request.',
+        AI_CAPABILITY_UNSUPPORTED: 'The API explicitly rejected the requested model capability.',
+        AI_TOKEN_PARAMETER_UNSUPPORTED: 'The API explicitly rejected the token limit parameter.',
         AI_RATE_LIMIT: 'The API or local request limit was reached.', AI_UNAVAILABLE: 'The API is temporarily unavailable.',
         AI_TIMEOUT: 'The API request timed out or was cancelled.', AI_INVALID_RESPONSE: 'The API returned an invalid or incomplete response.',
         AI_RESPONSE_TOO_LARGE: 'The API response exceeded the size limit.', AI_MODEL_REQUIRED: 'Select a successfully tested model.',
@@ -22,6 +25,35 @@ export function aiError(code, status = 400) {
         AI_CONNECTION_CHANGED: 'The connection changed during the request. Start again.', AI_NOT_FOUND: 'AI connection not found.'
     };
     return Object.assign(new Error(messages[code] || 'The AI request failed.'), { code, status });
+}
+
+// Only explicit 4xx request rejections can authorize a bounded setup profile probe.
+// Upstream text stays local to classification; never return, persist or log it.
+async function responseError(response, body) {
+    const status=response.status;
+    const immediate=status>=300 && status<400 ? 'AI_REDIRECT_BLOCKED' : status===401 ? 'AI_AUTH_FAILED'
+        : status===403 ? 'AI_PERMISSION_DENIED' : status===429 ? 'AI_RATE_LIMIT' : status>=500 ? 'AI_UNAVAILABLE' : null;
+    if (immediate) { response.body?.destroy(); return aiError(immediate,status===429?429:502); }
+    const fallback=aiError(status===404 ? 'AI_MODEL_UNAVAILABLE' : 'AI_INVALID_RESPONSE',502);
+    if (![400,404,422].includes(status)) { response.body?.destroy(); return fallback; }
+    if (Number(response.headers.get('content-length'))>AI_MAX_BYTES) { response.body?.destroy(); return fallback; }
+    let error;
+    try { error=JSON.parse(await response.text())?.error; }
+    catch (failure) { if (failure.name==='AbortError') throw failure; return fallback; }
+    if (!error || typeof error!=='object') return fallback;
+    const message=typeof error.message==='string' ? error.message.slice(0,4096) : '';
+    const rejected=['unsupported_parameter','unknown_parameter','unsupported_value'].includes(error.code) || /not supported|unsupported|unrecognized|unknown parameter/i.test(message);
+    const parameterRejected=['unsupported_parameter','unknown_parameter'].includes(error.code)
+        || (error.code==null && /^Unsupported parameter:/i.test(message));
+    if ([400,422].includes(status) && parameterRejected && ['max_tokens','max_completion_tokens'].includes(error.param) && Object.hasOwn(body || {},error.param)) {
+        return Object.assign(aiError('AI_TOKEN_PARAMETER_UNSUPPORTED',502),{parameter:error.param});
+    }
+    if ((rejected && /^response_format(?:\.|$)/.test(error.param || '') && body?.response_format)
+        || /not a chat model|does not support chat|not supported (?:in|on|by).*chat\/completions/i.test(message)
+        || (body?.response_format && /(?:json_schema|structured outputs?).*(?:not supported|unsupported)/i.test(message))) {
+        return aiError('AI_CAPABILITY_UNSUPPORTED',502);
+    }
+    return fallback;
 }
 
 export function normalizeBaseUrl(value) {
@@ -91,12 +123,7 @@ export async function requestJson(connection, settings, endpoint, { body, signal
             agent, redirect: 'manual', signal: controller.signal, size: AI_MAX_BYTES
         });
         if (!response.ok) {
-            response.body?.destroy();
-            if (response.status >= 300 && response.status < 400) throw aiError('AI_REDIRECT_BLOCKED', 502);
-            if ([401,403].includes(response.status)) throw aiError('AI_AUTH_FAILED', 502);
-            if (response.status === 429) throw aiError('AI_RATE_LIMIT', 429);
-            if (response.status === 404) throw aiError('AI_MODEL_UNAVAILABLE', 502);
-            throw aiError(response.status >= 500 ? 'AI_UNAVAILABLE' : 'AI_INVALID_RESPONSE', 502);
+            throw await responseError(response,body);
         }
         if (Number(response.headers.get('content-length')) > AI_MAX_BYTES) { response.body?.destroy(); throw aiError('AI_RESPONSE_TOO_LARGE', 502); }
         let json;

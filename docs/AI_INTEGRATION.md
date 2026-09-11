@@ -17,7 +17,7 @@ test users and individual functions before a broader rollout.
    destination before requesting discovery or a test. Entering or saving an
    address makes no network request. Custom proxy prefixes are preserved;
    known `/models` and `/chat/completions` suffixes are normalized.
-4. Discover models, then test up to three candidates. Tests send only synthetic
+4. Discover models, then select and test up to three candidates. Tests send only synthetic
    text and can incur provider charges. Select the tested recommendation or
    another tested model and finish setup. If model discovery is unavailable,
    use a manual model ID and explicitly test it.
@@ -27,10 +27,48 @@ test users and individual functions before a broader rollout.
 
 The UI supports German, English, French and Greek. Language and IANA timezone
 are personal preferences. The advanced token option selects `max_tokens` or
-`max_completion_tokens`; changing the API address, key or request profile
-invalidates model compatibility and selection. Retest and select explicitly.
+`max_completion_tokens`. Changing the API address or key invalidates model
+compatibility and selection. A manual profile change also invalidates them,
+unless you explicitly adopt a model successfully tested with that exact profile.
 Model recommendations reflect observed compatibility, not a price/quality
 ranking. There is no automatic fallback to a different provider or credential.
+
+### Model discovery and bounded compatibility tests
+
+The selected model, including a personal selection on an owned connection,
+survives discovery refreshes. A removed ID remains visible as **not in the
+current model list** until explicitly changed. Testing another model does not
+replace a saved selection. A sole successful candidate can be adopted without
+typing its ID; finishing setup confirms the model and tested token profile.
+
+Documented provider profiles are handled as follows:
+
+| API profile | Discovery and request behavior |
+| --- | --- |
+| OpenAI's [model list](https://developers.openai.com/api/reference/resources/models/methods/list) | IDs do not prove chat or schema support. Multiple unknown candidates require selection; neither model names nor list order imply suitability. |
+| OpenRouter's [model metadata](https://openrouter.ai/docs/guides/overview/models) | Valid `architecture.input_modalities` and `output_modalities` containing text suggest candidates. Only this bounded hint and the ID are retained; a successful request test is still required. Compatible proxies exposing this metadata use the same rule. |
+| Chat Completions token profiles | [OpenAI documents](https://developers.openai.com/api/reference/resources/chat) `max_completion_tokens` (including reasoning tokens), and deprecates `max_tokens`, which some reasoning models reject. Other compatible servers may require `max_tokens`. Both are tested under the rule below, without changing the configured endpoint or identity. |
+| Unknown aliases or proxies | Remain selectable and testable, including through the manual ID field. Missing metadata is unknown, not evidence of incompatibility. |
+
+Each explicit test accepts at most three model IDs. Per model it sends one
+plain JSON request, then one structured-output request if plain JSON passed.
+**Only** an explicit HTTP 400/422 rejection identifying the submitted token
+parameter as unsupported/unknown permits one alternate parameter probe before
+the structured check. A rejected parameter value, ambiguous response, timeout,
+5xx or authorization failure never triggers that probe. The bound is three
+requests per model, nine per batch, with 128 output tokens per request; all
+attempts consume the existing local call budget and may incur provider charges.
+There is no automatic budget increase. An incomplete answer stays **unverified**,
+including when a model needs more reasoning tokens than this test allows.
+
+Explicit chat/schema incompatibilities are recorded separately from model
+availability, authentication, permission, rate-limit and connection failures.
+Plain JSON success with rejected schema support is a usable JSON fallback.
+Choose another batch explicitly after incompatible candidates; those rejections
+do not trip the connection outage breaker. Authentication, permission, rate
+limits and real outages stop the batch. Provider error bodies are never exposed
+or persisted. A tested alternate token profile takes effect only on explicit
+adoption; an in-use model is never silently switched to it.
 
 For an EPG description, choose the channel, load its available programs, and
 select the actual program as the text source. Loading this local source list
@@ -41,12 +79,12 @@ does not call the model. Movies and series can use their original description.
 | Function | Behavior |
 | --- | --- |
 | List assistant | Proposes categories, personal names, assignments and order changes using the user's authorized editor catalog. |
-| Cleanup | Proposes name/category cleanup; confirmed literal name transformations can become reusable rules. |
+| Cleanup | Proposes personal/category renames, hiding and order cleanup; never creates assignments or EPG mappings. Confirmed literal name transformations can become reusable rules. |
 | Duplicates | Groups local identities and name variants, shows uncertainty, and proposes hiding entries. Reachability and picture quality require separate measured evidence. |
 | EPG | Runs local matching first, presents existing source candidates and program evidence, and protects manual mappings unless explicitly selected. |
 | Sync report | Explains a recorded successful before/after difference. Counts come from actual changes; missing or incomplete history is not reconstructed. |
 | Search | Converts requests and follow-ups into visible filters, then searches the current authorized catalog and EPG locally. New Search clears the conversation. |
-| Diagnosis | Explains deterministic findings and unknowns without automatic repairs. Administrators may request aggregate findings without selecting a user. |
+| Diagnosis | Reads assignment, visibility, local account export filters, configured EPG mapping and recorded user-connection limits. Separates observations, possible explanations and unimplemented measurements; no repairs. Administrators may request aggregate findings without selecting a user. |
 | Text | Translates, summarizes or tags an existing description. The original remains intact and the marked AI version is invalidated when its source changes. |
 
 Normal users keep their existing list-editing rights with `provider_access=0`.
@@ -59,6 +97,47 @@ Manual names, hidden rows and pinned positions are protected unless explicitly
 selected for editing. Proposals carry exact source state and dependencies.
 Stale proposals and undo conflicts require a fresh review; Undo does not
 restore a whole backup or overwrite intervening user edits.
+
+The output schema, proposal creation and Apply share a closed action contract:
+`list` allows category creation/renaming, assignment, personal renaming, hiding
+and reordering; `cleanup` allows only renaming, hiding and reordering;
+`duplicates` only hiding; `epg` only EPG mapping; and `sync` category creation,
+assignment and personal renaming. Read-only functions have no mutation actions.
+Apply validates **every stored action**, including unselected actions in legacy
+proposals, before any write and rechecks the current feature permission. EPG
+actions always require the EPG feature and current channel/source/program
+evidence. Full reorder transactions and conflict-protected Undo remain atomic;
+Undo cannot restore revoked rights or add actions.
+
+### Local diagnosis coverage
+
+Select an allowed provider channel ID or list-entry `selected_ids` to diagnose
+an individual entry. Own editable hidden assignments are included when selected;
+foreign or revoked content is rejected. Local findings include assignment and
+hidden status; eligibility in the account catalog; stream content type; cached
+series episodes relevant to M3U; HDHomeRun enablement/live-channel filtering;
+and configured manual/provider EPG mapping. These are filter/configuration
+observations, not proof that an export or program reached a player.
+
+User limits use a timestamped snapshot from the configured SQLite or Redis
+session store and the manager's existing stale-session and grouping rules.
+The reader does not clean up records, stop streams, or modify provider settings.
+A locally reached limit is observed; blocking a new connection remains a
+possible explanation because an existing session may be reusable. Missing or
+unreadable session storage is **unknown**, never zero. No raw session identities,
+IP addresses, provider credentials or stream URLs are sent to the model.
+Details cover at most 40 entries per context page, with explicit shown/total
+coverage. Aggregate findings describe that page, not unseen entries.
+
+The following measurements are **not implemented**: network reachability,
+actual M3U/Xtream/Stalker/HDHomeRun export delivery, client/share-specific request
+filters, EPG program delivery, upstream provider connection limits, playback
+health and identification of the selected entry's active session. They remain
+separate unknown findings in the UI. No global scan or external playback probe
+is started. A diagnosis menu entry is not approval of this entire pilot scope.
+Local technical findings survive a failed optional AI explanation. AI job and
+usage bookkeeping still writes private operational records; the diagnostic
+domain checks themselves are read-only and do not trigger retention cleanup.
 
 Rules support literal prefix removal or replacement with exceptions. Save a
 rule from an applied rename, inspect its preview, then separately enable future
@@ -101,7 +180,9 @@ Canceled or uncertain submitted requests are not blindly retried.
   Limits include failed submissions, not only successful answers.
 - Provider requests time out after 30 seconds. Normal jobs have a 2-minute
   deadline, explicit large analyses 10 minutes; queued jobs expire after
-  30 minutes. Three recent failures/timeouts pause a connection temporarily.
+  30 minutes. Three consecutive connection failures/5xx/timeouts within five
+  minutes pause a connection temporarily; expected capability, model, credential
+  and permission rejections do not count as connection outages.
 - Responses are limited to 512 KiB; inference requests set a 2,048-token
   output ceiling. Truncated, oversized or malformed outputs are rejected.
 - Default catalog analysis examines up to 240 entries; explicit large-list
@@ -109,8 +190,11 @@ Canceled or uncertain submitted requests are not blindly retried.
   process later pages. A partial page never claims the whole list was checked.
   Cross-page duplicate grouping uses the authorized local catalog.
 - EPG matching examines at most 5,000 source records; search returns at most
-  100 results and examines at most 5,000 program rows. Coverage/truncation flags
-  identify these bounds. Unknown language, region or runtime stays unknown.
+  100 results and examines at most 5,000 program rows using stable pages under
+  the channel/source/start primary key. Existence probes distinguish exact
+  terminal boundaries from omitted rows. Any omitted rows, or a capped source
+  catalog, produce `truncated: true`, including zero-match searches. Unknown
+  language, region or runtime stays unknown.
 - Sync history skips providers affecting more than 50,000 visible assignments
   rather than recording a misleading partial removal report.
 - Job inputs/results are retained for 7 days; conversations, proposals,
@@ -151,3 +235,7 @@ See [development checks](DEVELOPMENT.md#ai-integration-checks) and
 Synthetic tests establish application behavior; validate a configured model
 and real player setup separately before production enablement. Deployment,
 publishing and release tags are separate steps.
+
+Native ChatGPT, MCP and OAuth account integrations are not included. They are
+possible separate follow-up work requiring their own design, authorization and
+validation; an OpenAI-compatible API key connection does not implement them.

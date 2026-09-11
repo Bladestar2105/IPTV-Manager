@@ -43,20 +43,32 @@ export function searchLocally(actor,context,filters,timezone) {
   for(const channel of context.items) {
     if(channel.type!=='live') continue;
     for(const source of epgChannels.filter(source=>source.id===channel.epg_channel_id)) {
-      const programs=epgDb.prepare(`SELECT channel_id,source_type,source_id,start,stop,title,desc,lang FROM epg_programs
-        WHERE channel_id=? AND source_type=? AND source_id=? AND stop>? AND start<? ORDER BY start LIMIT 101`).all(source.id,source.source_type,source.source_id,start,end);
-      for(const program of programs) {
-        seen++;
-        const item={...channel,title:safeText(program.title,200),description:safeText(program.desc,1000),language:program.lang||null,
-          duration:(program.stop-program.start)/60,start:program.start,stop:program.stop,
-          local_start:new Intl.DateTimeFormat('en-GB',{timeZone:timezone,dateStyle:'short',timeStyle:'short'}).format(new Date(program.start*1000)),
-          timezone,program:{channel_id:program.channel_id,source_type:program.source_type,source_id:program.source_id,start:program.start}};
-        if(matches(item,filters)) {items.push(item);program_refs.push({...item.program,hash:hash(program)});}
-        if(items.length>=100||seen>=5000) return {items,program_refs,truncated:true};
+      // The primary key makes start unique within this exact channel/source partition.
+      let cursor=null;
+      while(true) {
+        const limited=items.length>=100||seen>=5000,limit=limited?1:Math.min(100,5000-seen);
+        // Once capped, only probe for omitted rows so an exact final page stays complete.
+        const programs=epgDb.prepare(`SELECT ${limited?'1':'channel_id,source_type,source_id,start,stop,title,desc,lang'} FROM epg_programs
+          WHERE channel_id=? AND source_type=? AND source_id=? AND stop>? AND start<? ${cursor===null?'':'AND start>?'} ORDER BY start LIMIT ?`)
+          .all(source.id,source.source_type,source.source_id,start,end,...(cursor===null?[]:[cursor]),limit);
+        if(!programs.length) break;
+        if(limited) return {items,program_refs,truncated:true};
+        for(const program of programs) {
+          if(items.length>=100) return {items,program_refs,truncated:true};
+          seen++;
+          const item={...channel,title:safeText(program.title,200),description:safeText(program.desc,1000),language:program.lang||null,
+            duration:(program.stop-program.start)/60,start:program.start,stop:program.stop,
+            local_start:new Intl.DateTimeFormat('en-GB',{timeZone:timezone,dateStyle:'short',timeStyle:'short'}).format(new Date(program.start*1000)),
+            timezone,program:{channel_id:program.channel_id,source_type:program.source_type,source_id:program.source_id,start:program.start}};
+          if(matches(item,filters)) {items.push(item);program_refs.push({...item.program,hash:hash(program)});}
+        }
+        cursor=programs.at(-1).start;
+        if(programs.length<limit) break;
       }
     }
   }
-  return {items,program_refs,truncated:false};
+  // ponytail: capped source catalogs stay partial; add catalog lookahead if exact cap detection is needed.
+  return {items,program_refs,truncated:epgChannels.length===5000};
 }
 export function verifyPrograms(actor,userId,refs) {
   for(const ref of refs||[]) {

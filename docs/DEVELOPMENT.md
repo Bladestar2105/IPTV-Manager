@@ -119,8 +119,8 @@ after completion.
 Focused checks:
 
 ```bash
-npm exec vitest run tests/ai_connections.test.js tests/ai_features.test.js tests/ai_proposals.test.js tests/ai_jobs.test.js tests/ai_api.test.js tests/ai_sync_history.test.js
-npm run test:playwright:ai
+DATA_DIR="$(mktemp -d)" npm exec vitest run tests/ai_connections.test.js tests/ai_features.test.js tests/ai_proposals.test.js tests/ai_jobs.test.js tests/ai_api.test.js tests/ai_sync_history.test.js tests/ai_epg_search.test.js tests/ai_diagnostics.test.js
+DATA_DIR="$(mktemp -d)" npm run test:playwright:ai
 ```
 
 The AI Vitest fixtures create and remove isolated SQLite/EPG data directories.
@@ -132,9 +132,19 @@ Domain suites exercise authorization, revocation, stale data, source evidence,
 protected positions and manual assignment semantics. Static smoke checks remain
 distinct from these real local database/API checks.
 
+EPG regressions use real SQLite partitions, including a sole match after the old
+101-row limit, shared start times, multiple channels/sources, the global work
+budget, exact boundaries and source/revocation invalidation. Diagnosis tests
+use SQLite `query_only=ON`, including hidden owned entries, local session limits,
+unavailable stores and failed AI explanations. Model fixtures distinguish
+capability rejection from outages and cover both token parameters with explicit
+4xx rejections; they assert request counts and prevent uncertain retries.
+
 `test:playwright:ai` runs the actual UI against a synthetic API: provided/own
 setup, four languages, all eight function controls, safe rendering, explicit
 apply/undo, rule previews, follow-ups, cancellation, history and session cleanup.
+It also checks discovery ordering, sole/unknown candidates, preserved selections
+and explicit adoption of tested token profiles.
 It starts its own ephemeral server without touching the application's runtime
 database. `AI_UI_SCREENSHOT=/absolute/path.png` optionally saves its screenshot.
 The existing `test:playwright:smoke` continues to start an isolated real app.
