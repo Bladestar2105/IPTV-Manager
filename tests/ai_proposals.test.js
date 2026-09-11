@@ -85,6 +85,53 @@ it('validates create-category dependencies and uses normal manual add semantics'
   undoChange(actor,applied.change_id);
   expect(db.prepare("SELECT id FROM user_categories WHERE name='Sports'").get()).toBeUndefined();
 });
+it.each([['new',1013],['existing',1011]])('previews, confirms and undoes %s live-source assignments to radio categories',(_case,categoryId)=>{
+  if(categoryId===1013) db.exec("INSERT INTO user_categories(id,user_id,name,type) VALUES(1013,711,'Radio','radio')");
+  else db.exec("UPDATE user_categories SET type='radio' WHERE id=1011");
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  const proposal=createProposal(actor,{...payload,feature:'list'},[{type:'assign_channel',provider_channel_id:911,category_id:categoryId}],'Radio list');
+  expect(getProposal(actor,proposal.id)).toMatchObject({status:'pending',actions:proposal.actions});
+  expect(proposal.actions[0]).toMatchObject({category_id:categoryId,provider_channel_id:911,after:{assignment_origin:'manual',mapping_id:null,granted_by_admin:0,authorization_revoked:0}});
+  expect(proposal.actions[0].before).toEqual(categoryId===1011?{sort_order:0,is_hidden:0,assignment_origin:'mapping',mapping_id:99,granted_by_admin:0,authorization_revoked:0}:null);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:[],idempotency_key:'radio'})).toThrow(/AI_INVALID_CONFIRMATION/);
+  const selection={action_ids:[proposal.actions[0].id],idempotency_key:'radio'};
+  const applied=applyProposal(actor,proposal.id,selection);
+  expect(applyProposal(actor,proposal.id,selection)).toEqual(applied);
+  const assignment=db.prepare('SELECT * FROM user_channels WHERE user_category_id=? AND provider_channel_id=911').get(categoryId);
+  expect(assignment).toMatchObject({assignment_origin:'manual',mapping_id:null,is_hidden:0,granted_by_admin:0,authorization_revoked:0});
+  if(categoryId===1013) expect(db.prepare('SELECT * FROM user_channels WHERE id=1111').get()).toEqual(before[0]);
+  else expect(assignment.id).toBe(1111);
+  expect(undoChange(actor,applied.change_id).status).toBe('undone');
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+});
+it.each([
+  ['live','movie'],['live','series'],['movie','live'],['movie','series'],
+  ['movie','radio'],['series','live'],['series','movie'],['series','radio']
+])('rejects incompatible %s sources in %s categories before storing a proposal',(streamType,categoryType)=>{
+  db.prepare('UPDATE provider_channels SET stream_type=? WHERE id=911').run(streamType);
+  db.prepare("INSERT INTO user_categories(id,user_id,name,type) VALUES(1013,711,'Target',?)").run(categoryType);
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  expect(()=>createProposal(actor,{...payload,feature:'list'},[{type:'assign_channel',provider_channel_id:911,category_id:1013}])).toThrow(/AI_CATEGORY_TYPE_MISMATCH/);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+});
+it.each([
+  ['source type',"UPDATE provider_channels SET stream_type='movie' WHERE id=911",'AI_STALE_SOURCE'],
+  ['category type',"UPDATE user_categories SET type='movie' WHERE id=1013",'AI_STALE_PROPOSAL'],
+  ['source authorization',"UPDATE user_channels SET authorization_revoked=1 WHERE id=1111",'AI_SOURCE_UNAVAILABLE'],
+  ['category ownership',"UPDATE user_categories SET user_id=712 WHERE id=1013",'AI_FORBIDDEN'],
+  ['list permission',"UPDATE settings SET value=json_set(value,'$.functions',json('[\"cleanup\"]')) WHERE key='ai_policy'",'AI_FORBIDDEN']
+])('rejects radio confirmation after %s changes',(_case,change,code)=>{
+  db.exec("INSERT INTO user_categories(id,user_id,name,type) VALUES(1013,711,'Radio','radio')");
+  const proposal=createProposal(actor,{...payload,feature:'list'},[{type:'assign_channel',provider_channel_id:911,category_id:1013}],'Radio list');
+  db.exec(change);
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'changed-radio'})).toThrow(expect.objectContaining({code}));
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT status FROM ai_proposals WHERE id=?').get(proposal.id).status).toBe('pending');
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+});
 it('requires confirmation for declarative rules and defaults future application off',()=>{
   const proposal=rename();
   const input={proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Strip DE',operation:'strip_prefix',match:'DE | ',replacement:''};

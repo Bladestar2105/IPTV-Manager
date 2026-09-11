@@ -95,6 +95,8 @@ export function applyRulesAfterSync(userId,channelIds) {
   const rules=db.prepare('SELECT * FROM ai_rules WHERE user_id=? AND enabled=1 ORDER BY created_at,id LIMIT 100').all(userId);
   let applied=0;
   db.transaction(()=>{
+    let remaining;
+    const rename=db.prepare("UPDATE user_channels SET custom_name=? WHERE id=? AND COALESCE(custom_name,'')=''");
     for(const row of rules) {
       const actor={id:Number(row.owner_key.split(':')[1]),is_admin:row.owner_key.startsWith('admin:')};
       try {
@@ -105,20 +107,22 @@ export function applyRulesAfterSync(userId,channelIds) {
         throw error;
       }
       const rule=JSON.parse(row.data_json),diffs=[];
-      for(const channelId of selected) {
-        const channels=db.prepare(`SELECT uc.id,uc.custom_name,pc.name FROM authorized_user_channels uc
-          JOIN user_categories cat ON cat.id=uc.user_category_id JOIN provider_channels pc ON pc.id=uc.provider_channel_id
-          WHERE cat.user_id=? AND pc.id=? AND COALESCE(uc.custom_name,'')=''`).all(userId,channelId);
-        for(const channel of channels) {
-          const value=safeText(ruleText(rule,channel.name),200);
-          if(!value || value===channel.name) continue;
-          db.prepare('UPDATE user_channels SET custom_name=? WHERE id=? AND COALESCE(custom_name,\'\')=\'\'').run(value,channel.id);
-          diffs.push({table:'user_channels',id:channel.id,provider_channel_id:channelId,before:{custom_name:channel.custom_name},after:{custom_name:value}});
+      remaining??=new Map(db.prepare(`SELECT uc.id,uc.custom_name,pc.id AS provider_channel_id,pc.name FROM authorized_user_channels uc
+        JOIN user_categories cat ON cat.id=uc.user_category_id JOIN provider_channels pc ON pc.id=uc.provider_channel_id
+        WHERE cat.user_id=? AND pc.id IN (${selected.map(()=>'?').join(',')}) AND COALESCE(uc.custom_name,'')=''
+        ORDER BY uc.id`).all(userId,...selected).map(channel=>[channel.id,channel]));
+      for(const channel of remaining.values()) {
+        const value=safeText(ruleText(rule,channel.name),200);
+        if(!value || value===channel.name) continue;
+        if(rename.run(value,channel.id).changes) {
+          diffs.push({table:'user_channels',id:channel.id,provider_channel_id:channel.provider_channel_id,before:{custom_name:channel.custom_name},after:{custom_name:value}});
           applied++;
         }
+        remaining.delete(channel.id);
       }
       if(diffs.length) db.prepare('INSERT INTO ai_changes(id,owner_key,user_id,data_json,status,created_at) VALUES(?,?,?,?,?,?)')
         .run(randomUUID(),row.owner_key,userId,JSON.stringify({rule_id:row.id,feature:'cleanup',diffs}),'applied',Date.now());
+      if(!remaining.size) break;
     }
     if(applied) prunePrivateRecords();
   })();

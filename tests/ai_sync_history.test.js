@@ -151,3 +151,57 @@ it('still dispatches the selected summary when a rule transaction fails',async()
     expect(db.prepare("SELECT COUNT(*) AS n FROM ai_changes WHERE json_extract(data_json,'$.rule_id')=?").get(fixture.rule.id).n).toBe(0);
   } finally { db.exec('DROP TRIGGER fail_rule_update'); }
 });
+
+it('loads eligible assignments once for 100 rules and 5000 added IDs while preserving precedence and Undo',async()=>{
+  const fixture=await followupFixture('bounded-rule-queries',5000);
+  const {saveRule,applyRulesAfterSync}=await import('../src/services/ai/library.js');
+  saveRule(fixture.actor,{exceptions:['Special']},fixture.rule.id);
+  db.prepare('UPDATE ai_rules SET created_at=0 WHERE id=?').run(fixture.rule.id);
+  const later=saveRule(fixture.actor,{...fixture.rule,name:'Later cleanup',exceptions:[],enabled:true});
+  db.prepare('UPDATE ai_rules SET created_at=1 WHERE id=?').run(later.id);
+  for(let i=2;i<100;i++) saveRule(fixture.actor,{...fixture.rule,name:`Later cleanup ${i}`,enabled:true});
+  db.prepare("UPDATE user_channels SET custom_name='Keep mine' WHERE id=?").run(fixture.added[0].id);
+  db.prepare('UPDATE user_channels SET authorization_revoked=1 WHERE id=?').run(fixture.added[1].id);
+  db.prepare('UPDATE user_channels SET custom_name=NULL WHERE id=?').run(fixture.added[2].id);
+  db.prepare("UPDATE provider_channels SET name='Prefix | Special' WHERE id=?").run(fixture.added[3].channelId);
+  db.prepare("UPDATE provider_channels SET name='Unmatched' WHERE id=?").run(fixture.added.at(-1).channelId);
+  const extraCategory=Number(db.prepare("INSERT INTO user_categories(user_id,name) VALUES (?,'Second assignment')").run(fixture.actor.id).lastInsertRowid);
+  const duplicate=Number(db.prepare("INSERT INTO user_channels(user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')").run(extraCategory,fixture.added[2].channelId).lastInsertRowid);
+  const foreign=Number(db.prepare("INSERT INTO user_channels(user_category_id,provider_channel_id,assignment_origin,granted_by_admin) VALUES (?,?,'manual',1)").run(category,fixture.added[2].channelId).lastInsertRowid);
+  const source=db.prepare('SELECT provider_id FROM provider_channels WHERE id=?').get(fixture.added[0].channelId).provider_id;
+  const unselected=Number(db.prepare("INSERT INTO provider_channels(provider_id,remote_stream_id,name) VALUES (?,99999,'Prefix | Unselected')").run(source).lastInsertRowid);
+  db.prepare("INSERT INTO user_channels(user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')").run(extraCategory,unselected);
+  const rows=()=>db.prepare(`SELECT uc.* FROM user_channels uc JOIN user_categories cat ON cat.id=uc.user_category_id
+    WHERE cat.user_id=? OR uc.id=? ORDER BY uc.id`).all(fixture.actor.id,foreign);
+  const before=rows();
+  // Count executed catalog reads, including reuse of a prepared statement; avoid timing-dependent assertions.
+  const prepare=db.prepare;
+  let reads=0,result;
+  db.prepare=function(sql,...args) {
+    const statement=prepare.call(this,sql,...args);
+    if(sql.includes('FROM authorized_user_channels')&&sql.includes('COALESCE(uc.custom_name')) {
+      const all=statement.all;
+      statement.all=function(...params) {reads++;return all.apply(this,params);};
+    }
+    return statement;
+  };
+  try { result=applyRulesAfterSync(fixture.actor.id,fixture.added.map(row=>row.channelId)); }
+  finally { db.prepare=prepare; }
+  expect(reads).toBe(1);
+  expect(result).toEqual({applied:4998});
+  const changes=db.prepare("SELECT id,data_json FROM ai_changes WHERE user_id=? AND json_extract(data_json,'$.rule_id') IS NOT NULL ORDER BY rowid").all(fixture.actor.id);
+  expect(changes.map(row=>({rule:JSON.parse(row.data_json).rule_id,count:JSON.parse(row.data_json).diffs.length}))).toEqual([
+    {rule:fixture.rule.id,count:4997},{rule:later.id,count:1}
+  ]);
+  const changed=new Map(rows().map(row=>[row.id,row]));
+  expect(changed.get(fixture.added[0].id).custom_name).toBe('Keep mine');
+  expect(changed.get(fixture.added[1].id).custom_name).toBe('');
+  expect(changed.get(fixture.added[2].id).custom_name).toBe('Item 2');
+  expect(changed.get(duplicate).custom_name).toBe('Item 2');
+  expect(changed.get(fixture.added[3].id).custom_name).toBe('Special');
+  expect(changed.get(foreign).custom_name).toBe('');
+  expect([...changed.values()].find(row=>row.provider_channel_id===unselected).custom_name).toBe('');
+  const {undoChange}=await import('../src/services/ai/proposals.js');
+  for(const change of changes) expect(undoChange(fixture.actor,change.id).status).toBe('undone');
+  expect(rows()).toEqual(before);
+},30000);

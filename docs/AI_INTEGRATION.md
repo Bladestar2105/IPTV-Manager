@@ -87,7 +87,7 @@ does not call the model. Movies and series can use their original description.
 
 | Function | Behavior |
 | --- | --- |
-| List assistant | Proposes categories, personal names, assignments and order changes using the user's authorized editor catalog. |
+| List assistant | Proposes categories, personal names, assignments and order changes using the user's authorized editor catalog. Existing radio categories accept live provider sources, following the normal list editor. |
 | Cleanup | Proposes personal/category renames, hiding and order cleanup; never creates assignments or EPG mappings. Confirmed literal name transformations can become reusable rules. |
 | Duplicates | Groups local identities and name variants, shows uncertainty, and proposes hiding entries. Reachability and picture quality require separate measured evidence. |
 | EPG | Runs local matching first, presents existing source candidates and program evidence, and protects manual mappings unless explicitly selected. |
@@ -167,8 +167,12 @@ records still within the 30-day retention period, even before cleanup removes
 expired rows. Each rule stays bound to its original target user; create a
 separate rule to use a confirmed transformation for another user.
 Large syncs apply rules in batches of at most 5,000 new channel IDs, yielding
-between batches. Each batch retains its own transaction and conflict-protected
-Undo record. A failed rule batch stops further rule batches for that user but
+between batches. Each batch loads its eligible authorized assignments once.
+Up to 100 enabled rules run in stored creation order; the first matching rule
+sets each blank personal name, and later rules only consider unchanged entries.
+Exceptions, existing personal names and revoked assignments remain protected.
+Each rule's changes retain conflict-protected Undo within the batch transaction.
+A failed rule batch stops further rule batches for that user but
 does not prevent the separately enabled summary from being requested. A failed
 summary is not automatically retried against the model.
 

@@ -132,6 +132,12 @@ Domain suites exercise authorization, revocation, stale data, source evidence,
 protected positions and manual assignment semantics. Static smoke checks remain
 distinct from these real local database/API checks.
 
+Radio assignment regressions cover live-source compatibility, rejected content
+types, stale/revoked access, Apply and Undo. A 100-rule/5,000-ID SQLite regression
+counts actual eligible-assignment queries and checks ordered rule precedence,
+exceptions, duplicate assignments, manual names, revocation, owner isolation and
+complete Undo; it does not use a timing threshold as a performance assertion.
+
 EPG regressions use real SQLite partitions, including a sole match after the old
 101-row limit, shared start times, multiple channels/sources, the global work
 budget, exact boundaries and source/revocation invalidation. Diagnosis tests

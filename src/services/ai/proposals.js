@@ -80,7 +80,7 @@ export function createProposal(actor,payload,input,summary='',evidence=[],source
       } else {
         cat=category(userId,raw.category_id); action.category_id=cat.id; action.category_hash=hash(cat);
       }
-      if(cat.type!==channel.stream_type) fail('AI_CATEGORY_TYPE_MISMATCH');
+      if(cat.type!==channel.stream_type && !(cat.type==='radio' && channel.stream_type==='live')) fail('AI_CATEGORY_TYPE_MISMATCH');
       const existing=action.category_id?db.prepare('SELECT * FROM user_channels WHERE user_category_id=? AND provider_channel_id=?').get(cat.id,channel.provider_channel_id):null;
       if(existing && (existing.authorization_revoked || existing.is_hidden && !selected.has(existing.id))) fail('AI_PROTECTED_VALUE',409);
       if(existing && (pinned.has(existing.id)||existing.sort_order<keepFirst) && !selected.has(existing.id)) fail('AI_PROTECTED_VALUE',409);
