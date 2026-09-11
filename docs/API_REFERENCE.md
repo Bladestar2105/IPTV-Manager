@@ -47,7 +47,7 @@ See [setup, data boundaries and limits](AI_INTEGRATION.md).
 | GET | `/api/ai/changes` | List up to 50 personal change records, including automatic rule applications; optional target `user_id`. |
 | POST | `/api/ai/changes/:id/undo` | Conditionally restore only the recorded changed fields. |
 | GET / POST | `/api/ai/rules` | List personal rules (`user_id` for administrators) or save a rule from an applied rename. |
-| PUT / DELETE | `/api/ai/rules/:id` | Update/enable or delete a confirmed literal rule. |
+| PUT / DELETE | `/api/ai/rules/:id` | Update/enable or delete a confirmed literal rule. Name and enabled-state updates survive history expiry; transformation changes require an available applied rename. |
 | GET / DELETE | `/api/ai/conversations/:id` | Read structured search criteria or delete a conversation. |
 | POST | `/api/ai/conversations/:id/messages` | Enqueue a search follow-up for the stored target user. |
 | GET | `/api/ai/enrichments/:id` | Read the marked derived description and its current original. |

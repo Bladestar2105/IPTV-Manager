@@ -29,24 +29,30 @@ export function listRules(actor,userId) {
 export function saveRule(actor,input,id=null) {
   const existing=id?owned('ai_rules',actor,id):null;
   const value={...(existing?.data||{}),...input};
-  const proposal=owned('ai_proposals',actor,value.proposal_id);
-  if(existing && existing.user_id!==proposal.user_id) fail('AI_INVALID_RULE');
-  if(proposal.status!=='applied') fail('AI_RULE_REQUIRES_CONFIRMATION',409);
-  const change=owned('ai_changes',actor,proposal.change_id);
-  const action=proposal.data.actions.find(action=>action.id===value.action_id && action.type==='rename_channel');
-  if(!action || !change.data.action_ids.includes(action.id)) fail('AI_RULE_REQUIRES_CONFIRMATION',409);
   const name=safeText(value.name,120).trim(),match=safeText(value.match,80),replacement=safeText(value.replacement||'',80);
   if(!name || !match || !['strip_prefix','replace_literal'].includes(value.operation)) fail('AI_INVALID_RULE');
   if(value.exceptions!==undefined && (!Array.isArray(value.exceptions)||value.exceptions.length>50||value.exceptions.some(x=>typeof x!=='string'||x.length>100))) fail('AI_INVALID_RULE');
-  const data={name,operation:value.operation,match,replacement,exceptions:value.exceptions||[],proposal_id:proposal.id,action_id:action.id};
-  const source=db.prepare('SELECT name FROM provider_channels WHERE id=?').get(action.provider_channel_id);
-  if(!source || ruleText(data,source.name)!==action.after.custom_name) fail('AI_RULE_NOT_CONFIRMED',409);
+  const data={name,operation:value.operation,match,replacement,exceptions:value.exceptions||[],proposal_id:value.proposal_id,action_id:value.action_id};
+  // A stored transformation remains confirmed after its historical records expire.
+  const unchanged=existing && ['operation','match','replacement','exceptions','proposal_id','action_id'].every(key=>JSON.stringify(data[key])===JSON.stringify(existing.data[key]));
+  let userId=existing?.user_id;
+  if(!unchanged) {
+    const proposal=owned('ai_proposals',actor,value.proposal_id);
+    if(existing && existing.user_id!==proposal.user_id) fail('AI_INVALID_RULE');
+    if(proposal.status!=='applied') fail('AI_RULE_REQUIRES_CONFIRMATION',409);
+    const change=owned('ai_changes',actor,proposal.change_id);
+    const action=proposal.data.actions.find(action=>action.id===value.action_id && action.type==='rename_channel');
+    if(!action || !change.data.action_ids.includes(action.id)) fail('AI_RULE_REQUIRES_CONFIRMATION',409);
+    const source=db.prepare('SELECT name FROM provider_channels WHERE id=?').get(action.provider_channel_id);
+    if(!source || ruleText(data,source.name)!==action.after.custom_name) fail('AI_RULE_NOT_CONFIRMED',409);
+    userId=proposal.user_id;
+  }
   if(input.enabled!==undefined && typeof input.enabled!=='boolean') fail('AI_INVALID_RULE');
   const enabled=input.enabled??Boolean(existing?.enabled),ruleId=id||randomUUID(),now=Date.now();
   if(!existing && db.prepare('SELECT COUNT(*) AS n FROM ai_rules WHERE owner_key=?').get(ownerKey(actor)).n>=100) fail('AI_RULE_LIMIT',429);
   db.prepare(`INSERT INTO ai_rules(id,owner_key,user_id,data_json,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,enabled=excluded.enabled,updated_at=excluded.updated_at`).run(ruleId,ownerKey(actor),proposal.user_id,JSON.stringify(data),enabled?1:0,existing?.created_at||now,now);
-  return {id:ruleId,...data,enabled,preview:rulePreview(proposal.user_id,data)};
+    ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,enabled=excluded.enabled,updated_at=excluded.updated_at`).run(ruleId,ownerKey(actor),userId,JSON.stringify(data),enabled?1:0,existing?.created_at||now,now);
+  return {id:ruleId,...data,enabled,preview:rulePreview(userId,data)};
 }
 export function deleteRule(actor,id) {owned('ai_rules',actor,id);db.prepare('DELETE FROM ai_rules WHERE id=? AND owner_key=?').run(id,ownerKey(actor));return {deleted:true};}
 

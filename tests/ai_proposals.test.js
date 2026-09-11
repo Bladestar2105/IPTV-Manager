@@ -4,14 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ai-proposals-'));
 process.env.DATA_DIR=dir;
-let db,createProposal,getProposal,applyProposal,undoChange,saveRule,applyRulesAfterSync,listChanges,getChange;
+let db,createProposal,getProposal,applyProposal,undoChange,saveRule,applyRulesAfterSync,listRules,prunePrivateRecords,listChanges,getChange;
 const actor={id:711,is_admin:false,username:'one'};
 const payload={feature:'cleanup',user_id:711};
 beforeAll(async()=>{
   ({default:db}=await import('../src/database/db.js'));
   (await import('../src/database/db.js')).initDb(true);
   ({createProposal,getProposal,applyProposal,undoChange,listChanges,getChange}=await import('../src/services/ai/proposals.js'));
-  ({saveRule,applyRulesAfterSync}=await import('../src/services/ai/library.js'));
+  ({saveRule,applyRulesAfterSync,listRules}=await import('../src/services/ai/library.js'));
+  ({prunePrivateRecords}=await import('../src/services/ai/context.js'));
 });
 beforeEach(()=>{
   for(const table of ['ai_changes','ai_proposals','ai_rules','user_channels','user_categories','provider_channels','providers','users','admin_users']) db.prepare(`DELETE FROM ${table}`).run();
@@ -96,6 +97,46 @@ it('rejects an administrator retargeting a rule to another user without changing
   expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1112').get().custom_name).toBe('Sport');
   expect(applyRulesAfterSync(712,[914])).toEqual({applied:0});
   expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1114').get().custom_name).toBe('');
+});
+it('keeps confirmed rules editable after their proposal and change records are pruned',()=>{
+  const proposal=rename();
+  applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'retained-rule'});
+  const input={proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Strip DE',operation:'strip_prefix',match:'DE | ',enabled:true};
+  const rule=saveRule(actor,input);
+  const expired=Date.now()-31*86400000;
+  db.prepare('UPDATE ai_proposals SET updated_at=?').run(expired);
+  db.prepare('UPDATE ai_changes SET created_at=?').run(expired);
+  prunePrivateRecords();
+  expect(db.prepare('SELECT id FROM ai_proposals').all()).toEqual([]);
+  expect(db.prepare('SELECT id FROM ai_changes').all()).toEqual([]);
+
+  expect(saveRule(actor,{...listRules(actor)[0],enabled:false},rule.id).enabled).toBe(false);
+  expect(applyRulesAfterSync(711,[912])).toEqual({applied:0});
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1112').get().custom_name).toBe('');
+  const disabled=db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id);
+  for(const update of [{operation:'replace_literal'},{match:'DE'},{replacement:'New'},{exceptions:['Sport']},{proposal_id:'missing'},{action_id:'missing'}]) {
+    expect(()=>saveRule(actor,update,rule.id)).toThrow(/AI_NOT_FOUND/);
+    expect(db.prepare('SELECT * FROM ai_rules WHERE id=?').get(rule.id)).toEqual(disabled);
+  }
+  expect(()=>saveRule({id:712,is_admin:false},{enabled:true},rule.id)).toThrow(/AI_NOT_FOUND/);
+  expect(()=>saveRule(actor,{enabled:'true'},rule.id)).toThrow(/AI_INVALID_RULE/);
+  expect(()=>saveRule(actor,input)).toThrow(/AI_NOT_FOUND/);
+
+  expect(saveRule(actor,{name:'Retained cleanup',enabled:true},rule.id)).toMatchObject({name:'Retained cleanup',enabled:true,preview:[{user_channel_id:1112,before:'DE | Sport',after:'Sport'}]});
+  expect(applyRulesAfterSync(711,[912])).toEqual({applied:1});
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1112').get().custom_name).toBe('Sport');
+});
+it('requires an applied rename when updating a rule transformation',()=>{
+  const first=rename();
+  applyProposal(actor,first.id,{action_ids:[first.actions[0].id],idempotency_key:'initial-rule'});
+  const rule=saveRule(actor,{proposal_id:first.id,action_id:first.actions[0].id,name:'Cleanup',operation:'strip_prefix',match:'DE | '});
+  const second=createProposal(actor,payload,[{type:'rename_channel',user_channel_id:1112,value:'Sports'}],'Update cleanup');
+  const update={proposal_id:second.id,action_id:second.actions[0].id,operation:'replace_literal',match:'DE | Sport',replacement:'Sports'};
+  expect(()=>saveRule(actor,update,rule.id)).toThrow(/AI_RULE_REQUIRES_CONFIRMATION/);
+  expect(listRules(actor)[0]).toMatchObject({operation:'strip_prefix',match:'DE | '});
+  applyProposal(actor,second.id,{action_ids:[second.actions[0].id],idempotency_key:'updated-rule'});
+  saveRule(actor,update,rule.id);
+  expect(listRules(actor)[0]).toMatchObject({id:rule.id,operation:'replace_literal',match:'DE | Sport',replacement:'Sports'});
 });
 it('preserves pinned positions and region variants unless explicitly selected',()=>{
   expect(()=>createProposal(actor,{...payload,pinned_ids:[1111]},[{type:'reorder_channel',user_channel_id:1111,value:5}],'')).toThrow(/AI_PROTECTED_VALUE/);
