@@ -73,7 +73,7 @@ function publicConnection(connection,actor) {
 function persist(connection, expectedVersion = null) {
     const { id,owner_key,version,...data }=connection;
     if (expectedVersion !== null) {
-        const updated=db.prepare('UPDATE ai_connections SET data_json=?,updated_at=? WHERE id=? AND version=?').run(JSON.stringify(data),Date.now(),id,expectedVersion);
+        const updated=db.prepare('UPDATE ai_connections SET data_json=?,version=?,updated_at=? WHERE id=? AND version=?').run(JSON.stringify(data),version,Date.now(),id,expectedVersion);
         if (!updated.changes) throw aiError('AI_CONNECTION_CHANGED',409);
     } else {
         db.prepare('INSERT INTO ai_connections(id,owner_key,data_json,version,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,version=excluded.version,updated_at=excluded.updated_at').run(id,owner_key,JSON.stringify(data),version,Date.now(),Date.now());
@@ -154,7 +154,7 @@ export function saveConnection(actor,input,id=null) {
         if (input.model_id !== null && (typeof input.model_id !== 'string' || !MODEL_ID.test(input.model_id) || !next.capabilities[input.model_id]?.chat)) throw aiError('AI_MODEL_REQUIRED');
         next.model_id=input.model_id;
     }
-    db.transaction(()=>{ persist(next); if(invalidated) clearModelSelection(next.id); })();
+    db.transaction(()=>{ persist(next,id ? old.version : null); if(invalidated) clearModelSelection(next.id); })();
     return publicConnection(next,actor);
 }
 export function deleteConnection(actor,id) { owned(actor,id); db.prepare('DELETE FROM ai_connections WHERE id=? AND owner_key=?').run(id,ownerKey(actor)); return {deleted:true}; }

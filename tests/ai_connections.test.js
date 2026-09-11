@@ -5,6 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import dns from 'node:dns/promises';
 import Database from 'better-sqlite3';
+import { Worker } from 'node:worker_threads';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-connections-'));
 process.env.DATA_DIR = dataDir;
@@ -107,6 +108,48 @@ describe('AI connection security', () => {
         expect(changed.models).toEqual([]); expect(changed.capabilities).toEqual({}); expect(changed.model_id).toBeNull(); expect(changed.version).toBeGreaterThan(c.version);
         await expect(ai.runInference(admin,'list',{messages:[{role:'user',content:'synthetic'}],schema})).rejects.toHaveProperty('code','AI_MODEL_REQUIRED');
     });
+    it('advances the connection version for every accepted concurrent worker update', async () => {
+        const connection=configure(), gate=new SharedArrayBuffer(4);
+        const source=`
+            import { parentPort, workerData } from 'node:worker_threads';
+            const {default:db}=await import(workerData.database);
+            const {saveConnection}=await import(workerData.connections);
+            const transaction=db.transaction.bind(db), barrier=new Int32Array(workerData.gate);
+            let waiting=true;
+            db.transaction=fn=>{
+                const write=transaction(fn);
+                if(waiting) {
+                    waiting=false;
+                    if(Atomics.add(barrier,0,1)===0 && Atomics.wait(barrier,0,1,5000)==='timed-out') throw new Error('Writer barrier timed out');
+                    Atomics.notify(barrier,0);
+                }
+                return write;
+            };
+            let result;
+            try { result={ok:true,value:saveConnection({id:1,is_admin:true},{name:workerData.name,api_key:'synthetic-'+workerData.name},workerData.id)}; }
+            catch(error) { result={ok:false,code:error.code}; }
+            finally { db.close(); }
+            parentPort.postMessage(result);
+        `;
+        // Rendezvous at the write transaction to reproduce overlapping worker updates.
+        const workers=['First','Second'].map(name=>new Worker(new URL('data:text/javascript,'+encodeURIComponent(source)),{
+            env:{...process.env,DATA_DIR:dataDir},workerData:{name,id:connection.id,gate,
+                database:new URL('../src/database/db.js',import.meta.url).href,
+                connections:new URL('../src/services/ai/connections.js',import.meta.url).href}
+        }));
+        try {
+            const results=await Promise.all(workers.map(worker=>new Promise((resolve,reject)=>{
+                worker.once('message',resolve); worker.once('error',reject);
+                worker.once('exit',code=>{if(code!==0)reject(new Error('Writer exited with code '+code));});
+            })));
+            expect(results.every(result=>result.ok || result.code==='AI_CONNECTION_CHANGED')).toBe(true);
+            const accepted=results.filter(result=>result.ok).map(result=>result.value).sort((a,b)=>a.version-b.version);
+            expect(accepted.length).toBeGreaterThan(0);
+            const stored=ai.listConnections(admin)[0];
+            expect(stored.version).toBe(connection.version+accepted.length);
+            expect(stored.name).toBe(accepted.at(-1).name);
+        } finally { await Promise.all(workers.map(worker=>worker.terminate())); }
+    },10000);
     it('does not follow redirects or expose provider error bodies', async () => {
         const c = configure(); reply = (_req,res) => {res.statusCode=302;res.setHeader('location','https://example.com/stolen');res.end('synthetic-secret');};
         await expect(ai.discoverModels(admin,c.id)).rejects.toMatchObject({code:'AI_REDIRECT_BLOCKED'}); expect(requests).toHaveLength(1);

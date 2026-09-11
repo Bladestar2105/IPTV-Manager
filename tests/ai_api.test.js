@@ -49,6 +49,33 @@ describe('AI management boundary', () => {
     expect(response.status).toBe(403);
   });
 
+  it.each([
+    ['a trusted forwarded HTTPS host', 'loopback', {}, 200],
+    ['the first forwarded host', 1, {'X-Forwarded-Host':'iptv.example, proxy.example'}, 200],
+    ['the HTTPS default port', 'loopback', {'X-Forwarded-Host':'iptv.example:443'}, 200],
+    ['a non-default HTTPS port', 'loopback', {'X-Forwarded-Host':'iptv.example:80',Origin:'https://iptv.example:80'}, 200],
+    ['the direct HTTP default port', false, {Host:'iptv.example:80',Origin:'http://iptv.example'}, 200],
+    ['disabled proxy trust', false, {'X-Forwarded-Proto':'http',Origin:'http://iptv.example'}, 403],
+    ['a peer outside the trusted subnet', '192.0.2.0/24', {'X-Forwarded-Proto':'http',Origin:'http://iptv.example'}, 403],
+    ['a different public origin', 'loopback', {Origin:'https://attacker.invalid','Sec-Fetch-Site':'same-site'}, 403],
+    ['a different public port', 'loopback', {Origin:'https://iptv.example:8443'}, 403],
+    ['cross-site fetch metadata', 'loopback', {'Sec-Fetch-Site':'cross-site'}, 403],
+    ['an opaque origin', 'loopback', {Origin:'null'}, 403]
+  ])('enforces the mutation origin for %s', async (_name, trustProxy, headers, status) => {
+    const previousTrust = app.get('trust proxy');
+    app.set('trust proxy',trustProxy);
+    try {
+      const response = await request(app).put('/api/ai/settings').auth(adminToken,{type:'bearer'})
+        .set({Host:'internal:3000','X-Forwarded-Host':'iptv.example','X-Forwarded-Proto':'https',Origin:'https://iptv.example'})
+        .set(headers).send({enabled:false});
+      expect(response.status).toBe(status);
+      if (status === 200) expect(response.body.enabled).toBe(false);
+      else expect(response.body.error).toBe('ai_cross_site');
+    } finally {
+      app.set('trust proxy',previousTrust);
+    }
+  });
+
   it('does not expose another principal history, including an admin with the same numeric ID', async () => {
     const now = Date.now();
     db.prepare(`INSERT INTO ai_jobs (id,owner_key,user_id,feature,status,input_json,idempotency_key,created_at,updated_at)

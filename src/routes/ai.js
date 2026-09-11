@@ -13,7 +13,8 @@ router.use((req,res,next) => {
     const origin = req.get('Origin');
     if (origin) {
       let allowed = false;
-      try { allowed = new URL(origin).origin === `${req.protocol}://${req.get('host')}`; } catch {}
+      // Express honors forwarded host/protocol only when the socket's proxy is trusted.
+      try { allowed = new URL(origin).origin === new URL(`${req.protocol}://${req.host}`).origin; } catch {}
       if (!allowed) return res.status(403).json({error:'ai_cross_site'});
     }
     if (req.method !== 'DELETE' && !req.is('application/json')) return res.status(415).json({error:'ai_json_required'});

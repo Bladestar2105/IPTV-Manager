@@ -28,6 +28,10 @@ All `/api/ai/*` routes require the current Web UI JWT in an
 `Authorization: Bearer ...` header. Query, player, Stalker and share tokens
 cannot authorize AI management. Mutations require same-origin browser requests
 and JSON bodies (DELETE does not require a body). Responses are `no-store`.
+The origin check respects `TRUST_PROXY` for forwarded host/protocol headers and
+normalizes default ports. Forwarded headers from untrusted peers are ignored.
+Concurrent connection edits check the stored version before writing. An edit
+that loses this race returns `AI_CONNECTION_CHANGED` (409); reload before retrying.
 See [setup, data boundaries and limits](AI_INTEGRATION.md).
 
 | Method | Path | Purpose |
