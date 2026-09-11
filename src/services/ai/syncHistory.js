@@ -71,8 +71,8 @@ export function recordSyncSnapshot(providerId, before) {
         insert.run(id,userId,providerId,JSON.stringify(report),report.timestamp);
         saved.push({id,user_id:userId,added_ids:report.changes.filter(change => change.kind === 'added').map(change => change.provider_channel_id)});
       }
-      db.prepare('DELETE FROM ai_sync_snapshots WHERE id IN (SELECT id FROM ai_sync_snapshots WHERE created_at < ? LIMIT 100)')
-        .run(Date.now() - 30 * 86400000);
+      db.prepare('DELETE FROM ai_sync_snapshots WHERE id IN (SELECT id FROM ai_sync_snapshots WHERE created_at < ? LIMIT ?)')
+        .run(Date.now() - 30 * 86400000,Math.max(100,saved.length));
     })();
     return saved;
   } catch {

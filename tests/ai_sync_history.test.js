@@ -1,4 +1,4 @@
-import { afterAll,beforeAll,describe,expect,it } from 'vitest';
+import { afterAll,beforeAll,describe,expect,it,vi } from 'vitest';
 import { mkdtempSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,5 +46,47 @@ describe('deterministic AI sync history',()=>{
     expect(saved.map(row=>row.user_id)).toEqual([user]);
     const result=JSON.parse(db.prepare('SELECT data_json FROM ai_sync_snapshots WHERE id=?').get(saved[0].id).data_json);
     expect(result.counts.removed).toBe(1);
+  });
+  it('keeps bounded retention cleanup ahead of repeated syncs affecting more than 100 users',()=>{
+    const now=Date.now(),cutoff=now-30*86400000;
+    const clock=vi.spyOn(Date,'now').mockReturnValue(now);
+    try {
+      db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('ai_policy',?)").run(JSON.stringify({enabled:true}));
+      const source=Number(db.prepare("INSERT INTO providers (name,url,username,password,user_id) VALUES ('Retention provider','https://retention.invalid','unused','unused',?)").run(user).lastInsertRowid);
+      const sourceChannel=Number(db.prepare("INSERT INTO provider_channels (provider_id,remote_stream_id,name) VALUES (?,1,'Retention channel')").run(source).lastInsertRowid);
+      const owners=[];
+      const insertUser=db.prepare("INSERT INTO users (username,password) VALUES (?,'unused')");
+      const insertCategory=db.prepare("INSERT INTO user_categories (user_id,name) VALUES (?,'Retention list')");
+      const insertAssignment=db.prepare("INSERT INTO user_channels (user_category_id,provider_channel_id,assignment_origin,granted_by_admin) VALUES (?,?,'manual',1)");
+      const insertSnapshot=db.prepare('INSERT INTO ai_sync_snapshots (id,user_id,provider_id,data_json,created_at) VALUES (?,?,?,?,?)');
+      db.transaction(()=>{
+        for(let i=0;i<150;i++) {
+          const owner=Number(insertUser.run(`retention-user-${i}`).lastInsertRowid);
+          owners.push(owner);
+          insertAssignment.run(Number(insertCategory.run(owner).lastInsertRowid),sourceChannel);
+        }
+        for(let i=0;i<600;i++) insertSnapshot.run(`expired-${i}`,owners[i%150],source,'{}',cutoff-(i%2?1:30*86400000));
+        insertSnapshot.run('retained-boundary',owners[0],source,'{}',cutoff);
+        insertSnapshot.run('retained-other-owner',user,source,'{}',now);
+        insertSnapshot.run('retained-other-provider',owners[0],provider,'{}',now);
+      })();
+      const controls=db.prepare("SELECT * FROM ai_sync_snapshots WHERE id LIKE 'retained-%' ORDER BY id").all();
+      const count=db.prepare('SELECT COUNT(*) AS total,COUNT(CASE WHEN created_at < ? THEN 1 END) AS expired FROM ai_sync_snapshots');
+      const initial=count.get(cutoff).total;
+      const before=captureSyncSnapshot(source);
+      expect(before).toHaveLength(150);
+      const remaining=[];
+      for(let i=0;i<3;i++) {
+        const saved=recordSyncSnapshot(source,before);
+        expect(saved.map(record=>record.user_id)).toEqual(owners);
+        remaining.push(count.get(cutoff));
+      }
+      expect(remaining).toEqual([
+        {total:initial,expired:450},
+        {total:initial,expired:300},
+        {total:initial,expired:150}
+      ]);
+      expect(db.prepare("SELECT * FROM ai_sync_snapshots WHERE id LIKE 'retained-%' ORDER BY id").all()).toEqual(controls);
+    } finally { clock.mockRestore(); }
   });
 });

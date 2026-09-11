@@ -63,9 +63,10 @@ including when a model needs more reasoning tokens than this test allows.
 
 Each connection retains at most 100 tested model profiles. The connection's
 selected model and its owner's current personal selection are protected;
-unselected older profiles are removed as new batches are tested. Removed
-profiles can be tested again explicitly. Legacy oversized maps are bounded on
-reads without database writes, then trimmed on the next connection save,
+unselected older profiles are removed only to make room for newly tested IDs.
+Retesting existing IDs replaces their profiles without evicting unrelated ones.
+Removed profiles can be tested again explicitly. Legacy oversized maps are
+bounded on reads without database writes, then trimmed on the next connection save,
 discovery refresh or completed test. Model IDs returned by discovery remain
 separately bounded to 500 and do not replace the selected model.
 
@@ -211,6 +212,13 @@ Canceled or uncertain submitted requests are not blindly retried.
   even if physical cleanup has a backlog. Connections, preferences and enabled
   rules persist until removed. Deleting an account removes its private records
   and records targeting that user.
+- Usage records are retained for 30 days. Each provider-request reservation,
+  including discovery and compatibility tests, removes up to 100 expired,
+  inactive records, oldest first. Job/history access uses the same cleanup;
+  active reservations and current quota/outage evidence remain intact.
+- Snapshot cleanup after a provider sync removes up to the larger of 100 or
+  the number of snapshots just inserted, so expiry cleanup keeps pace with
+  syncs affecting many users. Snapshots within 30 days are preserved.
 
 Clear History cancels pending personal jobs and removes job history,
 conversations and enrichments. Change/undo records remain for their retention

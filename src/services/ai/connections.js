@@ -200,6 +200,11 @@ export function requireAiAccess(actor,feature,connectionId=null,{requireModel=tr
     return {connection:publicConnection(connection,actor),preferences:{...prefs,model_id:model},settings:policy,owner_key:ownerKey(actor)};
 }
 
+export function pruneUsage() {
+    db.prepare("DELETE FROM ai_usage WHERE id IN (SELECT id FROM ai_usage WHERE status <> 'running' AND created_at < ? ORDER BY created_at LIMIT 100)")
+        .run(Date.now()-30*86400000);
+}
+
 function reserve(access,feature,model) {
     return db.transaction(()=>{
         const now=Date.now();
@@ -210,6 +215,7 @@ function reserve(access,feature,model) {
         if (db.prepare("SELECT count(*) AS n FROM ai_usage WHERE status='running' AND (owner_key=? OR connection_id=?)").get(access.owner_key,access.connection.id).n) throw aiError('AI_BUSY',409);
         const limits=db.prepare('SELECT SUM(owner_key=?) AS owner_count,SUM(connection_id=?) AS connection_count,SUM(owner_key=? AND feature=?) AS feature_count FROM ai_usage WHERE created_at>?').get(access.owner_key,access.connection.id,access.owner_key,feature,now-3600000);
         if (limits.owner_count>=60 || limits.connection_count>=180 || limits.feature_count>=30) throw aiError('AI_RATE_LIMIT',429);
+        pruneUsage();
         const id=randomUUID();
         db.prepare("INSERT INTO ai_usage(id,owner_key,connection_id,feature,model,status,created_at) VALUES(?,?,?,?,?,'running',?)").run(id,access.owner_key,access.connection.id,feature,model,now);
         return id;
@@ -311,6 +317,8 @@ export async function testModels(actor,id,input) {
         }
         models.push(profile);
     }
+    // Remove replacements first so only new IDs evict unrelated profiles.
+    for (const profile of models) delete c.capabilities[profile.id];
     // Reserve room for this explicit batch even if the wall clock moved backward.
     c.capabilities=retainedProfiles(c,MAX_MODEL_PROFILES-models.length);
     for (const profile of models) c.capabilities[profile.id]=profile;

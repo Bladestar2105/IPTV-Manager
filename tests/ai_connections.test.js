@@ -172,6 +172,25 @@ describe('AI connection security', () => {
         const c = await selected(); db.prepare('INSERT INTO ai_usage(id,owner_key,connection_id,feature,status,created_at) VALUES(?,?,?,?,?,?)').run('busy','admin:1',c.id,'list','running',Date.now());
         const count=requests.length; await expect(ai.runInference(admin,'list',{messages:[],schema})).rejects.toHaveProperty('code','AI_BUSY'); expect(requests).toHaveLength(count);
     });
+    it.each(['discovery','compatibility tests'])('prunes expired usage during setup-only %s without changing current reservations', async operation => {
+        const c=configure(), now=Date.now(), cutoff=now-30*86400000;
+        const clock=vi.spyOn(Date,'now').mockReturnValue(now);
+        try {
+            const insert=db.prepare('INSERT INTO ai_usage(id,owner_key,connection_id,feature,status,created_at) VALUES(?,?,?,?,?,?)');
+            for(let i=0;i<201;i++) insert.run(`expired-${i}`,'admin:1',c.id,'setup',['completed','failed','unknown'][i%3],cutoff-1-i);
+            insert.run('retention-boundary','admin:1',c.id,'setup','completed',cutoff);
+            insert.run('recent','admin:1',c.id,'setup','unknown',now-3600000);
+            insert.run('other-active','user:2','other-connection','setup','running',now);
+            const controls=db.prepare("SELECT * FROM ai_usage WHERE id NOT LIKE 'expired-%' ORDER BY id").all();
+            const run=()=>operation==='discovery' ? ai.discoverModels(admin,c.id) : ai.testModels(admin,c.id,{model_ids:['synthetic-model']});
+            await run();
+            expect(db.prepare('SELECT COUNT(*) AS n FROM ai_usage WHERE created_at<?').get(cutoff).n).toBe(operation==='discovery'?101:1);
+            for(let i=1;i<(operation==='discovery'?3:2);i++) await run();
+            expect(db.prepare('SELECT COUNT(*) AS n FROM ai_usage WHERE created_at<?').get(cutoff).n).toBe(0);
+            expect(db.prepare("SELECT * FROM ai_usage WHERE id IN ('retention-boundary','recent','other-active') ORDER BY id").all()).toEqual(controls);
+            expect(requests).toHaveLength(operation==='discovery'?3:4);
+        } finally { clock.mockRestore(); }
+    });
     it('authorizes shared access without exposing or mutating the owner key', async () => {
         const c = await selected(); ai.saveConnection(admin,{shared:true,allowed_user_ids:[1]},c.id);
         ai.savePreferences(user,{enabled:true,connection_id:c.id});
@@ -380,6 +399,25 @@ describe('AI connection security', () => {
         for(const model of tested.models) expect(profiles[model.id]?.chat).toBe(true);
         expect(profiles['synthetic-model'].chat).toBe(true);
         expect(()=>ai.savePreferences(admin,{model_id:tested.recommended_model_id})).not.toThrow();
+    });
+    it.each([
+        ['existing IDs',['cached-96','cached-97','cached-98'],[]],
+        ['mixed existing and new IDs',['cached-0','cached-98','new-model'],['cached-1']]
+    ])('reserves only added profile capacity when retesting %s', async (_label,modelIds,evicted) => {
+        const c=await selected();
+        const data=JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id).data_json);
+        for(let i=0;i<99;i++) data.capabilities[`cached-${i}`]={id:`cached-${i}`,chat:true,structured:false,token_parameter:'max_tokens',tested_at:Date.now()+3600000+i};
+        db.prepare('UPDATE ai_connections SET data_json=? WHERE id=?').run(JSON.stringify(data),c.id);
+        ai.savePreferences(admin,{model_id:'cached-98'});
+        const expected=[...new Set([...Object.keys(data.capabilities).filter(id=>!evicted.includes(id)),...modelIds])].sort();
+        const count=requests.length;
+        await ai.testModels(admin,c.id,{model_ids:modelIds});
+        const stored=JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(c.id).data_json);
+        expect(Object.keys(stored.capabilities).sort()).toEqual(expected);
+        for(const id of modelIds) expect(stored.capabilities[id]).toMatchObject({chat:true,structured:true,status:'compatible'});
+        expect(ai.requireAiAccess(admin,'list').preferences.model_id).toBe('cached-98');
+        expect(stored.model_id).toBe('synthetic-model');
+        expect(requests).toHaveLength(count+6);
     });
     it('rejects already-cancelled requests before network activity', async () => {
         await selected(); const count=requests.length;

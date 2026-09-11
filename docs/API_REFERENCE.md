@@ -78,8 +78,12 @@ compatibility. Authentication, permission and rate errors stop a test batch;
 there is no automatic retry after a timeout or uncertain response.
 Connections expose/store at most 100 capability profiles, retaining the current
 connection and owner-personal selections plus recent tests. Evicted unselected
-models require another explicit test. Existing oversized maps are capped in
-read responses and trimmed on their next normal connection write.
+models require another explicit test. Retesting retained IDs only replaces
+their profiles; unrelated profiles are evicted only for added IDs. Existing
+oversized maps are capped in read responses and trimmed on their next normal
+connection write.
+Discovery and tests also perform bounded usage retention through the shared
+request reservation: up to 100 inactive records older than 30 days per request.
 
 Error categories are `AI_AUTH_FAILED`, `AI_PERMISSION_DENIED`, `AI_RATE_LIMIT`,
 `AI_UNAVAILABLE`/`AI_TIMEOUT`, `AI_MODEL_UNAVAILABLE`,

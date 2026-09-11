@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
-import { requireAiAccess, runInference } from './connections.js';
+import { requireAiAccess, runInference, pruneUsage } from './connections.js';
 import { safeText } from './context.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
@@ -53,8 +53,7 @@ function expireJobs() {
     .run(Date.now(),Date.now() - 3 * LARGE_JOB_TIMEOUT);
   db.prepare("DELETE FROM ai_jobs WHERE id IN (SELECT id FROM ai_jobs WHERE status NOT IN ('running','queued') AND updated_at < ? LIMIT 100)")
     .run(Date.now() - HISTORY_AGE);
-  db.prepare("DELETE FROM ai_usage WHERE id IN (SELECT id FROM ai_usage WHERE status <> 'running' AND created_at < ? LIMIT 100)")
-    .run(Date.now() - 30 * 86400000);
+  pruneUsage();
 }
 
 function scheduleJob(id) {
