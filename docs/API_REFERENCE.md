@@ -86,6 +86,10 @@ a job idempotency key with changed input returns 409. Application does not
 repeat inference. Stale sources, revoked rights and undo conflicts reject the
 operation rather than overwriting current data.
 
+For reordering, confirm all companion moves needed to keep the affected positions
+unique within each category. Collisions reject the whole application with
+`AI_REORDER_CONFLICT` (409). Undo also rejects occupied original positions.
+
 `full_list:true` raises the bounded page size. Follow `coverage.next_offset`
 with `offset`; retain the reported partial status until the requested scope has
 actually been examined. Search accepts `conversation_id` and explicit `filters`

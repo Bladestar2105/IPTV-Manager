@@ -65,10 +65,11 @@ rule from an applied rename, inspect its preview, then separately enable future
 use. Automatic summaries after sync have a separate personal switch. Both are
 off initially; summaries run as separate jobs, and enabled rules need no model
 call. Rules can be renamed, enabled, disabled or deleted after their original
-proposal and change records expire. Changing the transformation or its
-confirmation references still requires an available, applied rename. Each rule
-stays bound to its original target user; create a separate rule to use a
-confirmed transformation for another user.
+proposal and change records expire. Creating a rule or changing its
+transformation or confirmation references requires an applied rename with both
+records still within the 30-day retention period, even before cleanup removes
+expired rows. Each rule stays bound to its original target user; create a
+separate rule to use a confirmed transformation for another user.
 
 ## Network and data boundaries
 

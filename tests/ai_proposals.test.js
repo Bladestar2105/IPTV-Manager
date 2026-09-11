@@ -138,6 +138,25 @@ it('rejects an administrator retargeting a rule to another user without changing
   expect(applyRulesAfterSync(712,[914])).toEqual({applied:0});
   expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1114').get().custom_name).toBe('');
 });
+it.each([
+  ['creating','ai_proposals','updated_at',false],
+  ['changing','ai_proposals','updated_at',true],
+  ['creating','ai_changes','created_at',false],
+  ['changing','ai_changes','created_at',true]
+])('rejects %s rules from expired %s confirmations before cleanup',(_operation,table,time,editing)=>{
+  const proposal=rename();
+  applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'expired-confirmation'});
+  const input={proposal_id:proposal.id,action_id:proposal.actions[0].id,name:'Strip DE',operation:'strip_prefix',match:'DE | ',enabled:true};
+  const rule=saveRule(actor,input);
+  db.prepare(`UPDATE ${table} SET ${time}=?`).run(Date.now()-31*86400000);
+  const before=db.prepare('SELECT * FROM ai_rules').all();
+
+  expect(()=>saveRule(actor,editing?{operation:'replace_literal'}:input,editing?rule.id:null)).toThrow(/AI_NOT_FOUND/);
+  expect(db.prepare('SELECT * FROM ai_rules').all()).toEqual(before);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(1);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(1);
+  expect(saveRule(actor,{name:'Retained cleanup',enabled:false},rule.id)).toMatchObject({name:'Retained cleanup',enabled:false,operation:'strip_prefix'});
+});
 it('keeps confirmed rules editable after their proposal and change records are pruned',()=>{
   const proposal=rename();
   applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'retained-rule'});
@@ -177,6 +196,48 @@ it('requires an applied rename when updating a rule transformation',()=>{
   applyProposal(actor,second.id,{action_ids:[second.actions[0].id],idempotency_key:'updated-rule'});
   saveRule(actor,update,rule.id);
   expect(listRules(actor)[0]).toMatchObject({id:rule.id,operation:'replace_literal',match:'DE | Sport',replacement:'Sports'});
+});
+it.each([
+  ['an occupied destination',[{type:'reorder_channel',user_channel_id:1111,value:1}]],
+  ['duplicate requested destinations',[{type:'reorder_channel',user_channel_id:1111,value:2},{type:'reorder_channel',user_channel_id:1112,value:2}]],
+  ['an assignment destination',[{type:'assign_channel',provider_channel_id:911,category_id:1011},{type:'reorder_channel',user_channel_id:1112,value:2}]]
+])('atomically rejects reorder actions with %s',(_case,actions)=>{
+  const proposal=createProposal(actor,{...payload,feature:'list'},actions,'Reorder');
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:proposal.actions.map(action=>action.id),idempotency_key:'conflicting-order'})).toThrow(/AI_REORDER_CONFLICT/);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT status FROM ai_proposals WHERE id=?').get(proposal.id).status).toBe('pending');
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+});
+it('requires companion reorder moves and atomically applies and undoes a complete swap',()=>{
+  const proposal=createProposal(actor,payload,[{type:'reorder_channel',user_channel_id:1111,value:1},{type:'reorder_channel',user_channel_id:1112,value:0}],'Swap');
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  expect(proposal.actions.map(action=>action.after.sort_order)).toEqual([1,0]);
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'partial-swap'})).toThrow(/AI_REORDER_CONFLICT/);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  const selection={action_ids:proposal.actions.map(action=>action.id),idempotency_key:'complete-swap'};
+  const applied=applyProposal(actor,proposal.id,selection);
+  expect(applyProposal(actor,proposal.id,selection)).toEqual(applied);
+  expect(db.prepare('SELECT id FROM user_channels WHERE user_category_id=1011 ORDER BY sort_order').all()).toEqual([{id:1112},{id:1111}]);
+  expect(undoChange(actor,applied.change_id).status).toBe('undone');
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+});
+it('rejects a reorder destination occupied after the preview without overwriting the later edit',()=>{
+  const proposal=createProposal(actor,payload,[{type:'reorder_channel',user_channel_id:1111,value:2}],'Move');
+  db.prepare('UPDATE user_channels SET sort_order=2 WHERE id=1112').run();
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'late-occupant'})).toThrow(/AI_REORDER_CONFLICT/);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+});
+it('rejects reorder undo when another entry has since occupied the original position',()=>{
+  const proposal=createProposal(actor,payload,[{type:'reorder_channel',user_channel_id:1111,value:2}],'Move');
+  const applied=applyProposal(actor,proposal.id,{action_ids:[proposal.actions[0].id],idempotency_key:'undo-occupied'});
+  db.prepare('UPDATE user_channels SET sort_order=0 WHERE id=1112').run();
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  expect(()=>undoChange(actor,applied.change_id)).toThrow(/AI_UNDO_CONFLICT/);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT status FROM ai_changes WHERE id=?').get(applied.change_id).status).toBe('applied');
 });
 it('preserves pinned positions and region variants unless explicitly selected',()=>{
   expect(()=>createProposal(actor,{...payload,pinned_ids:[1111]},[{type:'reorder_channel',user_channel_id:1111,value:5}],'')).toThrow(/AI_PROTECTED_VALUE/);

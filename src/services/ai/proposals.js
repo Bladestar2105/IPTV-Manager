@@ -193,6 +193,13 @@ function updateFields(table,key,value,fields) {
   if(!names.length||names.some(name=>!allowed.includes(name))) fail('AI_INVALID_ACTION');
   db.prepare(`UPDATE ${table} SET ${names.map(name=>`${name}=?`).join(',')} WHERE ${key}=?`).run(...names.map(name=>fields[name]),value);
 }
+function validateChannelOrder(diffs,code) {
+  const changed=new Set(diffs.filter(diff=>diff.table==='user_channels'&&diff.after.sort_order!==undefined).map(diff=>diff.id));
+  const occupied=db.prepare(`SELECT 1 FROM user_channels edited JOIN user_channels sibling
+    ON sibling.user_category_id=edited.user_category_id AND sibling.sort_order=edited.sort_order AND sibling.id<>edited.id
+    WHERE edited.id=? LIMIT 1`);
+  for(const id of changed) if(occupied.get(id)) fail(code,409);
+}
 export function applyProposal(actor,id,{action_ids,idempotency_key}={}) {
   if(!Array.isArray(action_ids)||!action_ids.length||action_ids.length>MAX_CANDIDATES||new Set(action_ids).size!==action_ids.length||typeof idempotency_key!=='string'||!idempotency_key||idempotency_key.length>200) fail('AI_INVALID_CONFIRMATION');
   const outcome=db.transaction(()=>{
@@ -235,6 +242,8 @@ export function applyProposal(actor,id,{action_ids,idempotency_key}={}) {
         diffs.push({table,id:rowId,provider_channel_id:action.provider_channel_id,before,after:action.after});
       }
     }
+    // Check the final transaction state so confirmed swaps and cycles remain valid.
+    validateChannelOrder(diffs,'AI_REORDER_CONFLICT');
     const changeId=randomUUID(),now=Date.now();
     const data={proposal_id:id,feature:row.data.feature,idempotency_key,action_ids:[...action_ids].sort(),diffs};
     db.prepare('INSERT INTO ai_changes(id,owner_key,user_id,data_json,status,created_at) VALUES(?,?,?,?,?,?)').run(changeId,ownerKey(actor),row.user_id,JSON.stringify(data),'applied',now);
@@ -293,6 +302,7 @@ export function undoChange(actor,id) {
         updateFields(diff.table,'id',diff.id,fields);
       }
     }
+    validateChannelOrder(row.data.diffs,'AI_UNDO_CONFLICT');
     db.prepare("UPDATE ai_changes SET status='undone' WHERE id=?").run(id);
     if(row.data.proposal_id) {
       const proposal=record('ai_proposals',actor,row.data.proposal_id);

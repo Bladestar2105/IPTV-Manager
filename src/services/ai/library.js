@@ -39,9 +39,11 @@ export function saveRule(actor,input,id=null) {
   let userId=existing?.user_id;
   if(!unchanged) {
     const proposal=owned('ai_proposals',actor,value.proposal_id);
+    if(proposal.updated_at<Date.now()-RETENTION_MS) fail('AI_NOT_FOUND',404);
     if(existing && existing.user_id!==proposal.user_id) fail('AI_INVALID_RULE');
     if(proposal.status!=='applied') fail('AI_RULE_REQUIRES_CONFIRMATION',409);
     const change=owned('ai_changes',actor,proposal.change_id);
+    if(change.created_at<Date.now()-RETENTION_MS) fail('AI_NOT_FOUND',404);
     const action=proposal.data.actions.find(action=>action.id===value.action_id && action.type==='rename_channel');
     if(!action || !change.data.action_ids.includes(action.id)) fail('AI_RULE_REQUIRES_CONFIRMATION',409);
     const source=db.prepare('SELECT name FROM provider_channels WHERE id=?').get(action.provider_channel_id);
