@@ -6,7 +6,7 @@ import { aiError } from '../transport.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
-import { seal, wipe, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord } from './credentials.js';
+import { seal, wipe, clearPlaintext, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 // A sign-in belongs to the browser session that started it. That session polls
@@ -130,9 +130,21 @@ function claimCompletedLogin(row, ownerKey) {
     }).immediate();
 }
 
+// Discards everything this attempt produced. A connection that was already
+// linked keeps its credential: a rejected replacement must not disconnect the
+// account that was working before it started.
+async function discardAttempt(session, ownerKey, connectionId, hadCredential) {
+    if (hadCredential) { clearPlaintext(ownerKey, connectionId); return; }
+    await logout(session).catch(() => null);
+    wipe(ownerKey, connectionId);
+}
+
 async function completeLogin(row, ownerKey, connectionId, notification) {
     const attempt = attempts.get(row.id);
     if (!attempt) return;
+    // Read before anything this attempt could store; an attempt never seals on
+    // teardown, so only its own success can add a record.
+    const hadCredential = Boolean(readCredentialRecord(ownerKey, connectionId));
     // Not our completion: leave the attempt and its runtime alone so the real
     // one can still arrive. Returning inside the try below would run its
     // `finally` and stop the pending runtime.
@@ -146,23 +158,20 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         if (!stillOwnsAttempt(row, ownerKey)) {
             // The attempt no longer belongs to the current session: sign the
             // runtime out again and keep nothing locally.
-            await logout(session).catch(() => null);
-            wipe(ownerKey, connectionId);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_login_superseded');
             return;
         }
         const status = await getAuthStatus(session);
         if (status.authMethod !== 'chatgpt') {
-            await logout(session).catch(() => null);
-            wipe(ownerKey, connectionId);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_unexpected_auth');
             return;
         }
         const account = await readAccount(session);
         const fingerprint = accountFingerprint(account.email);
         if (linkedElsewhere(ownerKey, connectionId, fingerprint)) {
-            await logout(session).catch(() => null);
-            wipe(ownerKey, connectionId);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_account_already_linked');
             return;
         }
@@ -170,8 +179,7 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         // so a failed claim means this attempt was ended and nothing newer has
         // linked yet: signing out and removing the local credential is safe.
         if (!claimCompletedLogin(row, ownerKey)) {
-            await logout(session).catch(() => null);
-            wipe(ownerKey, connectionId);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             return;
         }
         let sealed;
@@ -182,8 +190,7 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             authMethod: status.authMethod
         }); } catch { sealed = { sealed: false }; }
         if (!sealed.sealed) {
-            await logout(session).catch(() => null);
-            wipe(ownerKey, connectionId);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             forceLoginFailure(row.id, 'ai_codex_credentials_unavailable');
         }
     } catch {
@@ -352,15 +359,23 @@ export async function disconnectAccount(actor, connection) {
     }
     const live = liveRuntime(ownerKey, connection.id);
     if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
-    // A runtime owned by another worker cannot be stopped from here. Removing its
-    // lease is the shared signal; that worker's guard sees it within a second and
-    // ends whatever it was running before the credential disappears.
+    // A runtime owned by another worker cannot be stopped from here. Marking its
+    // lease revoked is the shared signal; that worker's guard sees it within a
+    // second and releases the row, and only that release is an acknowledgement
+    // that its runtime has actually stopped. Deleting the row here instead would
+    // make the wait trivially true and allow a second runtime on the same
+    // identity directory while the first is still running.
+    let acknowledged = true;
     if (runtimeState(ownerKey, connection.id)) {
-        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connection.id);
-        await waitForLeaseRelease(ownerKey, connection.id);
+        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+            .run(Date.now(), ownerKey, connection.id);
+        acknowledged = await waitForLeaseRelease(ownerKey, connection.id);
+        // No acknowledgement means the owner is gone, not that it is safe to run
+        // alongside it: local access is still removed and the difference reported.
+        if (!acknowledged) db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connection.id);
     }
     let remote = false;
-    if (readCredentialRecord(ownerKey, connection.id)) {
+    if (acknowledged && readCredentialRecord(ownerKey, connection.id)) {
         try { remote = await withRuntime(ownerKey, connection.id, session => logout(session)); }
         catch { remote = false; }
     }

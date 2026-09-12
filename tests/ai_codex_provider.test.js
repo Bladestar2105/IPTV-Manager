@@ -1066,18 +1066,62 @@ describe('personal ChatGPT runtime ownership', () => {
         } finally { runtime.stopRuntime(session); }
     }, 30000);
 
-    it('ends a runtime owned by another worker before unlinking', async () => {
+    it('waits for the owning worker to acknowledge a revoked lease before signing out', async () => {
         const connection = await withModel();
         const now = Date.now();
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
             .run('user:1', connection.id, 'other-worker', 123456, 'running', now + 60000, now);
-        const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
-        expect(result.disconnected).toBe(true);
-        // No lease survives the unlink, so no worker can keep using the credential.
+        // The owner acknowledges by releasing the row it saw marked revoked.
+        const acknowledge = setInterval(() => {
+            const row = db.prepare('SELECT state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
+            if (row?.state === 'revoked') {
+                db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id='other-worker'").run('user:1', connection.id);
+                clearInterval(acknowledge);
+            }
+        }, 50);
+        acknowledge.unref?.();
+        try {
+            const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
+            expect(result).toEqual({ disconnected: true, remote_logout: true });
+        } finally { clearInterval(acknowledge); }
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
         await expect(ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema }))
             .rejects.toMatchObject({ code: 'AI_CODEX_NOT_LINKED' });
+    }, 30000);
+
+    it('removes local access without a second runtime when the owner never acknowledges', async () => {
+        const connection = await withModel();
+        const now = Date.now();
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'silent-worker', 123456, 'running', now + 60000, now);
+        const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
+        // Starting a logout runtime beside a possibly live one is never the
+        // answer; local access goes and the difference is reported.
+        expect(result).toEqual({ disconnected: true, remote_logout: false });
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('keeps the working link when a replacement sign-in is rejected', async () => {
+        const mine = await linkedConnection(user);
+        const before = credentials.readCredentialRecord('user:1', mine.id);
+        // Another account links the address the replacement will authenticate.
+        fake({ email: 'second.tester@example.org' });
+        const theirs = createConnection(other);
+        expect((await link(other, theirs)).state.status).toBe('completed');
+        // The replacement authenticates that same, already linked account.
+        fake({ login: 'success', loginDelayMs: 100, email: 'second.tester@example.org' });
+        const started = await account.startAccountLink(user, ownedRecord(user, mine.id), 'fp');
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
+        expect(db.prepare('SELECT error_code FROM ai_codex_logins WHERE id=?').get(started.id).error_code)
+            .toBe('ai_codex_account_already_linked');
+        // A failed replacement must not disconnect the account that worked.
+        const after = credentials.readCredentialRecord('user:1', mine.id);
+        expect(after).toBeTruthy();
+        expect(after.account_hash).toBe(before.account_hash);
+        expect(after.encrypted_blob).toBe(before.encrypted_blob);
+        expect(fs.existsSync(credentials.identityPaths('user:1', mine.id).authFile)).toBe(false);
     }, 30000);
 
     it('confirms a successful remote sign-out separately', async () => {

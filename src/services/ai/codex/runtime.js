@@ -34,10 +34,12 @@ function acquireLease(ownerKey, connectionId) {
     return acquired;
 }
 
-// True while this worker still owns the lease it was granted.
+// True while this worker still owns the lease it was granted. A lease another
+// worker marked revoked is not held any more: releasing it is this worker's
+// acknowledgement that its runtime has actually stopped.
 function holdsLease(ownerKey, connectionId, leaseId) {
-    const row = db.prepare('SELECT lease_id,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
-    return Boolean(row) && row.lease_id === leaseId && row.expires_at >= Date.now();
+    const row = db.prepare('SELECT lease_id,state,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+    return Boolean(row) && row.lease_id === leaseId && row.state !== 'revoked' && row.expires_at >= Date.now();
 }
 
 function refreshLease(ownerKey, connectionId, leaseId, state = 'running') {

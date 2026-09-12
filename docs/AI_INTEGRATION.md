@@ -448,6 +448,10 @@ one-time device code.
   claimed attempt does, so cancelling a second sign-in on an already linked
   connection cannot replace the stored token while its recorded account stays the
   old one.
+* A rejected replacement keeps the link that already worked. If a second sign-in
+  on a linked connection is refused — for instance because the account it
+  authenticated is already linked elsewhere — only that attempt's own state is
+  discarded; the existing credential stays.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message. A
   runtime that dies after issuing the device code ends its attempt immediately
@@ -466,11 +470,13 @@ one-time device code.
 * Browser cookies and existing `auth.json` files from a developer or operator
   profile are never imported.
 
-Disconnecting blocks new work, cancels queued and running jobs, ends the runtime
-— including one owned by another worker, whose lease is removed as the shared
-stop signal and whose guard acts on it within a second, so no request can keep
-using a credential that is about to be revoked — performs the documented sign-out
-and removes the local credential. If
+Disconnecting blocks new work, cancels queued and running jobs and ends the
+runtime. A runtime owned by another worker is stopped by marking its lease
+revoked; that worker's guard sees this within a second and releases the lease,
+and only that release counts as an acknowledgement that it has actually stopped.
+The sign-out runs after the acknowledgement, so two runtimes never share one
+identity directory. Without an acknowledgement no second runtime is started at
+all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting an account removes its credential records, attempt history
