@@ -22,6 +22,12 @@ const BACKENDS = ['bwrap', 'sandbox-exec'];
 
 const READ_ONLY_ROOTS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ssl', '/etc/pki',
     '/etc/ca-certificates', '/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/System', '/private/var/db/timezone'];
+const STANDARD_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+
+const realPath = value => { try { return fs.realpathSync.native(value); } catch { return path.resolve(value); } };
+// Two paths overlap when either contains the other. A mount that contains the
+// data directory would expose it just as surely as one inside it.
+const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 
 let cached = null;
 
@@ -41,6 +47,22 @@ export function which(binary) {
     return null;
 }
 
+// A launcher with a `#!` line needs its interpreter inside the sandbox as well.
+// An npm-installed Codex uses `/usr/bin/env node`, and the Node that runs it is
+// routinely outside the standard system directories.
+export function launcherInterpreter(binary) {
+    let header = '';
+    try {
+        const handle = fs.openSync(binary, 'r');
+        try {
+            const buffer = Buffer.alloc(256);
+            header = buffer.subarray(0, fs.readSync(handle, buffer, 0, 256, 0)).toString('utf8');
+        } finally { fs.closeSync(handle); }
+    } catch { return null; }
+    if (!header.startsWith('#!')) return null;
+    return /(^|[\s/])node[0-9.]*(\s|$)/.test(header.split('\n')[0]) ? path.dirname(process.execPath) : null;
+}
+
 // Directories the launcher itself needs inside the namespace. A globally
 // installed Codex is commonly a symlink from a bin directory into a package
 // tree, so binding only the bin directory leaves the actual program and the
@@ -48,8 +70,9 @@ export function which(binary) {
 export function launcherMounts(binary) {
     if (!binary) return [];
     const mounts = [path.dirname(binary)];
-    let real = binary;
-    try { real = fs.realpathSync.native(binary); } catch { /* not a link, or unreadable */ }
+    const interpreter = launcherInterpreter(binary);
+    if (interpreter) mounts.push(interpreter);
+    const real = realPath(binary);
     if (real !== binary) {
         mounts.push(path.dirname(real));
         // Walk up to the package root so a launcher's sibling files and vendored
@@ -65,13 +88,31 @@ export function launcherMounts(binary) {
     return [...new Set(mounts)];
 }
 
+// A launcher placed in or above the manager's data directory cannot be mounted
+// without handing the runtime the database, the encryption key and every other
+// identity. That configuration is refused rather than silently contained.
+export function unsafeLauncherMounts(binary) {
+    const dataDirectory = realPath(DATA_DIR);
+    return launcherMounts(binary).filter(mount => overlaps(realPath(mount), dataDirectory));
+}
+
+// Directories the launcher needs on PATH. The version probe and the sandboxed
+// launch use the same list, so a launcher the probe can start is one the sandbox
+// can start too.
+export function launcherPath(binary) {
+    if (!binary) return [...STANDARD_PATH];
+    const extra = [path.dirname(binary), launcherInterpreter(binary)]
+        .filter(directory => directory && !STANDARD_PATH.includes(directory));
+    return [...new Set([...extra, ...STANDARD_PATH])];
+}
+
 // Built from scratch: nothing from the host profile is inherited, so an
 // operator's `OPENAI_API_KEY`, proxy settings, CODEX_HOME, plugin roots or
 // manager secrets can never reach the runtime. `extraPath` only ever holds the
 // launcher's own directory, which has to be executable for it to start at all.
 export function sandboxEnvironment(codexHome, workDir, extraPath = []) {
     return {
-        PATH: [...extraPath, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
+        PATH: [...new Set([...extraPath, ...STANDARD_PATH])].join(':'),
         HOME: codexHome,
         CODEX_HOME: codexHome,
         TMPDIR: path.join(workDir, 'tmp'),
@@ -88,7 +129,7 @@ function existingReadOnlyRoots() {
     });
 }
 
-function bwrapArguments(bwrap, { codexHome, workDir, environment, command }) {
+function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launcher }) {
     const args = [
         '--die-with-parent', '--new-session', '--clearenv',
         '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--unshare-cgroup',
@@ -101,7 +142,11 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command }) {
     // they live outside the standard roots, so a global npm install or an
     // install under /opt stays reachable inside the namespace.
     const covered = directory => roots.some(root => directory === root || directory.startsWith(`${root}/`));
-    for (const mount of launcherMounts(command[0])) {
+    const dataDirectory = realPath(DATA_DIR);
+    for (const mount of launcherMounts(launcher)) {
+        // Belt and braces: availability already refuses such a launcher, so this
+        // can only drop a mount that must never exist.
+        if (overlaps(realPath(mount), dataDirectory)) continue;
         if (!covered(mount)) args.push('--ro-bind-try', mount, mount);
     }
     // Only the identity's own runtime tree is writable. The manager's data
@@ -155,20 +200,19 @@ function seatbeltArguments(sandboxExec, { codexHome, workDir, environment, comma
 
 // Wraps a command so it runs inside the detected sandbox. The returned spawn
 // description never inherits the host environment.
-export function wrapCommand(backend, { codexHome, workDir, command }) {
-    // A launcher installed outside the standard roots must also be findable by
-    // name, because a wrapper script commonly executes a sibling interpreter.
-    const launcherDirectory = command?.[0]?.startsWith('/') ? path.dirname(command[0]) : null;
-    const extraPath = launcherDirectory && !['/usr/bin', '/bin', '/usr/sbin', '/sbin'].includes(launcherDirectory) ? [launcherDirectory] : [];
-    const environment = sandboxEnvironment(codexHome, workDir, extraPath);
-    if (backend.name === 'bwrap') return { ...bwrapArguments(backend.path, { codexHome, workDir, environment, command }), environment: {} };
+// `launcher` is the configured runtime. It defaults to the command being run, and
+// is passed explicitly by the containment self-test so the probe carries exactly
+// the mounts a real launch would.
+export function wrapCommand(backend, { codexHome, workDir, command, launcher = command?.[0] }) {
+    const environment = sandboxEnvironment(codexHome, workDir, launcherPath(launcher));
+    if (backend.name === 'bwrap') return { ...bwrapArguments(backend.path, { codexHome, workDir, environment, command, launcher }), environment: {} };
     if (backend.name === 'sandbox-exec') return seatbeltArguments(backend.path, { codexHome, workDir, environment, command });
     throw Object.assign(new Error('AI_CODEX_SANDBOX_UNAVAILABLE'), { code: 'AI_CODEX_SANDBOX_UNAVAILABLE' });
 }
 
 // Proves containment instead of assuming it: a canary file outside the sandbox
 // must be unreadable and the manager's data directory must be unwritable.
-async function selfTest(backend, runtimeDir) {
+async function selfTest(backend, runtimeDir, launcher) {
     const probeRoot = fs.mkdtempSync(path.join(runtimeDir, 'probe-'));
     const codexHome = path.join(probeRoot, 'home');
     const workDir = path.join(probeRoot, 'work');
@@ -180,7 +224,10 @@ async function selfTest(backend, runtimeDir) {
     const script = `cat ${JSON.stringify(canary)} 2>/dev/null; printf "|"; ` +
         `(printf x > ${JSON.stringify(forbidden)}) 2>/dev/null && printf WROTE; printf "|done"`;
     try {
-        const spawnDescription = wrapCommand(backend, { codexHome, workDir, command: ['/bin/sh', '-c', script] });
+        // Carries the configured launcher's mounts, so a launcher whose location
+        // would expose the data directory fails the canary rather than slipping
+        // past a probe built only around /bin/sh.
+        const spawnDescription = wrapCommand(backend, { codexHome, workDir, command: ['/bin/sh', '-c', script], launcher });
         const { stdout } = await run(spawnDescription.file, spawnDescription.args,
             { env: spawnDescription.environment, timeout: 15000, maxBuffer: 64 * 1024 });
         if (!stdout.includes('|done')) return { ok: false, reason: 'AI_CODEX_SANDBOX_PROBE_FAILED' };
@@ -213,7 +260,7 @@ export function codexVersion(binary) {
     const resolved = which(binary);
     if (!resolved) return null;
     try {
-        const output = execFileSync(resolved, ['--version'], { timeout: 10000, encoding: 'utf8', env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+        const output = execFileSync(resolved, ['--version'], { timeout: 10000, encoding: 'utf8', env: { PATH: launcherPath(resolved).join(':') } });
         return output.trim().match(/(\d+\.\d+\.\d+)/)?.[1] || null;
     } catch { return null; }
 }
@@ -228,7 +275,7 @@ export async function resolveIsolation({ force = false } = {}) {
         const resolved = which(name);
         if (!resolved) continue;
         const backend = { name, path: resolved, grade: name === 'bwrap' ? 'isolated' : 'development' };
-        const probe = await selfTest(backend, config.runtimeDir);
+        const probe = await selfTest(backend, config.runtimeDir, which(config.binary));
         if (!probe.ok) { cached = { available: false, reason: probe.reason, backend: name }; return cached; }
         if (backend.grade === 'development' && !config.allowDevelopmentSandbox) {
             cached = { available: false, reason: 'AI_CODEX_SANDBOX_GRADE_REJECTED', backend: name, grade: backend.grade };

@@ -320,9 +320,17 @@ the existing `chat/completions` transport.
   relative path, which the sandbox could not resolve from its own working
   directory — and the same path is both version-probed and launched, so an
   installation that only the host `PATH` can find cannot report itself available
-  and then fail inside the sandbox. Its directory, the target of a symlinked
-  launcher and that target's package root are bound read-only when they live
-  outside the standard system roots, which is what a global npm install needs.
+  and then fail inside the sandbox. Its directory, the interpreter of a
+  script launcher, the target of a symlinked launcher and that target's package
+  root are bound read-only when they live outside the standard system roots and
+  are kept on the sandbox `PATH`, which is what a global npm install needs; the
+  version probe uses that same `PATH`, so a launcher the probe can start is one
+  the sandbox can start. A launcher placed in or above the data directory is
+  refused outright (`AI_CODEX_BINARY_UNSAFE_LOCATION`), because mounting it would
+  hand the runtime the database, the encryption key and every other identity.
+  The containment self-test carries the configured launcher's mounts, so such a
+  configuration also fails the canary rather than slipping past a probe built
+  only around a shell.
 * Pinned and tested Codex release: **0.154.0**. Accepted range: `>= 0.154.0` and
   `< 0.156.0`. A version outside that range keeps the adapter unavailable unless
   an operator names one exact version in `AI_CODEX_VERSION_OVERRIDE` after

@@ -14,8 +14,10 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-codex-'));
 const fakeSource = path.join(here, 'fixtures', 'fakeCodexAppServer.mjs');
 // A tiny launcher stands in for the installed binary so `--version` and the
 // sandboxed launch both reach the fixture without inheriting the test process
-// environment.
-const fakeBinary = path.join(dataDir, 'codex');
+// environment. It lives outside the data directory, because a launcher inside it
+// cannot be mounted without exposing the database and the encryption key.
+const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-codex-bin-'));
+const fakeBinary = path.join(binDir, 'codex');
 const configPath = path.join(dataDir, 'fake-codex.json');
 const recordPath = path.join(dataDir, 'launch.json');
 const approvalPath = path.join(dataDir, 'approval.json');
@@ -93,6 +95,7 @@ afterAll(() => {
     account?.releaseAllAttempts();
     db?.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(binDir, { recursive: true, force: true });
     delete process.env.OPENAI_API_KEY;
 });
 
@@ -511,7 +514,7 @@ describe('personal ChatGPT runtime robustness', () => {
         const previousPath = process.env.PATH;
         const previousBin = process.env.AI_CODEX_BIN;
         // The documented default: a bare name that only the host PATH resolves.
-        process.env.PATH = `${dataDir}:${previousPath}`;
+        process.env.PATH = `${binDir}:${previousPath}`;
         process.env.AI_CODEX_BIN = 'codex';
         try {
             readiness.resetCodexReadiness();
@@ -563,6 +566,26 @@ describe('personal ChatGPT runtime robustness', () => {
         // The launcher's own directory also has to be on the sandbox PATH, since
         // a wrapper script commonly executes a sibling interpreter.
         expect(isolation.sandboxEnvironment('/tmp/home', '/tmp/work', [binDirectory]).PATH.startsWith(`${binDirectory}:`)).toBe(true);
+    });
+
+    it('keeps the adapter unavailable for a launcher placed in the data directory', async () => {
+        const previousBin = process.env.AI_CODEX_BIN;
+        const inside = path.join(dataDir, 'codex-inside-data');
+        fs.copyFileSync(fakeBinary, inside);
+        fs.chmodSync(inside, 0o755);
+        process.env.AI_CODEX_BIN = inside;
+        try {
+            readiness.resetCodexReadiness();
+            expect(await readiness.refreshCodexReadiness({ force: true }))
+                .toMatchObject({ available: false, reason: 'AI_CODEX_BINARY_UNSAFE_LOCATION' });
+            policy();
+            expect(thrown(() => ai.saveConnection(user, { name: 'x', provider: 'chatgpt_account' })).code)
+                .toBe('AI_CODEX_BINARY_UNSAFE_LOCATION');
+        } finally {
+            process.env.AI_CODEX_BIN = previousBin;
+            readiness.resetCodexReadiness();
+            await readiness.refreshCodexReadiness({ force: true });
+        }
     });
 
     it('installs one shutdown handler, and only once a runtime exists', async () => {

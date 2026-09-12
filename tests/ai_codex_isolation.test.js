@@ -77,6 +77,40 @@ describe('Codex runtime environment', () => {
     });
 });
 
+describe('Codex launcher location and interpreter', () => {
+    it('refuses a launcher that cannot be mounted without exposing the data directory', () => {
+        const inside = path.join(dataDir, 'codex');
+        fs.writeFileSync(inside, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        // Binding its directory would hand the runtime db.sqlite, secret.key and
+        // every identity directory.
+        expect(isolation.unsafeLauncherMounts(inside)).toContain(fs.realpathSync.native(dataDir));
+        const nested = path.join(dataDir, 'bin', 'codex');
+        fs.mkdirSync(path.dirname(nested), { recursive: true });
+        fs.writeFileSync(nested, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        expect(isolation.unsafeLauncherMounts(nested).length).toBeGreaterThan(0);
+        // A launcher in a normal system location stays acceptable.
+        expect(isolation.unsafeLauncherMounts('/bin/sh')).toEqual([]);
+    });
+
+    it('keeps the interpreter of a script launcher reachable for the probe and the sandbox', () => {
+        const scripted = path.join(runtimeDir, 'npm-style-codex');
+        fs.mkdirSync(runtimeDir, { recursive: true });
+        fs.writeFileSync(scripted, '#!/usr/bin/env node\nprocess.exit(0)\n', { mode: 0o755 });
+        const nodeDirectory = path.dirname(process.execPath);
+        // An npm install uses `env node`, and Node commonly lives outside the
+        // four standard directories, so both the probe PATH and the sandbox PATH
+        // must keep it.
+        expect(isolation.launcherInterpreter(scripted)).toBe(nodeDirectory);
+        expect(isolation.launcherPath(scripted)).toContain(nodeDirectory);
+        expect(isolation.launcherMounts(scripted)).toContain(nodeDirectory);
+        expect(isolation.sandboxEnvironment('/tmp/home', '/tmp/work', isolation.launcherPath(scripted)).PATH.split(':'))
+            .toContain(nodeDirectory);
+        // A compiled launcher needs no interpreter and gets no extra directory.
+        expect(isolation.launcherInterpreter('/bin/sh')).toBeNull();
+        expect(isolation.launcherPath('/bin/sh')).toEqual(['/usr/bin', '/bin', '/usr/sbin', '/sbin']);
+    });
+});
+
 describe('Codex isolation backend selection', () => {
     it('keeps the adapter unavailable when sandboxing is switched off', async () => {
         process.env.AI_CODEX_SANDBOX = 'none';

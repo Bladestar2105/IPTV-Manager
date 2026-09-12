@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../../database/db.js';
 import { codexConfig, versionSupported, DISABLED_CODEX_FEATURES, CODEX_CONFIG_OVERRIDES } from './config.js';
-import { resolveIsolation, wrapCommand, codexVersion, resolveCodexBinary } from './isolation.js';
+import { resolveIsolation, wrapCommand, codexVersion, resolveCodexBinary, unsafeLauncherMounts } from './isolation.js';
 import { createClient, codexError } from './protocol.js';
 import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
 
@@ -57,6 +57,9 @@ export async function codexAvailability({ force = false } = {}) {
     // that the probe can reach but the sandbox cannot is impossible.
     const binary = resolveCodexBinary(config.binary);
     if (!binary) return { available: false, reason: 'AI_CODEX_BINARY_MISSING' };
+    // Mounting a launcher that sits in or above the data directory would hand the
+    // runtime the database, the encryption key and every other identity.
+    if (unsafeLauncherMounts(binary).length) return { available: false, reason: 'AI_CODEX_BINARY_UNSAFE_LOCATION', binary };
     const version = codexVersion(binary);
     if (!version) return { available: false, reason: 'AI_CODEX_BINARY_MISSING' };
     if (!versionSupported(version) && config.versionOverride !== version) {

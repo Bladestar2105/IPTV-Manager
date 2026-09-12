@@ -28,6 +28,7 @@ export function aiError(code, status = 400) {
         AI_CODEX_DISABLED: 'The personal ChatGPT connection is disabled on this server.',
         AI_CODEX_NOT_READY: 'The personal ChatGPT runtime is not ready yet.',
         AI_CODEX_BINARY_MISSING: 'The pinned Codex runtime was not found.',
+        AI_CODEX_BINARY_UNSAFE_LOCATION: 'The configured Codex runtime cannot be isolated from the manager data directory.',
         AI_CODEX_VERSION_UNSUPPORTED: 'The installed Codex version is outside the tested range.',
         AI_CODEX_SANDBOX_MISSING: 'No usable runtime sandbox is available on this host.',
         AI_CODEX_SANDBOX_DISABLED: 'Runtime sandboxing is switched off, so the connection stays disabled.',
