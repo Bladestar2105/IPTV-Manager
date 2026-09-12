@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import db from '../../../database/db.js';
-import { codexConfig, versionSupported, DISABLED_CODEX_FEATURES, CODEX_CONFIG_OVERRIDES } from './config.js';
+import { codexConfig, versionSupported, VERSION_TOKEN, DISABLED_CODEX_FEATURES, CODEX_CONFIG_OVERRIDES } from './config.js';
 import { resolveIsolation, wrapCommand, resolveCodexBinary, unsafeLauncherMounts } from './isolation.js';
 import { createClient, codexError } from './protocol.js';
 import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
@@ -49,7 +49,7 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
         // The whole version token, prerelease and build metadata included: a
         // `0.154.0-beta.1` truncated to `0.154.0` would pass the range check as
         // the tested stable release.
-        return stdout.trim().match(/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/)?.[1] || null;
+        return stdout.trim().match(new RegExp(`(${VERSION_TOKEN})`))?.[1] || null;
     } catch { return null; }
     finally { fs.rmSync(probeRoot, { recursive: true, force: true }); }
 }
@@ -186,7 +186,9 @@ async function handshake(client, paths, expectedVersion) {
     if (result?.codexHome && ![paths.codexHome, `/private${paths.codexHome}`].includes(result.codexHome)) {
         throw codexError('AI_CODEX_HOME_MISMATCH', 'Codex resolved an unexpected credential directory.');
     }
-    const reported = String(result?.userAgent || '').match(/\/(\d+\.\d+\.\d+)/)?.[1] || null;
+    // The same token the probe read, so an explicitly allowed prerelease matches
+    // itself here instead of being rejected as an unexpected version.
+    const reported = String(result?.userAgent || '').match(new RegExp(`/(${VERSION_TOKEN})`))?.[1] || null;
     if (reported && expectedVersion && reported !== expectedVersion) {
         throw codexError('AI_CODEX_VERSION_UNSUPPORTED', 'Codex reported an unexpected protocol version.');
     }

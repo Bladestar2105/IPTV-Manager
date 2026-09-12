@@ -84,10 +84,15 @@ function expireLogins() {
     // leaves the row sealing. A live seal always holds the identity's lease, so
     // the absence of one is the signal that nobody is finishing it — and the
     // stored credential, not the claim, decides whether it succeeded.
-    for (const row of db.prepare(`SELECT id,owner_key,connection_id FROM ai_codex_logins WHERE status=?
+    for (const row of db.prepare(`SELECT id,owner_key,connection_id,credential_version FROM ai_codex_logins WHERE status=?
         AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
             AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
-        const linked = Boolean(readCredentialRecord(row.owner_key, row.connection_id));
+        // Presence alone is not evidence for this attempt: relinking an already
+        // linked connection would find the credential it was about to replace and
+        // report the new sign-in as successful while the old account stays linked.
+        // Only a version past the one claimed against was written by this attempt.
+        const record = readCredentialRecord(row.owner_key, row.connection_id);
+        const linked = Boolean(record) && Number(record.version || 0) > Number(row.credential_version ?? 0);
         db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
             .run(linked ? 'completed' : 'failed', linked ? null : 'ai_codex_login_interrupted', now, row.id, SEALING_STATUS);
     }
@@ -169,11 +174,12 @@ function stillOwnsAttempt(row, ownerKey) {
 // for good. The attempt moves to a non-terminal `sealing` state instead, which no
 // cancel or supersede can claim either, and only a stored credential publishes
 // the completion.
-function claimCompletedLogin(row, ownerKey) {
+function claimCompletedLogin(row, ownerKey, connectionId) {
     return db.transaction(() => {
         if (!stillOwnsAttempt(row, ownerKey)) return false;
-        return db.prepare("UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status IN ('starting','pending')")
-            .run(SEALING_STATUS, Date.now(), row.id).changes > 0;
+        const current = readCredentialRecord(ownerKey, connectionId);
+        return db.prepare("UPDATE ai_codex_logins SET status=?, error_code=NULL, credential_version=?, updated_at=? WHERE id=? AND status IN ('starting','pending')")
+            .run(SEALING_STATUS, Number(current?.version || 0), Date.now(), row.id).changes > 0;
     }).immediate();
 }
 
@@ -240,7 +246,7 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         // The runtime lease serializes sign-ins for one identity and connection,
         // so a failed claim means this attempt was ended and nothing newer has
         // linked yet: signing out and removing the local credential is safe.
-        if (!claimCompletedLogin(row, ownerKey)) {
+        if (!claimCompletedLogin(row, ownerKey, connectionId)) {
             await discardAttempt(session, ownerKey, connectionId, hadCredential);
             return;
         }
@@ -406,14 +412,18 @@ export function readLoginStatus(actor, connection, id, fingerprint = null) {
     return publicLogin(row);
 }
 
+// Sealing is an internal step of a sign-in that is still running. Every answer
+// that carries a status to a client goes through here, so none of them reports
+// an internal state the client has no handling for — and a client that sees
+// `pending` keeps polling until the credential is stored or the attempt fails.
+function publicStatus(status) {
+    return status === SEALING_STATUS ? 'pending' : status;
+}
+
 function publicLogin(row) {
     return {
         id: row.id,
-        // Sealing is an internal step of a sign-in that is still running; the
-        // account holder is told the truth — it is not finished yet — and the
-        // client keeps polling until the credential is stored or the attempt
-        // fails.
-        status: row.status === SEALING_STATUS ? 'pending' : row.status,
+        status: publicStatus(row.status),
         // Never a token: only the documented verification address and the code
         // the account holder types on it.
         verification_url: row.verification_url,
@@ -438,8 +448,11 @@ export async function cancelAccountLink(actor, connection, id) {
     // A completion that claimed the attempt first has already won. Reporting
     // "cancelled" then would tell the account holder the opposite of what
     // happened.
+    // A completion that claimed the attempt first is still storing its
+    // credential; reporting its internal state would show the account holder a
+    // failed sign-in for one that can still succeed.
     const current = db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(row.id);
-    return { id: row.id, status: current?.status ?? 'cancelled', error_code: current?.error_code ?? null };
+    return { id: row.id, status: publicStatus(current?.status ?? 'cancelled'), error_code: current?.error_code ?? null };
 }
 
 // Disconnecting blocks new work, ends queued and running work, signs the runtime

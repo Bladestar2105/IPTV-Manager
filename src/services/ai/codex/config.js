@@ -58,6 +58,11 @@ export const codexConfig = () => ({
     versionOverride: process.env.AI_CODEX_VERSION_OVERRIDE || null
 });
 
+// One version token: numbers plus any prerelease or build suffix. The probe and
+// the handshake must read the same string, or an operator's exact-version
+// override would be accepted by one and rejected by the other.
+export const VERSION_TOKEN = '\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?';
+
 export function compareVersions(left, right) {
     const parse = value => String(value).split('.').map(part => Number.parseInt(part, 10) || 0);
     const [a, b] = [parse(left), parse(right)];

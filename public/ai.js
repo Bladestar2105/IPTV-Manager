@@ -498,7 +498,10 @@ window.aiUI = (() => {
     const result = await api(`/connections/${encodeURIComponent(connection.id)}/link/${encodeURIComponent(login.id)}/cancel`, 'POST', {});
     login = {...login, ...result};
     renderLogin(connection.id);
-    // A completion can win the race; report what actually happened.
+    // A completion can win the race. It may also still be storing its
+    // credential, which reads as pending: the sign-in is not cancelled and can
+    // still succeed, so polling has to continue instead of reporting an end.
+    if (login.status === 'pending') { status('linkPending', 'setup'); return pollLink(connection.id); }
     if (login.status === 'completed') { await refreshConnections(); await loadAccount(); }
     renderAccount(chosen());
     status(loginStateKey(login), 'setup');

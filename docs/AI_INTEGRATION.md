@@ -343,7 +343,8 @@ the existing `chat/completions` transport.
   prerelease or build-tagged binary whose numbers fall inside it, keeps the
   adapter unavailable unless an operator names that exact version string —
   suffix included — in `AI_CODEX_VERSION_OVERRIDE` after validating it
-  separately.
+  separately. The version probe and the runtime handshake read the same token,
+  so an allowed build passes both gates rather than one.
 * Used methods: `initialize`, `account/login/start` (`chatgptDeviceCode`),
   `account/login/cancel`, `account/logout`, `account/read`,
   `account/rateLimits/read`, `getAuthStatus`, `model/list`, `thread/start`,
@@ -503,7 +504,12 @@ one-time device code.
   A worker that dies in that window leaves the attempt claimed but unfinished,
   and the credential store — not the claim — decides how it is resolved on the
   next poll, so a failed seal can never leave a permanent report of a link that
-  does not exist.
+  does not exist. What counts there is the stored credential's version, not its
+  presence: an attempt records the version it claimed against, so relinking an
+  already linked connection is only reported as successful once its own
+  replacement is on record. A cancel that arrives while a completion is storing
+  its credential reports the sign-in as still running, and the browser keeps
+  polling it: the attempt was not cancelled and can still succeed.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message. A
   cancellation that arrives after the sign-in already completed reports that

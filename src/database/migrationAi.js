@@ -38,6 +38,10 @@ export function migrateAiSchema(db) {
     // Last poll by the session that started a sign-in. A completion is only
     // adopted while that session is still watching its own attempt.
     if(!db.prepare('PRAGMA table_info(ai_codex_logins)').all().some(column=>column.name==='last_seen_at')) db.exec('ALTER TABLE ai_codex_logins ADD COLUMN last_seen_at INTEGER');
+    // The credential version this attempt claimed against. A sign-in has only
+    // succeeded once the stored version is past it: a relink whose worker died
+    // would otherwise be recovered as completed on the credential it replaced.
+    if(!db.prepare('PRAGMA table_info(ai_codex_logins)').all().some(column=>column.name==='credential_version')) db.exec('ALTER TABLE ai_codex_logins ADD COLUMN credential_version INTEGER');
     db.exec(`
         CREATE TRIGGER IF NOT EXISTS ai_delete_user AFTER DELETE ON users BEGIN
             DELETE FROM ai_connections WHERE owner_key='user:' || OLD.id;
