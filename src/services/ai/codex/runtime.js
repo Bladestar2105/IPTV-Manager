@@ -90,9 +90,15 @@ function holdsLease(ownerKey, connectionId, leaseId) {
     return Boolean(row) && row.lease_id === leaseId && row.state !== 'revoked' && row.expires_at >= Date.now();
 }
 
+// A refresh must never write a terminal state back to running. Another worker
+// can revoke this lease between the ownership check and this update, and
+// resurrecting it would swallow that revocation: the revoking request would wait
+// for an acknowledgement that never comes, force the lease away and return while
+// this child is still alive.
 function refreshLease(ownerKey, connectionId, leaseId, state = 'running') {
     const now = Date.now();
-    const updated = db.prepare('UPDATE ai_codex_runtimes SET expires_at=?,updated_at=?,state=? WHERE owner_key=? AND connection_id=? AND lease_id=?')
+    const updated = db.prepare(`UPDATE ai_codex_runtimes SET expires_at=?,updated_at=?,state=?
+        WHERE owner_key=? AND connection_id=? AND lease_id=? AND state NOT IN ('revoked','stopping','cleanup')`)
         .run(now + LEASE_TTL_MS, now, state, ownerKey, connectionId, leaseId);
     return updated.changes > 0;
 }

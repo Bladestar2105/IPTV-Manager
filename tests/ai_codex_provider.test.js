@@ -1270,6 +1270,21 @@ describe('personal ChatGPT runtime ownership', () => {
         runtime.stopRuntime(replacement);
     }, 30000);
 
+    it('never refreshes a lease another worker has revoked', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            // The revocation stays visible: a heartbeat that wrote `running` back
+            // would swallow it, and the revoking request would wait for an
+            // acknowledgement that never arrives.
+            db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+                .run(Date.now(), 'user:1', connection.id);
+            await until(() => session.stopped, 8000);
+            await idleRuntimes();
+            expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        } finally { runtime.stopRuntime(session); }
+    }, 30000);
+
     it('stops a runtime whose lease was revoked by another worker', async () => {
         const connection = await linkedConnection();
         const session = await runtime.startRuntime('user:1', connection.id);
