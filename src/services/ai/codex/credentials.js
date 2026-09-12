@@ -197,7 +197,7 @@ function liveDirectories() {
 // a worker cannot acquire it and hydrate a credential in the window between
 // observing "no lease" and deleting the files. Both sides claim the lease in an
 // immediate transaction on the same table, so they serialize.
-function withCleanupLease(ownerKey, connectionId, run) {
+export function withCleanupLease(ownerKey, connectionId, run) {
     const leaseId = `cleanup-${randomUUID()}`;
     const now = Date.now();
     const claimed = db.transaction(() => {

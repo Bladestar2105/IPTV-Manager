@@ -534,7 +534,13 @@ the winner is revoked and awaited and the sign-out retried. Without an acknowled
 all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
-themselves. Deleting an account revokes its access before anything is torn down, so no
+themselves. A credential that an account refresh finds no longer authenticating
+is dropped the same way, but without a user command behind it: waiting for the
+runtime lease to disappear only observes that the identity is free, it does not
+keep it free, so the removal claims a cleanup reservation in the same
+transaction every acquisition uses. A link request that took the identity in
+that instant therefore keeps its lease and its files, and the stale record is
+left for the next read to drop. Deleting an account revokes its access before anything is torn down, so no
 request that starts during the teardown can still reach the credential. Its
 runtimes are only stopped at that point; the credential and the runtime tree are
 removed after the deletion has committed, because that removal is irreversible

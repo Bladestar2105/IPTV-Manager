@@ -7,7 +7,7 @@ import { requireAiFeatureAccess, adjustConnectionTeardown } from '../connections
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
-import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord } from './credentials.js';
+import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, withCleanupLease } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 // A sign-in belongs to the browser session that started it. That session polls
@@ -517,13 +517,24 @@ export async function readAccountState(actor, connection) {
             quota
         };
     }, { verifyEligible: () => policyAllows(connection.owner_key) });
-    // Removed only once the child has handed the identity back; wiping while it
-    // still runs would free the identity for a relink beside a live process.
-    if (invalidate) {
-        await waitForLeaseRelease(connection.owner_key, connection.id);
-        wipe(connection.owner_key, connection.id);
-    }
+    if (invalidate) await discardInvalidCredential(connection.owner_key, connection.id);
     return state;
+}
+
+// A credential that no longer authenticates is not a link, but removing it has
+// to reserve the identity rather than only observe that it is free. Waiting for
+// the runtime lease to disappear does not keep it gone: a link request queued
+// behind the stopping runtime takes it in the same instant, and an unconditional
+// wipe would then delete that replacement's lease and its identity tree
+// underneath a live child. The cleanup lease is claimed in the same immediate
+// transaction every acquisition uses, so exactly one of the two wins. Losing
+// either race — the hand-off never acknowledged, or the reservation taken by
+// someone else — simply leaves the record for the next read to retry, which is
+// harmless: the state reported to the caller already says the connection is not
+// linked.
+async function discardInvalidCredential(ownerKey, connectionId) {
+    if (!(await waitForLeaseRelease(ownerKey, connectionId))) return false;
+    return withCleanupLease(ownerKey, connectionId, () => { wipe(ownerKey, connectionId); return true; }) === true;
 }
 
 // Ends every runtime of an account without removing anything, so a deletion never

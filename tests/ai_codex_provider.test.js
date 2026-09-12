@@ -1603,6 +1603,43 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
+    it('keeps an invalid credential when a replacement takes the identity in the same instant', async () => {
+        const connection = await withModel();
+        fake({ accountRead: 'none', recordPath, recordApprovalPath: approvalPath });
+        // A previous test's child may still be releasing its lease; that release
+        // would fire the trigger below before this test's own runtime starts.
+        await idleRuntimes();
+        // Models the link request that was waiting behind the stopping runtime:
+        // the instant the lease row disappears it holds the identity again.
+        // Observing that the identity is free is not the same as reserving it.
+        db.exec(`CREATE TRIGGER test_relink AFTER DELETE ON ai_codex_runtimes BEGIN
+            INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at)
+            VALUES(OLD.owner_key, OLD.connection_id, 'replacement', 999999, 'running', ${Date.now() + 600000}, ${Date.now()});
+        END;`);
+        try {
+            const state = await account.readAccountState(user, ownedRecord(user, connection.id));
+            expect(state).toMatchObject({ linked: false });
+            // Wiping here would have deleted the replacement's own lease and its
+            // identity tree underneath a live child.
+            expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)?.lease_id).toBe('replacement');
+            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+            expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(true);
+        } finally {
+            db.exec('DROP TRIGGER test_relink');
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE lease_id=?').run('replacement');
+        }
+    }, 30000);
+
+    it('refuses a cleanup reservation while the identity is leased', async () => {
+        const connection = await withModel();
+        await seedLease(connection.id, 'holder');
+        try {
+            let ran = false;
+            expect(credentials.withCleanupLease('user:1', connection.id, () => { ran = true; return true; })).toBeNull();
+            expect(ran).toBe(false);
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE lease_id=?').run('holder'); }
+    }, 30000);
+
     it('drops the stored link when a refreshed account read reports none', async () => {
         // A model is selected so the refusal below is the link check, not the
         // model gate in front of it.
