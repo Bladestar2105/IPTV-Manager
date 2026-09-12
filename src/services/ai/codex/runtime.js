@@ -1,7 +1,11 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import db from '../../../database/db.js';
 import { codexConfig, versionSupported, DISABLED_CODEX_FEATURES, CODEX_CONFIG_OVERRIDES } from './config.js';
-import { resolveIsolation, wrapCommand, codexVersion, resolveCodexBinary, unsafeLauncherMounts } from './isolation.js';
+import { resolveIsolation, wrapCommand, resolveCodexBinary, unsafeLauncherMounts } from './isolation.js';
 import { createClient, codexError } from './protocol.js';
 import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
 
@@ -25,6 +29,27 @@ const live = new Map();
 const terminating = new Set();
 
 const runtimeKey = (ownerKey, connectionId) => `${ownerKey}|${connectionId}`;
+const run = promisify(execFile);
+
+// The runtime is execution-capable and may have been replaced, so even asking it
+// for its version happens inside the verified sandbox. Running it on the host
+// first would hand it the data directory and the key files before any boundary
+// exists.
+export async function probeCodexVersion(backend, binary, runtimeDir) {
+    if (!backend || !binary) return null;
+    fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+    const probeRoot = fs.mkdtempSync(path.join(runtimeDir, 'version-'));
+    const codexHome = path.join(probeRoot, 'home');
+    const workDir = path.join(probeRoot, 'work');
+    for (const dir of [codexHome, workDir, path.join(workDir, 'tmp')]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+        const description = wrapCommand(backend, { codexHome, workDir, command: [binary, '--version'], launcher: binary });
+        const { stdout } = await run(description.file, description.args,
+            { env: description.environment, timeout: 15000, maxBuffer: 64 * 1024 });
+        return stdout.trim().match(/(\d+\.\d+\.\d+)/)?.[1] || null;
+    } catch { return null; }
+    finally { fs.rmSync(probeRoot, { recursive: true, force: true }); }
+}
 
 // One runtime per identity and connection, owned by exactly one worker. The
 // lease makes a concurrent start, a competing credential refresh or the reuse of
@@ -95,13 +120,15 @@ export async function codexAvailability({ force = false } = {}) {
     // Mounting a launcher that sits in or above the data directory would hand the
     // runtime the database, the encryption key and every other identity.
     if (unsafeLauncherMounts(binary).length) return { available: false, reason: 'AI_CODEX_BINARY_UNSAFE_LOCATION', binary };
-    const version = codexVersion(binary);
+    // The sandbox is resolved first, because even the version probe executes the
+    // runtime and must therefore already be contained.
+    const isolation = await resolveIsolation({ force });
+    if (!isolation.available) return { available: false, reason: isolation.reason, backend: isolation.backend, grade: isolation.grade };
+    const version = await probeCodexVersion(isolation.handle, binary, config.runtimeDir);
     if (!version) return { available: false, reason: 'AI_CODEX_BINARY_MISSING' };
     if (!versionSupported(version) && config.versionOverride !== version) {
         return { available: false, reason: 'AI_CODEX_VERSION_UNSUPPORTED', version };
     }
-    const isolation = await resolveIsolation({ force });
-    if (!isolation.available) return { available: false, reason: isolation.reason, version, backend: isolation.backend, grade: isolation.grade };
     return { available: true, version, binary, backend: isolation.backend, grade: isolation.grade };
 }
 
@@ -307,7 +334,15 @@ function installShutdownHandlers() {
         const remaining = [...live.values(), ...terminating];
         stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
         for (const session of remaining) {
-            try { clearPlaintext(session.ownerKey, session.connectionId); } catch { /* best effort on exit */ }
+            // Only while this session still owns the lease: another worker may
+            // already have started a replacement for the same identity.
+            try {
+                db.transaction(() => {
+                    const stillOurs = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
+                        .get(session.ownerKey, session.connectionId, session.leaseId);
+                    if (stillOurs) clearPlaintext(session.ownerKey, session.connectionId);
+                }).immediate();
+            } catch { /* best effort on exit */ }
         }
     });
     for (const signal of ['SIGINT', 'SIGTERM']) {

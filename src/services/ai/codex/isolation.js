@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -266,15 +266,6 @@ function candidates(requested) {
 // `codex` on the host PATH while the sandbox's narrow PATH cannot.
 export function resolveCodexBinary(binary) {
     return which(binary);
-}
-
-export function codexVersion(binary) {
-    const resolved = which(binary);
-    if (!resolved) return null;
-    try {
-        const output = execFileSync(resolved, ['--version'], { timeout: 10000, encoding: 'utf8', env: { PATH: launcherPath(resolved).join(':') } });
-        return output.trim().match(/(\d+\.\d+\.\d+)/)?.[1] || null;
-    } catch { return null; }
 }
 
 // Resolves the isolation backend once per process. A failure is a stable reason

@@ -316,6 +316,8 @@ newline-delimited JSON-RPC protocol and uses its managed ChatGPT sign-in
 browser OAuth token into an API key, and never routes a ChatGPT sign-in through
 the existing `chat/completions` transport.
 
+* Even asking the runtime for its version executes it, so that probe runs inside
+  the verified sandbox as well; the boundary exists before the runtime does.
 * The runtime is resolved to an absolute path once — including a configured
   relative path, which the sandbox could not resolve from its own working
   directory — and the same path is both version-probed and launched, so an
@@ -468,6 +470,8 @@ one-time device code.
   discarded; the existing credential stays.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message. A
+  cancellation that arrives after the sign-in already completed reports that
+  completion rather than claiming success it did not have. A
   runtime that dies after issuing the device code ends its attempt immediately
   and releases its lease, rather than reporting the sign-in as still running
   until the fifteen-minute expiry.
@@ -500,8 +504,9 @@ the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting a connection follows the same path before its row disappears, so a
 runtime never keeps using a credential whose connection is already gone. It is
-marked as being deleted first, so a sign-in cannot start between the teardown and
-the deletion and leave its credential file behind. Deleting
+marked as being deleted first, and that mark rejects every kind of work — sign-in,
+discovery, compatibility test, queued job and inference — so nothing can start
+between the teardown and the deletion and be orphaned by it. Deleting
 an account does the same for every runtime it owns before removing its credential
 records, attempt history and runtime directory.
 

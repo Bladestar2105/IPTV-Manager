@@ -300,6 +300,9 @@ export function requireAiAccess(actor,feature,connectionId=null,{requireModel=tr
     const connection=loadConnection(connectionId || prefs.connection_id);
     if (!canUse(actor,connection,policy)) throw aiError('AI_FORBIDDEN',403);
     if (!connection.enabled) throw aiError('AI_DISABLED',403);
+    // A connection being torn down starts no further work of any kind, so a
+    // discovery, test, job or inference cannot begin under a deletion.
+    if (connection.deleting) throw aiError('AI_CONNECTION_CHANGED',409);
     if (feature !== 'setup' && !connection.functions.includes(feature)) throw aiError('AI_FORBIDDEN',403);
     const model=connection.owner_key === ownerKey(actor) && prefs.connection_id===connection.id ? prefs.model_id || connection.model_id : connection.model_id;
     if (feature !== 'setup' && (requireModel || feature !== 'diagnose') && (!model || !testedProfile(connection,model))) throw aiError('AI_MODEL_REQUIRED');

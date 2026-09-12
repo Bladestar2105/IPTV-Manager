@@ -497,8 +497,11 @@ window.aiUI = (() => {
     clearTimeout(loginTimer);
     const result = await api(`/connections/${encodeURIComponent(connection.id)}/link/${encodeURIComponent(login.id)}/cancel`, 'POST', {});
     login = {...login, ...result};
-    renderLogin(connection.id); renderAccount(connection);
-    status('linkCancelled', 'setup');
+    renderLogin(connection.id);
+    // A completion can win the race; report what actually happened.
+    if (login.status === 'completed') { await refreshConnections(); await loadAccount(); }
+    renderAccount(chosen());
+    status(loginStateKey(login), 'setup');
   }
   async function unlink() {
     const connection = chosen();

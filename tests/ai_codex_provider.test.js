@@ -270,6 +270,18 @@ describe('personal ChatGPT sign-in', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     });
 
+    it('reports the real outcome when a completion wins the cancel race', async () => {
+        fake({ login: 'success', loginDelayMs: 60 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status === 'completed');
+        // Telling the account holder it was cancelled while the account is linked
+        // would be the opposite of what happened.
+        const result = await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
+        expect(result.status).toBe('completed');
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeTruthy();
+    }, 30000);
+
     it('cancels a pending sign-in and stores nothing', async () => {
         fake({ login: 'pending' });
         const connection = createConnection();
@@ -1321,6 +1333,21 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(after.account_hash).toBe(before.account_hash);
         expect(after.encrypted_blob).toBe(before.encrypted_blob);
         expect(fs.existsSync(credentials.identityPaths('user:1', mine.id).authFile)).toBe(false);
+    }, 30000);
+
+    it('rejects every kind of work on a connection that is being deleted', async () => {
+        const connection = await withModel();
+        const raw = JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json);
+        db.prepare('UPDATE ai_connections SET data_json=?, version=version+1 WHERE id=?')
+            .run(JSON.stringify({ ...raw, deleting: true }), connection.id);
+        // Not only sign-ins: discovery, tests, jobs and inference must not start
+        // under a deletion either, or the teardown removes their runtime.
+        await expect(ai.discoverModels(user, connection.id)).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        await expect(ai.testModels(user, connection.id, { model_ids: ['model-beta'] })).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        await expect(ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema }))
+            .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        expect(thrown(() => jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'deleting-key-0001')).code)
+            .toBe('AI_CONNECTION_CHANGED');
     }, 30000);
 
     it('refuses a new sign-in on a connection that is being deleted', async () => {

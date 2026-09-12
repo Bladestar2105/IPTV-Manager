@@ -365,11 +365,18 @@ export async function cancelAccountLink(actor, connection, id) {
     const row = loginRow(connection.owner_key, connection.id, id);
     // The row is ended first: a completion racing in while the cancel call is in
     // flight then fails to claim the attempt instead of linking the account.
-    finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
-    const attempt = attempts.get(row.id);
-    if (attempt && row.login_id) await cancelLogin(attempt.session, row.login_id).catch(() => null);
-    releaseAttempt(row.id);
-    return { id: row.id, status: 'cancelled' };
+    const claimed = db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_cancelled', updated_at=? WHERE id=? AND status IN ('starting','pending')")
+        .run(Date.now(), row.id).changes > 0;
+    if (claimed) {
+        const attempt = attempts.get(row.id);
+        if (attempt && row.login_id) await cancelLogin(attempt.session, row.login_id).catch(() => null);
+        releaseAttempt(row.id);
+    }
+    // A completion that claimed the attempt first has already won. Reporting
+    // "cancelled" then would tell the account holder the opposite of what
+    // happened.
+    const current = db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(row.id);
+    return { id: row.id, status: current?.status ?? 'cancelled', error_code: current?.error_code ?? null };
 }
 
 // Disconnecting blocks new work, ends queued and running work, signs the runtime
