@@ -70,6 +70,9 @@ window.aiUI = (() => {
     if (code === 'AI_DISABLED') return 'off';
     if (code === 'AI_PERMISSION_DENIED') return 'permission';
     if (code === 'AI_RATE_LIMIT') return 'rateLimit';
+    if (code === 'AI_BUSY') return 'busy';
+    if (code === 'AI_PAUSED') return 'paused';
+    if (code === 'AI_TIMEOUT') return 'timeout';
     if (/STALE|CONFLICT|CHANGED/.test(code)) return 'stale';
     if (/FORBIDDEN|DENIED|NOT_ALLOWED|ACCESS|AUTHENTICATION/.test(code)) return 'denied';
     if (/API_KEY|UNAUTHORIZED|AUTH_FAILED/.test(code)) return 'auth';
@@ -298,7 +301,7 @@ window.aiUI = (() => {
   function renderCapabilities(models) {
     const box = el('capabilities'); box.replaceChildren();
     if (!models.length) return;
-    const table = node('table', box, undefined, 'table table-sm');
+    const table = node('table', node('div', box, undefined, 'table-responsive'), undefined, 'table table-sm table-striped');
     const head = node('tr', node('thead', table));
     for (const key of ['model', 'chat', 'structured', 'testStatus', 'tokenParameter']) label('th', head, key).scope = 'col';
     const body = node('tbody', table);

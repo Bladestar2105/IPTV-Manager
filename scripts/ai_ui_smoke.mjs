@@ -16,6 +16,7 @@ try {
   let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false;
+  let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}];
   let cancelGate;
   let releaseChangeA, changeARequested, delayChangeA = true, releaseUndoA, undoARequested, delayUndoA = false;
@@ -39,7 +40,7 @@ try {
       if (method === 'PUT') { const {api_key: _key, ...safe} = body; connections[0] = {...connections[0], ...safe}; data = connections[0]; }
       else if (method === 'DELETE') connections = [];
     } else if (path.endsWith('/discover')) {
-      if (discoverFails) { status = 502; data = {code: 'AI_UNAVAILABLE'}; }
+      if (discoverFails) { status = discoverError.status; data = {code: discoverError.code}; }
       else data = {models: discoveredModels};
     } else if (path.endsWith('/test')) {
       assert(settings.enabled && preferences.enabled, 'tests require explicit activation');
@@ -145,6 +146,21 @@ try {
   ]);
   assert.equal(preferences.model_id, 'chat-one', 'wizard works without typing a model ID');
   assert.equal(preferences.enabled, true);
+  const tableStyles = await page.evaluate(() => {
+    const actual = getComputedStyle(document.querySelector('#ai-capabilities tbody td'));
+    const reference = getComputedStyle(document.querySelector('#sync-logs-tbody td'));
+    return {actual: [actual.color, actual.backgroundColor], reference: [reference.color, reference.backgroundColor]};
+  });
+  assert.deepEqual(tableStyles.actual, tableStyles.reference, 'model results must use the existing readable table theme without selecting text');
+  await page.setViewportSize({width: 390, height: 844});
+  const tableLayout = await page.locator('#ai-capabilities table').evaluate(table => {
+    const container = table.parentElement;
+    container.scrollLeft = container.scrollWidth;
+    return {scrollable: getComputedStyle(container).overflowX, right: table.getBoundingClientRect().right, containerRight: container.getBoundingClientRect().right, viewport: innerWidth};
+  });
+  assert.equal(tableLayout.scrollable, 'auto', 'wide model tables need the shared responsive scroll container');
+  assert(tableLayout.right <= tableLayout.containerRight + 1 && tableLayout.containerRight <= tableLayout.viewport, 'last model-result column stays reachable on mobile');
+  await page.setViewportSize({width: 1280, height: 720});
   discoveredModels = [{id: 'image-first', candidate: 'other'}, {id: 'chat-two', candidate: 'text'}];
   await page.locator('#ai-discover').click();
   await page.locator('#ai-models option[value="chat-two"]').waitFor();
@@ -162,6 +178,12 @@ try {
   discoverFails = true;
   await page.locator('#ai-discover').click();
   await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_network');
+  for (const [status, code, message] of [[409, 'AI_BUSY', 'busy'], [429, 'AI_PAUSED', 'paused'], [504, 'AI_TIMEOUT', 'timeout']]) {
+    discoverError = {status, code};
+    await page.locator('#ai-discover').click();
+    await page.waitForFunction(key => document.getElementById('ai-status').dataset.i18n === `ai_${key}`, message);
+    assert.notEqual(await page.locator('#ai-status').innerText(), `ai_${message}`, 'connection-state explanations must be translated');
+  }
   await page.locator('summary[data-i18n="ai_advanced"]').click();
   await page.locator('#ai-model').fill('manual-alias');
   await page.locator('#ai-models').selectOption([]);
