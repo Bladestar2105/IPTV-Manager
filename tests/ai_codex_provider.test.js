@@ -424,6 +424,21 @@ describe('personal ChatGPT sign-in ownership across workers and sessions', () =>
         expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).authFile)).toBe(false);
     }, 30000);
 
+    it.each([
+        ['no account is reported', { accountRead: 'none' }, 'ai_codex_account_unavailable'],
+        ['the account cannot be identified', { emailNull: true }, 'ai_codex_account_unidentified']
+    ])('discards a completion when %s', async (_label, overrides, expected) => {
+        fake({ login: 'success', loginDelayMs: 60, ...overrides });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
+        expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(started.id))
+            .toMatchObject({ status: 'failed', error_code: expected });
+        // Nothing may be reported as linked that the runtime cannot back.
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(ai.listConnections(user).find(item => item.id === connection.id).account.linked).toBe(false);
+    }, 30000);
+
     it('keeps the attempt running when a completion names another login', async () => {
         fake({ login: 'mismatchThenSuccess', loginDelayMs: 40, secondLoginDelayMs: 400 });
         const connection = createConnection();
@@ -1100,6 +1115,38 @@ describe('personal ChatGPT runtime ownership', () => {
         // identity while it lives.
         expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'stopping' });
         await until(() => runtime.runtimeState('user:1', connection.id) === null, 10000);
+    }, 30000);
+
+    it('waits for a session that was already stopping when shutdown began', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        // Stopping removes it from the live map while its child is still alive.
+        runtime.stopRuntime(session);
+        expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+        expect(fs.existsSync(session.paths.authFile)).toBe(true);
+        await runtime.shutdownRuntimes({ timeoutMs: 10000 });
+        // A shutdown that only looked at live runtimes would leave this behind.
+        expect(fs.existsSync(session.paths.authFile)).toBe(false);
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('never lets a departing child remove the files of its replacement', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const first = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(first);
+        // A relink takes the identity while the old child is still terminating.
+        db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key='user:1' AND connection_id=?").run(connection.id);
+        fake({ recordPath, recordApprovalPath: approvalPath });
+        const second = await runtime.startRuntime('user:1', connection.id);
+        try {
+            await first.client.exited;
+            await new Promise(resolve => { const timer = setTimeout(resolve, 200); timer.unref?.(); });
+            // The old child's pending cleanup must not touch the new runtime.
+            expect(fs.existsSync(second.paths.authFile)).toBe(true);
+            expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
+        } finally { runtime.stopRuntime(second); }
     }, 30000);
 
     it('waits for children and their credential files during shutdown', async () => {

@@ -435,6 +435,8 @@ window.aiUI = (() => {
       ai_codex_login_interrupted: 'linkInterrupted',
       ai_codex_login_rejected: 'linkRejected',
       ai_codex_account_already_linked: 'alreadyLinked',
+      ai_codex_account_unavailable: 'accountUnavailable',
+      ai_codex_account_unidentified: 'accountUnidentified',
       ai_codex_unexpected_auth: 'unexpectedAuth',
       ai_codex_credentials_unavailable: 'linkFailed'
     };

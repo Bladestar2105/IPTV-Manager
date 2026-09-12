@@ -169,7 +169,22 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             return;
         }
         const account = await readAccount(session);
+        // A completion the runtime cannot back with an account is not a sign-in.
+        // Claiming it would report the connection as linked while the runtime
+        // says otherwise.
+        if (!account.linked) {
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
+            finishLogin(row.id, 'failed', 'ai_codex_account_unavailable');
+            return;
+        }
         const fingerprint = accountFingerprint(account.email);
+        // The one-account rule rests on a reported identity. Without one it could
+        // not be enforced, and a null fingerprint would slip past the constraint.
+        if (!fingerprint) {
+            await discardAttempt(session, ownerKey, connectionId, hadCredential);
+            finishLogin(row.id, 'failed', 'ai_codex_account_unidentified');
+            return;
+        }
         if (linkedElsewhere(ownerKey, connectionId, fingerprint)) {
             await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_account_already_linked');
@@ -378,6 +393,10 @@ export async function disconnectAccount(actor, connection) {
     if (acknowledged && readCredentialRecord(ownerKey, connection.id)) {
         try { remote = await withRuntime(ownerKey, connection.id, session => logout(session)); }
         catch { remote = false; }
+        // The sign-out runtime has only been signalled; wiping now would free the
+        // identity for a relink whose files that child's pending cleanup could
+        // then remove.
+        await waitForLeaseRelease(ownerKey, connection.id);
     }
     wipe(ownerKey, connection.id);
     return { disconnected: true, remote_logout: remote };

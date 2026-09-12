@@ -454,6 +454,10 @@ one-time device code.
   claimed attempt does, so cancelling a second sign-in on an already linked
   connection cannot replace the stored token while its recorded account stays the
   old one.
+* A completion the runtime cannot back with an account is not a sign-in: it is
+  discarded rather than reported as linked. The same applies when the interface
+  reports an account it cannot identify, because the one-account rule rests on a
+  reported identity and could not be enforced without one.
 * A rejected replacement keeps the link that already worked. If a second sign-in
   on a linked connection is refused — for instance because the account it
   authenticated is already linked elsewhere — only that attempt's own state is
@@ -528,9 +532,11 @@ ChatGPT/Codex quota, that plan or workspace rules may restrict them, that data i
 processed externally by OpenAI under that account, and that no platform API key
 is required. The panel is fully localized in German, English, French and Greek.
 
-On shutdown the server stops every runtime and waits, with a bounded timeout, for
+On shutdown the server stops every runtime — including one that was already
+terminating, whose child is still alive — and waits, with a bounded timeout, for
 the children to exit and their credential files to be removed before it
-terminates. Terminating immediately would leave a hydrated credential on disk
+terminates. A departing child's cleanup never touches files of a runtime that has
+since taken the same identity. Terminating immediately would leave a hydrated credential on disk
 while the service is offline.
 
 ### Restart, failure and disabling

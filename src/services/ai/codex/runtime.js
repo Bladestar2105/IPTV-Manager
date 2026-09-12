@@ -19,6 +19,10 @@ const LEASE_HANDOVER_MS = 5000;
 const SHUTDOWN_WAIT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 20000;
 const live = new Map();
+// A runtime that was told to stop is not live any more, but its child can run for
+// a few more seconds. Shutdown has to know about those too, or their credential
+// files are left behind.
+const terminating = new Set();
 
 const runtimeKey = (ownerKey, connectionId) => `${ownerKey}|${connectionId}`;
 
@@ -133,11 +137,21 @@ function releaseAfterExit(ownerKey, connectionId, leaseId, client) {
     db.prepare("UPDATE ai_codex_runtimes SET state='stopping', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
         .run(Date.now(), ownerKey, connectionId, leaseId);
     const release = () => {
-        releaseLease(ownerKey, connectionId, leaseId);
-        clearPlaintext(ownerKey, connectionId);
+        const removed = db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
+            .run(ownerKey, connectionId, leaseId).changes;
+        const claimed = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+        // A late continuation must never remove the files of a runtime that has
+        // since taken this identity.
+        if (removed || !claimed) clearPlaintext(ownerKey, connectionId);
     };
     client.exited.then(release, release);
     return client.exited;
+}
+
+function trackTermination(session) {
+    terminating.add(session);
+    const forget = () => terminating.delete(session);
+    session.client.exited.then(forget, forget);
 }
 
 // Any tool, approval or capability request from the runtime is recorded as a
@@ -201,6 +215,7 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
         if (session?.client) {
             session.client.close('AI_CODEX_RUNTIME_FAILED');
             releaseAfterExit(ownerKey, connectionId, leaseId, session.client);
+            trackTermination(session);
         } else {
             releaseLease(ownerKey, connectionId, leaseId);
             clearPlaintext(ownerKey, connectionId);
@@ -228,6 +243,7 @@ export function stopRuntime(session, reason = 'AI_CODEX_RUNTIME_CLOSED', options
     session.client.close(reason);
     live.delete(runtimeKey(session.ownerKey, session.connectionId));
     releaseAfterExit(session.ownerKey, session.connectionId, session.leaseId, session.client);
+    trackTermination(session);
 }
 
 export function liveRuntime(ownerKey, connectionId) {
@@ -252,7 +268,9 @@ export function stopAllRuntimes(reason = 'AI_CODEX_RUNTIME_CLOSED') {
 // release and the plaintext removal actually run. Without this wait a shutdown
 // leaves a hydrated credential on disk while the service is offline.
 export async function shutdownRuntimes({ timeoutMs = SHUTDOWN_WAIT_MS } = {}) {
-    const pending = [...live.values()].map(session => session.client.exited);
+    // Sessions already on their way out count as well: their child is still alive
+    // and their credential file is still on disk.
+    const pending = [...live.values(), ...terminating].map(session => session.client.exited);
     stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
     if (!pending.length) return;
     await Promise.race([
@@ -277,7 +295,7 @@ function installShutdownHandlers() {
     process.on('exit', () => {
         // Nothing asynchronous can run any more, so the plaintext of whatever is
         // still live is removed synchronously here.
-        const remaining = [...live.values()];
+        const remaining = [...live.values(), ...terminating];
         stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
         for (const session of remaining) {
             try { clearPlaintext(session.ownerKey, session.connectionId); } catch { /* best effort on exit */ }

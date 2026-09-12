@@ -51,7 +51,8 @@ function authStatus() {
 
 function accountPayload() {
     if (authStatus() !== 'chatgpt') return null;
-    return { type: 'chatgpt', email: config.email || 'pilot.tester@example.org', planType: config.planType || 'plus' };
+    // `emailNull` models an account the interface reports without an address.
+    return { type: 'chatgpt', email: config.emailNull ? null : (config.email || 'pilot.tester@example.org'), planType: config.planType || 'plus' };
 }
 
 function modelPage(params) {
