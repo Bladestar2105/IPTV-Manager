@@ -255,6 +255,13 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
         });
         session.client = client;
         await handshake(client, paths, availability.version);
+        // The handshake may outlast a revocation's wait, after which the unlink
+        // has already forced the lease away, wiped the credential and cleared its
+        // marker. Returning the session then would hand its caller a runtime that
+        // is holding a credential nobody is entitled to any more.
+        if (!holdsLease(ownerKey, connectionId, leaseId)) {
+            throw codexError('AI_CODEX_LEASE_LOST', 'This connection was released while the runtime was starting.', 409);
+        }
         let refreshedAt = Date.now();
         session.heartbeat = setInterval(() => {
             if (session.client.closed) return stopRuntime(session, session.client.closeReason || 'AI_CODEX_RUNTIME_CLOSED');

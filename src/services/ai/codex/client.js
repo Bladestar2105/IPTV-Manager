@@ -142,11 +142,14 @@ function turnInput(messages, schema) {
 // One bounded, non-interactive turn. The runtime is started read-only with no
 // network access for the sandbox and every approval path denied, so the only
 // acceptable outcome is a single final assistant message.
-// The protocol has no per-turn output ceiling, so the configured budget is
-// enforced here: a turn that exceeds it is interrupted rather than left to burn
-// output and reasoning quota until the deadline and be rejected afterwards.
-// Four bytes per token is a deliberately generous bound for text.
-const BYTES_PER_TOKEN = 4;
+// The protocol has no per-turn output ceiling, so the configured token budget is
+// enforced here from the reported usage: a turn that exceeds it is interrupted
+// rather than left to burn output and reasoning quota until the deadline and be
+// rejected afterwards. The streamed byte count is a separate safety net at the
+// same size as the manager's response limit; it is deliberately not derived from
+// the token budget, because a token can be far more than a few bytes and that
+// would reject valid answers well below the promised limit.
+const MAX_STREAM_BYTES = 512 * 1024;
 
 export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000 }) {
     const { developer, text } = turnInput(messages, schema);
@@ -169,7 +172,7 @@ export async function runTurn(session, { model, messages, schema, structured = t
     }
 
     const state = { done: null, items: [], usage: null, message: null, streamed: 0, overBudget: false };
-    const byteBudget = Math.max(1024, maxTokens * BYTES_PER_TOKEN);
+    const byteBudget = MAX_STREAM_BYTES;
     session.onTurnEvent = (method, params) => {
         if (params?.threadId && params.threadId !== threadId) return;
         if (method === 'item/agentMessage/delta') {

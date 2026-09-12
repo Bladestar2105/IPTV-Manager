@@ -953,7 +953,7 @@ describe('personal ChatGPT model catalog and turns', () => {
     });
 
     it.each([
-        ['it streams more than the output budget', { deltaChunks: 12, deltaSize: 1024, turnDelayMs: 10 }],
+        ['it streams past the response safety limit', { deltaChunks: 600, deltaSize: 1024, turnDelayMs: 10 }],
         ['the reported output tokens exceed it', { outputTokens: 5000, turnDelayMs: 10 }]
     ])('interrupts a turn when %s', async (_label, overrides) => {
         await withModel();
@@ -1293,6 +1293,36 @@ describe('personal ChatGPT runtime ownership', () => {
         // stopped; it passed its own authorization long before.
         await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
         db.prepare('UPDATE users SET is_active=1 WHERE id=1').run();
+    }, 30000);
+
+    it('refuses a session whose lease was taken while it was starting', async () => {
+        const connection = await linkedConnection();
+        // The handshake can outlast a revocation's wait, after which the unlink
+        // has already forced the lease away and wiped the credential.
+        const stealing = setInterval(() => {
+            const row = db.prepare('SELECT state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
+            if (row?.state === 'starting') {
+                db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key='user:1' AND connection_id=?").run(connection.id);
+                clearInterval(stealing);
+            }
+        }, 5);
+        stealing.unref?.();
+        try {
+            await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_CODEX_LEASE_LOST' });
+        } finally { clearInterval(stealing); }
+        // The runtime it started is torn down rather than handed to its caller.
+        expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('accepts an answer that is large in bytes but within the token budget', async () => {
+        await withModel();
+        // Four bytes per token is not an upper bound; a byte surrogate derived
+        // from the token budget would reject this well below the promised limit.
+        const wide = 'Ω'.repeat(6000);
+        fake({ answer: JSON.stringify({ ok: true, note: wide }), outputTokens: 100, recordPath, recordApprovalPath: approvalPath });
+        const wideSchema = { type: 'object', properties: { ok: { type: 'boolean' }, note: { type: 'string', maxLength: 20000 } }, required: ['ok', 'note'], additionalProperties: false };
+        const result = await ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema: wideSchema });
+        expect(result.data.note.length).toBe(6000);
     }, 30000);
 
     it('still grants a lease to the teardown that owns the marker', async () => {
