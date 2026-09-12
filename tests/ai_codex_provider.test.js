@@ -136,7 +136,9 @@ function createConnection(actor = user, input = {}) {
 }
 async function link(actor, connection) {
     const started = await account.startAccountLink(actor, ownedRecord(actor, connection.id), 'session-fingerprint');
-    await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
+    // `sealing` is a running state too: a sign-in is finished when its row is
+    // terminal, not when it has left `pending`.
+    await until(() => !['starting', 'pending', 'sealing'].includes(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status));
     return { started, state: account.readLoginStatus(actor, ownedRecord(actor, connection.id), started.id, 'session-fingerprint') };
 }
 function ownedRecord(actor, id) {
@@ -175,12 +177,66 @@ describe('personal ChatGPT adapter availability', () => {
         expect(result).toMatchObject({ available: false, reason: 'AI_CODEX_VERSION_UNSUPPORTED' });
     });
 
+    it.each([['0.154.0-beta.1'], ['0.155.0-rc.2'], ['0.154.0+build.7']])('refuses an untested prerelease build (%s)', async version => {
+        // The numbers alone fall inside the pinned range; a prerelease of them is
+        // not the tested release and must not pass as one.
+        fake({ version });
+        readiness.resetCodexReadiness();
+        expect(await readiness.refreshCodexReadiness({ force: true }))
+            .toMatchObject({ available: false, reason: 'AI_CODEX_VERSION_UNSUPPORTED' });
+        // Only an operator naming that exact build accepts it.
+        process.env.AI_CODEX_VERSION_OVERRIDE = version;
+        try {
+            readiness.resetCodexReadiness();
+            expect(await readiness.refreshCodexReadiness({ force: true })).toMatchObject({ available: true, version });
+        } finally { delete process.env.AI_CODEX_VERSION_OVERRIDE; }
+    }, 30000);
+
     it('refuses a runtime that reports a different protocol version than the pinned binary', async () => {
         fake({ reportedVersion: '0.140.0' });
         const connection = createConnection();
         await expect(account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'))
             .rejects.toMatchObject({ code: 'AI_CODEX_VERSION_UNSUPPORTED' });
     });
+
+    it('publishes a completed sign-in only once the credential is stored', async () => {
+        const connection = createConnection();
+        // Records the state of the credential store at the exact instant the
+        // attempt is published as completed. A claim published before the seal
+        // would be recorded with no credential behind it, and a poll on another
+        // worker would have reported that account as linked.
+        db.exec(`CREATE TABLE IF NOT EXISTS test_publish_probe(had_credential INTEGER);
+            CREATE TRIGGER test_publish AFTER UPDATE OF status ON ai_codex_logins WHEN NEW.status='completed' BEGIN
+                INSERT INTO test_publish_probe VALUES((SELECT count(*) FROM ai_codex_credentials
+                    WHERE owner_key=NEW.owner_key AND connection_id=NEW.connection_id));
+            END;`);
+        try {
+            const { state } = await link(user, connection);
+            expect(state.status).toBe('completed');
+            expect(db.prepare('SELECT had_credential FROM test_publish_probe').all()).toEqual([{ had_credential: 1 }]);
+        } finally { db.exec('DROP TRIGGER test_publish; DROP TABLE test_publish_probe'); }
+    }, 30000);
+
+    it.each([
+        ['reports a sign-in whose worker died before storing anything as interrupted', false,
+            { status: 'failed', error_code: 'ai_codex_login_interrupted' }],
+        ['still reports a sign-in whose credential was stored before the worker died as completed', true,
+            { status: 'completed', error_code: null }]
+    ])('%s', async (_label, storeCredential, expected) => {
+        const connection = createConnection();
+        await idleRuntimes();
+        const now = Date.now();
+        // A claimed attempt left behind by a worker that no longer holds the
+        // identity: only the credential store decides how it ended.
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('dead-sealer','user:1',?,'login-1','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+            .run(connection.id, now, now, now + 600000, now);
+        if (storeCredential) {
+            db.prepare(`INSERT OR REPLACE INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,version,updated_at)
+                VALUES('user:1',?,'blob','hash-dead-sealer',1,?)`).run(connection.id, now);
+        }
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'dead-sealer', 'fp')).toMatchObject(expected);
+    }, 30000);
 
     it('refuses a runtime that resolved a foreign credential directory', async () => {
         fake({ reportedHome: '/home/someone-else/.codex' });

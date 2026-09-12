@@ -22,6 +22,11 @@ const LEASE_HANDOVER_TIMEOUT_MS = 6000;
 const ATTEMPT_WATCH_MS = 1000;
 const MAX_LOGINS_PER_HOUR = 5;
 const ACTIVE_STATUSES = ['starting', 'pending'];
+// A claimed attempt that is storing its credential. Not terminal and not
+// claimable: a poller must keep waiting, and only a stored credential turns it
+// into a completed sign-in.
+const SEALING_STATUS = 'sealing';
+const UNFINISHED_STATUSES = [...ACTIVE_STATUSES, SEALING_STATUS];
 
 // Login runtimes owned by this worker. A pending device-code login only exists
 // inside the process that started it; a worker loss ends that attempt instead of
@@ -75,7 +80,19 @@ function expireLogins() {
     const now = Date.now();
     db.prepare(`UPDATE ai_codex_logins SET status='expired', error_code=COALESCE(error_code,'ai_codex_login_expired'), updated_at=?
         WHERE status IN ('starting','pending') AND expires_at < ?`).run(now, now);
-    db.prepare("DELETE FROM ai_codex_logins WHERE status NOT IN ('starting','pending') AND updated_at < ?").run(now - 86400000);
+    // A worker that dies between claiming an attempt and storing its credential
+    // leaves the row sealing. A live seal always holds the identity's lease, so
+    // the absence of one is the signal that nobody is finishing it — and the
+    // stored credential, not the claim, decides whether it succeeded.
+    for (const row of db.prepare(`SELECT id,owner_key,connection_id FROM ai_codex_logins WHERE status=?
+        AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
+            AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
+        const linked = Boolean(readCredentialRecord(row.owner_key, row.connection_id));
+        db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+            .run(linked ? 'completed' : 'failed', linked ? null : 'ai_codex_login_interrupted', now, row.id, SEALING_STATUS);
+    }
+    db.prepare(`DELETE FROM ai_codex_logins WHERE status NOT IN (${UNFINISHED_STATUSES.map(() => '?').join(',')}) AND updated_at < ?`)
+        .run(...UNFINISHED_STATUSES, now - 86400000);
 }
 
 function loginRow(ownerKey, connectionId, id) {
@@ -115,7 +132,9 @@ function releaseAttempt(id) {
 function watchAttempt(id) {
     const watchdog = setInterval(() => {
         const row = db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id);
-        if (!row || !ACTIVE_STATUSES.includes(row.status)) releaseAttempt(id);
+        // Sealing counts as running: releasing here would stop the runtime and
+        // clear the plaintext credential the seal is reading.
+        if (!row || !UNFINISHED_STATUSES.includes(row.status)) releaseAttempt(id);
     }, ATTEMPT_WATCH_MS);
     watchdog.unref?.();
     return watchdog;
@@ -144,11 +163,17 @@ function stillOwnsAttempt(row, ownerKey) {
 // that lands while the account is being read cannot be overtaken by the seal
 // that follows. Ownership is re-evaluated inside the transaction; only a claim
 // that actually changed the row authorizes storing a credential.
+// The claim is not the success. Publishing `completed` here would let a poll on
+// another worker report a linked account in the window before the credential is
+// stored, and a failed seal or a dying worker would leave that report standing
+// for good. The attempt moves to a non-terminal `sealing` state instead, which no
+// cancel or supersede can claim either, and only a stored credential publishes
+// the completion.
 function claimCompletedLogin(row, ownerKey) {
     return db.transaction(() => {
         if (!stillOwnsAttempt(row, ownerKey)) return false;
-        return db.prepare("UPDATE ai_codex_logins SET status='completed', error_code=NULL, updated_at=? WHERE id=? AND status IN ('starting','pending')")
-            .run(Date.now(), row.id).changes > 0;
+        return db.prepare("UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status IN ('starting','pending')")
+            .run(SEALING_STATUS, Date.now(), row.id).changes > 0;
     }).immediate();
 }
 
@@ -229,7 +254,11 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         if (!sealed.sealed) {
             await discardAttempt(session, ownerKey, connectionId, hadCredential);
             forceLoginFailure(row.id, 'ai_codex_credentials_unavailable');
+            return;
         }
+        // Published only now, with the credential on record behind it.
+        db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
+            .run('completed', Date.now(), row.id, SEALING_STATUS);
     } catch {
         finishLogin(row.id, 'failed', 'ai_codex_login_failed');
     } finally {
@@ -380,7 +409,11 @@ export function readLoginStatus(actor, connection, id, fingerprint = null) {
 function publicLogin(row) {
     return {
         id: row.id,
-        status: row.status,
+        // Sealing is an internal step of a sign-in that is still running; the
+        // account holder is told the truth — it is not finished yet — and the
+        // client keeps polling until the credential is stored or the attempt
+        // fails.
+        status: row.status === SEALING_STATUS ? 'pending' : row.status,
         // Never a token: only the documented verification address and the code
         // the account holder types on it.
         verification_url: row.verification_url,

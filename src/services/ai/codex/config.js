@@ -69,7 +69,11 @@ export function compareVersions(left, right) {
 }
 
 export function versionSupported(version) {
-    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+/.test(version)) return false;
+    // Exactly a release version. A prerelease or a build-tagged binary is not the
+    // tested release even when its numbers fall inside the range, so it stays
+    // unavailable unless an operator names that exact string in
+    // `AI_CODEX_VERSION_OVERRIDE`.
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) return false;
     return compareVersions(version, SUPPORTED_CODEX_RANGE.minimum) >= 0
         && compareVersions(version, SUPPORTED_CODEX_RANGE.below) < 0;
 }

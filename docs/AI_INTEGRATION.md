@@ -339,9 +339,11 @@ the existing `chat/completions` transport.
   configuration also fails the canary rather than slipping past a probe built
   only around a shell.
 * Pinned and tested Codex release: **0.154.0**. Accepted range: `>= 0.154.0` and
-  `< 0.156.0`. A version outside that range keeps the adapter unavailable unless
-  an operator names one exact version in `AI_CODEX_VERSION_OVERRIDE` after
-  validating it separately.
+  `< 0.156.0`, release versions only. A version outside that range, and any
+  prerelease or build-tagged binary whose numbers fall inside it, keeps the
+  adapter unavailable unless an operator names that exact version string —
+  suffix included — in `AI_CODEX_VERSION_OVERRIDE` after validating it
+  separately.
 * Used methods: `initialize`, `account/login/start` (`chatgptDeviceCode`),
   `account/login/cancel`, `account/logout`, `account/read`,
   `account/rateLimits/read`, `getAuthStatus`, `model/list`, `thread/start`,
@@ -494,6 +496,14 @@ one-time device code.
   on a linked connection is refused — for instance because the account it
   authenticated is already linked elsewhere — only that attempt's own state is
   discarded; the existing credential stays.
+* Claiming an attempt is not yet a success. The claim moves it to an internal,
+  non-terminal state that no cancel or supersede can take either, and the
+  attempt is published as completed only once the credential is actually stored;
+  a poll on any worker keeps reporting the sign-in as still running until then.
+  A worker that dies in that window leaves the attempt claimed but unfinished,
+  and the credential store — not the claim — decides how it is resolved on the
+  next poll, so a failed seal can never leave a permanent report of a link that
+  does not exist.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message. A
   cancellation that arrives after the sign-in already completed reports that

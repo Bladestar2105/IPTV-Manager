@@ -46,7 +46,10 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
         const description = wrapCommand(backend, { codexHome, workDir, command: [binary, '--version'], launcher: binary });
         const { stdout } = await run(description.file, description.args,
             { env: description.environment, timeout: 15000, maxBuffer: 64 * 1024 });
-        return stdout.trim().match(/(\d+\.\d+\.\d+)/)?.[1] || null;
+        // The whole version token, prerelease and build metadata included: a
+        // `0.154.0-beta.1` truncated to `0.154.0` would pass the range check as
+        // the tested stable release.
+        return stdout.trim().match(/(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/)?.[1] || null;
     } catch { return null; }
     finally { fs.rmSync(probeRoot, { recursive: true, force: true }); }
 }
