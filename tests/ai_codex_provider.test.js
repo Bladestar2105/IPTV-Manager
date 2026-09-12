@@ -407,6 +407,36 @@ describe('personal ChatGPT runtime robustness', () => {
         expect(fs.existsSync(paths.root)).toBe(true);
     });
 
+    it('releases a dead worker\'s lease and plaintext without waiting for a full restart', async () => {
+        const connection = await linkedConnection();
+        const paths = credentials.identityPaths('user:1', connection.id);
+        credentials.hydrate('user:1', connection.id);
+        const now = Date.now();
+        // A worker that was killed while holding its lease. The primary keeps
+        // running, so the startup sweep is not going to happen.
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'dead-worker-lease', 987654, 'running', now + 60000, now);
+        expect(fs.existsSync(paths.authFile)).toBe(true);
+        const released = credentials.releaseWorkerRuntimes(987654);
+        expect(released).toMatchObject({ leases: 1, cleared: 1 });
+        expect(fs.existsSync(paths.authFile)).toBe(false);
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        // The link itself and its directory survive the worker's death.
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeTruthy();
+        expect(fs.existsSync(paths.root)).toBe(true);
+    });
+
+    it('leaves another live worker\'s plaintext credential alone while recovering one', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+            // Recovering an unrelated worker must not touch a leased runtime.
+            expect(credentials.releaseWorkerRuntimes(987654)).toMatchObject({ leases: 0, cleared: 0 });
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+        } finally { runtime.stopRuntime(session); }
+    });
+
     it('leaves a live runtime\'s plaintext credential alone', async () => {
         const connection = await linkedConnection();
         const session = await runtime.startRuntime('user:1', connection.id);
@@ -498,6 +528,41 @@ describe('personal ChatGPT runtime robustness', () => {
             readiness.resetCodexReadiness();
             await readiness.refreshCodexReadiness({ force: true });
         }
+    });
+
+    it('resolves a configured relative runtime path before sandboxing', async () => {
+        const isolation = await vi.importActual('../src/services/ai/codex/isolation.js');
+        const relative = path.relative(process.cwd(), fakeBinary);
+        expect(path.isAbsolute(relative)).toBe(false);
+        // bwrap changes into the identity work directory, where a path relative
+        // to the manager's working directory no longer exists.
+        expect(isolation.which(`./${relative}`)).toBe(fakeBinary);
+        expect(isolation.which('./does-not-exist/codex')).toBeNull();
+    });
+
+    it('mounts the target and package root of a symlinked launcher', async () => {
+        const isolation = await vi.importActual('../src/services/ai/codex/isolation.js');
+        // The shape a global npm install produces: a bin symlink into a package.
+        const packageRoot = path.join(dataDir, 'lib', 'node_modules', '@openai', 'codex');
+        const binDirectory = path.join(dataDir, 'globalbin');
+        fs.mkdirSync(path.join(packageRoot, 'bin'), { recursive: true });
+        fs.mkdirSync(binDirectory, { recursive: true });
+        fs.writeFileSync(path.join(packageRoot, 'package.json'), '{"name":"@openai/codex"}');
+        const target = path.join(packageRoot, 'bin', 'codex.js');
+        fs.writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        const launcher = path.join(binDirectory, 'codex');
+        fs.rmSync(launcher, { force: true });
+        fs.symlinkSync(target, launcher);
+        // Mounts use the kernel-resolved path, which on macOS differs from the
+        // symlinked temporary path the test built.
+        const real = candidate => fs.realpathSync.native(candidate);
+        const mounts = isolation.launcherMounts(launcher);
+        expect(mounts).toContain(binDirectory);
+        expect(mounts).toContain(real(path.dirname(target)));
+        expect(mounts).toContain(real(packageRoot));
+        // The launcher's own directory also has to be on the sandbox PATH, since
+        // a wrapper script commonly executes a sibling interpreter.
+        expect(isolation.sandboxEnvironment('/tmp/home', '/tmp/work', [binDirectory]).PATH.startsWith(`${binDirectory}:`)).toBe(true);
     });
 
     it('installs one shutdown handler, and only once a runtime exists', async () => {

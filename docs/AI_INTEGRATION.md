@@ -316,10 +316,13 @@ newline-delimited JSON-RPC protocol and uses its managed ChatGPT sign-in
 browser OAuth token into an API key, and never routes a ChatGPT sign-in through
 the existing `chat/completions` transport.
 
-* The runtime is resolved to an absolute path once and the same path is both
-  version-probed and launched, so an installation that only the host `PATH` can
-  find cannot report itself available and then fail inside the sandbox. Its
-  directory is bound read-only when it lives outside the standard system roots.
+* The runtime is resolved to an absolute path once — including a configured
+  relative path, which the sandbox could not resolve from its own working
+  directory — and the same path is both version-probed and launched, so an
+  installation that only the host `PATH` can find cannot report itself available
+  and then fail inside the sandbox. Its directory, the target of a symlinked
+  launcher and that target's package root are bound read-only when they live
+  outside the standard system roots, which is what a global npm install needs.
 * Pinned and tested Codex release: **0.154.0**. Accepted range: `>= 0.154.0` and
   `< 0.156.0`. A version outside that range keeps the adapter unavailable unless
   an operator names one exact version in `AI_CODEX_VERSION_OVERRIDE` after

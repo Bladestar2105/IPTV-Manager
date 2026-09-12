@@ -205,6 +205,15 @@ export function sweepOrphans() {
     return { removed, cleared };
 }
 
+// A worker that died holds no runtime any more. Its leases are released and the
+// plaintext credentials it hydrated are removed, because the primary keeps
+// running and would otherwise leave the raw token on disk until the whole server
+// restarts. Directories are untouched: other workers may be mid-sign-in.
+export function releaseWorkerRuntimes(workerPid) {
+    const leases = db.prepare('DELETE FROM ai_codex_runtimes WHERE worker_pid=?').run(workerPid).changes;
+    return { leases, cleared: clearAbandonedPlaintext() };
+}
+
 // No sign-in and no runtime lease survives a restart: a device-code attempt
 // lives only in the worker that started it. Called once by the primary process
 // before workers start, so the following sweep sees an accurate live set.

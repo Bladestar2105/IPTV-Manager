@@ -26,7 +26,13 @@ const READ_ONLY_ROOTS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ssl', 
 let cached = null;
 
 export function which(binary) {
-    if (binary.includes('/')) return fs.existsSync(binary) ? binary : null;
+    // A configured path is resolved against the manager's working directory
+    // here, because the sandbox executes from the identity's own work directory
+    // where a relative path no longer exists.
+    if (binary.includes('/')) {
+        const resolved = path.resolve(binary);
+        return fs.existsSync(resolved) ? resolved : null;
+    }
     for (const dir of (process.env.PATH || '').split(path.delimiter)) {
         if (!dir) continue;
         const candidate = path.join(dir, binary);
@@ -35,12 +41,37 @@ export function which(binary) {
     return null;
 }
 
+// Directories the launcher itself needs inside the namespace. A globally
+// installed Codex is commonly a symlink from a bin directory into a package
+// tree, so binding only the bin directory leaves the actual program and the
+// files it ships with outside the sandbox.
+export function launcherMounts(binary) {
+    if (!binary) return [];
+    const mounts = [path.dirname(binary)];
+    let real = binary;
+    try { real = fs.realpathSync.native(binary); } catch { /* not a link, or unreadable */ }
+    if (real !== binary) {
+        mounts.push(path.dirname(real));
+        // Walk up to the package root so a launcher's sibling files and vendored
+        // binaries come with it.
+        let candidate = path.dirname(real);
+        for (let depth = 0; depth < 6; depth += 1) {
+            const parent = path.dirname(candidate);
+            if (parent === candidate) break;
+            if (fs.existsSync(path.join(candidate, 'package.json'))) { mounts.push(candidate); break; }
+            candidate = parent;
+        }
+    }
+    return [...new Set(mounts)];
+}
+
 // Built from scratch: nothing from the host profile is inherited, so an
 // operator's `OPENAI_API_KEY`, proxy settings, CODEX_HOME, plugin roots or
-// manager secrets can never reach the runtime.
-export function sandboxEnvironment(codexHome, workDir) {
+// manager secrets can never reach the runtime. `extraPath` only ever holds the
+// launcher's own directory, which has to be executable for it to start at all.
+export function sandboxEnvironment(codexHome, workDir, extraPath = []) {
     return {
-        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+        PATH: [...extraPath, '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
         HOME: codexHome,
         CODEX_HOME: codexHome,
         TMPDIR: path.join(workDir, 'tmp'),
@@ -63,13 +94,15 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command }) {
         '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--unshare-cgroup',
         '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run', '--tmpfs', '/var'
     ];
-    for (const root of existingReadOnlyRoots()) args.push('--ro-bind', root, root);
-    // The runtime is launched by absolute path. Its directory is bound read-only
-    // when it lives outside the standard roots, so an install under /opt or
-    // /usr/local stays reachable inside the namespace.
-    const binaryDirectory = path.dirname(command[0]);
-    if (!existingReadOnlyRoots().some(root => binaryDirectory === root || binaryDirectory.startsWith(`${root}/`))) {
-        args.push('--ro-bind-try', binaryDirectory, binaryDirectory);
+    const roots = existingReadOnlyRoots();
+    for (const root of roots) args.push('--ro-bind', root, root);
+    // The runtime is launched by absolute path. Its directory, the target of a
+    // symlinked launcher and that target's package root are bound read-only when
+    // they live outside the standard roots, so a global npm install or an
+    // install under /opt stays reachable inside the namespace.
+    const covered = directory => roots.some(root => directory === root || directory.startsWith(`${root}/`));
+    for (const mount of launcherMounts(command[0])) {
+        if (!covered(mount)) args.push('--ro-bind-try', mount, mount);
     }
     // Only the identity's own runtime tree is writable. The manager's data
     // directory, .env, key files, other identities and any container socket are
@@ -123,7 +156,11 @@ function seatbeltArguments(sandboxExec, { codexHome, workDir, environment, comma
 // Wraps a command so it runs inside the detected sandbox. The returned spawn
 // description never inherits the host environment.
 export function wrapCommand(backend, { codexHome, workDir, command }) {
-    const environment = sandboxEnvironment(codexHome, workDir);
+    // A launcher installed outside the standard roots must also be findable by
+    // name, because a wrapper script commonly executes a sibling interpreter.
+    const launcherDirectory = command?.[0]?.startsWith('/') ? path.dirname(command[0]) : null;
+    const extraPath = launcherDirectory && !['/usr/bin', '/bin', '/usr/sbin', '/sbin'].includes(launcherDirectory) ? [launcherDirectory] : [];
+    const environment = sandboxEnvironment(codexHome, workDir, extraPath);
     if (backend.name === 'bwrap') return { ...bwrapArguments(backend.path, { codexHome, workDir, environment, command }), environment: {} };
     if (backend.name === 'sandbox-exec') return seatbeltArguments(backend.path, { codexHome, workDir, environment, command });
     throw Object.assign(new Error('AI_CODEX_SANDBOX_UNAVAILABLE'), { code: 'AI_CODEX_SANDBOX_UNAVAILABLE' });
