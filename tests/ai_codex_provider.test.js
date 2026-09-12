@@ -483,6 +483,54 @@ describe('personal ChatGPT model catalog and turns', () => {
     });
 });
 
+describe('personal ChatGPT feature contracts', () => {
+    // The real answer contract of each of the eight functions, not a minimal
+    // `ok:true` object: a valid answer must pass local validation and an answer
+    // carrying an action the function does not allow must be rejected.
+    const ALL_ACTIONS = {
+        create_category: { type: 'create_category', key: 'k1', name: 'Sports', category_type: 'live' },
+        rename_category: { type: 'rename_category', category_id: 4, value: 'Sports HD' },
+        assign_channel: { type: 'assign_channel', provider_channel_id: 5, category_key: 'k1' },
+        rename_channel: { type: 'rename_channel', user_channel_id: 7, value: 'Sport 1' },
+        hide_channel: { type: 'hide_channel', user_channel_id: 8, value: true },
+        reorder_channel: { type: 'reorder_channel', user_channel_id: 7, value: 3 },
+        epg_mapping: { type: 'epg_mapping', provider_channel_id: 5, epg_channel_id: 'sport.1', source_type: 'provider', source_id: 2 }
+    };
+    const proposal = (...types) => ({ summary: 'Proposed changes for review.', actions: types.map(type => ALL_ACTIONS[type]) });
+    const filters = { query: 'news', type: 'live', genre: null, language: null, region: null, start: null, end: null, max_duration: null, interests: null };
+    const CONTRACTS = {
+        list: [proposal('create_category', 'assign_channel', 'rename_channel', 'hide_channel', 'reorder_channel'), proposal('epg_mapping')],
+        cleanup: [proposal('rename_category', 'rename_channel', 'hide_channel', 'reorder_channel'), proposal('assign_channel')],
+        duplicates: [proposal('hide_channel'), proposal('rename_channel')],
+        epg: [proposal('epg_mapping'), proposal('hide_channel')],
+        sync: [proposal('create_category', 'assign_channel', 'rename_channel'), proposal('hide_channel')],
+        search: [{ summary: 'Filtered the catalog.', filters, clear_filters: ['genre'] }, { summary: 'x', filters: { query: 'news' }, clear_filters: [] }],
+        diagnose: [{ summary: 'Observed local findings only.' }, { summary: 'x', extra: true }],
+        text: [{ text: 'A shortened description.', tags: ['news'] }, { text: 'A shortened description.' }]
+    };
+
+    it('accepts the real answer of every function and rejects one outside its contract', async () => {
+        const { featureResultSchema } = await import('../src/services/ai/features.js');
+        const connection = createConnection(user, { functions: Object.keys(CONTRACTS) });
+        // `createConnection` applies the narrow default policy; widen it afterwards.
+        ai.updateAiSettings(admin, { enabled: true, allow_own_connections: true, allowed_user_ids: [1, 2], functions: Object.keys(CONTRACTS), internal_targets: [] });
+        await link(user, connection);
+        await ai.discoverModels(user, connection.id);
+        await ai.testModels(user, connection.id, { model_ids: ['model-beta'] });
+        ai.saveConnection(user, { model_id: 'model-beta', functions: Object.keys(CONTRACTS) }, connection.id);
+        ai.savePreferences(user, { model_id: 'model-beta' });
+        for (const [feature, [valid, invalid]] of Object.entries(CONTRACTS)) {
+            const schema = featureResultSchema(feature);
+            fake({ answer: JSON.stringify(valid), recordPath, recordApprovalPath: approvalPath });
+            const accepted = await ai.runInference(user, feature, { messages: [{ role: 'user', content: 'x' }], schema });
+            expect(accepted.data).toEqual(valid);
+            fake({ answer: JSON.stringify(invalid), recordPath, recordApprovalPath: approvalPath });
+            await expect(ai.runInference(user, feature, { messages: [{ role: 'user', content: 'x' }], schema }))
+                .rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
+        }
+    }, 60000);
+});
+
 describe('personal ChatGPT runtime ownership', () => {
     it('allows only one runtime per identity and connection', async () => {
         const connection = await linkedConnection();

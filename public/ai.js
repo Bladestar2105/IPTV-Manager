@@ -367,6 +367,14 @@ window.aiUI = (() => {
     node('div', panel).id = 'ai-link-state';
     renderAccount(connection);
   }
+  // Captions carry their translation key so the shared language switch
+  // re-renders them; only the value itself is plain text.
+  function captioned(parent, key, value) {
+    const row = node('p', parent, undefined, 'mb-1');
+    label('span', row, key);
+    node('span', row, `: ${value}`);
+    return row;
+  }
   function renderAccount(connection) {
     const box = el('account-state');
     if (!box) return;
@@ -374,10 +382,8 @@ window.aiUI = (() => {
     const linked = Boolean(connection?.account?.linked);
     label('p', box, linked ? 'accountLinked' : 'accountNotLinked', linked ? 'mb-1 fw-semibold' : 'mb-1 text-muted');
     if (linked) {
-      const label_ = accountState?.label ?? connection.account.label;
-      const plan = accountState?.plan_type ?? connection.account.plan_type;
-      node('p', box, `${tr('accountLabel')}: ${label_ || tr('unknown')}`, 'mb-1');
-      node('p', box, `${tr('plan')}: ${plan || tr('unknown')}`, 'mb-1');
+      captioned(box, 'accountLabel', (accountState?.label ?? connection.account.label) || tr('unknown'));
+      captioned(box, 'plan', (accountState?.plan_type ?? connection.account.plan_type) || tr('unknown'));
       renderQuota(box);
     }
     if (el('link-start')) el('link-start').hidden = linked;
@@ -393,10 +399,9 @@ window.aiUI = (() => {
     for (const key of ['primary', 'secondary']) {
       const window_ = quota[key];
       if (!window_) continue;
-      const parts = [`${tr('quotaUsed')}: ${Math.round(window_.used_percent)}%`];
-      if (window_.window_minutes) parts.push(`${tr('quotaWindow')}: ${window_.window_minutes} min`);
-      if (window_.resets_at) parts.push(`${tr('quotaResets')}: ${new Date(window_.resets_at * 1000).toLocaleString()}`);
-      node('p', box, parts.join(' · '), 'mb-1');
+      captioned(box, 'quotaUsed', `${Math.round(window_.used_percent)}%`);
+      if (window_.window_minutes) captioned(box, 'quotaWindow', `${window_.window_minutes} min`);
+      if (window_.resets_at) captioned(box, 'quotaResets', new Date(window_.resets_at * 1000).toLocaleString());
     }
     if (quota.ordinary_usage_allowed === false) label('p', box, 'quotaBlocked', 'mb-1 text-warning');
   }

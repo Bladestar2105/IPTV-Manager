@@ -5,6 +5,13 @@ WORKDIR /app
 # Install build dependencies for native modules
 RUN apk add --no-cache python3 make g++ su-exec
 
+# Optional: sandbox for the personal ChatGPT (Codex) connection. Off by default,
+# so the standard image is unchanged. Enabling it installs bubblewrap only; the
+# pinned Codex CLI still has to be provided separately and pointed at with
+# AI_CODEX_BIN, and AI_CODEX_ENABLED must be set. See docs/CONFIGURATION.md.
+ARG INSTALL_AI_CODEX_SANDBOX=false
+RUN if [ "$INSTALL_AI_CODEX_SANDBOX" = "true" ]; then apk add --no-cache bubblewrap; fi
+
 # Copy package files
 COPY package.json package-lock.json ./
 

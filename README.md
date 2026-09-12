@@ -22,7 +22,7 @@
 - **EPG Integration**: Comprehensive Electronic Program Guide (EPG) support with automatic updates.
 
 ### Advanced Features
-- **Optional AI Assistant**: Connect an OpenAI-compatible text API for list editing, name cleanup, duplicate review, EPG suggestions, sync reports, conversational search, diagnostics and description translation/summaries/tags. Changes require a preview and confirmation, with conflict-aware undo. AI is disabled by default; see [AI setup and operation](docs/AI_INTEGRATION.md).
+- **Optional AI Assistant**: Connect an OpenAI-compatible text API for list editing, name cleanup, duplicate review, EPG suggestions, sync reports, conversational search, diagnostics and description translation/summaries/tags. Changes require a preview and confirmation, with conflict-aware undo. Users and administrators can alternatively link their own ChatGPT account through the official Codex sign-in, with no OpenAI platform API key; that connection stays private to its owner and is offered only where the server can prove the runtime is contained by an operating-system sandbox. AI is disabled by default, and the personal ChatGPT connection has its own separate switch; see [AI setup and operation](docs/AI_INTEGRATION.md).
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
 - **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.

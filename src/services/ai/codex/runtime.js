@@ -8,7 +8,6 @@ import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
 const LEASE_TTL_MS = 60000;
 const HEARTBEAT_MS = 20000;
 const HANDSHAKE_TIMEOUT_MS = 20000;
-const WORKER_ID = `${process.pid}:${randomUUID().slice(0, 8)}`;
 const live = new Map();
 
 const runtimeKey = (ownerKey, connectionId) => `${ownerKey}|${connectionId}`;

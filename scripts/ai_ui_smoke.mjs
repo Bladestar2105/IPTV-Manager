@@ -27,6 +27,9 @@ try {
   let delayPrograms = false, releasePrograms, programsRequested;
   const waitForPrograms = new Promise(resolve => { programsRequested = resolve; });
   const programReference = {channel_id: 'real-epg-channel', source_type: 'xmltv', source_id: 7, start: 1800000000};
+  // Personal ChatGPT account-link state for the synthetic server.
+  let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
+  let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null};
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -37,9 +40,38 @@ try {
     else if (path === '/settings') { if (method === 'PUT') settings = body; data = settings; }
     else if (path === '/preferences') { if (method === 'PUT') preferences = {...preferences, ...body}; data = preferences; }
     else if (path === '/connections') {
-      if (method === 'POST') { const {api_key, ...safe} = body; connections.push({...safe, id: 'c1', editable: true, has_key: Boolean(api_key), models: [], capabilities: {}}); data = connections[0]; }
+      if (method === 'POST') {
+        const {api_key, ...safe} = body;
+        const chatgpt = safe.provider === 'chatgpt_account';
+        connections.push({...safe, id: chatgpt ? 'c2' : 'c1', editable: true, has_key: chatgpt ? false : Boolean(api_key),
+          models: [], capabilities: {}, ...(chatgpt ? {base_url: null, account: chatgptAccount} : {})});
+        data = connections.at(-1);
+      }
       else data = connections;
-    } else if (path === '/connections/c1') {
+    }
+    else if (path === '/codex/status') data = codexAvailable
+      ? {available: true, reason: null, codex_version: '0.154.0', isolation: {backend: 'bwrap', grade: 'isolated'}}
+      : {available: false, reason: 'AI_CODEX_DISABLED', codex_version: null, isolation: null};
+    else if (path.startsWith('/connections/c2')) {
+      const stored = () => connections.find(item => item.id === 'c2');
+      const rest = path.slice('/connections/c2'.length);
+      if (rest === '' && method === 'PUT') { const {api_key: _chatgptKey, ...safe} = body; Object.assign(stored(), safe); data = stored(); }
+      else if (rest === '/link' && method === 'POST') {
+        loginState = {id: 'L1', status: 'pending', verification_url: verificationUrl, user_code: 'ABCD-1234', error_code: null, expires_at: Date.now() + 900000};
+        data = loginState;
+      }
+      else if (rest === '/link/L1') data = loginState;
+      else if (rest === '/link/L1/cancel') { loginState = {...loginState, status: 'cancelled', error_code: 'ai_codex_login_cancelled'}; data = loginState; }
+      else if (rest === '/unlink') {
+        chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null};
+        Object.assign(stored(), {account: chatgptAccount});
+        data = {disconnected: true, remote_logout: true};
+      }
+      else if (rest === '/account') data = {...chatgptAccount,
+        quota: {known: true, ordinary_usage_allowed: true, primary: {used_percent: 42, window_minutes: 300, resets_at: 1800000000}, secondary: null}};
+      else { status = 404; data = {code: 'AI_NOT_FOUND'}; }
+    }
+    else if (path === '/connections/c1') {
       if (method === 'PUT') { const {api_key: _key, ...safe} = body; connections[0] = {...connections[0], ...safe}; data = connections[0]; }
       else if (method === 'DELETE') connections = [];
     } else if (path.endsWith('/discover')) {
@@ -484,10 +516,94 @@ try {
     fetchJSON = url => url === '/api/users' ? new Promise(resolve => { window.releaseUserChoices = () => resolve([{id: 8, username: 'Late admin-only name'}]); }) : original(url).then(result => { window.finishedAiReads++; return result; });
     window.pendingUserChoices = aiUI.open();
   });
-  await page.waitForFunction(() => typeof window.releaseUserChoices === 'function' && window.finishedAiReads === 3);
+  await page.waitForFunction(() => typeof window.releaseUserChoices === 'function' && window.finishedAiReads === 4);
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; window.releaseUserChoices(); await window.pendingUserChoices; });
   assert.equal(await page.locator('#view-ai').innerText(), '', 'late administrator user list cannot repopulate a cleared or different session');
-  console.log(`PASS AI UI (${Math.round(performance.now() - startedAt)} ms): setup and all eight functions; confirmed rename rules; follow-up filter patches; delayed history/Undo isolation; read-only cleanup; automatic rule-change history/Undo; local EPG picker and stale-target isolation; analyzed/displayed counts; four languages; session isolation. Synthetic API only.`);
+  // Personal ChatGPT account link. Offered only when the server reports a
+  // contained runtime, private by construction, and never showing a token.
+  // The session-isolation checks above leave `fetchJSON` patched to stall the
+  // administrator user list, so restore the real reader first.
+  await page.evaluate(() => { aiUI.clear(); if (window.originalAiFetch) fetchJSON = window.originalAiFetch; });
+  settings = {enabled: true, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
+  preferences = {enabled: true, connection_id: null, model_id: null};
+  connections = [];
+  await page.evaluate(async () => { currentUser = {id: 1, is_admin: true}; await aiUI.open(); });
+  await page.locator('#ai-connection').waitFor();
+  assert.deepEqual(await page.locator('#ai-connection option').evaluateAll(items => items.map(item => item.value)), ['', 'new'],
+    'the ChatGPT option is hidden while the server reports no contained runtime');
+
+  codexAvailable = true;
+  await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 1, is_admin: true}; await aiUI.open(); });
+  await page.locator('#ai-connection').waitFor();
+  assert.deepEqual(await page.locator('#ai-connection option').evaluateAll(items => items.map(item => item.value)), ['', 'new', 'new-chatgpt'],
+    'the ChatGPT option appears once the server reports a contained runtime');
+  await page.locator('#ai-connection').selectOption('new-chatgpt');
+  for (const field of ['url', 'key', 'shared', 'connection-users']) {
+    assert.equal(await page.locator(`#ai-${field}`).count(), 0, `a managed ChatGPT sign-in must not ask for ${field}`);
+  }
+  assert.equal(await page.locator('#ai-advanced').isVisible(), false, 'no token-limit parameter is offered for a managed sign-in');
+  assert.equal(await page.locator('#ai-token-parameter').isDisabled(), true);
+  assert.match(await page.locator('#ai-destination').innerText(), /Codex/, 'the managed destination is named before any request');
+  assert.match(await page.locator('#ai-account-panel').innerText(), /no OpenAI platform API key|kein OpenAI-Platform-API-Key/i,
+    'the disclosure states that no platform API key is needed');
+  assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'nothing can be disconnected before a sign-in');
+
+  await page.locator('#ai-name').fill('My ChatGPT');
+  await page.locator('#ai-enabled').check();
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/link') && response.request().method() === 'POST'),
+    page.locator('#ai-link-start').click()
+  ]);
+  await page.locator('#ai-link-state a').waitFor();
+  assert.equal(await page.locator('#ai-link-state a').getAttribute('href'), 'https://auth.openai.com/codex/device',
+    'only the approved verification address becomes a link');
+  assert.equal(await page.locator('#ai-link-state a').getAttribute('rel'), 'noopener noreferrer');
+  assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'the device code is shown');
+  assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a pending sign-in can be cancelled');
+  const linkRequests = requests.filter(request => request.path.includes('/link'));
+  assert.equal(JSON.stringify(linkRequests).includes('token'), false, 'no token is ever sent or echoed by the browser');
+
+  // The account holder completes the sign-in; the poll adopts only its own attempt.
+  chatgptAccount = {linked: true, label: 'p***@example.org', plan_type: 'plus', auth_method: 'chatgpt'};
+  loginState = {id: 'L1', status: 'completed', verification_url: null, user_code: null, error_code: null, expires_at: Date.now() + 900000};
+  Object.assign(connections.find(item => item.id === 'c2'), {account: chatgptAccount});
+  await page.locator('#ai-unlink').waitFor({state: 'visible', timeout: 20000});
+  assert.match(await page.locator('#ai-account-state').innerText(), /p\*\*\*@example\.org/, 'only the masked account label is shown');
+  assert.match(await page.locator('#ai-account-state').innerText(), /42%/, 'reported quota is displayed');
+  assert.equal(await page.locator('#ai-link-start').isVisible(), false, 'a linked account offers no second sign-in');
+
+  for (const [lang, linkedText, planCaption] of [
+    ['de', 'ChatGPT-Konto verbunden', 'Tarif'], ['fr', 'Compte ChatGPT connecté', 'Forfait'],
+    ['el', 'Ο λογαριασμός ChatGPT συνδέθηκε', 'Πρόγραμμα'], ['en', 'ChatGPT account connected', 'Plan']]) {
+    await page.locator('#language-selector').selectOption(lang);
+    const panel = await page.locator('#ai-account-panel').innerText();
+    assert.ok(panel.includes(linkedText), `the linked state is translated for ${lang}`);
+    assert.ok(panel.includes(`${planCaption}: plus`), `account captions re-translate on a language change for ${lang}`);
+    assert.equal(await page.locator('#ai-url').count(), 0, `no technical address field appears for ${lang}`);
+  }
+  await page.locator('#language-selector').selectOption('en');
+
+  // A page-wide dialog handler is already installed above; the disconnect
+  // confirmation is accepted by it.
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/unlink')),
+    page.locator('#ai-unlink').click()
+  ]);
+  await page.locator('#ai-link-start').waitFor({state: 'visible'});
+  assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'disconnecting returns the panel to the unlinked state');
+
+  // An address outside the documented targets is reported, never opened.
+  verificationUrl = 'https://phish.example/codex/device';
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/link') && response.request().method() === 'POST'),
+    page.locator('#ai-link-start').click()
+  ]);
+  await page.locator('#ai-link-state').waitFor();
+  assert.equal(await page.locator('#ai-link-state a').count(), 0, 'an unapproved verification address is never turned into a link');
+  assert.match(await page.locator('#ai-link-state').innerText(), /not an approved target/i);
+  await page.evaluate(() => aiUI.clear());
+
+  console.log(`PASS AI UI (${Math.round(performance.now() - startedAt)} ms): setup and all eight functions; confirmed rename rules; follow-up filter patches; delayed history/Undo isolation; read-only cleanup; automatic rule-change history/Undo; local EPG picker and stale-target isolation; analyzed/displayed counts; four languages; personal ChatGPT link, quota, disconnect and blocked verification target; session isolation. Synthetic API only.`);
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));

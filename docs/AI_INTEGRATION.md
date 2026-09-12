@@ -300,6 +300,185 @@ all affected secrets with the old and new key; this feature adds no automatic
 application-key rotation command. A lost encryption key cannot be recovered
 from the database.
 
+## Optional personal ChatGPT connection
+
+A second connection type lets each user and each administrator link **their own**
+ChatGPT account instead of supplying an OpenAI platform API key. It is an
+addition, not a replacement: the OpenAI-compatible API connection above is
+unchanged, and both types run the same eight functions through the same checks,
+source limits, proposals, confirmations and conflict-protected undo.
+
+### What it is and what it is not
+
+The adapter drives the officially documented **Codex app server** over its
+newline-delimited JSON-RPC protocol and uses its managed ChatGPT sign-in
+(device code). It does not use a private ChatGPT web interface, does not turn a
+browser OAuth token into an API key, and never routes a ChatGPT sign-in through
+the existing `chat/completions` transport.
+
+* Pinned and tested Codex release: **0.154.0**. Accepted range: `>= 0.154.0` and
+  `< 0.156.0`. A version outside that range keeps the adapter unavailable unless
+  an operator names one exact version in `AI_CODEX_VERSION_OVERRIDE` after
+  validating it separately.
+* Used methods: `initialize`, `account/login/start` (`chatgptDeviceCode`),
+  `account/login/cancel`, `account/logout`, `account/read`,
+  `account/rateLimits/read`, `getAuthStatus`, `model/list`, `thread/start`,
+  `turn/start`, `turn/interrupt`, and the `account/login/completed`,
+  `item/completed`, `turn/completed` and `thread/tokenUsage/updated`
+  notifications.
+* Device-code sign-in is a **beta** path of that release and must be permitted
+  by the personal ChatGPT security settings or by a workspace administrator.
+  Where it is not permitted, the sign-in fails with a specific message and
+  nothing is stored.
+* The presence of a sign-in function is **not** a blanket permission for every
+  hosted multi-user arrangement. Separating accounts does not by itself make an
+  operator's deployment contract- or fair-use-compliant. Check the applicable
+  ChatGPT and Codex terms for the plans involved before enabling this in a
+  hosted setting.
+
+### Required runtime containment
+
+A Codex runtime is an execution-capable agent host. A prompt, a read-only
+filesystem mode or a disabled tool flag are defence in depth, never the
+boundary. The adapter is therefore offered only where all of the following hold:
+
+1. An operating-system sandbox is available and passes a **canary self-test** at
+   startup: from inside the sandbox, a file outside it must be unreadable and a
+   write into `DATA_DIR` must fail. Linux uses bubblewrap (`bwrap`), which is the
+   only grade accepted for hosted multi-user operation. macOS `sandbox-exec` is
+   classified as development grade and refused unless an operator explicitly
+   opts in.
+2. Every runtime is started with `--strict-config`, so a renamed or removed
+   Codex option is a hard startup failure rather than a silent capability grant.
+3. Shell, unified exec, file view, sleep, browser control, computer use, apps,
+   hooks, plugins, marketplaces, skill discovery and web search are disabled by
+   flag; MCP servers are emptied; the sandbox mode is `read-only` and the turn is
+   started with `sandboxPolicy: readOnly` and no network access for the sandbox.
+4. The effective policy the server echoes back on `thread/start` is verified. A
+   weaker approval policy, a different sandbox policy or any loaded instruction
+   source aborts the turn.
+5. Every approval or capability request from the runtime is **denied** — there is
+   no automatic approval — and any turn that contains a command, file change,
+   MCP call, dynamic tool call, web search or generated image is discarded whole.
+6. The runtime environment is built from scratch. `CODEX_HOME`, `HOME`, `PATH`,
+   `TMPDIR` and the locale are set explicitly; nothing else is inherited, so an
+   operator's `OPENAI_API_KEY`, proxy settings, plugin roots or manager secrets
+   cannot reach it. `getAuthStatus` must report `chatgpt` before any request; an
+   API-key mode is refused rather than used.
+
+On bare metal the same requirements apply: install bubblewrap, run the web
+process unprivileged, and keep `AI_CODEX_RUNTIME_DIR` on a filesystem the web
+user owns. Separate directories under one privileged operating-system account
+are **not** multi-user isolation. Where a requirement is unmet the adapter stays
+disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
+`AI_CODEX_SANDBOX_READ_ESCAPE`, `AI_CODEX_SANDBOX_WRITE_ESCAPE`,
+`AI_CODEX_SANDBOX_GRADE_REJECTED`, `AI_CODEX_BINARY_MISSING`,
+`AI_CODEX_VERSION_UNSUPPORTED`).
+
+### Ownership, quota and multi-process behavior
+
+* A ChatGPT connection is **private**. `shared` is forced to false and its user
+  list to empty on every write, refused when a request tries to set them, and
+  ignored again on read, so a manipulated record cannot become a service for
+  other accounts.
+* Administrators enable the feature centrally but use only their own sign-in for
+  work they trigger themselves. There is no delegate mode that quietly uses a
+  target user's account.
+* `user:<id>` and `admin:<id>` stay separate namespaces, each with its own
+  credential, runtime directory and session.
+* One runtime per identity and connection, held by a database lease with a
+  heartbeat. A concurrent start, a competing token refresh or the reuse of
+  another identity's session is rejected across workers with `AI_BUSY`. There is
+  no shared process that is switched between personal logins.
+* Linking the same reliably reported external account twice is refused, so a
+  second connection cannot multiply one personal plan's quota. The address is
+  never stored: only a keyed fingerprint and a masked label.
+* The existing call, size, runtime and queue limits apply unchanged. A Codex turn
+  has a longer provider deadline than the 30-second API transport, so each
+  reservation records its own deadline; a crashed worker's reservation expires on
+  that deadline instead of a single global one.
+* No account rotation, no account pool, no automatic credit purchase and no
+  silent switch to an API-key connection after an error or a quota block.
+* Only deliberately triggered work runs on this connection type. Automatic sync
+  summaries and unattended catalog analysis are blocked (`ai_codex_manual_only`).
+  A deliberate large-list analysis stays bounded, cancellable, and shows scope
+  and partial coverage before and after the run. Confirmed local cleanup rules
+  keep working without any model request.
+
+### Signing in and disconnecting
+
+The setup panel offers **Connect my ChatGPT account** only when the server
+reports a contained runtime. Choosing it asks for a connection name and nothing
+else: no address, no key, no model ID and no token parameter. Starting the
+sign-in shows the verification address supplied by the official flow and the
+one-time device code.
+
+* The address is checked against the documented targets (`auth.openai.com`,
+  `chatgpt.com`, `auth.chatgpt.com`) on the server and again in the browser. Any
+  other address is reported and never turned into a link.
+* Typing in the panel makes no network request. An attempt is bound to the
+  current account, its token version and the current session, and is limited to
+  five starts per owner and hour; clicking again supersedes the previous attempt
+  instead of opening another one.
+* Cancellation, expiry, refusal, a workspace without device-code sign-in, an
+  interrupted worker and success each produce a distinct localized message.
+* A success that arrives after sign-out, a session change or a cancellation is
+  discarded: the runtime is signed out again and nothing is kept.
+* Browser cookies and existing `auth.json` files from a developer or operator
+  profile are never imported.
+
+Disconnecting blocks new work, cancels queued and running jobs, ends the
+runtime, performs the documented sign-out and removes the local credential. If
+the remote sign-out cannot be confirmed, local access is still removed and the
+difference is reported so the account holder can review active sessions
+themselves. Deleting an account removes its credential records, attempt history
+and runtime directory.
+
+### Credential storage
+
+Codex writes its own credential file, which is not automatically covered by the
+database encryption. The manager therefore keeps it inside the identity's own
+`0700` runtime directory only while a runtime is live, writes it atomically, and
+seals it with the existing `ENCRYPTION_KEY`/`secret.key` between runs. A refresh
+performed during a turn or an account read is captured before teardown; a
+credential file left behind by a discarded or superseded attempt is never turned
+into a stored link. No credential appears in HTTP responses, local storage,
+telemetry, logs, user backups, clones or JSON exports. The server operator can
+read the application key by design; this is not encryption against the operator.
+
+### Models, requests and quota
+
+For a ChatGPT connection the model catalog comes from the Codex app server with
+pagination and bounded page counts. Candidates are marked from their reported
+input modalities; a model without text input is shown as a non-text candidate.
+Nothing is adopted automatically: the catalog default is recommended only once it
+has actually passed a test, and there are no hard-coded current model names and
+no silent substitution if a model disappears. There is no token-limit parameter
+for this type, so that control is hidden and the stored profile records none.
+
+Requests use the same bounded synthetic test first, then the real contracts of
+all eight functions, and structured answers are validated locally against the
+same feature contract. A cancellation, refusal, tool request, truncated JSON or
+faulty RPC event can never result in an applied list change. Available quota and
+reset time are shown only where the documented interface reports them, and stay
+**unknown** otherwise. No monetary price and no guaranteed number of remaining
+requests are shown or derived.
+
+Before activation the panel states that requests run on the account holder's own
+ChatGPT/Codex quota, that plan or workspace rules may restrict them, that data is
+processed externally by OpenAI under that account, and that no platform API key
+is required. The panel is fully localized in German, English, French and Greek.
+
+### Restart, failure and disabling
+
+A pending device-code sign-in lives only in the worker that started it; losing
+that worker ends the attempt (`ai_codex_login_interrupted`) rather than letting
+another worker adopt it. After a process failure a request that was already sent
+is never replayed automatically. Setting `AI_CODEX_ENABLED=false` (the default)
+stops the connection type from being offered and starts nothing; existing API
+connections, playback, playlists, EPG and provider sync are unaffected in every
+case.
+
 ## Validation and rollout
 
 See [development checks](DEVELOPMENT.md#ai-integration-checks) and
@@ -308,6 +487,6 @@ Synthetic tests establish application behavior; validate a configured model
 and real player setup separately before production enablement. Deployment,
 publishing and release tags are separate steps.
 
-Native ChatGPT, MCP and OAuth account integrations are not included. They are
-possible separate follow-up work requiring their own design, authorization and
-validation; an OpenAI-compatible API key connection does not implement them.
+The personal ChatGPT connection described above covers the account-linked case.
+Native MCP integrations and third-party OAuth connectors remain out of scope and
+would need their own design, authorization and validation.

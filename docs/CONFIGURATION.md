@@ -52,6 +52,39 @@ encryption. Keep that key backed up separately from the database; access to both
 allows decryption. Ordinary user backups, clones and system exports do not
 include AI connections. Re-enter credentials and retest after importing a user.
 
+## Optional personal ChatGPT connection
+
+A second, separate AI connection type lets each user and each administrator link
+**their own** ChatGPT account through the official Codex sign-in, without an
+OpenAI platform API key. It is **disabled by default** and is offered only when
+the server can prove that the Codex runtime is contained by an operating-system
+sandbox. It never replaces the API connection type described above.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AI_CODEX_ENABLED` | `false` | Master switch. While false, nothing is started and the connection type is not offered. |
+| `AI_CODEX_BIN` | `codex` | Path to the pinned Codex CLI. Its reported version must fall inside the tested range (see [AI setup](AI_INTEGRATION.md)). |
+| `AI_CODEX_RUNTIME_DIR` | `$DATA_DIR/ai-codex` | Root for per-identity runtime directories, created with mode `0700`. |
+| `AI_CODEX_SANDBOX` | `auto` | Isolation backend: `auto`, `bwrap`, `sandbox-exec`, or `none` to keep the adapter disabled. |
+| `AI_CODEX_ALLOW_DEV_SANDBOX` | `false` | Accept a development-grade backend (macOS `sandbox-exec`). Not intended for hosted multi-user operation. |
+| `AI_CODEX_VERSION_OVERRIDE` | unset | Accept one exact Codex version outside the tested range. Use only for a deliberate, separately validated upgrade. |
+
+On Linux the supported backend is **bubblewrap** (`bwrap`), which gives the
+runtime its own mount, PID, IPC, UTS and cgroup namespaces with only its own
+identity directory writable. Install it in the image or host (`apt-get install
+-y bubblewrap`) and keep the web process unprivileged; no Docker socket and no
+host administration rights are required or granted. On startup the server runs a
+canary self-test that must fail to read a file outside the sandbox and fail to
+write into `DATA_DIR`. If the backend is missing, the self-test fails, or the
+grade is only development, the adapter stays unavailable with a specific reason
+and the connection type is not offered.
+
+Credentials are stored encrypted with the same `ENCRYPTION_KEY`/`secret.key`.
+The Codex credential file exists in clear text only inside the identity's own
+`0700` directory while its runtime is live and is removed when it stops. The
+server operator can read the application key by design; this is not encryption
+against the operator.
+
 ## Network and Proxy
 
 - `TRUST_PROXY`: Express trust proxy setting. Use this behind a reverse proxy
