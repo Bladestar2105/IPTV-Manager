@@ -83,7 +83,7 @@ describe('Codex launcher location and interpreter', () => {
         fs.writeFileSync(inside, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         // Binding its directory would hand the runtime db.sqlite, secret.key and
         // every identity directory.
-        expect(isolation.unsafeLauncherMounts(inside)).toContain(fs.realpathSync.native(dataDir));
+        expect(isolation.unsafeLauncherMounts(inside)).toContain(inside);
         const nested = path.join(dataDir, 'bin', 'codex');
         fs.mkdirSync(path.dirname(nested), { recursive: true });
         fs.writeFileSync(nested, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -102,12 +102,27 @@ describe('Codex launcher location and interpreter', () => {
         // must keep it.
         expect(isolation.launcherInterpreter(scripted)).toBe(nodeDirectory);
         expect(isolation.launcherPath(scripted)).toContain(nodeDirectory);
-        expect(isolation.launcherMounts(scripted)).toContain(nodeDirectory);
+        // The interpreter is bound as a file, not as its whole directory.
+        expect(isolation.launcherMounts(scripted)).toContain(process.execPath);
+        expect(isolation.launcherMounts(scripted)).not.toContain(nodeDirectory);
         expect(isolation.sandboxEnvironment('/tmp/home', '/tmp/work', isolation.launcherPath(scripted)).PATH.split(':'))
             .toContain(nodeDirectory);
         // A compiled launcher needs no interpreter and gets no extra directory.
         expect(isolation.launcherInterpreter('/bin/sh')).toBeNull();
         expect(isolation.launcherPath('/bin/sh')).toEqual(['/usr/bin', '/bin', '/usr/sbin', '/sbin']);
+    });
+
+    it('never binds a launcher directory that holds unrelated application files', () => {
+        const serviceDirectory = path.join(runtimeDir, 'service');
+        fs.mkdirSync(serviceDirectory, { recursive: true });
+        const launcher = path.join(serviceDirectory, 'codex');
+        fs.writeFileSync(launcher, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        fs.writeFileSync(path.join(serviceDirectory, '.env'), 'SECRET=value\n', { mode: 0o600 });
+        const mounts = isolation.launcherMounts(launcher);
+        // Binding the directory would carry the sibling secret into the sandbox.
+        expect(mounts).toContain(launcher);
+        expect(mounts).not.toContain(serviceDirectory);
+        expect(mounts.every(mount => !mount.endsWith('.env'))).toBe(true);
     });
 });
 

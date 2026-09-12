@@ -320,10 +320,13 @@ the existing `chat/completions` transport.
   relative path, which the sandbox could not resolve from its own working
   directory — and the same path is both version-probed and launched, so an
   installation that only the host `PATH` can find cannot report itself available
-  and then fail inside the sandbox. Its directory, the interpreter of a
-  script launcher, the target of a symlinked launcher and that target's package
-  root are bound read-only when they live outside the standard system roots and
-  are kept on the sandbox `PATH`, which is what a global npm install needs; the
+  and then fail inside the sandbox. The executable itself, the file a
+  symlink points at and the interpreter of a script launcher are bound read-only
+  as individual files, never as their directories, so a launcher sitting beside
+  unrelated application files such as a mounted `.env` does not carry them into
+  the sandbox. Only a resolved package root is bound as a directory, because a
+  packaged launcher needs the files it ships with. Those locations are kept on
+  the sandbox `PATH`, which is what a global npm install needs; the
   version probe uses that same `PATH`, so a launcher the probe can start is one
   the sandbox can start. A launcher placed in or above the data directory is
   refused outright (`AI_CODEX_BINARY_UNSAFE_LOCATION`), because mounting it would

@@ -63,18 +63,20 @@ export function launcherInterpreter(binary) {
     return /(^|[\s/])node[0-9.]*(\s|$)/.test(header.split('\n')[0]) ? path.dirname(process.execPath) : null;
 }
 
-// Directories the launcher itself needs inside the namespace. A globally
-// installed Codex is commonly a symlink from a bin directory into a package
-// tree, so binding only the bin directory leaves the actual program and the
-// files it ships with outside the sandbox.
+// What the launcher itself needs inside the namespace, kept as narrow as
+// possible: the executable file, the file a symlink points at, and its
+// interpreter — never their directories, because a launcher commonly sits beside
+// unrelated application files such as a mounted `.env` or an `.npmrc`. Only a
+// resolved package tree is bound as a directory, because a packaged launcher
+// genuinely needs the files it ships with.
 export function launcherMounts(binary) {
     if (!binary) return [];
-    const mounts = [path.dirname(binary)];
+    const mounts = [binary];
     const interpreter = launcherInterpreter(binary);
-    if (interpreter) mounts.push(interpreter);
+    if (interpreter) mounts.push(process.execPath);
     const real = realPath(binary);
     if (real !== binary) {
-        mounts.push(path.dirname(real));
+        mounts.push(real);
         // Walk up to the package root so a launcher's sibling files and vendored
         // binaries come with it.
         let candidate = path.dirname(real);
@@ -101,6 +103,8 @@ export function unsafeLauncherMounts(binary) {
 // can start too.
 export function launcherPath(binary) {
     if (!binary) return [...STANDARD_PATH];
+    // Only the launcher's and interpreter's own directories, which contain
+    // nothing else inside the namespace because the binds above are file-level.
     const extra = [path.dirname(binary), launcherInterpreter(binary)]
         .filter(directory => directory && !STANDARD_PATH.includes(directory));
     return [...new Set([...extra, ...STANDARD_PATH])];

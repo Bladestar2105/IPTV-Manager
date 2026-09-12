@@ -115,7 +115,7 @@ function violationSink() {
     };
 }
 
-export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed } = {}) {
+export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true } = {}) {
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
@@ -125,7 +125,7 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
         const paths = hydrate(ownerKey, connectionId);
         const sink = violationSink();
         const description = spawnDescription(isolation, paths, availability.binary);
-        session = { paths, sink, leaseId, ownerKey, connectionId, availability, heartbeat: null, stopped: false, onTurnEvent: null };
+        session = { paths, sink, leaseId, ownerKey, connectionId, availability, heartbeat: null, stopped: false, onTurnEvent: null, sealOnStop };
         const client = createClient({
             file: description.file,
             args: description.args,
@@ -168,10 +168,15 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
     }
 }
 
-export function stopRuntime(session, reason = 'AI_CODEX_RUNTIME_CLOSED', { keepCredentials = true } = {}) {
+export function stopRuntime(session, reason = 'AI_CODEX_RUNTIME_CLOSED', options = {}) {
     if (!session || session.stopped) return;
     session.stopped = true;
     clearInterval(session.heartbeat);
+    // A runtime started for a sign-in never seals, however it ends. Its
+    // credential file belongs to an account that has not been adopted, and a
+    // refresh-only seal would let it replace an existing one while keeping the
+    // previous account's fingerprint.
+    const keepCredentials = options.keepCredentials ?? session.sealOnStop ?? true;
     // Capture a token the runtime refreshed during this session before the
     // plaintext copy is removed.
     if (keepCredentials) { try { seal(session.ownerKey, session.connectionId, {}, { refreshOnly: true }); } catch { /* sealing is best effort on shutdown */ } }

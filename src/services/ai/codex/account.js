@@ -253,6 +253,9 @@ export async function startAccountLink(actor, connection, fingerprint) {
     let session;
     try {
         session = await startRuntime(ownerKey, connection.id, {
+            // Every close path of a sign-in runtime discards its credential file,
+            // including a crash before any completion notification.
+            sealOnStop: false,
             onNotification: (method, params) => {
                 if (method === 'account/login/completed') completeLogin(row, ownerKey, connection.id, params).catch(() => null);
             },

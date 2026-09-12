@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+import crypto, { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import db from '../../../database/db.js';
@@ -170,6 +170,25 @@ function liveDirectories() {
 // A worker that is killed never runs its teardown, so the plaintext credential
 // it hydrated stays on disk and would otherwise reach a data-directory backup.
 // Any identity whose runtime is no longer leased has no reason to hold one.
+// Cleanup takes the identity's runtime lease for the duration of the removal, so
+// a worker cannot acquire it and hydrate a credential in the window between
+// observing "no lease" and deleting the files. Both sides claim the lease in an
+// immediate transaction on the same table, so they serialize.
+function withCleanupLease(ownerKey, connectionId, run) {
+    const leaseId = `cleanup-${randomUUID()}`;
+    const now = Date.now();
+    const claimed = db.transaction(() => {
+        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND expires_at < ?').run(ownerKey, connectionId, now);
+        if (db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId)) return false;
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run(ownerKey, connectionId, leaseId, process.pid, 'cleanup', now + 30000, now);
+        return true;
+    }).immediate();
+    if (!claimed) return null;
+    try { return run(); }
+    finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?').run(ownerKey, connectionId, leaseId); }
+}
+
 function clearIdentityPlaintext(ownerKey, connectionId) {
     const paths = identityPaths(ownerKey, connectionId);
     if (!fs.existsSync(paths.authFile) && !fs.existsSync(`${paths.authFile}.tmp`)) return false;
@@ -178,13 +197,9 @@ function clearIdentityPlaintext(ownerKey, connectionId) {
 }
 
 function clearAbandonedPlaintext() {
-    const now = Date.now();
     let cleared = 0;
     for (const row of db.prepare('SELECT owner_key,connection_id FROM ai_codex_credentials').all()) {
-        const leased = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND expires_at > ?')
-            .get(row.owner_key, row.connection_id, now);
-        if (leased) continue;
-        if (clearIdentityPlaintext(row.owner_key, row.connection_id)) cleared += 1;
+        if (withCleanupLease(row.owner_key, row.connection_id, () => clearIdentityPlaintext(row.owner_key, row.connection_id))) cleared += 1;
     }
     return cleared;
 }
@@ -230,9 +245,25 @@ export function releaseWorkerRuntimes(workerPid) {
     // sealed it, so it has no record for the credential-driven pass to find. Its
     // own leases are the only trace of those identities.
     const held = db.prepare('SELECT owner_key,connection_id FROM ai_codex_runtimes WHERE worker_pid=?').all(workerPid);
-    const leases = db.prepare('DELETE FROM ai_codex_runtimes WHERE worker_pid=?').run(workerPid).changes;
+    let leases = 0;
     let cleared = 0;
-    for (const row of held) { if (clearIdentityPlaintext(row.owner_key, row.connection_id)) cleared += 1; }
+    for (const row of held) {
+        // Releasing the dead worker's lease and taking the cleanup lease happen in
+        // one step, so no other worker can slip in and hydrate between them.
+        const replaced = db.transaction(() => {
+            const removed = db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND worker_pid=?')
+                .run(row.owner_key, row.connection_id, workerPid).changes;
+            if (!removed) return 0;
+            db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+                .run(row.owner_key, row.connection_id, `cleanup-${randomUUID()}`, process.pid, 'cleanup', Date.now() + 30000, Date.now());
+            return removed;
+        }).immediate();
+        if (!replaced) continue;
+        leases += replaced;
+        try { if (clearIdentityPlaintext(row.owner_key, row.connection_id)) cleared += 1; }
+        finally { db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND state='cleanup'").run(row.owner_key, row.connection_id); }
+    }
+    leases += db.prepare('DELETE FROM ai_codex_runtimes WHERE worker_pid=?').run(workerPid).changes;
     return { leases, cleared: cleared + clearAbandonedPlaintext() };
 }
 

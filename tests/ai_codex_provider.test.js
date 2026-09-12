@@ -652,12 +652,15 @@ describe('personal ChatGPT runtime robustness', () => {
         fs.rmSync(launcher, { force: true });
         fs.symlinkSync(target, launcher);
         // Mounts use the kernel-resolved path, which on macOS differs from the
-        // symlinked temporary path the test built.
+        // symlinked temporary path the test built. The launcher and its target
+        // are bound as files; only the package root is a directory, because a
+        // packaged launcher needs the files it ships with.
         const real = candidate => fs.realpathSync.native(candidate);
         const mounts = isolation.launcherMounts(launcher);
-        expect(mounts).toContain(binDirectory);
-        expect(mounts).toContain(real(path.dirname(target)));
+        expect(mounts).toContain(launcher);
+        expect(mounts).toContain(real(target));
         expect(mounts).toContain(real(packageRoot));
+        expect(mounts).not.toContain(binDirectory);
         // The launcher's own directory also has to be on the sandbox PATH, since
         // a wrapper script commonly executes a sibling interpreter.
         expect(isolation.sandboxEnvironment('/tmp/home', '/tmp/work', [binDirectory]).PATH.startsWith(`${binDirectory}:`)).toBe(true);
@@ -1016,6 +1019,40 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(after.encrypted_blob).toBe(before.encrypted_blob);
         expect(after.account_hash).toBe(before.account_hash);
         expect(after.account_label).toBe(before.account_label);
+    }, 30000);
+
+    it('never seals when a sign-in runtime crashes on an already linked connection', async () => {
+        const connection = await linkedConnection();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        // A second sign-in writes its own credential file, then the child dies
+        // before any completion notification.
+        fake({ login: 'success', loginDelayMs: 60, exitAfterLogin: true, exitAfterLoginMs: 400, email: 'someone.else@example.org' });
+        try { await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'); } catch { /* the crash may surface here */ }
+        await until(() => !runtime.liveRuntime('user:1', connection.id), 15000);
+        const after = credentials.readCredentialRecord('user:1', connection.id);
+        // The unadopted token must not replace the stored one behind the old
+        // fingerprint and label.
+        expect(after.version).toBe(before.version);
+        expect(after.encrypted_blob).toBe(before.encrypted_blob);
+        expect(after.account_hash).toBe(before.account_hash);
+    }, 30000);
+
+    it('does not delete the files of a runtime that starts while cleanup runs', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            // The runtime holds the lease, so cleanup cannot claim it and must
+            // leave its hydrated credential and work directory intact.
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+            expect(credentials.sweepOrphans().cleared).toBe(0);
+            expect(credentials.releaseWorkerRuntimes(999999)).toMatchObject({ cleared: 0 });
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+            expect(fs.existsSync(session.paths.workDir)).toBe(true);
+        } finally { runtime.stopRuntime(session); }
+        // Cleanup releases its own lease again, so the next start is not blocked.
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        const next = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(next);
     }, 30000);
 
     it('stops a runtime whose lease was revoked by another worker', async () => {
