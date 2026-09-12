@@ -548,9 +548,11 @@ export const deleteUser = async (req, res) => {
     // A personal ChatGPT runtime keeps using this account's credential until it
     // is told to stop, so it is ended and acknowledged before anything is
     // removed. Deletion must not return while that use is still in progress.
+    // Only stopped here, not removed: deleting the credential is irreversible and
+    // the transaction below can still fail.
     try {
-      const {purgeAccountRuntimes} = await import('../services/ai/codex/account.js');
-      await purgeAccountRuntimes(`user:${id}`);
+      const {stopAccountRuntimes} = await import('../services/ai/codex/account.js');
+      await stopAccountRuntimes(`user:${id}`);
     } catch { /* Optional runtime cleanup never blocks an account deletion. */ }
     const ownedProviderUrls = db.prepare('SELECT url FROM providers WHERE user_id = ?').all(id).map(p => p.url);
 
@@ -604,8 +606,8 @@ export const deleteUser = async (req, res) => {
     deleted = true;
 
     clearChannelsCache(id);
-    // Database triggers remove the account's AI records; anything the runtime
-    // teardown above could not reach yet is swept here.
+    // The deletion committed, so removing the credential and the runtime tree is
+    // safe. Database triggers have already removed the account's AI records.
     try { purgeAiRuntimeIdentity(`user:${id}`); }
     catch { /* Optional runtime cleanup never fails an account deletion. */ }
     res.json({success: true});

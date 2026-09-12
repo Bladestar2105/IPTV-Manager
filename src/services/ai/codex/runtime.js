@@ -60,9 +60,14 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
 // the same transaction that inserts the lease.
 function identityStillEligible(ownerKey, connectionId, allowTeardown) {
     const [kind, id] = ownerKey.split(':');
-    const table = kind === 'admin' ? 'admin_users' : 'users';
-    const account = db.prepare(`SELECT is_active FROM ${table} WHERE id=?`).get(Number(id));
+    const admin = kind === 'admin';
+    const table = admin ? 'admin_users' : 'users';
+    // Every access field the rest of the subsystem checks, not just the account
+    // being present: Web UI access can be revoked and an account can expire while
+    // an authorized request is still waiting for its runtime.
+    const account = db.prepare(`SELECT is_active${admin ? '' : ',webui_access,expiry_date'} FROM ${table} WHERE id=?`).get(Number(id));
     if (!account?.is_active) return false;
+    if (!admin && (!account.webui_access || (account.expiry_date && account.expiry_date < Date.now() / 1000))) return false;
     const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
     if (!connection) return false;
     if (allowTeardown) return true;

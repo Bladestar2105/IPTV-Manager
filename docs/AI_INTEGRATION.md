@@ -417,8 +417,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   credential, runtime directory and session.
 * Granting a lease is the last point at which a request can be stopped, because
   by then it has long passed its own authorization. The owner must still exist
-  and be active and the connection must exist and not be tearing down, checked in
-  the same transaction that inserts the lease; only the teardown that owns the
+  still satisfy every access field the rest of the subsystem checks — active,
+  Web UI access, not expired — and the connection must exist and not be tearing
+  down, all checked in the same transaction that inserts the lease; only the teardown that owns the
   marker is exempt. Ownership is verified once more after the handshake, because
   that can outlast a revocation's wait, and a session is never handed to its
   caller once its identity has been released.
@@ -522,7 +523,10 @@ all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting an account revokes its access before anything is torn down, so no
-request that starts during the teardown can still reach the credential. Deleting
+request that starts during the teardown can still reach the credential. Its
+runtimes are only stopped at that point; the credential and the runtime tree are
+removed after the deletion has committed, because that removal is irreversible
+and a deletion that fails must not cost the account its link. Deleting
 a connection follows the same path before its row disappears, so a
 runtime never keeps using a credential whose connection is already gone. It sets the same
 marker first and keeps it, because the connection is going away. Deleting

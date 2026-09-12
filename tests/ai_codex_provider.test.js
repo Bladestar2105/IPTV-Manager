@@ -1284,6 +1284,8 @@ describe('personal ChatGPT runtime ownership', () => {
 
     it.each([
         ['the account was deactivated', async connectionId => { void connectionId; db.prepare('UPDATE users SET is_active=0 WHERE id=1').run(); }],
+        ['Web UI access was revoked', async connectionId => { void connectionId; db.prepare('UPDATE users SET webui_access=0 WHERE id=1').run(); }],
+        ['the account expired', async connectionId => { void connectionId; db.prepare('UPDATE users SET expiry_date=? WHERE id=1').run(Math.floor(Date.now() / 1000) - 60); }],
         ['the connection is tearing down', async connectionId => { ai.adjustConnectionTeardown('user:1', connectionId, 1); }],
         ['the connection is gone', async connectionId => { db.prepare('DELETE FROM ai_connections WHERE id=?').run(connectionId); }]
     ])('refuses a lease to a pre-authorized request once %s', async (_label, revoke) => {
@@ -1292,7 +1294,7 @@ describe('personal ChatGPT runtime ownership', () => {
         // Granting the lease is the last point at which such a request can be
         // stopped; it passed its own authorization long before.
         await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
-        db.prepare('UPDATE users SET is_active=1 WHERE id=1').run();
+        db.prepare('UPDATE users SET is_active=1, webui_access=1, expiry_date=NULL WHERE id=1').run();
     }, 30000);
 
     it('refuses a session whose lease was taken while it was starting', async () => {
@@ -1420,10 +1422,15 @@ describe('personal ChatGPT runtime ownership', () => {
         // teardown that follows.
         db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(1);
         expect(thrown(() => jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'revoked-key-00001')).status).toBe(403);
-        await account.purgeAccountRuntimes('user:1');
+        await account.stopAccountRuntimes('user:1');
         expect(session.stopped).toBe(true);
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        // Stopping is not removing: a deletion that fails afterwards must not have
+        // destroyed the account's link.
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeTruthy();
+        credentials.purgeIdentity('user:1');
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        db.prepare('UPDATE users SET is_active=1 WHERE id=1').run();
     }, 30000);
 
     it('revokes a runtime that wins the lease after the unlink scan', async () => {

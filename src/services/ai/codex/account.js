@@ -524,9 +524,11 @@ export async function readAccountState(actor, connection) {
     return state;
 }
 
-// Ends every runtime of an account before its runtime state is removed, so a
-// deletion never returns while a child is still using that account's credential.
-export async function purgeAccountRuntimes(ownerKey) {
+// Ends every runtime of an account without removing anything, so a deletion never
+// returns while a child is still using that account's credential. Removing the
+// credential itself is deliberately separate: it is irreversible, and a deletion
+// that fails afterwards must not have destroyed the account's link.
+export async function stopAccountRuntimes(ownerKey) {
     for (const row of db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN ('starting','pending')").all(ownerKey)) {
         finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
         releaseAttempt(row.id);
@@ -540,6 +542,12 @@ export async function purgeAccountRuntimes(ownerKey) {
             db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, row.connection_id);
         }
     }
+}
+
+// Stops everything and then removes it. Only for callers that have already
+// committed to losing the account's link.
+export async function purgeAccountRuntimes(ownerKey) {
+    await stopAccountRuntimes(ownerKey);
     purgeIdentity(ownerKey);
 }
 
