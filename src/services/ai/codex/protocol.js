@@ -25,7 +25,7 @@ export function codexError(code, message, status = 502) {
     return Object.assign(new Error(message || code), { code, status });
 }
 
-export function createClient({ file, args, env, cwd, onNotification, onViolation } = {}) {
+export function createClient({ file, args, env, cwd, onNotification, onViolation, onClose } = {}) {
     const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     const pending = new Map();
     const state = { closed: false, closeReason: null, budget: DEFAULT_BUDGET_BYTES, nextId: 1, diagnostics: '' };
@@ -35,12 +35,22 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
         for (const [, entry] of pending) { clearTimeout(entry.timer); entry.reject(error); }
         pending.clear();
     };
+    // Reported once, however the runtime ended, so its owner can release the
+    // lease and finish whatever was waiting on it instead of holding a dead
+    // process open until a timeout.
+    let closeReported = false;
+    const reportClose = reason => {
+        if (closeReported) return;
+        closeReported = true;
+        queueMicrotask(() => onClose?.(reason));
+    };
     const fail = (code, message) => {
         if (state.closed) return;
         state.closed = true;
         state.closeReason ||= code;
         try { child.kill('SIGKILL'); } catch { /* already gone */ }
         settleAll(codexError(code, message));
+        reportClose(code);
     };
     const write = payload => {
         if (state.closed) throw codexError('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime is not available.');
@@ -151,6 +161,7 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
             const hard = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, 3000);
             hard.unref?.();
             settleAll(codexError(reason, 'Codex runtime was stopped.'));
+            reportClose(reason);
         }
     };
 }

@@ -442,7 +442,10 @@ one-time device code.
   different worker the replacement waits briefly for its runtime to be handed
   over, and refuses without recording an attempt if it is not.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
-  interrupted worker and success each produce a distinct localized message.
+  interrupted worker and success each produce a distinct localized message. A
+  runtime that dies after issuing the device code ends its attempt immediately
+  and releases its lease, rather than reporting the sign-in as still running
+  until the fifteen-minute expiry.
 * An attempt belongs to the browser session that started it. Only that session
   can poll it, and its polling is what keeps the attempt alive: sign-out in this
   application is client side and does not invalidate the token, so a session that

@@ -213,14 +213,21 @@ export async function startAccountLink(actor, connection, fingerprint) {
         session = await startRuntime(ownerKey, connection.id, {
             onNotification: (method, params) => {
                 if (method === 'account/login/completed') completeLogin(row, ownerKey, connection.id, params).catch(() => null);
-            }
+            },
+            // The runtime can die after issuing the device code and before any
+            // completion. Nothing can finish the sign-in then, so it is reported
+            // at once instead of waiting out the fifteen-minute expiry.
+            onClosed: () => { finishLogin(id, 'failed', 'ai_codex_login_interrupted'); releaseAttempt(id); }
         });
         const timer = setTimeout(() => { finishLogin(id, 'expired', 'ai_codex_login_expired'); releaseAttempt(id); }, LOGIN_TTL_MS);
         timer.unref?.();
         attempts.set(id, { session, timer, watchdog: watchAttempt(id) });
         const device = await startDeviceLogin(session);
-        db.prepare("UPDATE ai_codex_logins SET login_id=?,status='pending',verification_url=?,user_code=?,updated_at=? WHERE id=? AND status='starting'")
+        const opened = db.prepare("UPDATE ai_codex_logins SET login_id=?,status='pending',verification_url=?,user_code=?,updated_at=? WHERE id=? AND status='starting'")
             .run(device.loginId, device.verificationUrl, device.userCode, Date.now(), id);
+        // The attempt may already have been ended while the device code was being
+        // fetched; reporting it as pending would be untrue.
+        if (!opened.changes) throw aiError('AI_CODEX_RUNTIME_CLOSED', 503);
         row.login_id = device.loginId;
         return { id, status: 'pending', verification_url: device.verificationUrl, user_code: device.userCode, expires_at: now + LOGIN_TTL_MS };
     } catch (error) {
@@ -242,7 +249,15 @@ export function readLoginStatus(actor, connection, id, fingerprint = null) {
     const row = loginRow(connection.owner_key, connection.id, id);
     if (fingerprint && row.session_hash !== fingerprint) throw aiError('AI_NOT_FOUND', 404);
     if (ACTIVE_STATUSES.includes(row.status)) {
-        if (!attempts.has(row.id) && !runtimeState(connection.owner_key, connection.id)) {
+        // A local attempt whose runtime already closed can never complete, even
+        // while its lease is still being refreshed elsewhere.
+        const localAttempt = attempts.get(row.id);
+        if (localAttempt?.session?.client?.closed) {
+            finishLogin(row.id, 'failed', 'ai_codex_login_interrupted');
+            releaseAttempt(row.id);
+            return { ...publicLogin(row), status: 'failed', error_code: 'ai_codex_login_interrupted' };
+        }
+        if (!localAttempt && !runtimeState(connection.owner_key, connection.id)) {
             finishLogin(row.id, 'failed', 'ai_codex_login_interrupted');
             return { ...publicLogin(row), status: 'failed', error_code: 'ai_codex_login_interrupted' };
         }

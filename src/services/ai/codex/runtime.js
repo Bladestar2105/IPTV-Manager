@@ -105,7 +105,7 @@ function violationSink() {
     };
 }
 
-export async function startRuntime(ownerKey, connectionId, { onNotification } = {}) {
+export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed } = {}) {
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
@@ -125,11 +125,18 @@ export async function startRuntime(ownerKey, connectionId, { onNotification } = 
                 session.onTurnEvent?.(method, params);
                 onNotification?.(method, params);
             },
-            onViolation: sink.record
+            onViolation: sink.record,
+            // A runtime whose child died must not keep its lease alive; whatever
+            // was waiting on it is told immediately rather than after a timeout.
+            onClose: reason => {
+                stopRuntime(session, reason);
+                onClosed?.(reason);
+            }
         });
         session.client = client;
         await handshake(client, paths, availability.version);
         session.heartbeat = setInterval(() => {
+            if (session.client.closed) return stopRuntime(session, session.client.closeReason || 'AI_CODEX_RUNTIME_CLOSED');
             if (!refreshLease(ownerKey, connectionId, leaseId)) stopRuntime(session, 'AI_CODEX_LEASE_LOST');
         }, HEARTBEAT_MS);
         session.heartbeat.unref?.();

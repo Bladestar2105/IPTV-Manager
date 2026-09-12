@@ -119,6 +119,9 @@ function handle(message) {
                 userCode: config.userCode || 'ABCD-1234'
             };
             reply(response);
+            // Models a runtime that dies after handing out the device code and
+            // before any completion notification.
+            if (config.exitAfterLogin) { later(config.exitAfterLoginMs ?? 40, () => process.exit(1)); return undefined; }
             const outcome = config.login || 'success';
             if (outcome === 'pending') return undefined;
             const succeed = loginId => {

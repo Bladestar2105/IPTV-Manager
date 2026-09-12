@@ -440,6 +440,26 @@ describe('personal ChatGPT runtime robustness', () => {
         } finally { runtime.stopRuntime(session); }
     });
 
+    it('fails a sign-in whose runtime dies after issuing the device code', async () => {
+        fake({ exitAfterLogin: true, exitAfterLoginMs: 40, recordPath, recordApprovalPath: approvalPath });
+        const connection = createConnection();
+        let started = null;
+        try { started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'); }
+        catch (error) { expect(error.code).toMatch(/^AI_CODEX_RUNTIME_/); }
+        // Nothing can complete the sign-in, so it must not keep reporting pending
+        // until the fifteen-minute expiry.
+        await until(() => db.prepare("SELECT status FROM ai_codex_logins WHERE owner_key='user:1'").get()?.status !== 'pending');
+        const row = db.prepare("SELECT status,error_code FROM ai_codex_logins WHERE owner_key='user:1'").get();
+        expect(row).toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
+        if (started) {
+            expect(account.readLoginStatus(user, ownedRecord(user, connection.id), started.id, 'fp'))
+                .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
+        }
+        // The lease is released, so the account holder can start again at once.
+        await until(() => runtime.runtimeState('user:1', connection.id) === null);
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
     it('leaves a live runtime\'s plaintext credential alone', async () => {
         const connection = await linkedConnection();
         const session = await runtime.startRuntime('user:1', connection.id);
