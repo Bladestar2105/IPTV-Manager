@@ -229,13 +229,25 @@ export function deleteConnection(actor,id) { owned(actor,id); db.prepare('DELETE
 // for the owning worker to acknowledge and signs out before the row disappears;
 // otherwise the deletion trigger drops the lease while a runtime is still using
 // the credential, and the request returns before that use has stopped.
+// Blocks every path that would start work on a connection for the duration of an
+// unlink or a deletion. Without it, work started after the teardown scan has its
+// runtime removed underneath it.
+export function setConnectionTeardown(ownerKey,id,active) {
+    const connection=loadConnection(id);
+    if (!connection || connection.owner_key!==ownerKey) return null;
+    if (Boolean(connection.teardown)===Boolean(active)) return connection;
+    const next={...connection,teardown:Boolean(active)};
+    if (!next.teardown) delete next.teardown;
+    persist(next,connection.version);
+    return loadConnection(id);
+}
 export async function removeConnection(actor,id) {
     let connection=owned(actor,id);
     if (adapterFor(connection).supportsAccountLink) {
         // Marked before anything is torn down: a sign-in started after the
         // teardown scan would otherwise take the lease of a connection that is
         // about to disappear, and its credential file would outlive it.
-        persist({...connection,deleting:true},connection.version);
+        setConnectionTeardown(connection.owner_key,id,true);
         connection=loadConnection(id);
         const {disconnectAccount}=await import('./codex/account.js');
         try { await disconnectAccount(actor,connection); } catch { /* removal proceeds even when the sign-out fails */ }
@@ -263,13 +275,13 @@ export function requireLinkedAccount(connection) {
 // the same server enablement and allowed-user gate as every other setup path;
 // it is relaxed only for cancelling an attempt and for disconnecting, so a
 // revoked account can never be stranded with a stored sign-in it cannot remove.
-export function ownedAccountConnection(actor,id,{requirePolicy=true,allowDeleting=false}={}) {
+export function ownedAccountConnection(actor,id,{requirePolicy=true,allowTeardown=false}={}) {
     if (requirePolicy) requireAiFeatureAccess(actor,'setup');
     const connection=owned(actor,id);
     if (!adapterFor(connection).supportsAccountLink) throw aiError('AI_INVALID_INPUT');
     // A connection being torn down accepts no new sign-in, so one cannot start
-    // between the teardown and the deletion and be orphaned by it.
-    if (connection.deleting && !allowDeleting) throw aiError('AI_CONNECTION_CHANGED',409);
+    // between the teardown and its completion and be orphaned by it.
+    if (connection.teardown && !allowTeardown) throw aiError('AI_CONNECTION_CHANGED',409);
     return connection;
 }
 // Identity of the account currently linked to a connection, used to bind a
@@ -301,8 +313,8 @@ export function requireAiAccess(actor,feature,connectionId=null,{requireModel=tr
     if (!canUse(actor,connection,policy)) throw aiError('AI_FORBIDDEN',403);
     if (!connection.enabled) throw aiError('AI_DISABLED',403);
     // A connection being torn down starts no further work of any kind, so a
-    // discovery, test, job or inference cannot begin under a deletion.
-    if (connection.deleting) throw aiError('AI_CONNECTION_CHANGED',409);
+    // discovery, test, job or inference cannot begin under an unlink or deletion.
+    if (connection.teardown) throw aiError('AI_CONNECTION_CHANGED',409);
     if (feature !== 'setup' && !connection.functions.includes(feature)) throw aiError('AI_FORBIDDEN',403);
     const model=connection.owner_key === ownerKey(actor) && prefs.connection_id===connection.id ? prefs.model_id || connection.model_id : connection.model_id;
     if (feature !== 'setup' && (requireModel || feature !== 'diagnose') && (!model || !testedProfile(connection,model))) throw aiError('AI_MODEL_REQUIRED');

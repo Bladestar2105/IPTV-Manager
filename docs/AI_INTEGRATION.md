@@ -493,8 +493,11 @@ one-time device code.
 * Browser cookies and existing `auth.json` files from a developer or operator
   profile are never imported.
 
-Disconnecting blocks new work, cancels queued and running jobs and ends the
-runtime. A runtime owned by another worker is stopped by marking its lease
+Disconnecting marks the connection as being torn down for the whole operation, so
+no sign-in, discovery, compatibility test, queued job or inference can start
+after its scan and have its runtime removed underneath it; the marker is cleared
+again when the unlink finishes, because the connection itself survives. It then
+cancels queued and running jobs and ends the runtime. A runtime owned by another worker is stopped by marking its lease
 revoked; that worker's guard sees this within a second and releases the lease,
 and only that release counts as an acknowledgement that it has actually stopped.
 The sign-out runs after the acknowledgement, so two runtimes never share one
@@ -503,10 +506,8 @@ all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting a connection follows the same path before its row disappears, so a
-runtime never keeps using a credential whose connection is already gone. It is
-marked as being deleted first, and that mark rejects every kind of work — sign-in,
-discovery, compatibility test, queued job and inference — so nothing can start
-between the teardown and the deletion and be orphaned by it. Deleting
+runtime never keeps using a credential whose connection is already gone. It sets the same
+marker first and keeps it, because the connection is going away. Deleting
 an account does the same for every runtime it owns before removing its credential
 records, attempt history and runtime directory.
 

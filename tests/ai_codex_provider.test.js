@@ -1281,6 +1281,31 @@ describe('personal ChatGPT runtime ownership', () => {
         } finally { runtime.stopRuntime(session); }
     }, 30000);
 
+    it('blocks new work for the whole unlink, not only until its scan', async () => {
+        const connection = await withModel();
+        // The teardown marker has to be visible to other requests while the
+        // unlink runs, or one can take the lease right after its scan.
+        let observed = null;
+        fake({ logout: 'fail', recordPath, recordApprovalPath: approvalPath });
+        const disconnecting = account.disconnectAccount(user, ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true }));
+        await until(() => {
+            try { ai.requireAiAccess(user, 'search', connection.id); return false; }
+            catch (error) { observed = error.code; return error.code === 'AI_CONNECTION_CHANGED'; }
+        }, 8000);
+        expect(observed).toBe('AI_CONNECTION_CHANGED');
+        await disconnecting;
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('clears the teardown marker again when an unlink finishes', async () => {
+        const connection = await linkedConnection();
+        await account.disconnectAccount(user, ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true }));
+        // The connection survives an unlink, so it must be usable again.
+        const stored = JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json);
+        expect(stored.teardown).toBeUndefined();
+        expect(() => ai.ownedAccountConnection(user, connection.id)).not.toThrow();
+    }, 30000);
+
     it('waits for the owning worker to acknowledge a revoked lease before signing out', async () => {
         const connection = await withModel();
         await seedLease(connection.id, 'other-worker');
@@ -1339,7 +1364,7 @@ describe('personal ChatGPT runtime ownership', () => {
         const connection = await withModel();
         const raw = JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json);
         db.prepare('UPDATE ai_connections SET data_json=?, version=version+1 WHERE id=?')
-            .run(JSON.stringify({ ...raw, deleting: true }), connection.id);
+            .run(JSON.stringify({ ...raw, teardown: true }), connection.id);
         // Not only sign-ins: discovery, tests, jobs and inference must not start
         // under a deletion either, or the teardown removes their runtime.
         await expect(ai.discoverModels(user, connection.id)).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
@@ -1356,10 +1381,10 @@ describe('personal ChatGPT runtime ownership', () => {
         // teardown scan and the deletion and be orphaned by it.
         const raw = JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json);
         db.prepare('UPDATE ai_connections SET data_json=?, version=version+1 WHERE id=?')
-            .run(JSON.stringify({ ...raw, deleting: true }), connection.id);
+            .run(JSON.stringify({ ...raw, teardown: true }), connection.id);
         expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_CONNECTION_CHANGED');
         // Disconnecting stays reachable so the teardown itself can run.
-        expect(ai.ownedAccountConnection(user, connection.id, { requirePolicy: false, allowDeleting: true }).id).toBe(connection.id);
+        expect(ai.ownedAccountConnection(user, connection.id, { requirePolicy: false, allowTeardown: true }).id).toBe(connection.id);
         expect(await ai.removeConnection(user, connection.id)).toEqual({ deleted: true });
         expect(ai.listConnections(user).some(item => item.id === connection.id)).toBe(false);
     }, 30000);
