@@ -63,7 +63,10 @@ let redisClient = null;
     // Personal ChatGPT runtimes: remove directories left behind by deleted
     // accounts, connections or interrupted sign-ins before workers start.
     try {
-      const {sweepOrphans} = await import('./services/ai/codex/credentials.js');
+      const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
+      // No sign-in or runtime lease survives a restart, so mark them interrupted
+      // first; the sweep then sees an accurate set of directories still in use.
+      resetInterruptedRuntimes();
       sweepOrphans();
     } catch { /* An unavailable optional runtime never blocks startup. */ }
 

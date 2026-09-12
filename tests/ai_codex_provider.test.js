@@ -636,6 +636,53 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(result).toEqual({ disconnected: true, remote_logout: true });
     });
 
+    it('keeps another account\'s running sign-in when a user is deleted', async () => {
+        fake({ login: 'pending' });
+        const mine = createConnection(user);
+        const started = await account.startAccountLink(user, ownedRecord(user, mine.id), 'fp');
+        const paths = credentials.identityPaths('user:1', mine.id);
+        expect(fs.existsSync(paths.codexHome)).toBe(true);
+        // An administrator deletes an unrelated account while this sign-in runs.
+        credentials.purgeIdentity('user:2');
+        expect(fs.existsSync(paths.codexHome)).toBe(true);
+        // A sign-in in progress holds no credential record yet, so a sweep must
+        // still treat its directory as in use.
+        credentials.sweepOrphans();
+        expect(fs.existsSync(paths.codexHome)).toBe(true);
+        expect(account.readLoginStatus(user, ownedRecord(user, mine.id), started.id).status).toBe('pending');
+        await account.cancelAccountLink(user, ownedRecord(user, mine.id), started.id);
+    });
+
+    it('removes only the deleted account\'s own runtime tree', async () => {
+        const mine = await linkedConnection(user);
+        fake({ email: 'second.tester@example.org' });
+        const theirs = createConnection(other);
+        const { state } = await link(other, theirs);
+        expect(state.status).toBe('completed');
+        const minePaths = credentials.identityPaths('user:1', mine.id);
+        const theirPaths = credentials.identityPaths('user:2', theirs.id);
+        expect(minePaths.ownerRoot).not.toBe(theirPaths.ownerRoot);
+        credentials.purgeIdentity('user:2');
+        expect(fs.existsSync(theirPaths.ownerRoot)).toBe(false);
+        expect(fs.existsSync(minePaths.root)).toBe(true);
+        expect(credentials.readCredentialRecord('user:1', mine.id)).toBeTruthy();
+    });
+
+    it('marks sign-ins and runtime leases interrupted on a restart before sweeping', async () => {
+        fake({ login: 'pending' });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
+        // A restart cannot inherit an in-flight attempt or a held lease.
+        const reset = credentials.resetInterruptedRuntimes();
+        expect(reset.logins).toBe(1);
+        expect(reset.leases).toBeGreaterThan(0);
+        expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(started.id))
+            .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
+        credentials.sweepOrphans();
+        expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
+    });
+
     it('removes every personal runtime record when the account is deleted', async () => {
         const connection = await linkedConnection();
         const root = credentials.identityPaths('user:1', connection.id).root;
