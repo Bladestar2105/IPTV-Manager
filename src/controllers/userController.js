@@ -535,6 +535,10 @@ export const deleteUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
+    // Access is revoked before anything is torn down. Otherwise a request that
+    // starts after the runtime scan below still passes the account checks, can
+    // hydrate the credential, and outlives the response.
+    db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(id);
     // A personal ChatGPT runtime keeps using this account's credential until it
     // is told to stop, so it is ended and acknowledged before anything is
     // removed. Deletion must not return while that use is still in progress.

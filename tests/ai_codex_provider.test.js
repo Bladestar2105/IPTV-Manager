@@ -1313,6 +1313,40 @@ describe('personal ChatGPT runtime ownership', () => {
         void handle;
     }, 30000);
 
+    it('clears a teardown marker abandoned by a crashed process on startup', async () => {
+        const connection = await linkedConnection();
+        // A process that died between marking and releasing would otherwise leave
+        // the connection blocked for good.
+        ai.adjustConnectionTeardown('user:1', connection.id, 2);
+        expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_CONNECTION_CHANGED');
+        expect(ai.clearAbandonedTeardowns()).toBeGreaterThan(0);
+        expect(() => ai.ownedAccountConnection(user, connection.id)).not.toThrow();
+    }, 30000);
+
+    it('refuses to record a sign-in when a teardown started while it waited', async () => {
+        const connection = createConnection();
+        // The route already returned this snapshot; the unlink begins while the
+        // request waits for the lease hand-off.
+        const stale = ownedRecord(user, connection.id);
+        ai.adjustConnectionTeardown('user:1', connection.id, 1);
+        await expect(account.startAccountLink(user, stale, 'fp')).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        expect(db.prepare('SELECT count(*) AS n FROM ai_codex_logins').get().n).toBe(0);
+        ai.adjustConnectionTeardown('user:1', connection.id, -1);
+    }, 30000);
+
+    it('stops new work as soon as a deleted account is revoked, before its runtimes are purged', async () => {
+        const connection = await withModel();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        // The controller revokes access first, so nothing new can start during the
+        // teardown that follows.
+        db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(1);
+        expect(thrown(() => jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'revoked-key-00001')).status).toBe(403);
+        await account.purgeAccountRuntimes('user:1');
+        expect(session.stopped).toBe(true);
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
     it('clears the teardown marker again when an unlink finishes', async () => {
         const connection = await linkedConnection();
         await account.disconnectAccount(user, ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true }));

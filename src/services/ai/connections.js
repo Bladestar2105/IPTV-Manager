@@ -249,6 +249,12 @@ export function adjustConnectionTeardown(ownerKey,id,delta) {
         return next;
     }).immediate();
 }
+// No teardown survives a restart: a process that died between marking and
+// releasing would otherwise leave a connection blocked for good, because a later
+// unlink increments and decrements back to the same non-zero count.
+export function clearAbandonedTeardowns() {
+    return db.prepare("UPDATE ai_connections SET data_json=json_remove(data_json,'$.teardown'),version=version+1 WHERE json_extract(data_json,'$.teardown') IS NOT NULL").run().changes;
+}
 export async function removeConnection(actor,id) {
     let connection=owned(actor,id);
     if (adapterFor(connection).supportsAccountLink) {

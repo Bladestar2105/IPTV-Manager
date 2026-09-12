@@ -64,9 +64,12 @@ let redisClient = null;
     // accounts, connections or interrupted sign-ins before workers start.
     try {
       const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
-      // No sign-in or runtime lease survives a restart, so mark them interrupted
-      // first; the sweep then sees an accurate set of directories still in use.
+      const {clearAbandonedTeardowns} = await import('./services/ai/connections.js');
+      // No sign-in, runtime lease or teardown marker survives a restart, so clear
+      // them first; the sweep then sees an accurate set of directories still in
+      // use, and no connection stays blocked by an interrupted teardown.
       resetInterruptedRuntimes();
+      clearAbandonedTeardowns();
       sweepOrphans();
     } catch { /* An unavailable optional runtime never blocks startup. */ }
 

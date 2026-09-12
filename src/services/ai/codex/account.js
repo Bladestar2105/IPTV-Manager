@@ -280,10 +280,19 @@ export async function startAccountLink(actor, connection, fingerprint) {
 
     const id = randomUUID();
     const now = Date.now();
-    db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at)
-        VALUES(?,?,?,NULL,'starting',NULL,NULL,?,?,?,?,?)`)
-        .run(id, ownerKey, connection.id, account.token_version, fingerprint, now, now, now + LOGIN_TTL_MS);
-    db.prepare('UPDATE ai_codex_logins SET last_seen_at=? WHERE id=?').run(now, id);
+    // The route checked the teardown marker before this call waited for the lease
+    // hand-off, and an unlink can have started in between. Recording the attempt
+    // and rechecking the marker happen in one transaction, so either this attempt
+    // exists before the unlink's cancel scan or it is refused outright.
+    const opened = db.transaction(() => {
+        const row = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connection.id, ownerKey);
+        if (!row || JSON.parse(row.data_json).teardown) return false;
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES(?,?,?,NULL,'starting',NULL,NULL,?,?,?,?,?,?)`)
+            .run(id, ownerKey, connection.id, account.token_version, fingerprint, now, now, now + LOGIN_TTL_MS, now);
+        return true;
+    }).immediate();
+    if (!opened) throw aiError('AI_CONNECTION_CHANGED', 409);
     const row = db.prepare('SELECT * FROM ai_codex_logins WHERE id=?').get(id);
 
     let session;
