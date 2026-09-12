@@ -411,7 +411,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   heartbeat. The lease is the promise that no process is using that identity, so
   a stopping runtime keeps it until its child has actually exited — closing only
   sends a termination signal — and a replacement waits for that hand-off instead
-  of starting beside a process that is still running. A lease held by a runtime
+  of starting beside a process that is still running. The same holds for a start
+  that failed its handshake: its child is signalled but still alive, so its lease
+  is released on that child's exit too. A lease held by a runtime
   that is not terminating is a genuine conflict and is refused at once. A concurrent start, a competing token refresh or the reuse of
   another identity's session is rejected across workers with `AI_BUSY`. There is
   no shared process that is switched between personal logins.
@@ -525,6 +527,11 @@ Before activation the panel states that requests run on the account holder's own
 ChatGPT/Codex quota, that plan or workspace rules may restrict them, that data is
 processed externally by OpenAI under that account, and that no platform API key
 is required. The panel is fully localized in German, English, French and Greek.
+
+On shutdown the server stops every runtime and waits, with a bounded timeout, for
+the children to exit and their credential files to be removed before it
+terminates. Terminating immediately would leave a hydrated credential on disk
+while the service is offline.
 
 ### Restart, failure and disabling
 

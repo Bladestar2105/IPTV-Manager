@@ -1080,6 +1080,40 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(() => process.kill(pid, 0)).toThrow();
     }, 30000);
 
+    it('keeps the lease until a child that ignores SIGTERM is gone', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(session);
+        // The child survives SIGTERM, so the identity must stay claimed.
+        expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'stopping' });
+        await until(() => runtime.runtimeState('user:1', connection.id) === null, 10000);
+        expect(fs.existsSync(session.paths.authFile)).toBe(false);
+    }, 30000);
+
+    it('keeps the lease when the handshake fails and the child lingers', async () => {
+        const connection = await linkedConnection();
+        // Reconfigured only now, so the link above still succeeds.
+        fake({ ignoreTerm: true, reportedHome: '/home/someone-else/.codex', recordPath, recordApprovalPath: approvalPath });
+        await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_CODEX_HOME_MISMATCH' });
+        // A failed start still leaves a running child; a retry must not get the
+        // identity while it lives.
+        expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'stopping' });
+        await until(() => runtime.runtimeState('user:1', connection.id) === null, 10000);
+    }, 30000);
+
+    it('waits for children and their credential files during shutdown', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        expect(fs.existsSync(session.paths.authFile)).toBe(true);
+        // Re-raising a shutdown signal before this resolves would leave the
+        // hydrated credential on disk while the service is offline.
+        await runtime.shutdownRuntimes({ timeoutMs: 10000 });
+        expect(fs.existsSync(session.paths.authFile)).toBe(false);
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+    }, 30000);
+
     it('lets a replacement wait for a terminating runtime but refuses a live one', async () => {
         const connection = await linkedConnection();
         const first = await runtime.startRuntime('user:1', connection.id);

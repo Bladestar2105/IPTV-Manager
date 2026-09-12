@@ -31,6 +31,10 @@ if (config.recordPath) {
 // the client's first write, so the pipe reports EPIPE asynchronously.
 if (config.exitOnStart) process.exit(config.exitCode ?? 1);
 
+// Models a child that does not die on SIGTERM, so a caller has to wait for the
+// protocol client's escalation to SIGKILL.
+if (config.ignoreTerm) process.on('SIGTERM', () => {});
+
 const codexHome = process.env.CODEX_HOME || '';
 const authFile = path.join(codexHome, 'auth.json');
 const hasAuth = () => fs.existsSync(authFile);

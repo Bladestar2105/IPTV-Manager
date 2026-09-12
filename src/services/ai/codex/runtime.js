@@ -15,6 +15,8 @@ const GUARD_MS = 1000;
 // genuine concurrent operation and is refused at once.
 const TRANSIENT_STATES = ['stopping', 'revoked', 'cleanup'];
 const LEASE_HANDOVER_MS = 5000;
+// Long enough to cover the protocol client's own escalation to SIGKILL.
+const SHUTDOWN_WAIT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 20000;
 const live = new Map();
 
@@ -124,6 +126,20 @@ async function handshake(client, paths, expectedVersion) {
     return result;
 }
 
+// Marks the lease as terminating and frees it only once the child has actually
+// exited. Used by every path that ends a runtime, so none of them can hand the
+// identity to a replacement while a process is still alive.
+function releaseAfterExit(ownerKey, connectionId, leaseId, client) {
+    db.prepare("UPDATE ai_codex_runtimes SET state='stopping', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
+        .run(Date.now(), ownerKey, connectionId, leaseId);
+    const release = () => {
+        releaseLease(ownerKey, connectionId, leaseId);
+        clearPlaintext(ownerKey, connectionId);
+    };
+    client.exited.then(release, release);
+    return client.exited;
+}
+
 // Any tool, approval or capability request from the runtime is recorded as a
 // boundary violation. The caller must discard the entire turn.
 function violationSink() {
@@ -180,9 +196,15 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
         live.set(runtimeKey(ownerKey, connectionId), session);
         return session;
     } catch (error) {
-        if (session?.client) session.client.close('AI_CODEX_RUNTIME_FAILED');
-        releaseLease(ownerKey, connectionId, leaseId);
-        clearPlaintext(ownerKey, connectionId);
+        // A handshake that failed still leaves a child that only received
+        // SIGTERM, so this path releases the lease on its exit as well.
+        if (session?.client) {
+            session.client.close('AI_CODEX_RUNTIME_FAILED');
+            releaseAfterExit(ownerKey, connectionId, leaseId, session.client);
+        } else {
+            releaseLease(ownerKey, connectionId, leaseId);
+            clearPlaintext(ownerKey, connectionId);
+        }
         throw error;
     }
 }
@@ -203,15 +225,9 @@ export function stopRuntime(session, reason = 'AI_CODEX_RUNTIME_CLOSED', options
     // lease is the promise that nothing is using this identity, so it is marked
     // as terminating now and released only once the child has actually exited.
     // Releasing it earlier would let a replacement start beside a live process.
-    db.prepare("UPDATE ai_codex_runtimes SET state='stopping', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
-        .run(Date.now(), session.ownerKey, session.connectionId, session.leaseId);
     session.client.close(reason);
     live.delete(runtimeKey(session.ownerKey, session.connectionId));
-    const release = () => {
-        releaseLease(session.ownerKey, session.connectionId, session.leaseId);
-        clearPlaintext(session.ownerKey, session.connectionId);
-    };
-    session.client.exited.then(release, release);
+    releaseAfterExit(session.ownerKey, session.connectionId, session.leaseId, session.client);
 }
 
 export function liveRuntime(ownerKey, connectionId) {
@@ -232,6 +248,21 @@ export function stopAllRuntimes(reason = 'AI_CODEX_RUNTIME_CLOSED') {
     for (const session of [...live.values()]) stopRuntime(session, reason);
 }
 
+// Stops every runtime and waits for the children to exit, so the deferred
+// release and the plaintext removal actually run. Without this wait a shutdown
+// leaves a hydrated credential on disk while the service is offline.
+export async function shutdownRuntimes({ timeoutMs = SHUTDOWN_WAIT_MS } = {}) {
+    const pending = [...live.values()].map(session => session.client.exited);
+    stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
+    if (!pending.length) return;
+    await Promise.race([
+        Promise.allSettled(pending),
+        new Promise(resolve => { const timer = setTimeout(resolve, timeoutMs); timer.unref?.(); })
+    ]);
+    // The release runs in a continuation of `exited`; let it settle.
+    await new Promise(resolve => { const timer = setImmediate(resolve); timer.unref?.(); });
+}
+
 export function identityDirectories(ownerKey, connectionId) { return identityPaths(ownerKey, connectionId); }
 
 // Installed only once a runtime actually exists, so a host with the adapter
@@ -243,10 +274,20 @@ let signalsInstalled = false;
 function installShutdownHandlers() {
     if (signalsInstalled) return;
     signalsInstalled = true;
-    process.on('exit', () => stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED'));
+    process.on('exit', () => {
+        // Nothing asynchronous can run any more, so the plaintext of whatever is
+        // still live is removed synchronously here.
+        const remaining = [...live.values()];
+        stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
+        for (const session of remaining) {
+            try { clearPlaintext(session.ownerKey, session.connectionId); } catch { /* best effort on exit */ }
+        }
+    });
     for (const signal of ['SIGINT', 'SIGTERM']) {
-        const handler = () => {
-            stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
+        const handler = async () => {
+            // Re-raising at once would kill the process before the children exit
+            // and their credential files are removed.
+            try { await shutdownRuntimes(); } catch { /* shutdown proceeds regardless */ }
             process.removeListener(signal, handler);
             process.kill(process.pid, signal);
         };
