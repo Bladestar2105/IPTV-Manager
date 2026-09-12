@@ -40,7 +40,7 @@ window.aiUI = (() => {
     if (type === 'textarea') { item.rows = 3; item.maxLength = 8000; }
     if (type === 'number') { item.min = '0'; item.step = '1'; }
     for (const event of ['input', 'change']) item.addEventListener(event, () => {
-      if (['ai_invalid', 'ai_targetUserRequired', 'ai_modelTestSelection'].includes(el('status')?.dataset.i18n)) status('inputChanged');
+      if (['ai_invalid', 'ai_targetUserRequired', 'ai_modelTestSelection'].includes(el('status')?.dataset.i18n)) status('inputChanged', item.closest('[data-ai-section]')?.dataset.aiSection);
     });
     return item;
   }
@@ -73,14 +73,26 @@ window.aiUI = (() => {
   }
   function section(key, expanded = false) {
     const container = node('details', root(), undefined, 'card mb-3');
-    container.open = expanded;
+    container.open = expanded; container.dataset.aiSection = key;
     label('summary', container, key, 'card-header');
     return node('div', container, undefined, 'card-body');
   }
-  function status(key) {
-    if (!el('status')) return;
-    el('status').dataset.i18n = `ai_${key}`;
-    el('status').textContent = tr(key);
+  function progress(parent, scope) {
+    const box = node('div', parent, undefined, 'alert alert-info'); box.id = `ai-${scope}-progress`;
+    const spinner = node('span', box, undefined, 'spinner-border spinner-border-sm me-2');
+    spinner.setAttribute('aria-hidden', 'true'); spinner.hidden = true;
+    node('span', box).id = `ai-${scope}-status`;
+  }
+  function status(key, scope = 'work') {
+    for (const id of ['status', `${scope}-status`]) {
+      const item = el(id); if (!item) continue;
+      item.dataset.i18n = `ai_${key}`; item.textContent = tr(key);
+    }
+    const box = el(`${scope}-progress`);
+    if (box) {
+      const busy = ['queued', 'running'].includes(key);
+      box.setAttribute('aria-busy', String(busy)); box.querySelector('.spinner-border').hidden = !busy;
+    }
   }
   function errorKey(error) {
     const code = String(error.response?.code || error.code || '').toUpperCase();
@@ -98,7 +110,7 @@ window.aiUI = (() => {
     if (/RULE/.test(code)) return 'ruleError';
     if (code === 'AI_PROGRAM_REQUIRED') return 'selectProgram';
     if (/MODEL|CAPABILIT/.test(code)) return 'modelError';
-    if (/SCHEMA|OUTPUT|RESPONSE_INVALID|INVALID_RESPONSE/.test(code)) return 'invalidOutput';
+    if (/SCHEMA|OUTPUT|RESPONSE_INVALID|INVALID_RESPONSE|INVALID_DEPENDENCY/.test(code)) return 'invalidOutput';
     if (/TIMEOUT|RATE|NETWORK|UPSTREAM|CIRCUIT|DISCOVERY|UNAVAILABLE|BUSY|PAUSED/.test(code)) return 'network';
     if (/INVALID|VALIDATION|REQUIRED|LIMIT/.test(code)) return 'invalid';
     return 'failed';
@@ -127,7 +139,7 @@ window.aiUI = (() => {
       if (stamp !== generation) return;
       const key = errorKey(error);
       if (key === 'denied') { clear(); label('p', root(), key, 'alert alert-warning'); }
-      else status(key);
+      else status(key, control?.closest('[data-ai-section]')?.dataset.aiSection);
     } finally { if (control?.isConnected) control.disabled = false; }
   }
   function ids(id) {
@@ -184,6 +196,7 @@ window.aiUI = (() => {
       [settings, preferences, connections, userChoices] = loaded;
       connections = list(connections, 'connections');
       buildPolicy(); buildSetup(); buildWork(); buildRules(); buildHistory();
+      status(settings.enabled && preferences.enabled ? 'saved' : 'off', 'setup');
       status(settings.enabled && preferences.enabled ? 'saved' : 'off');
     });
   }
@@ -218,25 +231,28 @@ window.aiUI = (() => {
     button(controls, 'discover', 'discover', async () => {
       await enableSetup();
       const connection = await saveConnection();
+      status('running', 'setup');
       const result = await api(`/connections/${encodeURIComponent(connection.id)}/discover`, 'POST', {});
-      renderModels(list(result, 'models')); status('saved');
+      renderModels(list(result, 'models')); status('saved', 'setup');
     });
     const models = field(controls, 'models', 'models', 'select'); models.multiple = true; models.size = 4;
     label('p', controls, 'candidateHint', 'small text-muted');
     button(controls, 'test', 'test', async () => {
-      await enableSetup();
-      const connection = await saveConnection();
       const selected = [...el('models').selectedOptions].map(opt => opt.value);
       const modelIds = selected.length ? selected : value('model') ? [value('model')] : [];
       if (!modelIds.length || modelIds.length > 3) { el('models').focus(); throw {code: 'AI_MODEL_TEST_SELECTION'}; }
+      await enableSetup();
+      const connection = await saveConnection();
+      status('running', 'setup');
       const result = await api(`/connections/${encodeURIComponent(connection.id)}/test`, 'POST', {model_ids: modelIds});
       connections = list(await api('/connections'), 'connections');
       recommendation = result.recommended_model_id;
       renderCapabilities(result.models);
       el('recommendation').disabled = !recommendation;
       if (!value('model') && result.models.filter(model => model.chat).length === 1 && recommendation) adoptRecommendation();
-      status('saved');
+      status('saved', 'setup');
     });
+    progress(controls, 'setup');
     label('p', controls, 'evidence', 'small text-muted');
     label('p', controls, 'profileProbe', 'small text-muted');
     node('div', controls).id = 'ai-capabilities';
@@ -250,12 +266,12 @@ window.aiUI = (() => {
       const connection = editable(chosen()) ? await saveConnection(true) : chosen();
       if (!connection || !value('model')) throw {code: 'AI_MODEL_REQUIRED'};
       preferences = await api('/preferences', 'PUT', {enabled: checked('enabled'), auto_sync_summary: checked('auto-sync'), connection_id: connection.id, model_id: value('model'), language: value('language'), timezone: value('timezone')});
-      status(preferences.enabled ? 'saved' : 'off');
+      status(preferences.enabled ? 'saved' : 'off', 'setup');
     }, 'primary');
     button(box, 'save-preference', 'save', async () => {
       preferences = await api('/preferences', 'PUT', {...preferences, enabled: checked('enabled'), auto_sync_summary: checked('auto-sync')});
       if (!preferences.enabled) { clearTimeout(timer); jobId = null; beginResult(); }
-      status(preferences.enabled ? 'saved' : 'off');
+      status(preferences.enabled ? 'saved' : 'off', 'setup');
     });
     button(box, 'delete-connection', 'deleteConnection', async () => {
       if (!chosen() || !confirm(tr('confirmDelete'))) return;
@@ -409,6 +425,7 @@ window.aiUI = (() => {
       clearTimeout(timer); jobId = null; status('cancelled');
     });
     button(box, 'new-search', 'newSearch', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; filterBaseline = {}; nextOffset = 0; el('filters').value = '{}'; el('prompt').value = ''; });
+    progress(box, 'work');
     const results = node('section', box); results.id = 'ai-result'; results.setAttribute('aria-live', 'polite'); results.tabIndex = -1;
     const preview = node('section', box); preview.id = 'ai-proposal';
     for (const id of ['user', 'channel-ids']) el(id)?.addEventListener('input', () => {
@@ -478,6 +495,7 @@ window.aiUI = (() => {
     if (!settings.enabled || !preferences.enabled) { status('off'); return; }
     const input = payload(); input.idempotency_key = crypto.randomUUID();
     const resultStamp = beginResult();
+    status('queued');
     const job = await api('/jobs', 'POST', input, resultStamp);
     if (resultStamp !== resultGeneration) return;
     jobId = job.id; status('queued');

@@ -129,7 +129,15 @@ async function runJob(id) {
       infer:async ({messages,schema}) => {
         const fresh = check(true);
         db.prepare('UPDATE ai_jobs SET request_started_at = ? WHERE id = ?').run(Date.now(),id);
-        const response = await runInference(fresh,job.feature,{messages,schema,signal:controller.signal,connectionId:job.connection_id});
+        let response;
+        try {
+          response = await runInference(fresh,job.feature,{messages,schema,signal:controller.signal,connectionId:job.connection_id});
+        } catch (error) {
+          // Only this request's successful model invalidation advances the expected snapshot.
+          if (job.feature === 'diagnose' && error.code === 'AI_MODEL_UNAVAILABLE' &&
+              error.invalidatedConnectionVersion === job.connection_version + 1) job.connection_version = error.invalidatedConnectionVersion;
+          throw error;
+        }
         check();
         return response;
       }

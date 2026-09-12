@@ -50,7 +50,8 @@ export function createProposal(actor,payload,input,summary='',evidence=[],source
   if(!Number.isSafeInteger(keepFirst)||keepFirst<0||keepFirst>100000) fail('AI_INVALID_PROTECTION');
   const created=new Map(), seen=new Set(), sortCounts=new Map();
   const actions=[];
-  for(const raw of input) {
+  // Resolve declared categories first; preserve the order of all other edits.
+  for(const raw of [...input.filter(action=>action.type==='create_category'),...input.filter(action=>action.type!=='create_category')]) {
     const action={id:randomUUID(),type:raw.type,label:safeText(raw.label||raw.type,200),dependencies:[],refs:[]};
     if(raw.type==='create_category') {
       const key=String(raw.key||'');

@@ -57,6 +57,11 @@ Documented provider profiles are handled as follows:
 | Chat Completions token profiles | [OpenAI documents](https://developers.openai.com/api/reference/resources/chat) `max_completion_tokens` (including reasoning tokens), and deprecates `max_tokens`, which some reasoning models reject. Other compatible servers may require `max_tokens`. Both are tested under the rule below, without changing the configured endpoint or identity. |
 | Unknown aliases or proxies | Remain selectable and testable, including through the manual ID field. Missing metadata is unknown, not evidence of incompatibility. |
 
+Setup and request controls show their current status beside the action, with a
+spinner while a request is queued or running. Model-test selection is validated
+before saving preferences, keys or connection sharing. Rejected empty or oversized
+selections leave those settings unchanged.
+
 Each explicit test accepts at most three model IDs. Per model it sends one
 plain JSON request, then one structured-output request if plain JSON passed.
 **Only** an explicit HTTP 400/422 rejection identifying the submitted token
@@ -75,7 +80,9 @@ Retesting existing IDs replaces their profiles without evicting unrelated ones.
 Removed profiles can be tested again explicitly. Legacy oversized maps are
 bounded on reads without database writes, then trimmed on the next connection save,
 discovery refresh or completed test. Model IDs returned by discovery remain
-separately bounded to 500 and do not replace the selected model.
+separately bounded to 500 and do not replace the selected model. Every accepted
+connection write advances its version, including discovery, test results and
+model-unavailability records. Stale concurrent results are rejected.
 
 Explicit chat/schema incompatibilities are recorded separately from model
 availability, authentication, permission, rate-limit and connection failures.
@@ -132,7 +139,10 @@ Existing channel, assignment and category IDs returned by the model must belong
 to the exact request batch, even when omitted entries belong to the same user.
 Sync proposals use only their supplied current candidates, and EPG proposals
 use only their supplied channel cases and mapping candidates. Valid dependencies
-on newly proposed categories remain available.
+on newly proposed categories remain available regardless of their declaration
+order in the response. Category creation precedes dependent actions in the
+preview; other action order is preserved. References to earlier batches must
+be present in the planned-category context actually supplied to the model.
 
 The output schema, proposal creation and Apply share a closed action contract:
 `list` allows category creation/renaming, assignment, personal renaming, hiding

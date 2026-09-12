@@ -56,12 +56,14 @@ function listModelItem(item,feature) {
     name:feature==='duplicates'?item.original_name:item.name,type:item.type,genre:safeText(item.genre,40)||null,
     sort_order:item.sort_order,manual_name:item.manual_name,hidden:item.hidden};
 }
-function validateProposalCandidates(actions,items,categoryIds) {
+function validateProposalCandidates(actions,items,categoryIds,plannedCategories=[]) {
   if(!Array.isArray(actions)||actions.length>80) fail('AI_INVALID_ACTIONS');
+  const categoryKeys=new Set([...plannedCategories,...actions.filter(action=>action.type==='create_category')].map(action=>action.key));
   for(const action of actions) {
     if(action.user_channel_id && !items.some(item=>item.user_channel_id===action.user_channel_id)) fail('AI_INVALID_CANDIDATE');
     if(action.provider_channel_id && !items.some(item=>item.provider_channel_id===action.provider_channel_id)) fail('AI_INVALID_CANDIDATE');
     if(action.category_id && !categoryIds.includes(action.category_id)) fail('AI_INVALID_CANDIDATE');
+    if(action.category_key && !categoryKeys.has(action.category_key)) fail('AI_INVALID_DEPENDENCY');
   }
 }
 function duplicateGroups(actor,context) {
@@ -177,7 +179,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
         batch=batch.slice(0,Math.ceil(batch.length/2));
       }
       const reply=await ask(data,proposalSchema(payload.feature),instructions);
-      validateProposalCandidates(reply.data.actions,data.items,data.categories.map(category=>category.id));
+      validateProposalCandidates(reply.data.actions,data.items,data.categories.map(category=>category.id),data.planned_categories);
       actions.push(...reply.data.actions);summaries.push(safeText(reply.data.summary,1000));
       i+=batch.length;
     }

@@ -86,6 +86,7 @@ function publicConnection(connection,actor) {
     return result;
 }
 function persist(connection, expectedVersion = null) {
+    connection.version=(expectedVersion ?? 0)+1;
     connection.capabilities=retainedProfiles(connection);
     const { id,owner_key,version,...data }=connection;
     if (expectedVersion !== null) {
@@ -151,7 +152,7 @@ export function saveConnection(actor,input,id=null) {
     if (!actor.is_admin && !policy.allow_own_connections) throw aiError('AI_FORBIDDEN',403);
     const old=id ? owned(actor,id) : {id:randomUUID(),owner_key:ownerKey(actor),version:0,name:'AI',base_url:null,encrypted_key:null,shared:false,allowed_user_ids:[],functions:FEATURES,enabled:true,model_id:null,models:[],capabilities:{},token_parameter:'max_tokens'};
     if (!id && db.prepare('SELECT count(*) AS n FROM ai_connections WHERE owner_key=?').get(ownerKey(actor)).n>=10) throw aiError('AI_RATE_LIMIT',429);
-    const next={...old,version:old.version+1,enabled:bool(input.enabled,old.enabled),functions:functions(input.functions,old.functions)};
+    const next={...old,enabled:bool(input.enabled,old.enabled),functions:functions(input.functions,old.functions)};
     if (input.name !== undefined) { if (typeof input.name !== 'string' || !input.name.trim() || input.name.length>100) throw aiError('AI_INVALID_INPUT'); next.name=input.name.trim(); }
     if (input.base_url !== undefined) next.base_url=normalizeBaseUrl(input.base_url);
     if (!next.base_url) throw aiError('AI_INVALID_INPUT');
@@ -250,6 +251,7 @@ async function call(actor,feature,connectionId,endpoint,body,signal,validate) {
                 current.capabilities[body.model]={...current.capabilities[body.model],chat:false,status:'unavailable'};
                 if(current.model_id===body.model) current.model_id=null;
                 db.transaction(()=>{persist(current,current.version);clearModelSelection(current.id,body.model);})();
+                Object.defineProperty(error,'invalidatedConnectionVersion',{value:current.version});
             }
         }
         throw error;

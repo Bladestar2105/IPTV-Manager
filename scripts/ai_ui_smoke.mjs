@@ -15,10 +15,12 @@ try {
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
   let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
-  let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false;
+  let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
-  let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}];
-  let cancelGate;
+  let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
+  let cancelGate, releaseJobCreation, jobCreationRequested;
+  let delayJobCreation = true;
+  const waitForJobCreation = new Promise(resolve => { jobCreationRequested = resolve; });
   let releaseChangeA, changeARequested, delayChangeA = true, releaseUndoA, undoARequested, delayUndoA = false;
   const waitForChangeA = new Promise(resolve => { changeARequested = resolve; });
   const waitForUndoA = new Promise(resolve => { undoARequested = resolve; });
@@ -44,6 +46,8 @@ try {
       if (discoverFails) { status = discoverError.status; data = {code: discoverError.code}; }
       else data = {models: discoveredModels};
     } else if (path.endsWith('/test')) {
+      assert.equal(await page.locator('#ai-setup-status').getAttribute('data-i18n'), 'ai_running', 'model tests show local progress before the response');
+      assert.equal(await page.locator('#ai-setup-progress .spinner-border').isVisible(), true);
       assert(settings.enabled && preferences.enabled, 'tests require explicit activation');
       assert(!body.model_ids.includes(undefined));
       const models = body.model_ids.map(id => ({id, chat: true, structured: true, status: 'compatible', token_parameter: id === 'chat-two' ? 'max_completion_tokens' : 'max_tokens'}));
@@ -54,11 +58,13 @@ try {
       data = {items: [{provider_channel_id: Number(path.split('/')[2]), title: 'Actual program', description: '<b>Original EPG description</b>', start: 1800000000, stop: 1800003600, local_start: '2027-01-15 20:00', timezone: 'Europe/Berlin', program: programReference}], truncated: false};
     } else if (path === '/jobs' && method === 'POST') {
       assert.equal(Object.hasOwn(body, 'provider_id'), false, 'job requests must not send unsupported provider scope');
+      if (delayJobCreation) { jobCreationRequested(); await new Promise(resolve => { releaseJobCreation = resolve; }); }
       jobCount++; pollCount = 0; data = {id: `j${jobCount}`, status: 'queued'};
     }
     else if (/^\/jobs\/j\d+$/.test(path)) {
       pollCount++;
-      data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
+      if (nextJobError && pollCount > 1) data = {id: `j${jobCount}`, status: 'failed', error_code: nextJobError};
+      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
     } else if (path.endsWith('/cancel')) {
       if (cancelGate?.path === path) {
         const gate = cancelGate;
@@ -134,6 +140,14 @@ try {
   await page.locator('#ai-key').fill('synthetic-secret');
   assert.match(await page.locator('#ai-destination').innerText(), /model.example\/custom\/v1/);
   assert.equal(requests.filter(r => /discover|test/.test(r.path)).length, 0, 'typing has no discovery side effects');
+  const beforeRejectedTest = JSON.stringify({settings, preferences, connections});
+  const writesBeforeRejectedTest = requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length;
+  await page.locator('#ai-test').click();
+  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  assert.equal(JSON.stringify({settings, preferences, connections}), beforeRejectedTest, 'invalid model choices must not enable preferences, save a connection or sharing grants');
+  assert.equal(requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length, writesBeforeRejectedTest, 'reject invalid model choices before any persistent request');
+  assert.equal(await page.locator('#ai-key').inputValue(), 'synthetic-secret', 'rejected selection must leave the unsubmitted key in its field');
+
   await page.locator('#ai-enabled').uncheck();
   await page.locator('#ai-discover').click();
   assert.equal(requests.filter(r => /discover|test/.test(r.path)).length, 0, 'disabled preference forbids model discovery');
@@ -143,6 +157,17 @@ try {
   assert.equal(await page.locator('#ai-key').inputValue(), '', 'key cleared after save');
   assert.deepEqual(connections[0].allowed_user_ids, [3, 2], 'shared connection grants come from the named user selector');
   assert.deepEqual(await page.locator('#ai-models').evaluate(select => [...select.selectedOptions].map(option => option.value)), [], 'discovery order and model names do not imply compatibility');
+  await page.locator('#ai-models').selectOption(['chat-one', 'chat-two', 'chat-three', 'chat-four']);
+  await page.locator('#ai-key').fill('unsubmitted-replacement');
+  const beforeTooManyModels = JSON.stringify({settings, preferences, connections});
+  const writesBeforeTooManyModels = requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length;
+  await page.locator('#ai-test').click();
+  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  assert.equal(JSON.stringify({settings, preferences, connections}), beforeTooManyModels);
+  assert.equal(requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length, writesBeforeTooManyModels, 'too many candidates must not update an existing connection');
+  assert.equal(await page.locator('#ai-key').inputValue(), 'unsubmitted-replacement');
+  await page.locator('#ai-key').fill('');
+  await page.locator('#ai-models').selectOption([]);
   discoveredModels = [{id: 'chat-one'}];
   await page.locator('#ai-discover').click();
   await page.waitForFunction(() => document.getElementById('ai-models').options.length === 1);
@@ -221,7 +246,18 @@ try {
 
   page.on('dialog', dialog => dialog.accept());
   await page.locator('#ai-run').click();
+  await waitForJobCreation;
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_queued', 'submission must show progress before the server responds');
+  assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), true);
+  assert.equal(await page.locator('#ai-run').isDisabled(), true);
+  const localFeedback = await page.locator('#ai-work-progress').boundingBox();
+  const runButton = await page.locator('#ai-run').boundingBox();
+  assert(localFeedback.y >= runButton.y && localFeedback.y - runButton.y < 160, 'progress is beside the job controls, not only at the top of the page');
+  delayJobCreation = false; releaseJobCreation();
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
   await page.locator('#ai-action-a1').waitFor();
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_completed');
+  assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), false);
   assert.equal(await page.locator('#ai-result img').count(), 0);
   assert.equal(await page.locator('#ai-proposal script').count(), 0);
   assert.equal(await page.evaluate(() => window.hostile), undefined);
@@ -387,6 +423,12 @@ try {
   await page.locator('#ai-user').selectOption('3');
   assert.equal(await page.locator('#ai-program option').count(), 1, 'target-user change clears EPG references');
   assert.equal(await page.locator('#ai-program-description').innerText(), '');
+  nextJobError = 'AI_INVALID_DEPENDENCY';
+  await page.locator('#ai-feature').selectOption('list');
+  await page.locator('#ai-run').click();
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_invalidOutput');
+  assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), false);
+  assert.equal(await page.locator('#ai-proposal').innerText(), '', 'invalid model dependencies expose no actionable proposal');
   if (process.env.AI_UI_SCREENSHOT) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path: process.env.AI_UI_SCREENSHOT});

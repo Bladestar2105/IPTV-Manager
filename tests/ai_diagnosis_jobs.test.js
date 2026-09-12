@@ -31,9 +31,9 @@ beforeAll(async()=>{
   server=http.createServer(async(req,res)=>{
     let text='';for await(const chunk of req)text+=chunk;const body=JSON.parse(text);requests++;
     if(mode==='auth'){res.writeHead(401);res.end('{}');return;}
-    if(mode==='model'){res.writeHead(404);res.end('{"error":{"code":"model_not_found"}}');return;}
     const send=()=>{
       if(res.destroyed)return;
+      if(mode==='model'){res.writeHead(404);res.end('{"error":{"code":"model_not_found"}}');return;}
       const setup=body.messages.some(message=>message.content.includes('Synthetic compatibility check'));
       res.setHeader('content-type','application/json');
       res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(setup?{ok:true}:{summary:'Fixture explanation'})}}],usage:{prompt_tokens:1,completion_tokens:1}}));
@@ -122,6 +122,14 @@ describe('local diagnosis through authenticated persisted jobs',()=>{
     mode='ok';release();await settled(create.body.id);
     const state=db.prepare('SELECT status,result_json FROM ai_jobs WHERE id=?').get(create.body.id);
     expect(['failed','cancelled']).toContain(state.status);expect(state.result_json).toBeNull();
+  });
+  it('discards local findings after a configuration change even when the upstream model also disappears',async()=>{
+    mode='hold';const create=await createJob();await waitFor(()=>pending.length===1);
+    api.saveConnection(admin,{name:'Changed configuration'},connection.id);
+    mode='model';release();await settled(create.body.id);
+    const state=db.prepare('SELECT status,error_code,result_json FROM ai_jobs WHERE id=?').get(create.body.id);
+    expect(state).toMatchObject({status:'failed',error_code:'ai_connection_changed',result_json:null});
+    expect(requests).toBe(1);
   });
   it('discards local findings when the owner cancels a running diagnosis',async()=>{
     mode='hold';const create=await createJob();await waitFor(()=>pending.length===1);

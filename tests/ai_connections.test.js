@@ -150,6 +150,63 @@ describe('AI connection security', () => {
             expect(stored.name).toBe(accepted.at(-1).name);
         } finally { await Promise.all(workers.map(worker=>worker.terminate())); }
     },10000);
+    it.each(['discovery','tests','model unavailability'])('rejects stale worker %s results after another setup write wins', async operation => {
+        const connection=await selected(), gate=new SharedArrayBuffer(4), count=requests.length;
+        reply=(req,res)=>{
+            if(operation==='model unavailability') { res.statusCode=404; res.end('{}'); }
+            else res.end(JSON.stringify(req.method==='GET' ? {data:[{id:'stale-model'}]} : {choices:[{finish_reason:'stop',message:{content:'{"ok":true}'}}]}));
+        };
+        const source=`
+            import { parentPort, workerData } from 'node:worker_threads';
+            const {default:db}=await import(workerData.database);
+            const ai=await import(workerData.connections);
+            const prepare=db.prepare.bind(db), barrier=new Int32Array(workerData.gate);
+            db.prepare=sql=>{
+                if(sql.startsWith('UPDATE ai_connections SET data_json=')) {
+                    parentPort.postMessage({type:'ready'});
+                    if(Atomics.wait(barrier,0,0,5000)==='timed-out') throw new Error('Result write barrier timed out');
+                }
+                return prepare(sql);
+            };
+            let result;
+            try {
+                const actor={id:1,is_admin:true};
+                if(workerData.operation==='discovery') await ai.discoverModels(actor,workerData.id);
+                else if(workerData.operation==='tests') await ai.testModels(actor,workerData.id,{model_ids:['stale-model']});
+                else await ai.runInference(actor,'list',{messages:[],schema:workerData.schema});
+                result={ok:true};
+            } catch(error) { result={ok:false,code:error.code}; }
+            finally { db.close(); }
+            parentPort.postMessage({type:'result',...result});
+        `;
+        const worker=new Worker(new URL('data:text/javascript,'+encodeURIComponent(source)),{
+            env:{...process.env,DATA_DIR:dataDir},workerData:{operation,id:connection.id,gate,schema,
+                database:new URL('../src/database/db.js',import.meta.url).href,
+                connections:new URL('../src/services/ai/connections.js',import.meta.url).href}
+        });
+        const message=type=>new Promise((resolve,reject)=>{
+            worker.on('message',value=>{ if(value.type===type) resolve(value); else if(value.type==='result' && type==='ready') reject(new Error('Worker did not reach the write barrier: '+JSON.stringify(value))); });
+            worker.once('error',reject);
+            worker.once('exit',code=>{if(code!==0) reject(new Error('Writer exited with code '+code));});
+        });
+        const ready=message('ready'), result=message('result');
+        try {
+            // The worker holds a result snapshot, but no longer owns a usage reservation.
+            await ready;
+            expect(db.prepare("SELECT count(*) AS n FROM ai_usage WHERE status='running'").get().n).toBe(0);
+            reply=null;
+            if(operation==='discovery') await ai.discoverModels(admin,connection.id);
+            else await ai.testModels(admin,connection.id,{model_ids:[operation==='tests'?'winner-model':'synthetic-model']});
+            const winner=ai.listConnections(admin)[0], preferences=ai.getPreferences(admin);
+            Atomics.store(new Int32Array(gate),0,1); Atomics.notify(new Int32Array(gate),0);
+            expect(await result).toMatchObject({ok:false,code:'AI_CONNECTION_CHANGED'});
+            expect(ai.listConnections(admin)[0]).toEqual(winner);
+            expect(winner.version).toBe(connection.version+1);
+            expect(ai.getPreferences(admin)).toEqual(preferences);
+            expect(preferences.model_id).toBe('synthetic-model');
+            expect(requests).toHaveLength(count+({discovery:2,tests:4,'model unavailability':3}[operation]));
+        } finally { await worker.terminate(); }
+    },10000);
     it('does not follow redirects or expose provider error bodies', async () => {
         const c = configure(); reply = (_req,res) => {res.statusCode=302;res.setHeader('location','https://example.com/stolen');res.end('synthetic-secret');};
         await expect(ai.discoverModels(admin,c.id)).rejects.toMatchObject({code:'AI_REDIRECT_BLOCKED'}); expect(requests).toHaveLength(1);
@@ -445,8 +502,10 @@ describe('AI connection security', () => {
         expect(db.prepare("SELECT prompt_tokens,completion_tokens FROM ai_usage WHERE feature='list'").get()).toEqual({prompt_tokens:25,completion_tokens:128});
     });
     it('requires a fresh model test after the selected model is removed', async () => {
-        await selected(); reply=(_req,res)=>{res.statusCode=404;res.end('{}');};
+        const connection=await selected(); reply=(_req,res)=>{res.statusCode=404;res.end('{}');};
         await expect(ai.runInference(admin,'list',{messages:[],schema})).rejects.toHaveProperty('code','AI_MODEL_UNAVAILABLE');
+        expect(ai.listConnections(admin)[0]).toMatchObject({version:connection.version+1,model_id:null,capabilities:{'synthetic-model':{chat:false,status:'unavailable'}}});
+        expect(ai.getPreferences(admin).model_id).toBeNull();
         const count=requests.length; await expect(ai.runInference(admin,'list',{messages:[],schema})).rejects.toHaveProperty('code','AI_MODEL_REQUIRED'); expect(requests).toHaveLength(count);
         reply=null; await ai.testModels(admin,ai.getPreferences(admin).connection_id,{model_ids:['synthetic-model']});
         expect(()=>ai.requireAiAccess(admin,'list')).toThrow(expect.objectContaining({code:'AI_MODEL_REQUIRED'}));

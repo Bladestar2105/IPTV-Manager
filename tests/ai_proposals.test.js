@@ -85,6 +85,52 @@ it('validates create-category dependencies and uses normal manual add semantics'
   undoChange(actor,applied.change_id);
   expect(db.prepare("SELECT id FROM user_categories WHERE name='Sports'").get()).toBeUndefined();
 });
+it('resolves forward category keys while preserving assignment order, confirmation and Undo',()=>{
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  const categories=db.prepare('SELECT * FROM user_categories ORDER BY id').all();
+  const input=[
+    {type:'assign_channel',provider_channel_id:912,category_key:'sports'},
+    {type:'rename_channel',user_channel_id:1111,value:'News'},
+    {type:'create_category',key:'sports',name:'Sports',category_type:'live'},
+    {type:'assign_channel',provider_channel_id:911,category_key:'sports'}
+  ];
+  const proposal=createProposal(actor,{...payload,feature:'list'},input,'New list');
+  expect(input[0].type).toBe('assign_channel');
+  expect(proposal.actions.map(action=>action.type)).toEqual(['create_category','assign_channel','rename_channel','assign_channel']);
+  for(const index of [1,3]) expect(proposal.actions[index].dependencies).toEqual([proposal.actions[0].id]);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT * FROM user_categories ORDER BY id').all()).toEqual(categories);
+  expect(()=>applyProposal(actor,proposal.id,{action_ids:[proposal.actions[1].id],idempotency_key:'missing-forward'})).toThrow(/AI_MISSING_DEPENDENCY/);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+  const selection={action_ids:proposal.actions.map(action=>action.id),idempotency_key:'forward'};
+  const applied=applyProposal(actor,proposal.id,selection);
+  expect(applyProposal(actor,proposal.id,selection)).toEqual(applied);
+  const category=db.prepare("SELECT id FROM user_categories WHERE name='Sports'").get();
+  expect(db.prepare('SELECT provider_channel_id,sort_order,assignment_origin,mapping_id FROM user_channels WHERE user_category_id=? ORDER BY sort_order').all(category.id)).toEqual([
+    {provider_channel_id:912,sort_order:0,assignment_origin:'manual',mapping_id:null},
+    {provider_channel_id:911,sort_order:1,assignment_origin:'manual',mapping_id:null}
+  ]);
+  expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=1111').get().custom_name).toBe('News');
+  expect(undoChange(actor,applied.change_id).status).toBe('undone');
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT * FROM user_categories ORDER BY id').all()).toEqual(categories);
+});
+it.each([
+  ['unknown key',[{type:'assign_channel',provider_channel_id:912,category_key:'missing'}],'AI_INVALID_DEPENDENCY'],
+  ['duplicate key',[
+    {type:'assign_channel',provider_channel_id:912,category_key:'sports'},
+    {type:'create_category',key:'sports',name:'Sports',category_type:'live'},
+    {type:'create_category',key:'sports',name:'Other',category_type:'live'}
+  ],'AI_INVALID_ACTION']
+])('rejects %s without persisting or applying any action',(_case,actions,code)=>{
+  const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+  const categories=db.prepare('SELECT * FROM user_categories ORDER BY id').all();
+  expect(()=>createProposal(actor,{...payload,feature:'list'},actions)).toThrow(code);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_changes').get().n).toBe(0);
+  expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+  expect(db.prepare('SELECT * FROM user_categories ORDER BY id').all()).toEqual(categories);
+});
 it.each([['new',1013],['existing',1011]])('previews, confirms and undoes %s live-source assignments to radio categories',(_case,categoryId)=>{
   if(categoryId===1013) db.exec("INSERT INTO user_categories(id,user_id,name,type) VALUES(1013,711,'Radio','radio')");
   else db.exec("UPDATE user_categories SET type='radio' WHERE id=1011");
