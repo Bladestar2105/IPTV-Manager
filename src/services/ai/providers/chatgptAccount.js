@@ -52,7 +52,7 @@ export const chatgptAccountProvider = {
                     timeoutMs: CODEX_TURN_TIMEOUT_MS
                 });
                 // A token refreshed during the turn is captured before teardown.
-                seal(ownerKey, connection.id);
+                seal(ownerKey, connection.id, {}, { refreshOnly: true });
                 return { result: { content: turn.content }, usage: turn.usage };
             });
         } catch (error) { throw translate(error); }

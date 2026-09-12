@@ -6,6 +6,9 @@ window.aiUI = (() => {
   let appliedActionIds = [];
   let filterBaseline = {};
   let programs = [], programScope = '', programGeneration = 0;
+  let codex = {available: false, reason: null}, login = null, loginTimer, accountState = null;
+  // Mirrors the server-side allowlist so an unexpected address is never linked.
+  const LOGIN_HOSTS = ['auth.openai.com', 'chatgpt.com', 'auth.chatgpt.com'];
   const root = () => document.getElementById('view-ai');
   const el = id => document.getElementById(`ai-${id}`);
   const value = id => el(id)?.value?.trim() || '';
@@ -97,6 +100,14 @@ window.aiUI = (() => {
   function errorKey(error) {
     const code = String(error.response?.code || error.code || '').toUpperCase();
     if (code === 'AI_DISABLED') return 'off';
+    if (code === 'AI_CODEX_NOT_LINKED') return 'notLinked';
+    if (code === 'AI_CODEX_TOOL_REQUEST') return 'toolRequest';
+    if (code === 'AI_CODEX_UNEXPECTED_AUTH') return 'unexpectedAuth';
+    if (code === 'AI_CODEX_ACCOUNT_ALREADY_LINKED') return 'alreadyLinked';
+    if (code === 'AI_CODEX_LOGIN_TARGET_BLOCKED') return 'linkTargetBlocked';
+    if (code === 'AI_CODEX_LOGIN_UNSUPPORTED') return 'linkUnsupported';
+    if (code === 'AI_CODEX_MANUAL_ONLY') return 'manualOnly';
+    if (code.startsWith('AI_CODEX_')) return 'codexUnavailable';
     if (code === 'AI_PERMISSION_DENIED') return 'permission';
     if (code === 'AI_RATE_LIMIT') return 'rateLimit';
     if (code === 'AI_TARGET_USER_REQUIRED') return 'targetUserRequired';
@@ -171,6 +182,8 @@ window.aiUI = (() => {
     generation++;
     resultGeneration++;
     clearTimeout(timer);
+    clearTimeout(loginTimer);
+    login = null; accountState = null; codex = {available: false, reason: null};
     owner = ''; sessionToken = null; connections = []; userChoices = []; settings = {}; preferences = {};
     jobId = proposal = changeId = conversationId = recommendation = null;
     appliedActionIds = [];
@@ -192,9 +205,11 @@ window.aiUI = (() => {
     state.id = 'ai-status'; state.role = 'status'; state.setAttribute('aria-live', 'polite');
     await run(async () => {
       const loaded = await Promise.all([api('/settings'), api('/preferences'), api('/connections'),
-        currentUser.is_admin ? fetchJSON('/api/users').then(users => users.map(({id, username}) => ({id, username})).sort((a, b) => a.username.localeCompare(b.username))) : []]);
+        currentUser.is_admin ? fetchJSON('/api/users').then(users => users.map(({id, username}) => ({id, username})).sort((a, b) => a.username.localeCompare(b.username))) : [],
+        // An unavailable optional adapter must not break the rest of the page.
+        api('/codex/status').catch(() => ({available: false, reason: 'AI_CODEX_NOT_READY'}))]);
       if (stamp !== generation || identity !== actor() || token !== getToken()) return;
-      [settings, preferences, connections, userChoices] = loaded;
+      [settings, preferences, connections, userChoices, codex] = loaded;
       connections = list(connections, 'connections');
       buildPolicy(); buildSetup(); buildWork(); buildRules(); buildHistory();
       status(settings.enabled && preferences.enabled ? 'saved' : 'off', 'setup');
@@ -221,7 +236,11 @@ window.aiUI = (() => {
     const select = field(box, 'connection', 'connection', 'select');
     option(select, '', '', 'choose');
     for (const connection of connections) option(select, connection.id, connection.name);
-    if (currentUser.is_admin || settings.allow_own_connections) option(select, 'new', '', 'own');
+    if (currentUser.is_admin || settings.allow_own_connections) {
+      option(select, 'new', '', 'own');
+      // Offered only where the server actually proved a contained runtime.
+      if (codex.available) option(select, 'new-chatgpt', '', 'ownChatgpt');
+    }
     select.value = preferences.connection_id || '';
     const details = node('div', box); details.id = 'ai-connection-fields';
     const target = node('p', box, undefined, 'alert alert-secondary');
@@ -258,7 +277,7 @@ window.aiUI = (() => {
     label('p', controls, 'profileProbe', 'small text-muted');
     node('div', controls).id = 'ai-capabilities';
     button(controls, 'recommendation', 'recommendation', adoptRecommendation).disabled = true;
-    const advanced = node('details', box); label('summary', advanced, 'advanced');
+    const advanced = node('details', box); advanced.id = 'ai-advanced'; label('summary', advanced, 'advanced');
     const manualModel = field(advanced, 'model', 'model', 'text', preferences.model_id || chosen()?.model_id || '');
     manualModel.addEventListener('input', () => { for (const item of el('models').options) item.selected = false; });
     const parameter = field(advanced, 'token-parameter', 'tokenParameter', 'select');
@@ -286,32 +305,196 @@ window.aiUI = (() => {
     });
     renderConnection();
   }
+  const pendingProvider = () => {
+    const selection = value('connection');
+    if (selection === 'new-chatgpt') return 'chatgpt_account';
+    if (selection === 'new') return 'openai_api';
+    return chosen()?.provider || 'openai_api';
+  };
+  // Mirrors the documented verification targets. An address outside them is
+  // never turned into a link the account holder could follow.
+  function safeLoginUrl(candidate) {
+    try {
+      const url = new URL(candidate);
+      return url.protocol === 'https:' && LOGIN_HOSTS.includes(url.hostname.toLowerCase()) ? url.href : null;
+    } catch { return null; }
+  }
   function renderConnection() {
     const connection = chosen(), canEdit = editable(connection), box = el('connection-fields');
+    const provider = pendingProvider();
     box.replaceChildren(); recommendation = null;
+    clearTimeout(loginTimer); login = null; accountState = null;
     if (value('connection') && canEdit) {
       field(box, 'name', 'name', 'text', connection?.name || '');
-      field(box, 'url', 'url', 'url', connection?.base_url || '');
-      const key = field(box, 'key', 'key', 'password'); key.autocomplete = 'new-password';
-      label('p', box, 'keyInfo', 'small text-muted');
+      if (provider === 'chatgpt_account') renderAccountPanel(box, connection);
+      else {
+        field(box, 'url', 'url', 'url', connection?.base_url || '');
+        const key = field(box, 'key', 'key', 'password'); key.autocomplete = 'new-password';
+        label('p', box, 'keyInfo', 'small text-muted');
+      }
       if (currentUser.is_admin) {
-        field(box, 'shared', 'shared', 'checkbox', connection?.shared);
-        userSelect(box, 'connection-users', 'users', connection?.allowed_user_ids || [], true);
+        // A personal ChatGPT sign-in has no sharing controls at all; the server
+        // rejects them as well.
+        if (provider !== 'chatgpt_account') {
+          field(box, 'shared', 'shared', 'checkbox', connection?.shared);
+          userSelect(box, 'connection-users', 'users', connection?.allowed_user_ids || [], true);
+        }
         featureChecks(box, 'connection-function', connection?.functions || settings.functions || []);
       }
-      el('url').addEventListener('input', destination);
+      el('url')?.addEventListener('input', destination);
     } else if (connection) label('p', box, 'provided');
     el('model-controls').hidden = !canEdit || !value('connection');
     el('delete-connection').hidden = !connection || !canEdit;
     el('model').value = (canEdit && preferences.connection_id === connection?.id && preferences.model_id) || connection?.model_id || '';
     el('model').readOnly = !canEdit;
+    el('advanced').hidden = provider === 'chatgpt_account';
     el('token-parameter').value = connection?.token_parameter || 'max_tokens';
-    el('token-parameter').disabled = !canEdit;
+    el('token-parameter').disabled = !canEdit || provider === 'chatgpt_account';
     renderCapabilities(Object.values(connection?.capabilities || {}));
     el('recommendation').disabled = true;
     el('models').replaceChildren(); renderModels(connection?.models || []); destination();
   }
+  function renderAccountPanel(box, connection) {
+    const panel = node('div', box, undefined, 'border rounded p-3 mb-3');
+    panel.id = 'ai-account-panel';
+    label('p', panel, 'chatgptDisclosure', 'small text-muted');
+    node('div', panel).id = 'ai-account-state';
+    const controls = node('div', panel);
+    button(controls, 'link-start', 'linkStart', startLink, 'primary');
+    button(controls, 'link-cancel', 'linkCancel', cancelLink, 'outline-secondary');
+    button(controls, 'account-refresh', 'accountRefresh', loadAccount);
+    button(controls, 'unlink', 'unlink', unlink, 'outline-danger');
+    node('div', panel).id = 'ai-link-state';
+    renderAccount(connection);
+  }
+  function renderAccount(connection) {
+    const box = el('account-state');
+    if (!box) return;
+    box.replaceChildren();
+    const linked = Boolean(connection?.account?.linked);
+    label('p', box, linked ? 'accountLinked' : 'accountNotLinked', linked ? 'mb-1 fw-semibold' : 'mb-1 text-muted');
+    if (linked) {
+      const label_ = accountState?.label ?? connection.account.label;
+      const plan = accountState?.plan_type ?? connection.account.plan_type;
+      node('p', box, `${tr('accountLabel')}: ${label_ || tr('unknown')}`, 'mb-1');
+      node('p', box, `${tr('plan')}: ${plan || tr('unknown')}`, 'mb-1');
+      renderQuota(box);
+    }
+    if (el('link-start')) el('link-start').hidden = linked;
+    if (el('unlink')) el('unlink').hidden = !linked;
+    if (el('account-refresh')) el('account-refresh').hidden = !linked;
+    if (el('link-cancel')) el('link-cancel').hidden = !login || login.status !== 'pending';
+  }
+  // Quota is shown only where the documented interface reported it; anything
+  // else stays explicitly unknown, with no prices and no derived request counts.
+  function renderQuota(box) {
+    const quota = accountState?.quota;
+    if (!quota?.known) { label('p', box, 'quotaUnknown', 'mb-1 text-muted'); return; }
+    for (const key of ['primary', 'secondary']) {
+      const window_ = quota[key];
+      if (!window_) continue;
+      const parts = [`${tr('quotaUsed')}: ${Math.round(window_.used_percent)}%`];
+      if (window_.window_minutes) parts.push(`${tr('quotaWindow')}: ${window_.window_minutes} min`);
+      if (window_.resets_at) parts.push(`${tr('quotaResets')}: ${new Date(window_.resets_at * 1000).toLocaleString()}`);
+      node('p', box, parts.join(' · '), 'mb-1');
+    }
+    if (quota.ordinary_usage_allowed === false) label('p', box, 'quotaBlocked', 'mb-1 text-warning');
+  }
+  function renderLogin(connectionId) {
+    const box = el('link-state');
+    if (!box) return;
+    box.replaceChildren();
+    if (!login) return;
+    if (login.status === 'pending') {
+      const url = safeLoginUrl(login.verification_url);
+      label('p', box, 'linkPending', 'mb-1');
+      if (url) {
+        const anchor = node('a', box, url, 'd-block mb-1');
+        anchor.href = url; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer';
+      } else label('p', box, 'linkTargetBlocked', 'mb-1 text-danger');
+      node('p', node('p', box, undefined, 'mb-1'), `${tr('linkCode')}: ${login.user_code || ''}`, 'fs-5 fw-bold');
+    } else label('p', box, loginStateKey(login), login.status === 'completed' ? 'mb-1 text-success' : 'mb-1 text-warning');
+    if (el('link-cancel')) el('link-cancel').hidden = login.status !== 'pending';
+    void connectionId;
+  }
+  function loginStateKey(state) {
+    const map = {
+      ai_codex_login_expired: 'linkExpired',
+      ai_codex_login_cancelled: 'linkCancelled',
+      ai_codex_login_superseded: 'linkSuperseded',
+      ai_codex_login_interrupted: 'linkInterrupted',
+      ai_codex_login_rejected: 'linkRejected',
+      ai_codex_account_already_linked: 'alreadyLinked',
+      ai_codex_unexpected_auth: 'unexpectedAuth',
+      ai_codex_credentials_unavailable: 'linkFailed'
+    };
+    if (state.status === 'completed') return 'linkDone';
+    return map[state.error_code] || (state.status === 'cancelled' ? 'linkCancelled' : state.status === 'expired' ? 'linkExpired' : 'linkFailed');
+  }
+  async function refreshConnections() {
+    const selection = value('connection');
+    connections = list(await api('/connections'), 'connections');
+    if (el('connection')) el('connection').value = selection;
+  }
+  async function startLink() {
+    await enableSetup();
+    const connection = await saveConnection();
+    if (!connection) throw {code: 'AI_INVALID_INPUT'};
+    status('running', 'setup');
+    login = await api(`/connections/${encodeURIComponent(connection.id)}/link`, 'POST', {});
+    renderLogin(connection.id); renderAccount(connection);
+    status('linkPending', 'setup');
+    pollLink(connection.id);
+  }
+  function pollLink(connectionId) {
+    clearTimeout(loginTimer);
+    if (!login || login.status !== 'pending') return;
+    const stamp = generation, identity = actor(), token = sessionToken;
+    loginTimer = setTimeout(() => {
+      // A late poll from a previous session or account must never be applied.
+      if (stamp !== generation || identity !== actor() || token !== getToken() || !login) return;
+      run(async () => {
+        const state = await api(`/connections/${encodeURIComponent(connectionId)}/link/${encodeURIComponent(login.id)}`);
+        if (!state || stamp !== generation || !login || state.id !== login.id) return;
+        login = {...login, ...state};
+        renderLogin(connectionId);
+        if (state.status === 'pending') return pollLink(connectionId);
+        await refreshConnections();
+        renderAccount(chosen());
+        if (state.status === 'completed') { await loadAccount(); status('linkDone', 'setup'); }
+        else status(loginStateKey(state), 'setup');
+      });
+    }, 3000);
+  }
+  async function cancelLink() {
+    const connection = chosen();
+    if (!connection || !login) return;
+    clearTimeout(loginTimer);
+    const result = await api(`/connections/${encodeURIComponent(connection.id)}/link/${encodeURIComponent(login.id)}/cancel`, 'POST', {});
+    login = {...login, ...result};
+    renderLogin(connection.id); renderAccount(connection);
+    status('linkCancelled', 'setup');
+  }
+  async function unlink() {
+    const connection = chosen();
+    if (!connection || !confirm(tr('confirmUnlink'))) return;
+    clearTimeout(loginTimer); login = null;
+    const result = await api(`/connections/${encodeURIComponent(connection.id)}/unlink`, 'POST', {});
+    accountState = null;
+    await refreshConnections();
+    renderConnection();
+    status(result?.remote_logout === false ? 'unlinkRemoteFailed' : 'unlinkDone', 'setup');
+  }
+  async function loadAccount() {
+    const connection = chosen();
+    if (!connection?.account?.linked) { accountState = null; renderAccount(connection); return; }
+    status('running', 'setup');
+    accountState = await api(`/connections/${encodeURIComponent(connection.id)}/account`);
+    renderAccount(connection);
+    status('saved', 'setup');
+  }
   function destination() {
+    if (pendingProvider() === 'chatgpt_account') { el('destination').textContent = tr('managedDestination'); return; }
     let target = chosen()?.base_url || '';
     if (el('url')) {
       try { const url = new URL(value('url')); url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, '').replace(/\/$/, ''); target = url.toString(); }
@@ -361,12 +544,23 @@ window.aiUI = (() => {
   async function saveConnection(selectModel = false) {
     const connection = chosen();
     const selection = value('connection');
+    const provider = pendingProvider();
     if (!editable(connection)) return connection;
-    if (!value('url') || !value('name')) throw {code: 'AI_INVALID_INPUT'};
-    const input = {name: value('name'), base_url: value('url'), enabled: true, token_parameter: value('token-parameter')};
+    if (!value('name')) throw {code: 'AI_INVALID_INPUT'};
+    const input = {name: value('name'), enabled: true};
+    // The provider is fixed at creation; an existing connection never sends it.
+    if (!connection) input.provider = provider;
+    if (provider === 'chatgpt_account') {
+      // No user-supplied address, key or token parameter exists for a managed
+      // ChatGPT sign-in, and the server rejects them.
+      if (currentUser.is_admin) input.functions = selectedFeatures('connection-function');
+    } else {
+      if (!value('url')) throw {code: 'AI_INVALID_INPUT'};
+      Object.assign(input, {base_url: value('url'), token_parameter: value('token-parameter')});
+      if (value('key')) input.api_key = value('key');
+      if (currentUser.is_admin) Object.assign(input, {shared: checked('shared'), allowed_user_ids: ids('connection-users'), functions: selectedFeatures('connection-function')});
+    }
     if (selectModel) input.model_id = value('model') || null;
-    if (value('key')) input.api_key = value('key');
-    if (currentUser.is_admin) Object.assign(input, {shared: checked('shared'), allowed_user_ids: ids('connection-users'), functions: selectedFeatures('connection-function')});
     try {
       const saved = await api(`/connections${connection ? `/${encodeURIComponent(connection.id)}` : ''}`, connection ? 'PUT' : 'POST', input);
       if (selection !== value('connection')) throw {code: 'AI_CONNECTION_CHANGED'};
@@ -374,7 +568,8 @@ window.aiUI = (() => {
       if (!connection) option(el('connection'), saved.id, saved.name);
       el('connection').value = saved.id;
       // Show the server-normalized destination before any external request.
-      el('url').value = saved.base_url; destination();
+      if (el('url')) el('url').value = saved.base_url || '';
+      destination();
       return saved;
     } finally { if (el('key')) el('key').value = ''; input.api_key = undefined; }
   }

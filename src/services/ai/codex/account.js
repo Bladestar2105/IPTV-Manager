@@ -262,7 +262,7 @@ export async function readAccountState(actor, connection) {
             accountLabel: maskAccount(account.email) ?? record.account_label,
             planType: account.planType ?? record.plan_type,
             authMethod: status.authMethod
-        });
+        }, { refreshOnly: true });
         return {
             linked: account.linked,
             label: maskAccount(account.email) ?? record.account_label,

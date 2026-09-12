@@ -65,8 +65,8 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
         if (message.id !== undefined && message.method === undefined) {
             const entry = pending.get(String(message.id));
             if (!entry) return;
-            pending.delete(String(message.id));
-            clearTimeout(entry.timer);
+            // Bookkeeping belongs to the settler; removing the entry here would
+            // make it treat the response as already handled and never settle.
             if (message.error) {
                 const detail = typeof message.error?.message === 'string' ? message.error.message : '';
                 entry.reject(codexError('AI_CODEX_RPC_ERROR', detail.slice(0, 300)));

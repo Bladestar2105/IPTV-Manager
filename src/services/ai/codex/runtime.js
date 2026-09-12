@@ -143,7 +143,7 @@ export function stopRuntime(session, reason = 'AI_CODEX_RUNTIME_CLOSED', { keepC
     clearInterval(session.heartbeat);
     // Capture a token the runtime refreshed during this session before the
     // plaintext copy is removed.
-    if (keepCredentials) { try { seal(session.ownerKey, session.connectionId); } catch { /* sealing is best effort on shutdown */ } }
+    if (keepCredentials) { try { seal(session.ownerKey, session.connectionId, {}, { refreshOnly: true }); } catch { /* sealing is best effort on shutdown */ } }
     session.client.close(reason);
     live.delete(runtimeKey(session.ownerKey, session.connectionId));
     releaseLease(session.ownerKey, session.connectionId, session.leaseId);
