@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import db from '../../../database/db.js';
 import { ENCRYPTION_KEY } from '../../../utils/crypto.js';
 import { aiError } from '../transport.js';
+import { requireAiFeatureAccess } from '../connections.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
@@ -35,6 +36,17 @@ export const sessionFingerprint = token =>
 // One predicate for every access field an owner must still satisfy, matching the
 // checks the rest of the AI subsystem applies: active account, Web UI access and
 // an unexpired account.
+// The same server-enablement and allowed-user gate the setup endpoints apply.
+// Polling deliberately bypasses it so a revoked owner can still cancel, which
+// means the asynchronous completion has to check it itself.
+function policyAllows(ownerKey) {
+    const [kind, id] = ownerKey.split(':');
+    try {
+        requireAiFeatureAccess({ id: Number(id), is_admin: kind === 'admin' }, 'setup');
+        return true;
+    } catch { return false; }
+}
+
 function usableAccount(ownerKey) {
     const [kind, id] = ownerKey.split(':');
     const admin = kind === 'admin';
@@ -115,6 +127,8 @@ function stillOwnsAttempt(row, ownerKey) {
     // open; adopting the sign-in then would grant what was just taken away.
     const account = usableAccount(ownerKey);
     if (!account || account.token_version !== current.actor_version) return false;
+    // AI access can be withdrawn centrally or personally while the code is open.
+    if (!policyAllows(ownerKey)) return false;
     return Date.now() - (current.last_seen_at ?? current.created_at) <= LOGIN_SESSION_IDLE_MS;
 }
 
@@ -444,8 +458,12 @@ export async function readAccountState(actor, connection) {
             quota
         };
     });
-    // Removed after the runtime stopped, so its guard cannot race the teardown.
-    if (invalidate) wipe(connection.owner_key, connection.id);
+    // Removed only once the child has handed the identity back; wiping while it
+    // still runs would free the identity for a relink beside a live process.
+    if (invalidate) {
+        await waitForLeaseRelease(connection.owner_key, connection.id);
+        wipe(connection.owner_key, connection.id);
+    }
     return state;
 }
 

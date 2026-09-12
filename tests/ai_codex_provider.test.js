@@ -425,6 +425,22 @@ describe('personal ChatGPT sign-in ownership across workers and sessions', () =>
     }, 30000);
 
     it.each([
+        ['the server policy is switched off', () => ai.updateAiSettings(admin, { enabled: false })],
+        ['the owner loses their allowance', () => ai.updateAiSettings(admin, { allowed_user_ids: [2] })],
+        ['the owner turns their own AI off', () => ai.savePreferences(user, { enabled: false })]
+    ])('discards a completion after %s', async (_label, revoke) => {
+        fake({ login: 'success', loginDelayMs: 500 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        revoke();
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
+        expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(started.id))
+            .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_superseded' });
+        // Access withdrawn during a sign-in must not be granted by its completion.
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it.each([
         ['no account is reported', { accountRead: 'none' }, 'ai_codex_account_unavailable'],
         ['the account cannot be identified', { emailNull: true }, 'ai_codex_account_unidentified']
     ])('discards a completion when %s', async (_label, overrides, expected) => {
@@ -1254,6 +1270,16 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(ai.listConnections(user).some(item => item.id === connection.id)).toBe(false);
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
         expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
+    }, 30000);
+
+    it('waits for the account-read runtime before invalidating the link', async () => {
+        const connection = await withModel();
+        fake({ accountRead: 'none', ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        await account.readAccountState(user, ownedRecord(user, connection.id));
+        // The identity is only free once its child is gone, so a relink cannot
+        // start beside it.
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
     it('drops the stored link when a refreshed account read reports none', async () => {
