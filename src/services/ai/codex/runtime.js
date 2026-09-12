@@ -11,6 +11,10 @@ const HEARTBEAT_MS = 20000;
 // handled by another worker stops this runtime within a second instead of within
 // a heartbeat, while an in-flight billable request is still running.
 const GUARD_MS = 1000;
+// A lease whose runtime is on its way out is waited for; any other holder is a
+// genuine concurrent operation and is refused at once.
+const TRANSIENT_STATES = ['stopping', 'revoked', 'cleanup'];
+const LEASE_HANDOVER_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 20000;
 const live = new Map();
 
@@ -19,19 +23,32 @@ const runtimeKey = (ownerKey, connectionId) => `${ownerKey}|${connectionId}`;
 // One runtime per identity and connection, owned by exactly one worker. The
 // lease makes a concurrent start, a competing credential refresh or the reuse of
 // another identity's session impossible across the manager's workers.
-function acquireLease(ownerKey, connectionId) {
+function tryAcquireLease(ownerKey, connectionId) {
     const leaseId = randomUUID();
-    const acquired = db.transaction(() => {
+    return db.transaction(() => {
         const now = Date.now();
         db.prepare('DELETE FROM ai_codex_runtimes WHERE expires_at < ?').run(now);
-        const existing = db.prepare('SELECT lease_id,worker_pid FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
-        if (existing) return null;
+        const existing = db.prepare('SELECT lease_id,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+        if (existing) return { leaseId: null, blockedBy: existing.state };
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
             .run(ownerKey, connectionId, leaseId, process.pid, 'starting', now + LEASE_TTL_MS, now);
-        return leaseId;
+        return { leaseId, blockedBy: null };
     }).immediate();
-    if (!acquired) throw codexError('AI_BUSY', 'A Codex runtime for this connection is already active.', 409);
-    return acquired;
+}
+
+// A runtime that is terminating still holds its lease until its child has
+// actually exited, so a replacement waits for that hand-off. Anything else
+// holding the lease is a concurrent operation and is refused immediately.
+async function acquireLease(ownerKey, connectionId) {
+    const deadline = Date.now() + LEASE_HANDOVER_MS;
+    for (;;) {
+        const attempt = tryAcquireLease(ownerKey, connectionId);
+        if (attempt.leaseId) return attempt.leaseId;
+        if (!TRANSIENT_STATES.includes(attempt.blockedBy) || Date.now() >= deadline) {
+            throw codexError('AI_BUSY', 'A Codex runtime for this connection is already active.', 409);
+        }
+        await new Promise(resolve => { const timer = setTimeout(resolve, 100); timer.unref?.(); });
+    }
 }
 
 // True while this worker still owns the lease it was granted. A lease another
@@ -121,7 +138,7 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
-    const leaseId = acquireLease(ownerKey, connectionId);
+    const leaseId = await acquireLease(ownerKey, connectionId);
     let session = null;
     try {
         const paths = hydrate(ownerKey, connectionId);
@@ -182,10 +199,19 @@ export function stopRuntime(session, reason = 'AI_CODEX_RUNTIME_CLOSED', options
     // Capture a token the runtime refreshed during this session before the
     // plaintext copy is removed.
     if (keepCredentials) { try { seal(session.ownerKey, session.connectionId, {}, { refreshOnly: true }); } catch { /* sealing is best effort on shutdown */ } }
+    // Closing only sends SIGTERM; the child may run for a few more seconds. The
+    // lease is the promise that nothing is using this identity, so it is marked
+    // as terminating now and released only once the child has actually exited.
+    // Releasing it earlier would let a replacement start beside a live process.
+    db.prepare("UPDATE ai_codex_runtimes SET state='stopping', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
+        .run(Date.now(), session.ownerKey, session.connectionId, session.leaseId);
     session.client.close(reason);
     live.delete(runtimeKey(session.ownerKey, session.connectionId));
-    releaseLease(session.ownerKey, session.connectionId, session.leaseId);
-    clearPlaintext(session.ownerKey, session.connectionId);
+    const release = () => {
+        releaseLease(session.ownerKey, session.connectionId, session.leaseId);
+        clearPlaintext(session.ownerKey, session.connectionId);
+    };
+    session.client.exited.then(release, release);
 }
 
 export function liveRuntime(ownerKey, connectionId) {

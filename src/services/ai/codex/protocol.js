@@ -38,6 +38,10 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
     // Reported once, however the runtime ended, so its owner can release the
     // lease and finish whatever was waiting on it instead of holding a dead
     // process open until a timeout.
+    // Resolves when the operating system has actually reaped the child, which is
+    // later than `close()` returning: closing only sends SIGTERM.
+    let markExited;
+    const exited = new Promise(resolve => { markExited = resolve; });
     let closeReported = false;
     const reportClose = reason => {
         if (closeReported) return;
@@ -121,11 +125,12 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
     child.stdin.on('error', () => fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime closed its input.'));
     child.stdout.on('error', () => fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime closed its output.'));
     child.stderr.on('error', () => { /* diagnostics are best effort */ });
-    child.on('error', () => fail('AI_CODEX_RUNTIME_FAILED', 'Codex runtime could not be started.'));
-    child.on('exit', () => fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime exited.'));
+    child.on('error', () => { markExited(); fail('AI_CODEX_RUNTIME_FAILED', 'Codex runtime could not be started.'); });
+    child.on('exit', () => { markExited(); fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime exited.'); });
 
     return {
         pid: child.pid,
+        exited,
         get closed() { return state.closed; },
         get closeReason() { return state.closeReason; },
         diagnostics: () => state.diagnostics,

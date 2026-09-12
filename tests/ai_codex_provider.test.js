@@ -59,6 +59,17 @@ function thrown(run) {
     try { run(); } catch (error) { return error; }
     throw new Error('expected a rejection');
 }
+// A stopped runtime releases its lease only once its child has exited, so tests
+// that seed a lease of their own wait for the table to be quiet first.
+async function idleRuntimes() {
+    await until(() => db.prepare('SELECT count(*) AS n FROM ai_codex_runtimes').get().n === 0, 10000);
+}
+async function seedLease(connectionId, leaseId, { pid = 123456, state = 'running', owner = 'user:1' } = {}) {
+    await idleRuntimes();
+    const now = Date.now();
+    db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+        .run(owner, connectionId, leaseId, pid, state, now + 60000, now);
+}
 async function until(check, timeout = 8000) {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -102,6 +113,7 @@ afterAll(() => {
 beforeEach(async () => {
     runtime.stopAllRuntimes();
     account.releaseAllAttempts();
+    await idleRuntimes().catch(() => null);
     for (const table of ['ai_connections', 'ai_preferences', 'ai_usage', 'ai_jobs', 'ai_codex_credentials', 'ai_codex_logins', 'ai_codex_runtimes']) db.exec(`DELETE FROM ${table}`);
     db.exec('DELETE FROM settings; UPDATE users SET is_active=1, webui_access=1, expiry_date=NULL, token_version=0; UPDATE admin_users SET is_active=1, token_version=0');
     fs.rmSync(path.join(dataDir, 'ai-codex'), { recursive: true, force: true });
@@ -265,6 +277,8 @@ describe('personal ChatGPT sign-in', () => {
         const cancelled = await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
         expect(cancelled.status).toBe('cancelled');
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        // The lease outlives `stopRuntime` until the child has actually exited.
+        await idleRuntimes();
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
     });
 
@@ -350,6 +364,7 @@ describe('personal ChatGPT sign-in ownership across workers and sessions', () =>
             expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
             expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'foreign-worker', 'fp').status).toBe('pending');
         } finally { runtime.stopRuntime(session); }
+        await idleRuntimes();
         // Once no worker holds the lease the attempt really is gone.
         expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'foreign-worker', 'fp'))
             .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
@@ -443,11 +458,9 @@ describe('personal ChatGPT runtime robustness', () => {
         const connection = await linkedConnection();
         const paths = credentials.identityPaths('user:1', connection.id);
         credentials.hydrate('user:1', connection.id);
-        const now = Date.now();
         // A worker that was killed while holding its lease. The primary keeps
         // running, so the startup sweep is not going to happen.
-        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run('user:1', connection.id, 'dead-worker-lease', 987654, 'running', now + 60000, now);
+        await seedLease(connection.id, 'dead-worker-lease', { pid: 987654 });
         expect(fs.existsSync(paths.authFile)).toBe(true);
         const released = credentials.releaseWorkerRuntimes(987654);
         expect(released).toMatchObject({ leases: 1, cleared: 1 });
@@ -470,9 +483,9 @@ describe('personal ChatGPT runtime robustness', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
         const pid = db.prepare('SELECT worker_pid FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id).worker_pid;
         account.releaseAllAttempts();
+        await idleRuntimes();
         fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'unsealed-token' } }), { mode: 0o600 });
-        db.prepare('INSERT OR REPLACE INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run('user:1', connection.id, 'dead', pid, 'running', Date.now() + 60000, Date.now());
+        await seedLease(connection.id, 'dead', { pid });
         expect(credentials.releaseWorkerRuntimes(pid).cleared).toBeGreaterThan(0);
         expect(fs.existsSync(paths.authFile)).toBe(false);
         expect(started.status).toBe('pending');
@@ -548,18 +561,14 @@ describe('personal ChatGPT runtime robustness', () => {
     // A supersede routed to another worker leaves that worker's lease in the
     // shared table while this process has no runtime of its own for it. Holding
     // only the database lease reproduces exactly that state.
-    const holdForeignLease = connectionId => {
-        const now = Date.now();
-        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run('user:1', connectionId, 'foreign-lease', 424242, 'running', now + 60000, now);
-    };
+    const holdForeignLease = connectionId => seedLease(connectionId, 'foreign-lease', { pid: 424242 });
     const dropForeignLease = connectionId =>
         db.prepare("DELETE FROM ai_codex_runtimes WHERE connection_id=? AND lease_id='foreign-lease'").run(connectionId);
 
     it('waits for the previous runtime to hand over its lease before replacing it', async () => {
         fake({ login: 'pending' });
         const connection = createConnection();
-        holdForeignLease(connection.id);
+        await holdForeignLease(connection.id);
         expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
         const released = setTimeout(() => dropForeignLease(connection.id), 500);
         released.unref?.();
@@ -571,7 +580,7 @@ describe('personal ChatGPT runtime robustness', () => {
     it('refuses a collision that never hands over, without recording an attempt', async () => {
         fake({ login: 'pending' });
         const connection = createConnection();
-        holdForeignLease(connection.id);
+        await holdForeignLease(connection.id);
         try {
             const before = db.prepare('SELECT count(*) AS n FROM ai_codex_logins').get().n;
             await expect(account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'))
@@ -974,6 +983,7 @@ describe('personal ChatGPT runtime ownership', () => {
             await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_BUSY' });
             await expect(ai.discoverModels(user, connection.id)).rejects.toMatchObject({ code: 'AI_BUSY' });
         } finally { runtime.stopRuntime(session); }
+        await idleRuntimes();
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
         await expect(ai.discoverModels(user, connection.id)).resolves.toBeTruthy();
     });
@@ -1049,10 +1059,38 @@ describe('personal ChatGPT runtime ownership', () => {
             expect(fs.existsSync(session.paths.authFile)).toBe(true);
             expect(fs.existsSync(session.paths.workDir)).toBe(true);
         } finally { runtime.stopRuntime(session); }
+        await idleRuntimes();
         // Cleanup releases its own lease again, so the next start is not blocked.
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
         const next = await runtime.startRuntime('user:1', connection.id);
         runtime.stopRuntime(next);
+    }, 30000);
+
+    it('holds the lease until the child has actually exited', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        const pid = session.client.pid;
+        runtime.stopRuntime(session);
+        // Closing only sends SIGTERM. Releasing the lease here would let a
+        // replacement start beside a process that is still running.
+        expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'stopping' });
+        await session.client.exited;
+        await until(() => runtime.runtimeState('user:1', connection.id) === null, 8000);
+        // The child is really gone by the time the identity is free again.
+        expect(() => process.kill(pid, 0)).toThrow();
+    }, 30000);
+
+    it('lets a replacement wait for a terminating runtime but refuses a live one', async () => {
+        const connection = await linkedConnection();
+        const first = await runtime.startRuntime('user:1', connection.id);
+        // A live runtime is a genuine conflict and is refused at once.
+        const started = Date.now();
+        await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_BUSY' });
+        expect(Date.now() - started).toBeLessThan(2000);
+        // A terminating one is waited for instead.
+        runtime.stopRuntime(first);
+        const replacement = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(replacement);
     }, 30000);
 
     it('stops a runtime whose lease was revoked by another worker', async () => {
@@ -1068,9 +1106,7 @@ describe('personal ChatGPT runtime ownership', () => {
 
     it('waits for the owning worker to acknowledge a revoked lease before signing out', async () => {
         const connection = await withModel();
-        const now = Date.now();
-        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run('user:1', connection.id, 'other-worker', 123456, 'running', now + 60000, now);
+        await seedLease(connection.id, 'other-worker');
         // The owner acknowledges by releasing the row it saw marked revoked.
         const acknowledge = setInterval(() => {
             const row = db.prepare('SELECT state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
@@ -1092,9 +1128,7 @@ describe('personal ChatGPT runtime ownership', () => {
 
     it('removes local access without a second runtime when the owner never acknowledges', async () => {
         const connection = await withModel();
-        const now = Date.now();
-        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run('user:1', connection.id, 'silent-worker', 123456, 'running', now + 60000, now);
+        await seedLease(connection.id, 'silent-worker');
         const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
         // Starting a logout runtime beside a possibly live one is never the
         // answer; local access goes and the difference is reported.
@@ -1208,6 +1242,20 @@ describe('personal ChatGPT runtime ownership', () => {
         credentials.sweepOrphans();
         expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
     });
+
+    it('ends a running runtime before an account deletion returns', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
+        // The account's runtime must be stopped and acknowledged before its
+        // credential state disappears.
+        await account.purgeAccountRuntimes('user:1');
+        expect(session.stopped).toBe(true);
+        expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
+    }, 30000);
 
     it('removes every personal runtime record when the account is deleted', async () => {
         const connection = await linkedConnection();

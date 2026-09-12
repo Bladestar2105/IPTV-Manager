@@ -531,10 +531,17 @@ export const updateUser = async (req, res) => {
   }
 };
 
-export const deleteUser = (req, res) => {
+export const deleteUser = async (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
+    // A personal ChatGPT runtime keeps using this account's credential until it
+    // is told to stop, so it is ended and acknowledged before anything is
+    // removed. Deletion must not return while that use is still in progress.
+    try {
+      const {purgeAccountRuntimes} = await import('../services/ai/codex/account.js');
+      await purgeAccountRuntimes(`user:${id}`);
+    } catch { /* Optional runtime cleanup never blocks an account deletion. */ }
     const ownedProviderUrls = db.prepare('SELECT url FROM providers WHERE user_id = ?').all(id).map(p => p.url);
 
     db.transaction(() => {
@@ -586,8 +593,8 @@ export const deleteUser = (req, res) => {
     })();
 
     clearChannelsCache(id);
-    // Database triggers remove the account's AI records; the personal ChatGPT
-    // runtime directory and any sealed credential are removed here as well.
+    // Database triggers remove the account's AI records; anything the runtime
+    // teardown above could not reach yet is swept here.
     try { purgeAiRuntimeIdentity(`user:${id}`); }
     catch { /* Optional runtime cleanup never fails an account deletion. */ }
     res.json({success: true});

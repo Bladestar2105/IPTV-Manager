@@ -6,7 +6,7 @@ import { aiError } from '../transport.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
-import { seal, wipe, clearPlaintext, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord } from './credentials.js';
+import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 // A sign-in belongs to the browser session that started it. That session polls
@@ -428,6 +428,25 @@ export async function readAccountState(actor, connection) {
     // Removed after the runtime stopped, so its guard cannot race the teardown.
     if (invalidate) wipe(connection.owner_key, connection.id);
     return state;
+}
+
+// Ends every runtime of an account before its runtime state is removed, so a
+// deletion never returns while a child is still using that account's credential.
+export async function purgeAccountRuntimes(ownerKey) {
+    for (const row of db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN ('starting','pending')").all(ownerKey)) {
+        finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
+        releaseAttempt(row.id);
+    }
+    for (const row of db.prepare('SELECT connection_id FROM ai_codex_runtimes WHERE owner_key=?').all(ownerKey)) {
+        const live = liveRuntime(ownerKey, row.connection_id);
+        if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
+        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+            .run(Date.now(), ownerKey, row.connection_id);
+        if (!(await waitForLeaseRelease(ownerKey, row.connection_id))) {
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, row.connection_id);
+        }
+    }
+    purgeIdentity(ownerKey);
 }
 
 export function releaseAllAttempts() {

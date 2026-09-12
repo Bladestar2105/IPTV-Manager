@@ -139,7 +139,7 @@ describe('delete cleanup regressions', () => {
     const { deleteUser } = await import('../../src/controllers/userController.js');
     const res = makeRes();
 
-    deleteUser({ user: { is_admin: true }, params: { id: '7' } }, res);
+    await deleteUser({ user: { is_admin: true }, params: { id: '7' } }, res);
 
     const iconCacheIndex = sqlIndex('DELETE FROM provider_icon_cache WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)');
     const providersIndex = sqlIndex('DELETE FROM providers WHERE user_id = ?');

@@ -408,7 +408,11 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
 * `user:<id>` and `admin:<id>` stay separate namespaces, each with its own
   credential, runtime directory and session.
 * One runtime per identity and connection, held by a database lease with a
-  heartbeat. A concurrent start, a competing token refresh or the reuse of
+  heartbeat. The lease is the promise that no process is using that identity, so
+  a stopping runtime keeps it until its child has actually exited — closing only
+  sends a termination signal — and a replacement waits for that hand-off instead
+  of starting beside a process that is still running. A lease held by a runtime
+  that is not terminating is a genuine conflict and is refused at once. A concurrent start, a competing token refresh or the reuse of
   another identity's session is rejected across workers with `AI_BUSY`. There is
   no shared process that is switched between personal logins.
 * Linking the same reliably reported external account twice is refused, so a
@@ -484,8 +488,8 @@ the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting a connection follows the same path before its row disappears, so a
 runtime never keeps using a credential whose connection is already gone. Deleting
-an account removes its credential records, attempt history and runtime
-directory.
+an account does the same for every runtime it owns before removing its credential
+records, attempt history and runtime directory.
 
 ### Credential storage
 
