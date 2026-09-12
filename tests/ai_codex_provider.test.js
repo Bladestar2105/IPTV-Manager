@@ -1147,6 +1147,25 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
     }, 30000);
 
+    it('does not clean up an identity it no longer holds', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(session);
+        // The identity is force-released and taken over while the old child is
+        // still terminating, exactly as a disconnect that timed out leaves it.
+        db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key='user:1' AND connection_id=?").run(connection.id);
+        await seedLease(connection.id, 'replacement-lease');
+        fs.mkdirSync(session.paths.codexHome, { recursive: true });
+        fs.writeFileSync(session.paths.authFile, JSON.stringify({ tokens: { access_token: 'replacement-token' } }), { mode: 0o600 });
+        await session.client.exited;
+        await new Promise(resolve => { const timer = setTimeout(resolve, 200); timer.unref?.(); });
+        // The departing child must leave the new holder's files alone.
+        expect(fs.existsSync(session.paths.authFile)).toBe(true);
+        expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'running' });
+        db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key='user:1' AND connection_id=?").run(connection.id);
+    }, 30000);
+
     it('never lets a departing child remove the files of its replacement', async () => {
         fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
         const connection = await linkedConnection();

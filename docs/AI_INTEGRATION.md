@@ -537,8 +537,10 @@ is required. The panel is fully localized in German, English, French and Greek.
 On shutdown the server stops every runtime — including one that was already
 terminating, whose child is still alive — and waits, with a bounded timeout, for
 the children to exit and their credential files to be removed before it
-terminates. A departing child's cleanup never touches files of a runtime that has
-since taken the same identity. Terminating immediately would leave a hydrated credential on disk
+terminates. A departing child removes its credential file while it still holds the lease and
+in the same transaction that releases it, so cleanup and acquisition exclude each
+other and it can never touch the files of a runtime that has since taken the same
+identity. Terminating immediately would leave a hydrated credential on disk
 while the service is offline.
 
 ### Restart, failure and disabling

@@ -136,13 +136,22 @@ async function handshake(client, paths, expectedVersion) {
 function releaseAfterExit(ownerKey, connectionId, leaseId, client) {
     db.prepare("UPDATE ai_codex_runtimes SET state='stopping', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
         .run(Date.now(), ownerKey, connectionId, leaseId);
+    // Cleanup happens while the lease is still held and in the same immediate
+    // transaction that releases it, so it is mutually exclusive with acquisition:
+    // a replacement cannot own this identity while its files are being removed.
+    // Checking after the release could not achieve that, because acquisition can
+    // land between the release and the check, or between the check and the
+    // removal.
     const release = () => {
-        const removed = db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
-            .run(ownerKey, connectionId, leaseId).changes;
-        const claimed = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
-        // A late continuation must never remove the files of a runtime that has
-        // since taken this identity.
-        if (removed || !claimed) clearPlaintext(ownerKey, connectionId);
+        db.transaction(() => {
+            const stillOurs = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
+                .get(ownerKey, connectionId, leaseId);
+            // Someone force-released this identity and it may already belong to
+            // another runtime; the sweeps clean up what is left behind.
+            if (stillOurs) clearPlaintext(ownerKey, connectionId);
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
+                .run(ownerKey, connectionId, leaseId);
+        }).immediate();
     };
     client.exited.then(release, release);
     return client.exited;
