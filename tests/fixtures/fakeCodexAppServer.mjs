@@ -188,6 +188,14 @@ function handle(message) {
             });
         case 'turn/start': {
             const turnId = 'turn-1';
+            // Models a model that answers plain JSON but rejects a schema.
+            if (config.rejectStructured && params?.outputSchema) {
+                reply({ turn: { id: turnId, items: [], itemsView: 'complete', status: 'inProgress', error: null } });
+                later(config.turnDelayMs ?? 20, () => notify('turn/completed', { threadId: params?.threadId || 'thread-1',
+                    turn: { id: turnId, items: [], itemsView: 'complete', status: 'failed',
+                        error: { message: 'schema unsupported', codexErrorInfo: 'badRequest', additionalDetails: null, misalignment: null } } }));
+                return undefined;
+            }
             reply({ turn: { id: turnId, items: [], itemsView: 'complete', status: 'inProgress', error: null } });
             later(config.turnDelayMs ?? 20, () => completeTurn(params?.threadId || 'thread-1', turnId));
             return undefined;

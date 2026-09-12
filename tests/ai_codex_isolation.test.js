@@ -126,6 +126,22 @@ describe('Codex launcher location and interpreter', () => {
     });
 });
 
+describe('Codex namespace layout', () => {
+    it('masks the data directory even when it sits under a mounted system root', () => {
+        const paths = identity('mask-check');
+        const wrapped = isolation.wrapCommand({ name: 'bwrap', path: '/usr/bin/bwrap', grade: 'isolated' },
+            { ...paths, command: ['/bin/sh', '-c', 'true'] });
+        const args = wrapped.args;
+        const tmpfsAt = args.findIndex((value, index) => value === '--tmpfs' && args[index + 1] === fs.realpathSync.native(dataDir));
+        const bindAt = args.findIndex((value, index) => value === '--bind' && args[index + 1] === paths.codexHome);
+        expect(tmpfsAt).toBeGreaterThan(-1);
+        // Masked after the read-only roots and before the identity binds, so a
+        // data directory under /usr is hidden while the runtime tree stays usable.
+        expect(bindAt).toBeGreaterThan(tmpfsAt);
+        expect(args.slice(0, tmpfsAt)).toContain('--ro-bind');
+    });
+});
+
 describe('Codex isolation backend selection', () => {
     it('keeps the adapter unavailable when sandboxing is switched off', async () => {
         process.env.AI_CODEX_SANDBOX = 'none';

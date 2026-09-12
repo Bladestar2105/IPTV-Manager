@@ -361,8 +361,12 @@ filesystem mode or a disabled tool flag are defence in depth, never the
 boundary. The adapter is therefore offered only where all of the following hold:
 
 1. An operating-system sandbox is available and passes a **canary self-test** at
-   startup: from inside the sandbox, a file outside it must be unreadable and a
-   write into `DATA_DIR` must fail. Linux uses bubblewrap (`bwrap`), which is the
+   startup: from inside the sandbox, a file outside it must be unreadable — the
+   probe places one beside the runtime directory and one inside `DATA_DIR`, so a
+   data directory reachable through a mounted system root is detected — and a
+   write into `DATA_DIR` must fail. The data directory is additionally masked
+   inside the namespace, so its location relative to the read-only system roots
+   does not matter. Linux uses bubblewrap (`bwrap`), which is the
    only grade accepted for hosted multi-user operation. macOS `sandbox-exec` is
    classified as development grade and refused unless an operator explicitly
    opts in: its profile denies writes outside the identity's own tree and reads
@@ -523,7 +527,10 @@ for this type, so that control is hidden and the stored profile records none.
 
 Requests use the same bounded synthetic test first, then the real contracts of
 all eight functions, and structured answers are validated locally against the
-same feature contract. A cancellation, refusal, tool request, truncated JSON or
+same feature contract. As with the API transport, the plain-JSON test is sent
+without schema-constrained output, so a model that answers JSON but rejects a
+schema is recorded as a usable JSON fallback rather than as incompatible, and
+keeps working afterwards; the schema is always stated in the instructions. A cancellation, refusal, tool request, truncated JSON or
 faulty RPC event can never result in an applied list change. Available quota and
 reset time are shown only where the documented interface reports them, and stay
 **unknown** otherwise. No monetary price and no guaranteed number of remaining

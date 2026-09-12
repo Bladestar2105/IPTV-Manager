@@ -881,6 +881,21 @@ describe('personal ChatGPT model catalog and turns', () => {
         expect(tested.models.every(model => model.token_parameter === null)).toBe(true);
     });
 
+    it('records a model that rejects a schema as a JSON fallback and keeps it usable', async () => {
+        const connection = await linkedConnection();
+        await ai.discoverModels(user, connection.id);
+        fake({ rejectStructured: true, recordPath, recordApprovalPath: approvalPath });
+        const tested = await ai.testModels(user, connection.id, { model_ids: ['model-beta'] });
+        // Plain JSON passed, only the schema-constrained turn failed.
+        expect(tested.models[0]).toMatchObject({ chat: true, structured: false, status: 'json_fallback' });
+        expect(tested.recommended_model_id).toBe('model-beta');
+        ai.saveConnection(user, { model_id: 'model-beta' }, connection.id);
+        ai.savePreferences(user, { model_id: 'model-beta' });
+        // A stored fallback profile has to keep working for real requests.
+        const result = await ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema });
+        expect(result.data).toEqual({ ok: true });
+    }, 30000);
+
     it('completes a bounded turn and records the reported token usage', async () => {
         await withModel();
         const result = await ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'check' }], schema });

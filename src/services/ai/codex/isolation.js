@@ -141,6 +141,11 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launc
     ];
     const roots = existingReadOnlyRoots();
     for (const root of roots) args.push('--ro-bind', root, root);
+    // A data directory that happens to live under one of those roots would be
+    // carried in by that bind, with the database and the key files in it. Masking
+    // it makes the layout irrelevant; the identity binds below are applied
+    // afterwards, so a runtime directory inside it stays reachable.
+    for (const directory of new Set([path.resolve(DATA_DIR), realPath(DATA_DIR)])) args.push('--tmpfs', directory);
     // The runtime is launched by absolute path. Its directory, the target of a
     // symlinked launcher and that target's package root are bound read-only when
     // they live outside the standard roots, so a global npm install or an
@@ -222,10 +227,13 @@ async function selfTest(backend, runtimeDir, launcher) {
     const workDir = path.join(probeRoot, 'work');
     for (const dir of [codexHome, workDir, path.join(workDir, 'tmp')]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const token = randomBytes(16).toString('hex');
-    const canary = path.join(runtimeDir, `canary-${token}`);
-    fs.writeFileSync(canary, token, { mode: 0o600 });
+    // One canary beside the runtime directory and one in the data directory
+    // itself: a layout where the data directory is reachable through a system
+    // root would otherwise pass a probe that only reads the first.
+    const canaries = [...new Set([path.join(runtimeDir, `canary-${token}`), path.join(DATA_DIR, `.codex-read-probe-${token}`)])];
+    for (const canary of canaries) fs.writeFileSync(canary, token, { mode: 0o600 });
     const forbidden = path.join(DATA_DIR, `.codex-write-probe-${token}`);
-    const script = `cat ${JSON.stringify(canary)} 2>/dev/null; printf "|"; ` +
+    const script = `${canaries.map(canary => `cat ${JSON.stringify(canary)} 2>/dev/null;`).join(' ')} printf "|"; ` +
         `(printf x > ${JSON.stringify(forbidden)}) 2>/dev/null && printf WROTE; printf "|done"`;
     try {
         // Carries the configured launcher's mounts, so a launcher whose location
@@ -241,7 +249,7 @@ async function selfTest(backend, runtimeDir, launcher) {
     } catch {
         return { ok: false, reason: 'AI_CODEX_SANDBOX_PROBE_FAILED' };
     } finally {
-        fs.rmSync(canary, { force: true });
+        for (const canary of canaries) fs.rmSync(canary, { force: true });
         fs.rmSync(forbidden, { force: true });
         fs.rmSync(probeRoot, { recursive: true, force: true });
     }
