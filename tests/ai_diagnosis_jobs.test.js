@@ -121,6 +121,21 @@ describe('local diagnosis through authenticated persisted jobs',()=>{
     const state=db.prepare('SELECT status,result_json FROM ai_jobs WHERE id=?').get(create.body.id);
     expect(['failed','cancelled']).toContain(state.status);expect(state.result_json).toBeNull();
   });
+  it.each([['version','ai_connection_changed'],['policy','AI_FORBIDDEN'],['token','ai_access_revoked']])('preserves the monitor %s abort reason',async(kind,code)=>{
+    mode='hold';const create=await createJob();await waitFor(()=>pending.length===1);
+    if(kind==='version')api.saveConnection(admin,{name:'Changed during hold'},connection.id);
+    if(kind==='policy')api.updateAiSettings(admin,{functions:['search']});
+    if(kind==='token')db.prepare('UPDATE users SET token_version=token_version+1 WHERE id=992').run();
+    // Leave the response held until the real monitor detects the change and aborts.
+    await waitFor(()=>db.prepare('SELECT status FROM ai_jobs WHERE id=?').get(create.body.id).status!=='running');
+    mode='ok';release();
+    expect(db.prepare('SELECT status,error_code,result_json FROM ai_jobs WHERE id=?').get(create.body.id)).toEqual({status:'failed',error_code:code,result_json:null});
+    expect((await getJob(create.body.id)).body).toMatchObject({status:'failed',error_code:code});
+    const history=await request(app).get('/api/ai/jobs').set('Authorization',bearer());
+    expect(history.body.find(row=>row.id===create.body.id)).toMatchObject({status:'failed',error_code:code});
+    expect(db.prepare("SELECT status,error_code FROM ai_usage WHERE feature='diagnose'").get()).toEqual({status:'unknown',error_code:code.toUpperCase()});
+    expect(requests).toBe(1);
+  });
   it('discards local findings after a configuration change even when the upstream model also disappears',async()=>{
     mode='hold';const create=await createJob();await waitFor(()=>pending.length===1);
     api.saveConnection(admin,{name:'Changed configuration'},connection.id);

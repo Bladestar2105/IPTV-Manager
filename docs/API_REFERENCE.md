@@ -112,7 +112,11 @@ For example, POST `/api/ai/jobs` with header `Idempotency-Key: cleanup-example-1
 ```
 
 The response contains `id`, `status`, `feature` and `created_at`. Poll the job;
-statuses are `queued`, `running`, `completed`, `failed`, `cancelled`. A completed
+statuses are `queued`, `running`, `completed`, `failed`, `cancelled`. Only an
+explicit cancellation uses `cancelled`. Overall deadlines use `failed` with
+`AI_TIMEOUT`; internal permission/connection aborts retain their error code in
+polling, history and usage. Interrupted requests can still have unknown billing
+status and are not automatically retried. A completed
 result may include `proposal_id`, `conversation_id`, `enrichment_id`, findings
 and coverage. Reading a persisted result requires current account, Web UI and
 AI feature access plus renewed source/ownership checks. It does not require

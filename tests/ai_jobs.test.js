@@ -67,6 +67,22 @@ describe('durable bounded AI jobs',()=>{
     hold=false;release();
     await until(()=>db.prepare('SELECT status FROM ai_usage ORDER BY created_at DESC LIMIT 1').get().status!=='running');
     expect(await jobs.getJob(actor,job.id)).not.toHaveProperty('result');
+    expect(await jobs.getJob(actor,job.id)).toMatchObject({status:'cancelled',error_code:'ai_cancelled'});
+    expect(jobs.listJobs(actor).find(row=>row.id===job.id)).toMatchObject({status:'cancelled',error_code:'ai_cancelled'});
+    expect(db.prepare('SELECT status,error_code FROM ai_usage ORDER BY created_at DESC LIMIT 1').get()).toEqual({status:'unknown',error_code:'AI_CANCELLED'});
+  });
+  it('records the overall deadline as a failure with uncertain usage, not a user cancellation',async()=>{
+    hold=true;const count=requests;
+    const job=jobs.createJob(actor,{feature:'diagnose'},'deadline-job-key');
+    // Shorten only this persisted fixture's internal budget before its scheduled worker starts.
+    db.prepare("UPDATE ai_jobs SET input_json=json_set(input_json,'$._timeout',150) WHERE id=?").run(job.id);
+    await until(()=>pending.length===1);
+    await until(()=>db.prepare('SELECT status FROM ai_jobs WHERE id=?').get(job.id).status!=='running');
+    hold=false;release();
+    expect(await jobs.getJob(actor,job.id)).toMatchObject({status:'failed',error_code:'AI_TIMEOUT'});
+    expect(jobs.listJobs(actor).find(row=>row.id===job.id)).toMatchObject({status:'failed',error_code:'AI_TIMEOUT'});
+    expect(db.prepare('SELECT status,error_code FROM ai_usage ORDER BY created_at DESC LIMIT 1').get()).toEqual({status:'unknown',error_code:'AI_TIMEOUT'});
+    expect(requests).toBe(count+1);
   });
   it('invalidates a completed response when its connection changes during inference',async()=>{
     hold=true;

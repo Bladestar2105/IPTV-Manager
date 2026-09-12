@@ -104,9 +104,9 @@ async function runJob(id) {
   const actor = {id:Number(actorId),is_admin:kind === 'admin'};
   const controller = new AbortController();
   running.set(id,controller);
-  const deadline = setTimeout(() => controller.abort(),input._timeout || JOB_TIMEOUT);
+  const deadline = setTimeout(() => controller.abort({code:'AI_TIMEOUT'}),input._timeout || JOB_TIMEOUT);
   const check = (requireModel = job.feature !== 'diagnose') => {
-    if (controller.signal.aborted) fail(409,'ai_cancelled');
+    if (controller.signal.aborted) throw controller.signal.reason;
     const state = db.prepare('SELECT status FROM ai_jobs WHERE id = ?').get(id);
     if (state?.status !== 'running') fail(409,'ai_cancelled');
     const fresh = currentActor(actor,input._actor_version);
@@ -118,7 +118,7 @@ async function runJob(id) {
     return fresh;
   };
   const monitor = setInterval(() => {
-    try { check(); } catch { controller.abort(); }
+    try { check(); } catch (error) { controller.abort(error); }
   },500);
   monitor.unref();
   try {
@@ -150,10 +150,10 @@ async function runJob(id) {
     db.prepare("UPDATE ai_jobs SET status = 'completed', result_json = ?, updated_at = ? WHERE id = ? AND status = 'running'")
       .run(output,Date.now(),id);
   } catch (error) {
-    const code = controller.signal.aborted ? 'ai_cancelled' :
-      (/^ai_[a-z0-9_]+$/i.test(error.code || '') ? error.code : 'ai_job_failed');
+    const cause = controller.signal.aborted ? controller.signal.reason : error;
+    const code = /^ai_[a-z0-9_]+$/i.test(cause?.code || '') ? cause.code : 'ai_job_failed';
     db.prepare("UPDATE ai_jobs SET status = ?, error_code = ?, updated_at = ? WHERE id = ? AND status = 'running'")
-      .run(controller.signal.aborted ? 'cancelled' : 'failed',code,Date.now(),id);
+      .run('failed',code,Date.now(),id);
   } finally {
     clearTimeout(deadline);
     clearInterval(monitor);
@@ -189,7 +189,7 @@ export function cancelJob(actor, id) {
   if (!row) fail(404,'ai_not_found');
   db.prepare("UPDATE ai_jobs SET status = 'cancelled', error_code = 'ai_cancelled', updated_at = ? WHERE id = ? AND status IN ('queued','running')")
     .run(Date.now(),id);
-  running.get(id)?.abort();
+  running.get(id)?.abort({code:'ai_cancelled'});
   return {id,status:db.prepare('SELECT status FROM ai_jobs WHERE id = ?').get(id).status};
 }
 

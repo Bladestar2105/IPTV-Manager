@@ -244,7 +244,9 @@ async function call(actor,feature,connectionId,endpoint,body,signal,validate) {
         db.prepare("UPDATE ai_usage SET status='completed' WHERE id=?").run(reservation);
         return {data,model:body?.model || null,usage};
     } catch(error) {
-        db.prepare("UPDATE ai_usage SET status=?,error_code=? WHERE id=?").run(error.code==='AI_TIMEOUT'?'unknown':'failed',signal?.aborted?'AI_CANCELLED':error.code || 'AI_UNAVAILABLE',reservation);
+        const reason=signal?.reason?.code;
+        const code=signal?.aborted ? /^ai_[a-z0-9_]+$/i.test(reason || '') ? reason.toUpperCase() : 'AI_CANCELLED' : error.code || 'AI_UNAVAILABLE';
+        db.prepare("UPDATE ai_usage SET status=?,error_code=? WHERE id=?").run(error.code==='AI_TIMEOUT'?'unknown':'failed',code,reservation);
         if (error.code==='AI_MODEL_UNAVAILABLE' && feature!=='setup') {
             const current=loadConnection(connection.id);
             if (current?.version===connection.version && current.capabilities[body.model]) {
