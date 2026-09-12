@@ -441,6 +441,10 @@ one-time device code.
   attempt instead of opening another one; when that attempt is held by a
   different worker the replacement waits briefly for its runtime to be handed
   over, and refuses without recording an attempt if it is not.
+* A sign-in attempt never stores a credential on teardown. Only a completed,
+  claimed attempt does, so cancelling a second sign-in on an already linked
+  connection cannot replace the stored token while its recorded account stays the
+  old one.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message. A
   runtime that dies after issuing the device code ends its attempt immediately
@@ -459,8 +463,11 @@ one-time device code.
 * Browser cookies and existing `auth.json` files from a developer or operator
   profile are never imported.
 
-Disconnecting blocks new work, cancels queued and running jobs, ends the
-runtime, performs the documented sign-out and removes the local credential. If
+Disconnecting blocks new work, cancels queued and running jobs, ends the runtime
+— including one owned by another worker, whose lease is removed as the shared
+stop signal and whose guard acts on it within a second, so no request can keep
+using a credential that is about to be revoked — performs the documented sign-out
+and removes the local credential. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting an account removes its credential records, attempt history

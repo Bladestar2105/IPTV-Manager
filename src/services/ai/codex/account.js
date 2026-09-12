@@ -70,7 +70,11 @@ function releaseAttempt(id) {
     clearTimeout(attempt.timer);
     clearInterval(attempt.watchdog);
     attempts.delete(id);
-    stopRuntime(attempt.session, 'AI_CODEX_RUNTIME_CLOSED');
+    // A sign-in attempt never seals on teardown. A successful one already sealed
+    // explicitly; for a cancelled or superseded one the file Codex just wrote
+    // belongs to an account that was never adopted, and a refresh-only seal would
+    // let it replace an existing credential while keeping the old fingerprint.
+    stopRuntime(attempt.session, 'AI_CODEX_RUNTIME_CLOSED', { keepCredentials: false });
 }
 
 // A cancel or a supersede can be handled by any worker, so the worker that owns
@@ -333,6 +337,13 @@ export async function disconnectAccount(actor, connection) {
     }
     const live = liveRuntime(ownerKey, connection.id);
     if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
+    // A runtime owned by another worker cannot be stopped from here. Removing its
+    // lease is the shared signal; that worker's guard sees it within a second and
+    // ends whatever it was running before the credential disappears.
+    if (runtimeState(ownerKey, connection.id)) {
+        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connection.id);
+        await waitForLeaseRelease(ownerKey, connection.id);
+    }
     let remote = false;
     if (readCredentialRecord(ownerKey, connection.id)) {
         try { remote = await withRuntime(ownerKey, connection.id, session => logout(session)); }

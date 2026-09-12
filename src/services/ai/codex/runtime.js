@@ -7,6 +7,10 @@ import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
 
 const LEASE_TTL_MS = 60000;
 const HEARTBEAT_MS = 20000;
+// The lease is checked far more often than it is refreshed, so a revocation
+// handled by another worker stops this runtime within a second instead of within
+// a heartbeat, while an in-flight billable request is still running.
+const GUARD_MS = 1000;
 const HANDSHAKE_TIMEOUT_MS = 20000;
 const live = new Map();
 
@@ -28,6 +32,12 @@ function acquireLease(ownerKey, connectionId) {
     }).immediate();
     if (!acquired) throw codexError('AI_BUSY', 'A Codex runtime for this connection is already active.', 409);
     return acquired;
+}
+
+// True while this worker still owns the lease it was granted.
+function holdsLease(ownerKey, connectionId, leaseId) {
+    const row = db.prepare('SELECT lease_id,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+    return Boolean(row) && row.lease_id === leaseId && row.expires_at >= Date.now();
 }
 
 function refreshLease(ownerKey, connectionId, leaseId, state = 'running') {
@@ -135,10 +145,17 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
         });
         session.client = client;
         await handshake(client, paths, availability.version);
+        let refreshedAt = Date.now();
         session.heartbeat = setInterval(() => {
             if (session.client.closed) return stopRuntime(session, session.client.closeReason || 'AI_CODEX_RUNTIME_CLOSED');
+            // A disconnect handled by another worker removes the lease. Noticing
+            // that quickly is what stops a running request from continuing to use
+            // a credential that was just revoked.
+            if (!holdsLease(ownerKey, connectionId, leaseId)) return stopRuntime(session, 'AI_CODEX_LEASE_LOST');
+            if (Date.now() - refreshedAt < HEARTBEAT_MS) return;
+            refreshedAt = Date.now();
             if (!refreshLease(ownerKey, connectionId, leaseId)) stopRuntime(session, 'AI_CODEX_LEASE_LOST');
-        }, HEARTBEAT_MS);
+        }, GUARD_MS);
         session.heartbeat.unref?.();
         installShutdownHandlers();
         live.set(runtimeKey(ownerKey, connectionId), session);

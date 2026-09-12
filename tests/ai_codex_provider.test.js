@@ -940,6 +940,49 @@ describe('personal ChatGPT runtime ownership', () => {
             .rejects.toMatchObject({ code: 'AI_CODEX_NOT_LINKED' });
     });
 
+    it('never lets a cancelled sign-in overwrite the stored credential', async () => {
+        const connection = await linkedConnection();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        // A second sign-in on an already linked connection, cancelled after Codex
+        // wrote its new credential file.
+        fake({ login: 'success', loginDelayMs: 100, email: 'someone.else@example.org' });
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        await until(() => fs.existsSync(credentials.identityPaths('user:1', connection.id).authFile));
+        await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
+        const after = credentials.readCredentialRecord('user:1', connection.id);
+        // The stored token must not be replaced while its fingerprint and label
+        // still describe the previously linked account.
+        expect(after.version).toBe(before.version);
+        expect(after.encrypted_blob).toBe(before.encrypted_blob);
+        expect(after.account_hash).toBe(before.account_hash);
+        expect(after.account_label).toBe(before.account_label);
+    }, 30000);
+
+    it('stops a runtime whose lease was revoked by another worker', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            // Exactly what a disconnect handled elsewhere leaves behind.
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run('user:1', connection.id);
+            await until(() => session.client.closed || session.stopped, 8000);
+            expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+        } finally { runtime.stopRuntime(session); }
+    }, 30000);
+
+    it('ends a runtime owned by another worker before unlinking', async () => {
+        const connection = await withModel();
+        const now = Date.now();
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'other-worker', 123456, 'running', now + 60000, now);
+        const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
+        expect(result.disconnected).toBe(true);
+        // No lease survives the unlink, so no worker can keep using the credential.
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        await expect(ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema }))
+            .rejects.toMatchObject({ code: 'AI_CODEX_NOT_LINKED' });
+    }, 30000);
+
     it('confirms a successful remote sign-out separately', async () => {
         const connection = await linkedConnection();
         const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
