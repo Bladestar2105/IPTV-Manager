@@ -1,0 +1,166 @@
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+
+// Exercises the real isolation backend, not a stand-in. Containment is asserted
+// by trying to escape it: a canary outside the sandbox must stay unreadable and
+// the manager's data directory must stay unwritable. Where the host provides no
+// usable backend, the suite asserts that the adapter reports itself unavailable
+// and records the missing precondition instead of passing quietly.
+const run = promisify(execFile);
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-codex-isolation-'));
+const runtimeDir = path.join(dataDir, 'ai-codex');
+process.env.DATA_DIR = dataDir;
+process.env.AI_CODEX_RUNTIME_DIR = runtimeDir;
+
+// Resolved at module scope: the containment cases are skipped by value, and a
+// value produced in `beforeAll` would not be known when the suite is collected.
+process.env.AI_CODEX_SANDBOX = 'auto';
+process.env.AI_CODEX_ALLOW_DEV_SANDBOX = 'true';
+const isolation = await import('../src/services/ai/codex/isolation.js');
+const runtime = await import('../src/services/ai/codex/runtime.js');
+isolation.resetIsolationCache();
+const detected = await isolation.resolveIsolation({ force: true });
+if (!detected.available) {
+    // Recorded on purpose: an environment without a usable backend leaves the
+    // containment evidence outstanding for the pilot acceptance.
+    console.warn(`[ai-codex] no usable isolation backend on this host: ${detected.reason}. Containment assertions are reported as an unmet precondition.`);
+}
+
+function identity(name) {
+    const root = path.join(runtimeDir, 'probe-identities', name);
+    const codexHome = path.join(root, 'home');
+    const workDir = path.join(root, 'work');
+    for (const dir of [codexHome, workDir, path.join(workDir, 'tmp')]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return { root, codexHome, workDir };
+}
+
+async function inSandbox(paths, script) {
+    const description = isolation.wrapCommand(detected.handle, { ...paths, command: ['/bin/sh', '-c', script] });
+    try {
+        const { stdout } = await run(description.file, description.args, { env: description.environment, timeout: 20000, maxBuffer: 64 * 1024 });
+        return stdout;
+    } catch (error) { return `ERROR:${error.message}`; }
+}
+
+afterAll(() => {
+    for (const key of ['AI_CODEX_SANDBOX', 'AI_CODEX_ALLOW_DEV_SANDBOX', 'AI_CODEX_ENABLED', 'AI_CODEX_BIN']) delete process.env[key];
+    fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+beforeEach(() => { isolation.resetIsolationCache(); });
+
+describe('Codex runtime environment', () => {
+    it('builds the runtime environment from scratch and inherits nothing', () => {
+        process.env.OPENAI_API_KEY = 'inherited-platform-key';
+        process.env.OPENAI_BASE_URL = 'https://inherited.example/v1';
+        process.env.CODEX_HOME = '/home/operator/.codex';
+        try {
+            const paths = identity('env-check');
+            const environment = isolation.sandboxEnvironment(paths.codexHome, paths.workDir);
+            expect(Object.keys(environment).sort()).toEqual(['CODEX_HOME', 'HOME', 'LANG', 'LC_ALL', 'PATH', 'TERM', 'TMPDIR']);
+            expect(environment.CODEX_HOME).toBe(paths.codexHome);
+            expect(environment.HOME).toBe(paths.codexHome);
+            expect(environment.TMPDIR.startsWith(paths.workDir)).toBe(true);
+            expect(JSON.stringify(environment)).not.toContain('inherited-platform-key');
+            expect(JSON.stringify(environment)).not.toContain('inherited.example');
+            expect(environment.PATH).not.toContain(process.cwd());
+        } finally {
+            delete process.env.OPENAI_API_KEY;
+            delete process.env.OPENAI_BASE_URL;
+            delete process.env.CODEX_HOME;
+        }
+    });
+});
+
+describe('Codex isolation backend selection', () => {
+    it('keeps the adapter unavailable when sandboxing is switched off', async () => {
+        process.env.AI_CODEX_SANDBOX = 'none';
+        const result = await isolation.resolveIsolation({ force: true });
+        expect(result).toMatchObject({ available: false, reason: 'AI_CODEX_SANDBOX_DISABLED' });
+        expect(() => isolation.wrapCommand({ name: 'none' }, { codexHome: '/tmp', workDir: '/tmp', command: ['/bin/sh'] }))
+            .toThrow(/AI_CODEX_SANDBOX_UNAVAILABLE/);
+        process.env.AI_CODEX_SANDBOX = 'auto';
+    });
+
+    it('keeps the adapter unavailable when the requested backend is unknown or absent', async () => {
+        process.env.AI_CODEX_SANDBOX = 'definitely-not-a-backend';
+        expect(await isolation.resolveIsolation({ force: true })).toMatchObject({ available: false, reason: 'AI_CODEX_SANDBOX_MISSING' });
+        process.env.AI_CODEX_SANDBOX = 'auto';
+    });
+
+    it('refuses a development-grade backend unless an operator opted in', async () => {
+        delete process.env.AI_CODEX_ALLOW_DEV_SANDBOX;
+        const result = await isolation.resolveIsolation({ force: true });
+        process.env.AI_CODEX_ALLOW_DEV_SANDBOX = 'true';
+        if (detected.available && detected.grade === 'development') {
+            expect(result).toMatchObject({ available: false, reason: 'AI_CODEX_SANDBOX_GRADE_REJECTED' });
+        } else {
+            expect(result.available).toBe(detected.available);
+        }
+    });
+
+    it('never reports the adapter as available without a proven backend', async () => {
+        process.env.AI_CODEX_ENABLED = 'true';
+        process.env.AI_CODEX_SANDBOX = 'none';
+        const availability = await runtime.codexAvailability({ force: true });
+        expect(availability.available).toBe(false);
+        expect(['AI_CODEX_SANDBOX_DISABLED', 'AI_CODEX_BINARY_MISSING', 'AI_CODEX_VERSION_UNSUPPORTED']).toContain(availability.reason);
+        process.env.AI_CODEX_SANDBOX = 'auto';
+        delete process.env.AI_CODEX_ENABLED;
+    });
+});
+
+describe('Codex isolation containment', () => {
+    it('reports the detected backend and its grade', () => {
+        expect(detected).toHaveProperty('available');
+        if (detected.available) expect(['isolated', 'development']).toContain(detected.grade);
+        else expect(typeof detected.reason).toBe('string');
+    });
+
+    it.skipIf(!detected?.available)('cannot read a file outside the sandboxed identity', async () => {
+        const paths = identity('read-escape');
+        const token = randomBytes(16).toString('hex');
+        const secret = path.join(dataDir, 'secret.key');
+        fs.writeFileSync(secret, token, { mode: 0o600 });
+        const output = await inSandbox(paths, `cat ${JSON.stringify(secret)} 2>/dev/null; printf "|end"`);
+        expect(output).not.toContain(token);
+    });
+
+    it.skipIf(!detected?.available)('cannot write into the manager data directory', async () => {
+        const paths = identity('write-escape');
+        const target = path.join(dataDir, `escape-${randomBytes(6).toString('hex')}`);
+        await inSandbox(paths, `(printf x > ${JSON.stringify(target)}) 2>/dev/null; printf "|end"`);
+        expect(fs.existsSync(target)).toBe(false);
+    });
+
+    it.skipIf(!detected?.available)('cannot reach another identity runtime directory', async () => {
+        const mine = identity('neighbour-a');
+        const theirs = identity('neighbour-b');
+        const token = randomBytes(16).toString('hex');
+        fs.writeFileSync(path.join(theirs.codexHome, 'auth.json'), token, { mode: 0o600 });
+        const output = await inSandbox(mine, `cat ${JSON.stringify(path.join(theirs.codexHome, 'auth.json'))} 2>/dev/null; printf "|end"`);
+        expect(output).not.toContain(token);
+    });
+
+    it.skipIf(!detected?.available)('can still write inside its own runtime directory', async () => {
+        const paths = identity('own-write');
+        const marker = path.join(paths.workDir, 'marker');
+        await inSandbox(paths, `printf ok > ${JSON.stringify(marker)}; printf "|end"`);
+        expect(fs.readFileSync(marker, 'utf8')).toBe('ok');
+    });
+
+    it.skipIf(!detected?.available)('passes no inherited credential into the sandbox', async () => {
+        process.env.OPENAI_API_KEY = 'inherited-platform-key';
+        try {
+            const paths = identity('env-escape');
+            const output = await inSandbox(paths, 'env; printf "|end"');
+            expect(output).not.toContain('inherited-platform-key');
+            expect(output).toContain('|end');
+        } finally { delete process.env.OPENAI_API_KEY; }
+    });
+});

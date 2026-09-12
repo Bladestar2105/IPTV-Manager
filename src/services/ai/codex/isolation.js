@@ -1,7 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { DATA_DIR } from '../../../config/constants.js';
@@ -74,16 +73,29 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command }) {
 }
 
 function seatbeltProfile({ codexHome, workDir }) {
-    const literal = value => `(literal ${JSON.stringify(path.resolve(value))})`;
-    const subpath = value => `(subpath ${JSON.stringify(path.resolve(value))})`;
-    // Deny every write outside the identity's own tree, and deny reading the
-    // manager's runtime data, secrets and every other identity's runtime.
+    // Seatbelt matches the kernel's resolved path, so every rule lists the given
+    // path and its real path; on macOS the temporary and data directories are
+    // routinely reached through a symlink.
+    const variants = value => {
+        const resolved = path.resolve(value);
+        const real = (() => { try { return fs.realpathSync.native(resolved); } catch { return resolved; } })();
+        return [...new Set([resolved, real])];
+    };
+    const literal = value => variants(value).map(item => `(literal ${JSON.stringify(item)})`).join(' ');
+    const subpath = value => variants(value).map(item => `(subpath ${JSON.stringify(item)})`).join(' ');
+    // Seatbelt applies the last matching rule, so the order is deliberate: deny
+    // every write and every read of the manager's data directory first, then
+    // re-allow exactly this identity's own tree. That keeps the runtime usable
+    // even when its directory lives under the data directory, which is the
+    // default, while every neighbouring identity and every secret stays out of
+    // reach. The runtime's TMPDIR already points inside its own tree, so the
+    // host temporary directory is never opened up.
     return `(version 1)
 (allow default)
 (deny file-write*)
-(allow file-write* ${subpath(codexHome)} ${subpath(workDir)} ${subpath(os.tmpdir())})
 (deny file-read* ${subpath(DATA_DIR)})
 (allow file-read* ${subpath(codexHome)} ${subpath(workDir)})
+(allow file-write* ${subpath(codexHome)} ${subpath(workDir)})
 (deny file-read* ${literal(path.join(DATA_DIR, '.env'))} ${literal(path.join(DATA_DIR, 'secret.key'))} ${literal(path.join(DATA_DIR, 'jwt.secret'))})
 (deny process-exec* (literal "/usr/bin/docker") (literal "/usr/local/bin/docker"))
 `;
