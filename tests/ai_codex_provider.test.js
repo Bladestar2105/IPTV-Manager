@@ -1347,6 +1347,42 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
+    it('revokes a runtime that wins the lease after the unlink scan', async () => {
+        const connection = await withModel();
+        // A request authorized before the marker went up takes the identity right
+        // after the teardown scan, exactly as an account refresh would.
+        await seedLease(connection.id, 'late-winner');
+        let acknowledged = false;
+        const owner = setInterval(() => {
+            const row = db.prepare('SELECT state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
+            if (row?.state === 'revoked') {
+                acknowledged = true;
+                db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key='user:1' AND connection_id=? AND lease_id='late-winner'").run(connection.id);
+                clearInterval(owner);
+            }
+        }, 50);
+        owner.unref?.();
+        try {
+            const result = await account.disconnectAccount(user, ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true }));
+            // Losing the race is no reason to wipe underneath the winner: it is
+            // revoked, awaited, and the sign-out retried.
+            expect(acknowledged).toBe(true);
+            expect(result.disconnected).toBe(true);
+            expect(result.remote_logout).toBe(true);
+        } finally { clearInterval(owner); }
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('refuses an account refresh that a teardown overtook', async () => {
+        const connection = await withModel();
+        const stale = ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true });
+        ai.adjustConnectionTeardown('user:1', connection.id, 1);
+        // The request was authorized before the teardown began; starting a runtime
+        // now would race its wipe.
+        await expect(account.readAccountState(user, stale)).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        ai.adjustConnectionTeardown('user:1', connection.id, -1);
+    }, 30000);
+
     it('clears the teardown marker again when an unlink finishes', async () => {
         const connection = await linkedConnection();
         await account.disconnectAccount(user, ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true }));

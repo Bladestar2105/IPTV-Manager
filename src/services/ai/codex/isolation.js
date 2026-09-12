@@ -23,6 +23,10 @@ const BACKENDS = ['bwrap', 'sandbox-exec'];
 const READ_ONLY_ROOTS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ssl', '/etc/pki',
     '/etc/ca-certificates', '/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/System', '/private/var/db/timezone'];
 const STANDARD_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+// Only the Codex distribution's own package tree is ever mounted whole. A
+// launcher that resolves into an application or monorepo package must not carry
+// that package's other files, such as a `.env` or an `.npmrc`, into the sandbox.
+const CODEX_PACKAGE = '@openai/codex';
 
 const realPath = value => { try { return fs.realpathSync.native(value); } catch { return path.resolve(value); } };
 // Two paths overlap when either contains the other. A mount that contains the
@@ -45,6 +49,14 @@ export function which(binary) {
         try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* keep searching */ }
     }
     return null;
+}
+
+function isCodexPackage(directory) {
+    try {
+        const name = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'))?.name;
+        if (typeof name !== 'string') return false;
+        return name === CODEX_PACKAGE || name.startsWith(`${CODEX_PACKAGE}-`) || name.startsWith(`${CODEX_PACKAGE}/`);
+    } catch { return false; }
 }
 
 // A launcher with a `#!` line needs its interpreter inside the sandbox as well.
@@ -83,7 +95,13 @@ export function launcherMounts(binary) {
         for (let depth = 0; depth < 6; depth += 1) {
             const parent = path.dirname(candidate);
             if (parent === candidate) break;
-            if (fs.existsSync(path.join(candidate, 'package.json'))) { mounts.push(candidate); break; }
+            if (fs.existsSync(path.join(candidate, 'package.json'))) {
+                // The first package boundary is the answer either way; an
+                // unrecognized one is simply not mounted, so a launcher inside it
+                // fails visibly instead of exposing its neighbours.
+                if (isCodexPackage(candidate)) mounts.push(candidate);
+                break;
+            }
             candidate = parent;
         }
     }

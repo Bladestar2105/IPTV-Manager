@@ -532,12 +532,18 @@ export const updateUser = async (req, res) => {
 };
 
 export const deleteUser = async (req, res) => {
+  // Declared outside the block so the failure path can restore what the
+  // revocation below changed.
+  let previousActive;
+  let deleted = false;
+  const id = Number(req.params.id);
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const id = Number(req.params.id);
     // Access is revoked before anything is torn down. Otherwise a request that
     // starts after the runtime scan below still passes the account checks, can
-    // hydrate the credential, and outlives the response.
+    // hydrate the credential, and outlives the response. The previous state is
+    // kept so a failed deletion does not leave the account present but disabled.
+    previousActive = db.prepare('SELECT is_active FROM users WHERE id = ?').get(id)?.is_active;
     db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(id);
     // A personal ChatGPT runtime keeps using this account's credential until it
     // is told to stop, so it is ended and acknowledged before anything is
@@ -595,6 +601,7 @@ export const deleteUser = async (req, res) => {
       db.prepare('DELETE FROM user_backups WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
+    deleted = true;
 
     clearChannelsCache(id);
     // Database triggers remove the account's AI records; anything the runtime
@@ -603,6 +610,13 @@ export const deleteUser = async (req, res) => {
     catch { /* Optional runtime cleanup never fails an account deletion. */ }
     res.json({success: true});
   } catch (e) {
+    // A deletion that failed must leave the account as it was, not present and
+    // permanently disabled. Its sessions stay invalidated, which only requires a
+    // fresh sign-in.
+    if (!deleted && previousActive !== undefined) {
+      try { db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(previousActive, id); }
+      catch { /* the row may already be gone */ }
+    }
     res.status(500).json({error: e.message});
   }
 };

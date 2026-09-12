@@ -47,6 +47,14 @@ function policyAllows(ownerKey) {
     } catch { return false; }
 }
 
+// Read straight from storage: the caller's snapshot predates any teardown that
+// started while its request was being authorized.
+function loadTeardown(ownerKey, connectionId) {
+    const row = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
+    if (!row) return true;
+    try { return Boolean(JSON.parse(row.data_json).teardown); } catch { return false; }
+}
+
 function usableAccount(ownerKey) {
     const [kind, id] = ownerKey.split(':');
     const admin = kind === 'admin';
@@ -232,6 +240,17 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
 // A supersede or cancel handled by another worker is applied by that worker's
 // watchdog, so the replacement waits briefly for the shared lease to disappear
 // instead of colliding with it.
+// Marks whatever holds this identity as revoked and waits for its owner to
+// acknowledge by releasing the lease. Reports whether that happened.
+async function revokeAndWait(ownerKey, connectionId) {
+    if (!runtimeState(ownerKey, connectionId)) return true;
+    const live = liveRuntime(ownerKey, connectionId);
+    if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
+    db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+        .run(Date.now(), ownerKey, connectionId);
+    return waitForLeaseRelease(ownerKey, connectionId);
+}
+
 async function waitForLeaseRelease(ownerKey, connectionId) {
     const deadline = Date.now() + LEASE_HANDOVER_TIMEOUT_MS;
     for (;;) {
@@ -423,24 +442,27 @@ async function runDisconnect(actor, connection, ownerKey) {
     // that its runtime has actually stopped. Deleting the row here instead would
     // make the wait trivially true and allow a second runtime on the same
     // identity directory while the first is still running.
-    let acknowledged = true;
-    if (runtimeState(ownerKey, connection.id)) {
-        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
-            .run(Date.now(), ownerKey, connection.id);
-        acknowledged = await waitForLeaseRelease(ownerKey, connection.id);
-        // No acknowledgement means the owner is gone, not that it is safe to run
-        // alongside it: local access is still removed and the difference reported.
-        if (!acknowledged) db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connection.id);
-    }
+    let acknowledged = await revokeAndWait(ownerKey, connection.id);
     let remote = false;
     if (acknowledged && readCredentialRecord(ownerKey, connection.id)) {
-        try { remote = await withRuntime(ownerKey, connection.id, session => logout(session)); }
-        catch { remote = false; }
+        // A request authorized before the marker went up can still win the lease
+        // between the scan above and this call. Losing that race is not a reason
+        // to give up and wipe underneath it: the winner is revoked and awaited,
+        // then the sign-out is tried once more.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            try { remote = await withRuntime(ownerKey, connection.id, session => logout(session)); break; }
+            catch { remote = false; }
+            acknowledged = await revokeAndWait(ownerKey, connection.id);
+            if (!acknowledged) break;
+        }
         // The sign-out runtime has only been signalled; wiping now would free the
         // identity for a relink whose files that child's pending cleanup could
         // then remove.
         await waitForLeaseRelease(ownerKey, connection.id);
     }
+    // No acknowledgement means the owner is gone, not that it is safe to run
+    // alongside it: local access is still removed and the difference reported.
+    if (!acknowledged) db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connection.id);
     wipe(ownerKey, connection.id);
     return { disconnected: true, remote_logout: remote };
 }
@@ -457,6 +479,10 @@ export async function readAccountState(actor, connection) {
             quota: { known: false }, unavailable_reason: readiness.reason };
     }
     if (liveRuntime(connection.owner_key, connection.id)) throw aiError('AI_BUSY', 409);
+    // Re-read immediately before starting: a teardown can have begun after this
+    // request was authorized, and starting a runtime then would race its wipe.
+    if (readCredentialRecord(connection.owner_key, connection.id) === null) throw aiError('AI_CODEX_NOT_LINKED', 409);
+    if (loadTeardown(connection.owner_key, connection.id)) throw aiError('AI_CONNECTION_CHANGED', 409);
     // A stored credential that no longer authenticates an account is not a link.
     // Keeping the record would make the connection read as linked again on the
     // next load and send later jobs at an invalid credential.

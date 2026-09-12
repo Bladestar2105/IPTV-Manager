@@ -326,8 +326,10 @@ the existing `chat/completions` transport.
   symlink points at and the interpreter of a script launcher are bound read-only
   as individual files, never as their directories, so a launcher sitting beside
   unrelated application files such as a mounted `.env` does not carry them into
-  the sandbox. Only a resolved package root is bound as a directory, because a
-  packaged launcher needs the files it ships with. Those locations are kept on
+  the sandbox. Only the Codex distribution's own package root is bound as a
+  directory, because a packaged launcher needs the files it ships with; a
+  launcher that resolves into an unrelated application or monorepo package does
+  not carry that package's other files in, and fails visibly instead. Those locations are kept on
   the sandbox `PATH`, which is what a global npm install needs; the
   version probe uses that same `PATH`, so a launcher the probe can start is one
   the sandbox can start. A launcher placed in or above the data directory is
@@ -506,7 +508,9 @@ cancels queued and running jobs and ends the runtime. A runtime owned by another
 revoked; that worker's guard sees this within a second and releases the lease,
 and only that release counts as an acknowledgement that it has actually stopped.
 The sign-out runs after the acknowledgement, so two runtimes never share one
-identity directory. Without an acknowledgement no second runtime is started at
+identity directory. A request authorized before the marker went up can still win
+the lease after that scan; losing that race does not lead to wiping underneath it,
+the winner is revoked and awaited and the sign-out retried. Without an acknowledgement no second runtime is started at
 all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
