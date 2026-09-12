@@ -80,6 +80,16 @@ function completeTurn(threadId, turnId) {
         return;
     }
     if (mode === 'stall') return;
+    // Streams more output than the caller's budget allows.
+    if (config.deltaChunks) {
+        for (let index = 0; index < config.deltaChunks; index += 1) {
+            notify('item/agentMessage/delta', { threadId, turnId, itemId: 'm1', delta: 'x'.repeat(config.deltaSize ?? 1024) });
+        }
+    }
+    if (config.outputTokens) {
+        notify('thread/tokenUsage/updated', { threadId, turnId,
+            tokenUsage: { total: { totalTokens: config.outputTokens, inputTokens: 7, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: config.outputTokens, reasoningOutputTokens: 0 }, last: {}, modelContextWindow: null } });
+    }
     notify('thread/tokenUsage/updated', {
         threadId, turnId,
         tokenUsage: { total: { totalTokens: 11, inputTokens: 7, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 4, reasoningOutputTokens: 0 }, last: {}, modelContextWindow: null }

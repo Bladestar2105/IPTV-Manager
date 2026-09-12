@@ -49,6 +49,7 @@ export const chatgptAccountProvider = {
                     messages: payload.messages,
                     schema: payload.schema,
                     structured: payload.structured !== false,
+                    maxTokens: payload.maxTokens,
                     signal,
                     timeoutMs: CODEX_TURN_TIMEOUT_MS
                 });

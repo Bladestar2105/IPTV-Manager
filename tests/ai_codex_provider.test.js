@@ -952,6 +952,18 @@ describe('personal ChatGPT model catalog and turns', () => {
         expect(usage).toMatchObject({ status: 'completed', prompt_tokens: 7 });
     });
 
+    it.each([
+        ['it streams more than the output budget', { deltaChunks: 12, deltaSize: 1024, turnDelayMs: 10 }],
+        ['the reported output tokens exceed it', { outputTokens: 5000, turnDelayMs: 10 }]
+    ])('interrupts a turn when %s', async (_label, overrides) => {
+        await withModel();
+        fake({ ...overrides, recordPath, recordApprovalPath: approvalPath });
+        // The protocol has no per-turn ceiling, so an unbounded answer would burn
+        // quota until the deadline and only then be rejected.
+        await expect(ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema }))
+            .rejects.toMatchObject({ code: 'AI_RESPONSE_TOO_LARGE' });
+    }, 30000);
+
     it('discards a turn that produced a tool action', async () => {
         await withModel();
         fake({ turn: 'toolItem', recordPath, recordApprovalPath: approvalPath });
@@ -1268,6 +1280,28 @@ describe('personal ChatGPT runtime ownership', () => {
         runtime.stopRuntime(first);
         const replacement = await runtime.startRuntime('user:1', connection.id);
         runtime.stopRuntime(replacement);
+    }, 30000);
+
+    it.each([
+        ['the account was deactivated', async connectionId => { void connectionId; db.prepare('UPDATE users SET is_active=0 WHERE id=1').run(); }],
+        ['the connection is tearing down', async connectionId => { ai.adjustConnectionTeardown('user:1', connectionId, 1); }],
+        ['the connection is gone', async connectionId => { db.prepare('DELETE FROM ai_connections WHERE id=?').run(connectionId); }]
+    ])('refuses a lease to a pre-authorized request once %s', async (_label, revoke) => {
+        const connection = await linkedConnection();
+        await revoke(connection.id);
+        // Granting the lease is the last point at which such a request can be
+        // stopped; it passed its own authorization long before.
+        await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        db.prepare('UPDATE users SET is_active=1 WHERE id=1').run();
+    }, 30000);
+
+    it('still grants a lease to the teardown that owns the marker', async () => {
+        const connection = await linkedConnection();
+        ai.adjustConnectionTeardown('user:1', connection.id, 1);
+        const session = await runtime.startRuntime('user:1', connection.id, { allowTeardown: true });
+        runtime.stopRuntime(session);
+        await idleRuntimes();
+        ai.adjustConnectionTeardown('user:1', connection.id, -1);
     }, 30000);
 
     it('never refreshes a lease another worker has revoked', async () => {

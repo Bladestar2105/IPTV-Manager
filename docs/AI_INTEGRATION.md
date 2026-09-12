@@ -415,6 +415,11 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   target user's account.
 * `user:<id>` and `admin:<id>` stay separate namespaces, each with its own
   credential, runtime directory and session.
+* Granting a lease is the last point at which a request can be stopped, because
+  by then it has long passed its own authorization. The owner must still exist
+  and be active and the connection must exist and not be tearing down, checked in
+  the same transaction that inserts the lease; only the teardown that owns the
+  marker is exempt.
 * One runtime per identity and connection, held by a database lease with a
   heartbeat. The lease is the promise that no process is using that identity, so
   a stopping runtime keeps it until its child has actually exited — closing only

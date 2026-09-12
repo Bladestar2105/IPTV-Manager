@@ -54,13 +54,29 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
 // One runtime per identity and connection, owned by exactly one worker. The
 // lease makes a concurrent start, a competing credential refresh or the reuse of
 // another identity's session impossible across the manager's workers.
-function tryAcquireLease(ownerKey, connectionId) {
+// Granting a lease is the last point at which a request can be stopped: by then
+// it has long passed its own authorization. The owner must still exist and be
+// active, and the connection must exist and not be tearing down, both checked in
+// the same transaction that inserts the lease.
+function identityStillEligible(ownerKey, connectionId, allowTeardown) {
+    const [kind, id] = ownerKey.split(':');
+    const table = kind === 'admin' ? 'admin_users' : 'users';
+    const account = db.prepare(`SELECT is_active FROM ${table} WHERE id=?`).get(Number(id));
+    if (!account?.is_active) return false;
+    const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
+    if (!connection) return false;
+    if (allowTeardown) return true;
+    try { return !JSON.parse(connection.data_json).teardown; } catch { return true; }
+}
+
+function tryAcquireLease(ownerKey, connectionId, allowTeardown) {
     const leaseId = randomUUID();
     return db.transaction(() => {
         const now = Date.now();
         db.prepare('DELETE FROM ai_codex_runtimes WHERE expires_at < ?').run(now);
         const existing = db.prepare('SELECT lease_id,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
         if (existing) return { leaseId: null, blockedBy: existing.state };
+        if (!identityStillEligible(ownerKey, connectionId, allowTeardown)) return { leaseId: null, blockedBy: 'ineligible' };
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
             .run(ownerKey, connectionId, leaseId, process.pid, 'starting', now + LEASE_TTL_MS, now);
         return { leaseId, blockedBy: null };
@@ -70,11 +86,14 @@ function tryAcquireLease(ownerKey, connectionId) {
 // A runtime that is terminating still holds its lease until its child has
 // actually exited, so a replacement waits for that hand-off. Anything else
 // holding the lease is a concurrent operation and is refused immediately.
-async function acquireLease(ownerKey, connectionId) {
+async function acquireLease(ownerKey, connectionId, allowTeardown) {
     const deadline = Date.now() + LEASE_HANDOVER_MS;
     for (;;) {
-        const attempt = tryAcquireLease(ownerKey, connectionId);
+        const attempt = tryAcquireLease(ownerKey, connectionId, allowTeardown);
         if (attempt.leaseId) return attempt.leaseId;
+        if (attempt.blockedBy === 'ineligible') {
+            throw codexError('AI_CONNECTION_CHANGED', 'This connection can no longer start a runtime.', 409);
+        }
         if (!TRANSIENT_STATES.includes(attempt.blockedBy) || Date.now() >= deadline) {
             throw codexError('AI_BUSY', 'A Codex runtime for this connection is already active.', 409);
         }
@@ -206,11 +225,11 @@ function violationSink() {
     };
 }
 
-export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true } = {}) {
+export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false } = {}) {
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
-    const leaseId = await acquireLease(ownerKey, connectionId);
+    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown);
     let session = null;
     try {
         const paths = hydrate(ownerKey, connectionId);
@@ -296,8 +315,8 @@ export function liveRuntime(ownerKey, connectionId) {
 
 // Runs one bounded operation on a fresh runtime and always tears it down. There
 // is no shared process that could be switched between personal logins.
-export async function withRuntime(ownerKey, connectionId, handler, { onNotification } = {}) {
-    const session = await startRuntime(ownerKey, connectionId, { onNotification });
+export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false } = {}) {
+    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown });
     try { return await handler(session); }
     finally { stopRuntime(session); }
 }

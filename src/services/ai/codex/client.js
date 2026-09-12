@@ -142,7 +142,13 @@ function turnInput(messages, schema) {
 // One bounded, non-interactive turn. The runtime is started read-only with no
 // network access for the sandbox and every approval path denied, so the only
 // acceptable outcome is a single final assistant message.
-export async function runTurn(session, { model, messages, schema, structured = true, signal, timeoutMs = 120000 }) {
+// The protocol has no per-turn output ceiling, so the configured budget is
+// enforced here: a turn that exceeds it is interrupted rather than left to burn
+// output and reasoning quota until the deadline and be rejected afterwards.
+// Four bytes per token is a deliberately generous bound for text.
+const BYTES_PER_TOKEN = 4;
+
+export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000 }) {
     const { developer, text } = turnInput(messages, schema);
     const started = await session.client.request('thread/start', {
         cwd: session.paths.workDir,
@@ -162,9 +168,17 @@ export async function runTurn(session, { model, messages, schema, structured = t
         throw codexError('AI_CODEX_POLICY_MISMATCH', 'Codex loaded unexpected instruction sources.');
     }
 
-    const state = { done: null, items: [], usage: null, message: null };
+    const state = { done: null, items: [], usage: null, message: null, streamed: 0, overBudget: false };
+    const byteBudget = Math.max(1024, maxTokens * BYTES_PER_TOKEN);
     session.onTurnEvent = (method, params) => {
         if (params?.threadId && params.threadId !== threadId) return;
+        if (method === 'item/agentMessage/delta') {
+            const chunk = typeof params?.delta === 'string' ? params.delta : typeof params?.text === 'string' ? params.text : '';
+            state.streamed += Buffer.byteLength(chunk);
+            if (state.streamed > byteBudget) state.overBudget = true;
+        }
+        if (method === 'thread/tokenUsage/updated' && Number.isSafeInteger(params?.tokenUsage?.total?.outputTokens)
+            && params.tokenUsage.total.outputTokens > maxTokens) state.overBudget = true;
         if (method === 'item/completed' && params?.item) {
             state.items.push(params.item);
             if (params.item.type === 'agentMessage' && typeof params.item.text === 'string') {
@@ -204,6 +218,10 @@ export async function runTurn(session, { model, messages, schema, structured = t
             await session.client.request('turn/interrupt', { threadId, turnId: turn?.turn?.id || '' }, { timeoutMs: 5000 }).catch(() => null);
             throw codexError('AI_CODEX_TOOL_REQUEST', 'The model requested a capability that is not available.');
         }
+        if (state.overBudget) {
+            await session.client.request('turn/interrupt', { threadId, turnId: turn?.turn?.id || '' }, { timeoutMs: 5000 }).catch(() => null);
+            throw codexError('AI_RESPONSE_TOO_LARGE', 'The answer exceeded the configured output budget.');
+        }
         await new Promise(resolve => { const timer = setTimeout(resolve, TURN_POLL_MS); timer.unref?.(); });
     }
     session.onTurnEvent = null;
@@ -212,6 +230,7 @@ export async function runTurn(session, { model, messages, schema, structured = t
         throw codexError('AI_TIMEOUT', 'The Codex turn did not complete in time.', 504);
     }
     if (session.sink.violations.length) throw codexError('AI_CODEX_TOOL_REQUEST', 'The model requested a capability that is not available.');
+    if (state.overBudget) throw codexError('AI_RESPONSE_TOO_LARGE', 'The answer exceeded the configured output budget.');
 
     const items = [...state.items, ...(Array.isArray(state.done.items) ? state.done.items : [])];
     if (items.some(item => FORBIDDEN_ITEM_TYPES.includes(item?.type))) {

@@ -450,7 +450,9 @@ async function runDisconnect(actor, connection, ownerKey) {
         // to give up and wipe underneath it: the winner is revoked and awaited,
         // then the sign-out is tried once more.
         for (let attempt = 0; attempt < 2; attempt += 1) {
-            try { remote = await withRuntime(ownerKey, connection.id, session => logout(session)); break; }
+            // The teardown marker is this operation's own; the sign-out has to
+            // run despite it.
+            try { remote = await withRuntime(ownerKey, connection.id, session => logout(session), { allowTeardown: true }); break; }
             catch { remote = false; }
             acknowledged = await revokeAndWait(ownerKey, connection.id);
             if (!acknowledged) break;
