@@ -406,7 +406,7 @@ describe('personal ChatGPT connection privacy', () => {
         const connection = await withModel();
         const queued = jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'bound-key-000001');
         const stored = JSON.parse(db.prepare('SELECT input_json FROM ai_jobs WHERE id=?').get(queued.id).input_json);
-        expect(stored._account).toMatchObject({ version: expect.any(Number) });
+        expect(stored._account).toMatchObject({ linked: true });
         expect(typeof stored._account.hash).toBe('string');
         jobs.cancelJob(user, queued.id);
         credentials.wipe('user:1', connection.id);
@@ -417,6 +417,32 @@ describe('personal ChatGPT connection privacy', () => {
         let diagnoseError = null;
         try { jobs.createJob(user, { feature: 'diagnose' }, 'diagnose-key-0001'); } catch (error) { diagnoseError = error; }
         expect(diagnoseError?.code).not.toBe('AI_CODEX_NOT_LINKED');
+    });
+
+    it('applies the operator policy to outbound account work but never strands a stored sign-in', async () => {
+        const connection = await linkedConnection();
+        // The administrator revokes AI access after the account was linked.
+        ai.updateAiSettings(admin, { enabled: true, allow_own_connections: true, allowed_user_ids: [2], functions: ['list', 'search'], internal_targets: [] });
+        // Starting a sign-in and reading the account both go through the gated
+        // handle, so both are refused once access is revoked.
+        expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_FORBIDDEN');
+        // Cancelling and disconnecting stay reachable so the owner can remove it.
+        const relaxed = ai.ownedAccountConnection(user, connection.id, { requirePolicy: false });
+        expect(relaxed.id).toBe(connection.id);
+        const result = await account.disconnectAccount(user, relaxed);
+        expect(result.disconnected).toBe(true);
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    });
+
+    it('keeps a job bound to the account identity across the token seals of its own turn', async () => {
+        const connection = await withModel();
+        const before = ai.accountBinding(connection.id);
+        await ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema });
+        // A completed turn seals a refreshed token more than once; the binding
+        // must survive that, or an already billed answer would be discarded.
+        expect(ai.accountBinding(connection.id)).toEqual(before);
+        credentials.wipe('user:1', connection.id);
+        expect(ai.accountBinding(connection.id)).not.toEqual(before);
     });
 
     it('requires a linked account before any billable request', async () => {

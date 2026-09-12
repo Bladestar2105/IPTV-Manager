@@ -44,9 +44,9 @@ export const programs = handle(async req => {
 // Personal ChatGPT account link. Every endpoint is owner-only, never returns a
 // token and binds the attempt to the caller's current session.
 const bearer = req => (req.get('Authorization') || '').split(' ')[1] || null;
-const accountConnection = async req => {
+const accountConnection = async (req, {requirePolicy = true} = {}) => {
   const {ownedAccountConnection} = await import('../services/ai/connections.js');
-  return ownedAccountConnection(req.user, req.params.id);
+  return ownedAccountConnection(req.user, req.params.id, {requirePolicy});
 };
 export const codexStatus = handle(async () => {
   const {codexStatus: status} = await import('../services/ai/codex/account.js');
@@ -58,15 +58,17 @@ export const startAccountLink = handle(async req => {
 });
 export const accountLinkStatus = handle(async req => {
   const {readLoginStatus} = await import('../services/ai/codex/account.js');
-  return readLoginStatus(req.user, await accountConnection(req), req.params.loginId);
+  return readLoginStatus(req.user, await accountConnection(req, {requirePolicy: false}), req.params.loginId);
 });
+// Cancelling an attempt and disconnecting stay reachable after AI access is
+// revoked, so a stored sign-in can always be removed by its owner.
 export const cancelAccountLink = handle(async req => {
   const {cancelAccountLink: cancel} = await import('../services/ai/codex/account.js');
-  return cancel(req.user, await accountConnection(req), req.params.loginId);
+  return cancel(req.user, await accountConnection(req, {requirePolicy: false}), req.params.loginId);
 });
 export const unlinkAccount = handle(async req => {
   const {disconnectAccount} = await import('../services/ai/codex/account.js');
-  return disconnectAccount(req.user, await accountConnection(req));
+  return disconnectAccount(req.user, await accountConnection(req, {requirePolicy: false}));
 });
 export const accountState = handle(async req => {
   const {readAccountState} = await import('../services/ai/codex/account.js');

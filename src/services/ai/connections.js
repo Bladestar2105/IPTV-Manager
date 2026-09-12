@@ -240,8 +240,12 @@ export function requireLinkedAccount(connection) {
     const readiness=codexReadinessSnapshot();
     if (!readiness.available) throw aiError(readiness.reason,503);
 }
-// Owner-only handle used by the account-link endpoints.
-export function ownedAccountConnection(actor,id) {
+// Owner-only handle used by the account-link endpoints. `requirePolicy` applies
+// the same server enablement and allowed-user gate as every other setup path;
+// it is relaxed only for cancelling an attempt and for disconnecting, so a
+// revoked account can never be stranded with a stored sign-in it cannot remove.
+export function ownedAccountConnection(actor,id,{requirePolicy=true}={}) {
+    if (requirePolicy) requireAiFeatureAccess(actor,'setup');
     const connection=owned(actor,id);
     if (!adapterFor(connection).supportsAccountLink) throw aiError('AI_INVALID_INPUT');
     return connection;
@@ -252,7 +256,10 @@ export function accountBinding(connectionId) {
     const connection=loadConnection(connectionId);
     if (!connection || !adapterFor(connection).supportsAccountLink) return null;
     const record=readCredentialRecord(connection.owner_key,connection.id);
-    return record ? {hash:record.account_hash,version:record.version} : {hash:null,version:0};
+    // Only the account identity binds the job. The record version advances every
+    // time a refreshed token is sealed, including twice during the job's own
+    // turn, so comparing it would discard an answer that was already billed.
+    return {hash:record?.account_hash ?? null,linked:Boolean(record)};
 }
 export function requireLinkedConnection(connectionId) {
     const connection=loadConnection(connectionId);

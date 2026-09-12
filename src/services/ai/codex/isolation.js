@@ -90,6 +90,13 @@ function seatbeltProfile({ codexHome, workDir }) {
     // default, while every neighbouring identity and every secret stays out of
     // reach. The runtime's TMPDIR already points inside its own tree, so the
     // host temporary directory is never opened up.
+    //
+    // Deliberately limited: this profile starts from `allow default`, so reads
+    // outside the data directory and execution of other binaries remain
+    // possible. It is graded `development` and refused for hosted multi-user
+    // operation for exactly that reason. No partial process-exec denial is
+    // written here, because an allowlist-shaped rule that is trivially bypassed
+    // by another install path would only look protective.
     return `(version 1)
 (allow default)
 (deny file-write*)
@@ -97,7 +104,6 @@ function seatbeltProfile({ codexHome, workDir }) {
 (allow file-read* ${subpath(codexHome)} ${subpath(workDir)})
 (allow file-write* ${subpath(codexHome)} ${subpath(workDir)})
 (deny file-read* ${literal(path.join(DATA_DIR, '.env'))} ${literal(path.join(DATA_DIR, 'secret.key'))} ${literal(path.join(DATA_DIR, 'jwt.secret'))})
-(deny process-exec* (literal "/usr/bin/docker") (literal "/usr/local/bin/docker"))
 `;
 }
 

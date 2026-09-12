@@ -126,7 +126,7 @@ async function runJob(id) {
     // of continuing it against another identity.
     if (input._account) {
       const current = accountBinding(job.connection_id);
-      if (!current || current.hash !== input._account.hash || current.version !== input._account.version) fail(409,'ai_connection_changed');
+      if (!current || current.hash !== input._account.hash || current.linked !== input._account.linked) fail(409,'ai_connection_changed');
     }
     return fresh;
   };

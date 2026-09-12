@@ -347,7 +347,10 @@ boundary. The adapter is therefore offered only where all of the following hold:
    write into `DATA_DIR` must fail. Linux uses bubblewrap (`bwrap`), which is the
    only grade accepted for hosted multi-user operation. macOS `sandbox-exec` is
    classified as development grade and refused unless an operator explicitly
-   opts in.
+   opts in: its profile denies writes outside the identity's own tree and reads
+   of the manager's data directory, but still permits reads elsewhere on the
+   host and execution of other binaries, so it is a development convenience
+   rather than a multi-user boundary.
 2. Every runtime is started with `--strict-config`, so a renamed or removed
    Codex option is a hard startup failure rather than a silent capability grant.
 3. Shell, unified exec, file view, sleep, browser control, computer use, apps,
