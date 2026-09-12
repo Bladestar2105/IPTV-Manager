@@ -39,6 +39,9 @@ window.aiUI = (() => {
     else item.value = initial ?? '';
     if (type === 'textarea') { item.rows = 3; item.maxLength = 8000; }
     if (type === 'number') { item.min = '0'; item.step = '1'; }
+    for (const event of ['input', 'change']) item.addEventListener(event, () => {
+      if (['ai_invalid', 'ai_targetUserRequired', 'ai_modelTestSelection'].includes(el('status')?.dataset.i18n)) status('inputChanged');
+    });
     return item;
   }
   function option(select, val, text, key) {
@@ -70,6 +73,8 @@ window.aiUI = (() => {
     if (code === 'AI_DISABLED') return 'off';
     if (code === 'AI_PERMISSION_DENIED') return 'permission';
     if (code === 'AI_RATE_LIMIT') return 'rateLimit';
+    if (code === 'AI_TARGET_USER_REQUIRED') return 'targetUserRequired';
+    if (code === 'AI_MODEL_TEST_SELECTION') return 'modelTestSelection';
     if (code === 'AI_BUSY') return 'busy';
     if (code === 'AI_PAUSED') return 'paused';
     if (code === 'AI_TIMEOUT') return 'timeout';
@@ -204,7 +209,7 @@ window.aiUI = (() => {
       const connection = await saveConnection();
       const selected = [...el('models').selectedOptions].map(opt => opt.value);
       const modelIds = selected.length ? selected : value('model') ? [value('model')] : [];
-      if (!modelIds.length || modelIds.length > 3) throw {code: 'AI_INVALID_INPUT'};
+      if (!modelIds.length || modelIds.length > 3) { el('models').focus(); throw {code: 'AI_MODEL_TEST_SELECTION'}; }
       const result = await api(`/connections/${encodeURIComponent(connection.id)}/test`, 'POST', {model_ids: modelIds});
       connections = list(await api('/connections'), 'connections');
       recommendation = result.recommended_model_id;
@@ -224,7 +229,7 @@ window.aiUI = (() => {
     for (const val of ['max_tokens', 'max_completion_tokens']) option(parameter, val, val);
     button(box, 'finish', 'finish', async () => {
       const connection = editable(chosen()) ? await saveConnection(true) : chosen();
-      if (!connection || !value('model')) throw {code: 'AI_INVALID_INPUT'};
+      if (!connection || !value('model')) throw {code: 'AI_MODEL_REQUIRED'};
       preferences = await api('/preferences', 'PUT', {enabled: checked('enabled'), auto_sync_summary: checked('auto-sync'), connection_id: connection.id, model_id: value('model'), language: value('language'), timezone: value('timezone')});
       status(preferences.enabled ? 'saved' : 'off');
     }, 'primary');
@@ -406,7 +411,8 @@ window.aiUI = (() => {
   async function loadPrograms() {
     resetPrograms();
     const stamp = programGeneration, target = programTarget();
-    if (!target.channel || !Number.isSafeInteger(target.user) || target.user <= 0) throw {code: 'AI_INVALID_INPUT'};
+    if (!Number.isSafeInteger(target.user) || target.user <= 0) { el('user')?.focus(); throw {code: 'AI_TARGET_USER_REQUIRED'}; }
+    if (!target.channel) throw {code: 'AI_INVALID_INPUT'};
     const query = new URLSearchParams({timezone: target.timezone});
     if (currentUser.is_admin) query.set('user_id', target.user);
     let result;
@@ -420,7 +426,10 @@ window.aiUI = (() => {
   }
   function payload() {
     const result = {feature: value('feature'), prompt: value('prompt'), language: value('language'), timezone: value('timezone'), connection_id: value('connection'), channel_ids: ids('channel-ids'), pinned_ids: ids('pinned'), selected_ids: ids('override'), keep_first: Number(value('keep-first') || 0), full_list: checked('full-list'), offset: nextOffset};
-    if (currentUser.is_admin && (value('user') || result.feature !== 'diagnose')) { result.user_id = Number(value('user')); if (!Number.isSafeInteger(result.user_id) || result.user_id <= 0) throw {code: 'AI_INVALID_INPUT'}; }
+    if (currentUser.is_admin && (value('user') || result.feature !== 'diagnose')) {
+      result.user_id = Number(value('user'));
+      if (!Number.isSafeInteger(result.user_id) || result.user_id <= 0) { el('user').focus(); throw {code: 'AI_TARGET_USER_REQUIRED'}; }
+    }
     if (value('category-id')) result.category_id = Number(value('category-id'));
     if (result.feature === 'search') {
       try { result.filters = JSON.parse(value('filters') || '{}'); } catch { throw {code: 'AI_INVALID_INPUT'}; }

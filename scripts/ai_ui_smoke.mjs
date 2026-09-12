@@ -185,13 +185,30 @@ try {
     assert.notEqual(await page.locator('#ai-status').innerText(), `ai_${message}`, 'connection-state explanations must be translated');
   }
   await page.locator('summary[data-i18n="ai_advanced"]').click();
+  await page.locator('#ai-model').fill('');
+  await page.locator('#ai-models').selectOption([]);
+  const testsBeforeEmptySelection = requests.filter(request => request.path.endsWith('/test')).length;
+  await page.locator('#ai-test').click();
+  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  assert.equal(requests.filter(request => request.path.endsWith('/test')).length, testsBeforeEmptySelection, 'empty model selection must not start a provider test');
   await page.locator('#ai-model').fill('manual-alias');
   await page.locator('#ai-models').selectOption([]);
   await page.locator('#ai-test').click();
   await page.waitForFunction(() => document.getElementById('ai-capabilities').textContent.includes('manual-alias'));
   assert.equal(requests.filter(r => r.path.endsWith('/test')).at(-1).body.model_ids[0], 'manual-alias');
-  await page.locator('#ai-user').fill('2');
   await page.locator('#ai-prompt').fill('Review my list');
+  const jobsBeforeMissingUser = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
+  await page.locator('#ai-run').click();
+  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_targetUserRequired', 'missing administrator target must not be reported as a model-test problem');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'ai-user', 'focus the missing target field');
+  assert.equal(requests.filter(request => request.path === '/jobs' && request.method === 'POST').length, jobsBeforeMissingUser, 'missing target cannot submit inference');
+  await page.locator('#ai-feature').selectOption('cleanup');
+  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'changing features must clear stale validation feedback');
+  await page.locator('#ai-feature').selectOption('list');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-user').fill('2');
+  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
+
   page.on('dialog', dialog => dialog.accept());
   await page.locator('#ai-run').click();
   await page.locator('#ai-action-a1').waitFor();
