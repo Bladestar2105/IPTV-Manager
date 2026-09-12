@@ -352,6 +352,25 @@ describe('personal ChatGPT connection privacy', () => {
         }
     });
 
+    it('still allows disabling and deleting an existing connection after the host loses its runtime', async () => {
+        const connection = createConnection();
+        delete process.env.AI_CODEX_ENABLED;
+        readiness.resetCodexReadiness();
+        expect(thrown(() => ai.saveConnection(user, { name: 'x', provider: 'chatgpt_account' })).code).toBe('AI_CODEX_DISABLED');
+        expect(ai.saveConnection(user, { enabled: false, name: 'Renamed' }, connection.id)).toMatchObject({ enabled: false, name: 'Renamed' });
+        expect(ai.deleteConnection(user, connection.id)).toEqual({ deleted: true });
+    });
+
+    it('never seals a credential file caught mid-write', async () => {
+        const connection = await linkedConnection();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        const paths = credentials.identityPaths('user:1', connection.id);
+        fs.mkdirSync(paths.codexHome, { recursive: true });
+        fs.writeFileSync(paths.authFile, '{"tokens":{"access_token":"trunc');
+        expect(credentials.seal('user:1', connection.id, {}, { refreshOnly: true })).toEqual({ sealed: false });
+        expect(credentials.readCredentialRecord('user:1', connection.id).encrypted_blob).toBe(before.encrypted_blob);
+    });
+
     it('never changes the provider of an existing connection', () => {
         const connection = createConnection();
         expect(() => ai.saveConnection(user, { provider: 'openai_api' }, connection.id)).toThrow(/AI_INVALID_INPUT|Invalid/i);

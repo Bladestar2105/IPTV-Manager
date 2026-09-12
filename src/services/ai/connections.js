@@ -173,7 +173,10 @@ export function saveConnection(actor,input,id=null) {
     // and can never be switched underneath stored credentials or tested models.
     if (id && input.provider !== undefined && normalizeProvider(input.provider) !== providerOf(old)) throw aiError('AI_INVALID_INPUT');
     const adapter=adapterFor(old);
-    if (adapter.supportsAccountLink) {
+    // Only creating a connection requires the runtime to be offered. Renaming,
+    // disabling or deleting an existing one must stay possible after the host
+    // loses its sandbox.
+    if (!id && adapter.supportsAccountLink) {
         const readiness=codexReadinessSnapshot();
         if (!readiness.available) throw aiError(readiness.reason,503);
     }
