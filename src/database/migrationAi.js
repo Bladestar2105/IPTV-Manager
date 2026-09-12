@@ -35,6 +35,9 @@ export function migrateAiSchema(db) {
     // Providers have different request deadlines, so a crashed worker's reservation
     // expires on its own recorded deadline instead of one global timeout.
     if(!db.prepare('PRAGMA table_info(ai_usage)').all().some(column=>column.name==='expires_at')) db.exec('ALTER TABLE ai_usage ADD COLUMN expires_at INTEGER');
+    // Last poll by the session that started a sign-in. A completion is only
+    // adopted while that session is still watching its own attempt.
+    if(!db.prepare('PRAGMA table_info(ai_codex_logins)').all().some(column=>column.name==='last_seen_at')) db.exec('ALTER TABLE ai_codex_logins ADD COLUMN last_seen_at INTEGER');
     db.exec(`
         CREATE TRIGGER IF NOT EXISTS ai_delete_user AFTER DELETE ON users BEGIN
             DELETE FROM ai_connections WHERE owner_key='user:' || OLD.id;

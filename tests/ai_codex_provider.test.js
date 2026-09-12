@@ -42,6 +42,8 @@ vi.mock('../src/services/ai/codex/isolation.js', async () => {
 });
 
 let db, ai, jobs, account, credentials, readiness, runtime, migrateAiSchema;
+// Captured right after the modules load and before any runtime exists.
+let signalListenersAfterImport = null;
 const admin = { id: 1, is_admin: true };
 const user = { id: 1, is_admin: false };
 const other = { id: 2, is_admin: false };
@@ -82,6 +84,7 @@ beforeAll(async () => {
     credentials = await import('../src/services/ai/codex/credentials.js');
     readiness = await import('../src/services/ai/codex/readiness.js');
     runtime = await import('../src/services/ai/codex/runtime.js');
+    signalListenersAfterImport = process.listenerCount('SIGTERM');
     await readiness.refreshCodexReadiness({ force: true });
 });
 
@@ -119,7 +122,7 @@ function createConnection(actor = user, input = {}) {
 async function link(actor, connection) {
     const started = await account.startAccountLink(actor, ownedRecord(actor, connection.id), 'session-fingerprint');
     await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
-    return { started, state: account.readLoginStatus(actor, ownedRecord(actor, connection.id), started.id) };
+    return { started, state: account.readLoginStatus(actor, ownedRecord(actor, connection.id), started.id, 'session-fingerprint') };
 }
 function ownedRecord(actor, id) {
     return ai.ownedAccountConnection(actor, id);
@@ -292,7 +295,7 @@ describe('personal ChatGPT sign-in', () => {
         const second = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
         expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(first.id))
             .toMatchObject({ status: 'cancelled', error_code: 'ai_codex_login_superseded' });
-        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), second.id).status).toBe('pending');
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), second.id, 'fp').status).toBe('pending');
         await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
         await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
         await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
@@ -327,6 +330,114 @@ describe('personal ChatGPT sign-in', () => {
         expect(credentials.readCredentialRecord('admin:1', adminConnection.id).account_label).toBe('a***********@example.org');
         expect(credentials.readCredentialRecord('user:1', userConnection.id).account_label).toBe('p***********@example.org');
         expect(ai.listConnections(admin).some(item => item.id === userConnection.id)).toBe(false);
+    });
+});
+
+describe('personal ChatGPT sign-in ownership across workers and sessions', () => {
+    it('keeps a sign-in pending when the poll lands on a worker that does not own it', async () => {
+        const connection = createConnection();
+        // A runtime lease held by another worker, with no attempt in this
+        // process: exactly what a poll without sticky routing sees.
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            const now = Date.now();
+            db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+                VALUES('foreign-worker','user:1',?,'login-1','pending','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+                .run(connection.id, now, now, now + 600000, now);
+            expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
+            expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'foreign-worker', 'fp').status).toBe('pending');
+        } finally { runtime.stopRuntime(session); }
+        // Once no worker holds the lease the attempt really is gone.
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'foreign-worker', 'fp'))
+            .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
+    });
+
+    it('hides an attempt from a different session and refreshes liveness on its own poll', async () => {
+        fake({ login: 'pending' });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'owning-session');
+        expect(thrown(() => account.readLoginStatus(user, ownedRecord(user, connection.id), started.id, 'another-session')).status).toBe(404);
+        const before = db.prepare('SELECT last_seen_at FROM ai_codex_logins WHERE id=?').get(started.id).last_seen_at;
+        db.prepare('UPDATE ai_codex_logins SET last_seen_at=? WHERE id=?').run(before - 60000, started.id);
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), started.id, 'owning-session').status).toBe('pending');
+        expect(db.prepare('SELECT last_seen_at FROM ai_codex_logins WHERE id=?').get(started.id).last_seen_at).toBeGreaterThan(before - 60000);
+        await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
+    });
+
+    it('discards a success that arrives after the initiating session stopped watching', async () => {
+        fake({ login: 'success', loginDelayMs: 600 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'owning-session');
+        // The browser session ends. Sign-out here is client side and does not
+        // advance token_version, so the attempt is only kept alive by polling.
+        db.prepare('UPDATE ai_codex_logins SET last_seen_at=? WHERE id=?').run(Date.now() - 600000, started.id);
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
+        expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(started.id))
+            .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_superseded' });
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    });
+
+    it('keeps the attempt running when a completion names another login', async () => {
+        fake({ login: 'mismatchThenSuccess', loginDelayMs: 40, secondLoginDelayMs: 400 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        // The foreign completion must not stop the runtime that is still waiting.
+        await wait(200);
+        expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('pending');
+        expect(runtime.liveRuntime('user:1', connection.id)).toBeTruthy();
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status === 'completed');
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeTruthy();
+    });
+});
+
+describe('personal ChatGPT runtime robustness', () => {
+    it('reports a runtime that exits before the first request instead of crashing the worker', async () => {
+        fake({ exitOnStart: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = createConnection();
+        await expect(account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'))
+            .rejects.toMatchObject({ code: expect.stringMatching(/^AI_CODEX_RUNTIME_/) });
+        // The lease is released, so a later attempt is not blocked.
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        expect(db.prepare('SELECT status FROM ai_codex_logins').get().status).toBe('failed');
+    });
+
+    it('resolves the runtime to an absolute path so the sandbox can launch it', async () => {
+        const previousPath = process.env.PATH;
+        const previousBin = process.env.AI_CODEX_BIN;
+        // The documented default: a bare name that only the host PATH resolves.
+        process.env.PATH = `${dataDir}:${previousPath}`;
+        process.env.AI_CODEX_BIN = 'codex';
+        try {
+            readiness.resetCodexReadiness();
+            const availability = await readiness.refreshCodexReadiness({ force: true });
+            expect(availability.available).toBe(true);
+            expect(path.isAbsolute(availability.binary)).toBe(true);
+            const connection = createConnection();
+            const { state } = await link(user, connection);
+            expect(state.status).toBe('completed');
+            expect(JSON.parse(fs.readFileSync(recordPath, 'utf8')).argv[0]).toBe('app-server');
+        } finally {
+            process.env.PATH = previousPath;
+            process.env.AI_CODEX_BIN = previousBin;
+            readiness.resetCodexReadiness();
+            await readiness.refreshCodexReadiness({ force: true });
+        }
+    });
+
+    it('installs one shutdown handler, and only once a runtime exists', async () => {
+        // Loading the module must not change Node's signal behavior: a listener
+        // that only cleans up would suppress termination on a host where the
+        // adapter is switched off entirely.
+        expect(signalListenersAfterImport).toBe(0);
+        const connection = await linkedConnection();
+        const first = await runtime.startRuntime('user:1', connection.id);
+        const installed = process.listenerCount('SIGTERM');
+        runtime.stopRuntime(first);
+        expect(installed).toBe(1);
+        const second = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(second);
+        // Never stacked, however many runtimes come and go.
+        expect(process.listenerCount('SIGTERM')).toBe(1);
     });
 });
 
@@ -611,7 +722,7 @@ describe('personal ChatGPT runtime ownership', () => {
         const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
         // Simulate this worker losing the attempt without a terminal notification.
         account.releaseAllAttempts();
-        const state = account.readLoginStatus(user, ownedRecord(user, connection.id), started.id);
+        const state = account.readLoginStatus(user, ownedRecord(user, connection.id), started.id, 'fp');
         expect(['failed']).toContain(state.status);
         expect(state.error_code).toMatch(/interrupted/);
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
@@ -649,7 +760,7 @@ describe('personal ChatGPT runtime ownership', () => {
         // still treat its directory as in use.
         credentials.sweepOrphans();
         expect(fs.existsSync(paths.codexHome)).toBe(true);
-        expect(account.readLoginStatus(user, ownedRecord(user, mine.id), started.id).status).toBe('pending');
+        expect(account.readLoginStatus(user, ownedRecord(user, mine.id), started.id, 'fp').status).toBe('pending');
         await account.cancelAccountLink(user, ownedRecord(user, mine.id), started.id);
     });
 

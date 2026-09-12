@@ -25,7 +25,7 @@ const READ_ONLY_ROOTS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ssl', 
 
 let cached = null;
 
-function which(binary) {
+export function which(binary) {
     if (binary.includes('/')) return fs.existsSync(binary) ? binary : null;
     for (const dir of (process.env.PATH || '').split(path.delimiter)) {
         if (!dir) continue;
@@ -64,6 +64,13 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command }) {
         '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run', '--tmpfs', '/var'
     ];
     for (const root of existingReadOnlyRoots()) args.push('--ro-bind', root, root);
+    // The runtime is launched by absolute path. Its directory is bound read-only
+    // when it lives outside the standard roots, so an install under /opt or
+    // /usr/local stays reachable inside the namespace.
+    const binaryDirectory = path.dirname(command[0]);
+    if (!existingReadOnlyRoots().some(root => binaryDirectory === root || binaryDirectory.startsWith(`${root}/`))) {
+        args.push('--ro-bind-try', binaryDirectory, binaryDirectory);
+    }
     // Only the identity's own runtime tree is writable. The manager's data
     // directory, .env, key files, other identities and any container socket are
     // simply absent from the mount namespace.
@@ -158,9 +165,18 @@ function candidates(requested) {
     return process.platform === 'linux' ? ['bwrap'] : process.platform === 'darwin' ? ['sandbox-exec'] : [];
 }
 
+// The readiness probe and the sandboxed launch must use the same executable.
+// Resolving once, to an absolute path, prevents the case where the probe finds
+// `codex` on the host PATH while the sandbox's narrow PATH cannot.
+export function resolveCodexBinary(binary) {
+    return which(binary);
+}
+
 export function codexVersion(binary) {
+    const resolved = which(binary);
+    if (!resolved) return null;
     try {
-        const output = execFileSync(binary, ['--version'], { timeout: 10000, encoding: 'utf8', env: { PATH: process.env.PATH || '' } });
+        const output = execFileSync(resolved, ['--version'], { timeout: 10000, encoding: 'utf8', env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
         return output.trim().match(/(\d+\.\d+\.\d+)/)?.[1] || null;
     } catch { return null; }
 }

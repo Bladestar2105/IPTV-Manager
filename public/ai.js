@@ -379,11 +379,13 @@ window.aiUI = (() => {
     const box = el('account-state');
     if (!box) return;
     box.replaceChildren();
-    const linked = Boolean(connection?.account?.linked);
+    // A refreshed account read is newer than the stored connection record, so a
+    // sign-in that no longer authenticates must not keep showing as connected.
+    const linked = accountState ? Boolean(accountState.linked) : Boolean(connection?.account?.linked);
     label('p', box, linked ? 'accountLinked' : 'accountNotLinked', linked ? 'mb-1 fw-semibold' : 'mb-1 text-muted');
     if (linked) {
-      captioned(box, 'accountLabel', (accountState?.label ?? connection.account.label) || tr('unknown'));
-      captioned(box, 'plan', (accountState?.plan_type ?? connection.account.plan_type) || tr('unknown'));
+      captioned(box, 'accountLabel', (accountState?.label ?? connection?.account?.label) || tr('unknown'));
+      captioned(box, 'plan', (accountState?.plan_type ?? connection?.account?.plan_type) || tr('unknown'));
       renderQuota(box);
     }
     if (el('link-start')) el('link-start').hidden = linked;
@@ -496,7 +498,10 @@ window.aiUI = (() => {
     status('running', 'setup');
     accountState = await api(`/connections/${encodeURIComponent(connection.id)}/account`);
     renderAccount(connection);
-    status('saved', 'setup');
+    // A refresh that reports the account as no longer connected leaves the
+    // refreshed state on screen — re-rendering the connection would fall back to
+    // the stored record and show it as connected again.
+    status(accountState && !accountState.linked ? 'notLinked' : 'saved', 'setup');
   }
   function destination() {
     if (pendingProvider() === 'chatgpt_account') { el('destination').textContent = tr('managedDestination'); return; }

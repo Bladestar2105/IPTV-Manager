@@ -27,6 +27,10 @@ if (config.recordPath) {
     }));
 }
 
+// Models a runtime whose configuration is rejected: it exits between spawn and
+// the client's first write, so the pipe reports EPIPE asynchronously.
+if (config.exitOnStart) process.exit(config.exitCode ?? 1);
+
 const codexHome = process.env.CODEX_HOME || '';
 const authFile = path.join(codexHome, 'auth.json');
 const hasAuth = () => fs.existsSync(authFile);
@@ -117,15 +121,25 @@ function handle(message) {
             reply(response);
             const outcome = config.login || 'success';
             if (outcome === 'pending') return undefined;
-            later(config.loginDelayMs ?? 30, () => {
-                if (outcome === 'success') {
-                    fs.mkdirSync(codexHome, { recursive: true });
-                    fs.writeFileSync(authFile, JSON.stringify({ tokens: { access_token: 'synthetic-access-token' } }), { mode: 0o600 });
-                }
+            const succeed = loginId => {
+                fs.mkdirSync(codexHome, { recursive: true });
+                fs.writeFileSync(authFile, JSON.stringify({ tokens: { access_token: 'synthetic-access-token' } }), { mode: 0o600 });
+                notify('account/login/completed', { loginId, success: true, error: null, onboardingEntrypoint: null });
+            };
+            const delay = config.loginDelayMs ?? 30;
+            // A completion naming another login arrives first; the real one must
+            // still be processed afterwards.
+            if (outcome === 'mismatchThenSuccess') {
+                later(delay, () => notify('account/login/completed', { loginId: 'someone-elses-login', success: true, error: null, onboardingEntrypoint: null }));
+                later(delay + (config.secondLoginDelayMs ?? 250), () => succeed(pendingLoginId));
+                return undefined;
+            }
+            later(delay, () => {
+                if (outcome === 'success') return succeed(config.completedLoginId || pendingLoginId);
                 notify('account/login/completed', {
                     loginId: config.completedLoginId || pendingLoginId,
-                    success: outcome === 'success',
-                    error: outcome === 'success' ? null : 'declined',
+                    success: false,
+                    error: 'declined',
                     onboardingEntrypoint: null
                 });
             });

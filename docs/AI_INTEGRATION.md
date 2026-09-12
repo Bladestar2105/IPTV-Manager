@@ -316,6 +316,10 @@ newline-delimited JSON-RPC protocol and uses its managed ChatGPT sign-in
 browser OAuth token into an API key, and never routes a ChatGPT sign-in through
 the existing `chat/completions` transport.
 
+* The runtime is resolved to an absolute path once and the same path is both
+  version-probed and launched, so an installation that only the host `PATH` can
+  find cannot report itself available and then fail inside the sandbox. Its
+  directory is bound read-only when it lives outside the standard system roots.
 * Pinned and tested Codex release: **0.154.0**. Accepted range: `>= 0.154.0` and
   `< 0.156.0`. A version outside that range keeps the adapter unavailable unless
   an operator names one exact version in `AI_CODEX_VERSION_OVERRIDE` after
@@ -425,8 +429,16 @@ one-time device code.
   instead of opening another one.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message.
-* A success that arrives after sign-out, a session change or a cancellation is
-  discarded: the runtime is signed out again and nothing is kept.
+* An attempt belongs to the browser session that started it. Only that session
+  can poll it, and its polling is what keeps the attempt alive: sign-out in this
+  application is client side and does not invalidate the token, so a session that
+  stops watching its own attempt for more than two minutes no longer owns it. A
+  success arriving after that, after a cancellation, after the attempt was
+  superseded, or after the account was disabled or its tokens invalidated, is
+  discarded — the runtime is signed out again and nothing is kept.
+* Polling is not pinned to a worker. Whether a sign-in is still running is read
+  from the shared runtime lease, not from the process that happens to answer, so
+  a poll routed elsewhere never ends a running attempt.
 * Browser cookies and existing `auth.json` files from a developer or operator
   profile are never imported.
 

@@ -4,11 +4,16 @@ import db from '../../../database/db.js';
 import { ENCRYPTION_KEY } from '../../../utils/crypto.js';
 import { aiError } from '../transport.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
-import { startRuntime, stopRuntime, liveRuntime, withRuntime } from './runtime.js';
+import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
 import { seal, wipe, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
+// A sign-in belongs to the browser session that started it. That session polls
+// its own attempt every few seconds while the panel is open; once it stops for
+// longer than this, the attempt is no longer watched and a completion arriving
+// afterwards is not adopted.
+const LOGIN_SESSION_IDLE_MS = 120000;
 const MAX_LOGINS_PER_HOUR = 5;
 const ACTIVE_STATUSES = ['starting', 'pending'];
 
@@ -51,28 +56,49 @@ function releaseAttempt(id) {
     const attempt = attempts.get(id);
     if (!attempt) return;
     clearTimeout(attempt.timer);
+    clearInterval(attempt.watchdog);
     attempts.delete(id);
     stopRuntime(attempt.session, 'AI_CODEX_RUNTIME_CLOSED');
 }
 
-// A late success must never be adopted after the account signed out, changed
-// identity, cancelled the attempt or started a different one.
+// A cancel or a supersede can be handled by any worker, so the worker that owns
+// the runtime watches the shared row and releases it when the attempt is no
+// longer active.
+function watchAttempt(id) {
+    const watchdog = setInterval(() => {
+        const row = db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id);
+        if (!row || !ACTIVE_STATUSES.includes(row.status)) releaseAttempt(id);
+    }, 5000);
+    watchdog.unref?.();
+    return watchdog;
+}
+
+// A late success must never be adopted after the attempt was cancelled or
+// superseded, after the account was disabled or its tokens were invalidated, or
+// after the session that started it stopped watching. Sign-out in this
+// application is client side and does not advance `token_version`, so session
+// ownership is established by the initiating session's own polling rather than
+// by a stored value compared against itself.
 function stillOwnsAttempt(row, ownerKey) {
-    const current = db.prepare('SELECT status,actor_version,session_hash FROM ai_codex_logins WHERE id=?').get(row.id);
+    const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at FROM ai_codex_logins WHERE id=?').get(row.id);
     if (!current || !ACTIVE_STATUSES.includes(current.status)) return false;
+    if (current.session_hash !== row.session_hash) return false;
     const [kind, id] = ownerKey.split(':');
     const table = kind === 'admin' ? 'admin_users' : 'users';
     const account = db.prepare(`SELECT is_active,token_version FROM ${table} WHERE id=?`).get(Number(id));
     if (!account?.is_active || account.token_version !== current.actor_version) return false;
-    return current.session_hash === row.session_hash;
+    return Date.now() - (current.last_seen_at ?? current.created_at) <= LOGIN_SESSION_IDLE_MS;
 }
 
 async function completeLogin(row, ownerKey, connectionId, notification) {
     const attempt = attempts.get(row.id);
     if (!attempt) return;
+    // Not our completion: leave the attempt and its runtime alone so the real
+    // one can still arrive. Returning inside the try below would run its
+    // `finally` and stop the pending runtime.
+    if (notification?.loginId && row.login_id && notification.loginId !== row.login_id) return;
     const session = attempt.session;
     try {
-        if (notification?.loginId && row.login_id && notification.loginId !== row.login_id) return;
         if (!notification?.success) {
             finishLogin(row.id, 'failed', 'ai_codex_login_rejected');
             return;
@@ -153,6 +179,7 @@ export async function startAccountLink(actor, connection, fingerprint) {
     db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at)
         VALUES(?,?,?,NULL,'starting',NULL,NULL,?,?,?,?,?)`)
         .run(id, ownerKey, connection.id, account.token_version, fingerprint, now, now, now + LOGIN_TTL_MS);
+    db.prepare('UPDATE ai_codex_logins SET last_seen_at=? WHERE id=?').run(now, id);
     const row = db.prepare('SELECT * FROM ai_codex_logins WHERE id=?').get(id);
 
     let session;
@@ -164,7 +191,7 @@ export async function startAccountLink(actor, connection, fingerprint) {
         });
         const timer = setTimeout(() => { finishLogin(id, 'expired', 'ai_codex_login_expired'); releaseAttempt(id); }, LOGIN_TTL_MS);
         timer.unref?.();
-        attempts.set(id, { session, timer });
+        attempts.set(id, { session, timer, watchdog: watchAttempt(id) });
         const device = await startDeviceLogin(session);
         db.prepare("UPDATE ai_codex_logins SET login_id=?,status='pending',verification_url=?,user_code=?,updated_at=? WHERE id=? AND status='starting'")
             .run(device.loginId, device.verificationUrl, device.userCode, Date.now(), id);
@@ -178,14 +205,22 @@ export async function startAccountLink(actor, connection, fingerprint) {
     }
 }
 
-export function readLoginStatus(actor, connection, id) {
+// Polling is not routed to any particular worker, so the process-local attempt
+// map cannot decide whether a sign-in is still running. The runtime lease in the
+// database is the shared truth; only when no worker holds it is the attempt
+// really gone. Each poll from the initiating session also refreshes the
+// attempt's liveness.
+export function readLoginStatus(actor, connection, id, fingerprint = null) {
     actorRow(actor);
     expireLogins();
     const row = loginRow(connection.owner_key, connection.id, id);
-    // A pending attempt whose runtime is gone cannot complete in this process.
-    if (ACTIVE_STATUSES.includes(row.status) && !attempts.has(row.id)) {
-        finishLogin(row.id, 'failed', 'ai_codex_login_interrupted');
-        return { ...publicLogin(row), status: 'failed', error_code: 'ai_codex_login_interrupted' };
+    if (fingerprint && row.session_hash !== fingerprint) throw aiError('AI_NOT_FOUND', 404);
+    if (ACTIVE_STATUSES.includes(row.status)) {
+        if (!attempts.has(row.id) && !runtimeState(connection.owner_key, connection.id)) {
+            finishLogin(row.id, 'failed', 'ai_codex_login_interrupted');
+            return { ...publicLogin(row), status: 'failed', error_code: 'ai_codex_login_interrupted' };
+        }
+        if (fingerprint) db.prepare('UPDATE ai_codex_logins SET last_seen_at=? WHERE id=? AND session_hash=?').run(Date.now(), row.id, fingerprint);
     }
     return publicLogin(row);
 }

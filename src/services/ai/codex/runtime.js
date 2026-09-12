@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../../database/db.js';
 import { codexConfig, versionSupported, DISABLED_CODEX_FEATURES, CODEX_CONFIG_OVERRIDES } from './config.js';
-import { resolveIsolation, wrapCommand, codexVersion } from './isolation.js';
+import { resolveIsolation, wrapCommand, codexVersion, resolveCodexBinary } from './isolation.js';
 import { createClient, codexError } from './protocol.js';
 import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
 
@@ -53,18 +53,22 @@ export function runtimeState(ownerKey, connectionId) {
 export async function codexAvailability({ force = false } = {}) {
     const config = codexConfig();
     if (!config.enabled) return { available: false, reason: 'AI_CODEX_DISABLED' };
-    const version = codexVersion(config.binary);
+    // The same absolute path is probed here and launched later, so a runtime
+    // that the probe can reach but the sandbox cannot is impossible.
+    const binary = resolveCodexBinary(config.binary);
+    if (!binary) return { available: false, reason: 'AI_CODEX_BINARY_MISSING' };
+    const version = codexVersion(binary);
     if (!version) return { available: false, reason: 'AI_CODEX_BINARY_MISSING' };
     if (!versionSupported(version) && config.versionOverride !== version) {
         return { available: false, reason: 'AI_CODEX_VERSION_UNSUPPORTED', version };
     }
     const isolation = await resolveIsolation({ force });
     if (!isolation.available) return { available: false, reason: isolation.reason, version, backend: isolation.backend, grade: isolation.grade };
-    return { available: true, version, backend: isolation.backend, grade: isolation.grade };
+    return { available: true, version, binary, backend: isolation.backend, grade: isolation.grade };
 }
 
-function spawnDescription(isolation, paths) {
-    const command = [codexConfig().binary, 'app-server', '--listen', 'stdio://', '--strict-config',
+function spawnDescription(isolation, paths, binary) {
+    const command = [binary, 'app-server', '--listen', 'stdio://', '--strict-config',
         ...DISABLED_CODEX_FEATURES.flatMap(feature => ['--disable', feature]),
         ...CODEX_CONFIG_OVERRIDES.flatMap(override => ['-c', override])];
     return wrapCommand(isolation.handle, { codexHome: paths.codexHome, workDir: paths.workDir, command });
@@ -107,7 +111,7 @@ export async function startRuntime(ownerKey, connectionId, { onNotification } = 
     try {
         const paths = hydrate(ownerKey, connectionId);
         const sink = violationSink();
-        const description = spawnDescription(isolation, paths);
+        const description = spawnDescription(isolation, paths, availability.binary);
         session = { paths, sink, leaseId, ownerKey, connectionId, availability, heartbeat: null, stopped: false, onTurnEvent: null };
         const client = createClient({
             file: description.file,
@@ -126,6 +130,7 @@ export async function startRuntime(ownerKey, connectionId, { onNotification } = 
             if (!refreshLease(ownerKey, connectionId, leaseId)) stopRuntime(session, 'AI_CODEX_LEASE_LOST');
         }, HEARTBEAT_MS);
         session.heartbeat.unref?.();
+        installShutdownHandlers();
         live.set(runtimeKey(ownerKey, connectionId), session);
         return session;
     } catch (error) {
@@ -169,6 +174,22 @@ export function stopAllRuntimes(reason = 'AI_CODEX_RUNTIME_CLOSED') {
 
 export function identityDirectories(ownerKey, connectionId) { return identityPaths(ownerKey, connectionId); }
 
-for (const signal of ['SIGINT', 'SIGTERM', 'exit']) {
-    process.on(signal, () => stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED'));
+// Installed only once a runtime actually exists, so a host with the adapter
+// disabled keeps Node's default signal behavior untouched. On a signal the
+// handler cleans up, removes itself and re-raises, because a listener that only
+// returns would suppress termination and leave the process running through a
+// container or service shutdown.
+let signalsInstalled = false;
+function installShutdownHandlers() {
+    if (signalsInstalled) return;
+    signalsInstalled = true;
+    process.on('exit', () => stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED'));
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+        const handler = () => {
+            stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
+            process.removeListener(signal, handler);
+            process.kill(process.pid, signal);
+        };
+        process.on(signal, handler);
+    }
 }

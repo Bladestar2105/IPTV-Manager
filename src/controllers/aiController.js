@@ -57,8 +57,8 @@ export const startAccountLink = handle(async req => {
   return start(req.user, await accountConnection(req), sessionFingerprint(bearer(req)));
 });
 export const accountLinkStatus = handle(async req => {
-  const {readLoginStatus} = await import('../services/ai/codex/account.js');
-  return readLoginStatus(req.user, await accountConnection(req, {requirePolicy: false}), req.params.loginId);
+  const {readLoginStatus, sessionFingerprint} = await import('../services/ai/codex/account.js');
+  return readLoginStatus(req.user, await accountConnection(req, {requirePolicy: false}), req.params.loginId, sessionFingerprint(bearer(req)));
 });
 // Cancelling an attempt and disconnecting stay reachable after AI access is
 // revoked, so a stored sign-in can always be removed by its owner.

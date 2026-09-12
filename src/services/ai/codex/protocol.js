@@ -46,7 +46,11 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
         if (state.closed) throw codexError('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime is not available.');
         const line = `${JSON.stringify(payload)}\n`;
         if (Buffer.byteLength(line) > MAX_MESSAGE_BYTES) throw codexError('AI_INVALID_INPUT', 'Codex request exceeded the message limit.', 400);
-        child.stdin.write(line);
+        // A runtime that exited between spawn and this write reports EPIPE
+        // asynchronously on the pipe, so a synchronous failure here is turned
+        // into the same runtime error rather than escaping the caller.
+        try { child.stdin.write(line); }
+        catch { throw codexError('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime is not available.'); }
     };
 
     // Any tool, approval or capability request is a boundary violation: the
@@ -101,6 +105,12 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
     child.stderr.on('data', chunk => {
         state.diagnostics = `${state.diagnostics}${chunk}`.slice(-MAX_DIAGNOSTIC_BYTES);
     });
+    // Every pipe needs its own listener. Without one, an EPIPE from a runtime
+    // that exited early is an uncaught exception that would take the whole
+    // worker down, which an authenticated user could trigger repeatedly.
+    child.stdin.on('error', () => fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime closed its input.'));
+    child.stdout.on('error', () => fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime closed its output.'));
+    child.stderr.on('error', () => { /* diagnostics are best effort */ });
     child.on('error', () => fail('AI_CODEX_RUNTIME_FAILED', 'Codex runtime could not be started.'));
     child.on('exit', () => fail('AI_CODEX_RUNTIME_CLOSED', 'Codex runtime exited.'));
 
@@ -136,7 +146,7 @@ export function createClient({ file, args, env, cwd, onNotification, onViolation
             if (state.closed) return;
             state.closed = true;
             state.closeReason ||= reason;
-            try { child.stdin.end(); } catch { /* already closed */ }
+            try { child.stdin.destroy(); } catch { /* already closed */ }
             try { child.kill('SIGTERM'); } catch { /* already gone */ }
             const hard = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, 3000);
             hard.unref?.();

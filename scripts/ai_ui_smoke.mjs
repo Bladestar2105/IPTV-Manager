@@ -29,7 +29,7 @@ try {
   const programReference = {channel_id: 'real-epg-channel', source_type: 'xmltv', source_id: 7, start: 1800000000};
   // Personal ChatGPT account-link state for the synthetic server.
   let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
-  let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null};
+  let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true;
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -67,8 +67,9 @@ try {
         Object.assign(stored(), {account: chatgptAccount});
         data = {disconnected: true, remote_logout: true};
       }
-      else if (rest === '/account') data = {...chatgptAccount,
-        quota: {known: true, ordinary_usage_allowed: true, primary: {used_percent: 42, window_minutes: 300, resets_at: 1800000000}, secondary: null}};
+      else if (rest === '/account') data = accountReadsLinked
+        ? {...chatgptAccount, quota: {known: true, ordinary_usage_allowed: true, primary: {used_percent: 42, window_minutes: 300, resets_at: 1800000000}, secondary: null}}
+        : {linked: false, label: null, plan_type: null, auth_method: null, quota: {known: false}};
       else { status = 404; data = {code: 'AI_NOT_FOUND'}; }
     }
     else if (path === '/connections/c1') {
@@ -582,6 +583,23 @@ try {
     assert.equal(await page.locator('#ai-url').count(), 0, `no technical address field appears for ${lang}`);
   }
   await page.locator('#language-selector').selectOption('en');
+
+  // A refreshed account read that no longer authenticates must win over the
+  // stored connection record, or the panel keeps claiming the account is linked.
+  accountReadsLinked = false;
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/account')),
+    page.locator('#ai-account-refresh').click()
+  ]);
+  await page.locator('#ai-link-start').waitFor({state: 'visible'});
+  assert.match(await page.locator('#ai-account-state').innerText(), /No ChatGPT account connected/i,
+    'a refreshed account read that reports no link is shown instead of the stored record');
+  assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'a refreshed unlinked account offers no disconnect');
+  // Re-selecting the connection reloads the panel from the stored record, which
+  // still holds the link, so the disconnect path below can run.
+  accountReadsLinked = true;
+  await page.evaluate(() => document.getElementById('ai-connection').dispatchEvent(new Event('change')));
+  await page.locator('#ai-unlink').waitFor({state: 'visible'});
 
   // A page-wide dialog handler is already installed above; the disconnect
   // confirmation is accepted by it.
