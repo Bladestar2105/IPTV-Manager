@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DATA_DIR } from '../../../config/constants.js';
 import { codexConfig } from './config.js';
@@ -32,6 +33,14 @@ const realPath = value => { try { return fs.realpathSync.native(value); } catch 
 // Two paths overlap when either contains the other. A mount that contains the
 // data directory would expose it just as surely as one inside it.
 const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+
+// Everything the manager itself lives in: its working directory, where dotenv
+// reads `.env`, and its installation root. A bare-metal install under one of the
+// read-only system roots would otherwise be carried in by that bind.
+export function maskedRoots() {
+    const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+    return [...new Set([DATA_DIR, process.cwd(), moduleRoot].flatMap(directory => [path.resolve(directory), realPath(directory)]))];
+}
 
 let cached = null;
 
@@ -159,11 +168,12 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launc
     ];
     const roots = existingReadOnlyRoots();
     for (const root of roots) args.push('--ro-bind', root, root);
-    // A data directory that happens to live under one of those roots would be
-    // carried in by that bind, with the database and the key files in it. Masking
-    // it makes the layout irrelevant; the identity binds below are applied
-    // afterwards, so a runtime directory inside it stays reachable.
-    for (const directory of new Set([path.resolve(DATA_DIR), realPath(DATA_DIR)])) args.push('--tmpfs', directory);
+    // A data directory or an application root that happens to live under one of
+    // those roots would be carried in by that bind, with the database, the key
+    // files and the application's own `.env` in it. Masking them makes the layout
+    // irrelevant; the launcher and identity binds below are applied afterwards,
+    // so a launcher or runtime directory inside them stays reachable.
+    for (const directory of maskedRoots()) args.push('--tmpfs', directory);
     // The runtime is launched by absolute path. Its directory, the target of a
     // symlinked launcher and that target's package root are bound read-only when
     // they live outside the standard roots, so a global npm install or an
@@ -245,11 +255,14 @@ async function selfTest(backend, runtimeDir, launcher) {
     const workDir = path.join(probeRoot, 'work');
     for (const dir of [codexHome, workDir, path.join(workDir, 'tmp')]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const token = randomBytes(16).toString('hex');
-    // One canary beside the runtime directory and one in the data directory
-    // itself: a layout where the data directory is reachable through a system
-    // root would otherwise pass a probe that only reads the first.
-    const canaries = [...new Set([path.join(runtimeDir, `canary-${token}`), path.join(DATA_DIR, `.codex-read-probe-${token}`)])];
-    for (const canary of canaries) fs.writeFileSync(canary, token, { mode: 0o600 });
+    // One canary beside the runtime directory and one in every masked root, so a
+    // layout that reaches any of them through a system root is detected. A root
+    // that cannot be written to needs no canary.
+    const canaries = [...new Set([path.join(runtimeDir, `canary-${token}`),
+        ...maskedRoots().map(root => path.join(root, `.codex-read-probe-${token}`))])]
+        .filter(canary => {
+            try { fs.writeFileSync(canary, token, { mode: 0o600 }); return true; } catch { return false; }
+        });
     const forbidden = path.join(DATA_DIR, `.codex-write-probe-${token}`);
     const script = `${canaries.map(canary => `cat ${JSON.stringify(canary)} 2>/dev/null;`).join(' ')} printf "|"; ` +
         `(printf x > ${JSON.stringify(forbidden)}) 2>/dev/null && printf WROTE; printf "|done"`;

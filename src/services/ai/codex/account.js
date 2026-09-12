@@ -317,6 +317,8 @@ export async function startAccountLink(actor, connection, fingerprint) {
     let session;
     try {
         session = await startRuntime(ownerKey, connection.id, {
+            // Access can be withdrawn while this request waits for a runtime.
+            verifyEligible: () => policyAllows(ownerKey),
             // Every close path of a sign-in runtime discards its credential file,
             // including a crash before any completion notification.
             sealOnStop: false,
@@ -514,7 +516,7 @@ export async function readAccountState(actor, connection) {
             auth_method: status.authMethod,
             quota
         };
-    });
+    }, { verifyEligible: () => policyAllows(connection.owner_key) });
     // Removed only once the child has handed the identity back; wiping while it
     // still runs would free the identity for a relink beside a live process.
     if (invalidate) {

@@ -1327,6 +1327,21 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(result.data.note.length).toBe(6000);
     }, 30000);
 
+    it.each([
+        ['the server policy is switched off', () => ai.updateAiSettings(admin, { enabled: false })],
+        ['the owner loses their allowance', () => ai.updateAiSettings(admin, { allowed_user_ids: [2] })],
+        ['the owner turns their own AI off', () => ai.savePreferences(user, { enabled: false })]
+    ])('refuses an account runtime once %s', async (_label, revoke) => {
+        const connection = await linkedConnection();
+        revoke();
+        // The request was authorized before this; the lease is the last gate, so
+        // the current policy has to be evaluated there too.
+        await expect(account.readAccountState(user, ai.ownedAccountConnection(user, connection.id, { requirePolicy: false })))
+            .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        await expect(account.startAccountLink(user, ai.ownedAccountConnection(user, connection.id, { requirePolicy: false }), 'fp'))
+            .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+    }, 30000);
+
     it('still grants a lease to the teardown that owns the marker', async () => {
         const connection = await linkedConnection();
         ai.adjustConnectionTeardown('user:1', connection.id, 1);

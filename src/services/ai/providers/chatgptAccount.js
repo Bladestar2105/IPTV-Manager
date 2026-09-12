@@ -33,6 +33,10 @@ export const chatgptAccountProvider = {
     async execute({ connection, ownerKey, operation, payload, signal, beforeSend }) {
         if (liveRuntime(ownerKey, connection.id)) throw aiError('AI_BUSY', 409);
         try {
+            // The orchestrator's own recheck, evaluated inside the lease
+            // transaction as well: access can be withdrawn while this request
+            // waits for a runtime.
+            const verifyEligible = () => { try { beforeSend?.(); return true; } catch { return false; } };
             return await withRuntime(ownerKey, connection.id, async session => {
                 await requireChatGptAuth(session);
                 // Re-checked immediately before the billable request, exactly as the
@@ -56,7 +60,7 @@ export const chatgptAccountProvider = {
                 // A token refreshed during the turn is captured before teardown.
                 seal(ownerKey, connection.id, {}, { refreshOnly: true });
                 return { result: { content: turn.content }, usage: turn.usage };
-            });
+            }, { verifyEligible });
         } catch (error) { throw translate(error); }
     }
 };

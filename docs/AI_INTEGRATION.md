@@ -368,9 +368,12 @@ boundary. The adapter is therefore offered only where all of the following hold:
    startup: from inside the sandbox, a file outside it must be unreadable — the
    probe places one beside the runtime directory and one inside `DATA_DIR`, so a
    data directory reachable through a mounted system root is detected — and a
-   write into `DATA_DIR` must fail. The data directory is additionally masked
-   inside the namespace, so its location relative to the read-only system roots
-   does not matter. Linux uses bubblewrap (`bwrap`), which is the
+   write into `DATA_DIR` must fail. The data directory, the manager's working
+   directory and its installation root are additionally masked inside the
+   namespace — each under both its given and its resolved path — so a bare-metal
+   installation that lives beneath a mounted system root exposes neither its
+   working tree nor the `.env` file loaded from it, whatever `DATA_DIR` points
+   at. Linux uses bubblewrap (`bwrap`), which is the
    only grade accepted for hosted multi-user operation. macOS `sandbox-exec` is
    classified as development grade and refused unless an operator explicitly
    opts in: its profile denies writes outside the identity's own tree and reads
@@ -418,8 +421,10 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
 * Granting a lease is the last point at which a request can be stopped, because
   by then it has long passed its own authorization. The owner must still exist
   still satisfy every access field the rest of the subsystem checks — active,
-  Web UI access, not expired — and the connection must exist and not be tearing
-  down, all checked in the same transaction that inserts the lease; only the teardown that owns the
+  Web UI access, not expired — the connection must exist and not be tearing
+  down, and the same policy gates the request itself passed — the server switch,
+  the owner's allowance and their personal preference — must still hold, all
+  checked in the same transaction that inserts the lease; only the teardown that owns the
   marker is exempt. Ownership is verified once more after the handshake, because
   that can outlast a revocation's wait, and a session is never handed to its
   caller once its identity has been released.

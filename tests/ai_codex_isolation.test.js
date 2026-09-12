@@ -135,6 +135,11 @@ describe('Codex namespace layout', () => {
         const tmpfsAt = args.findIndex((value, index) => value === '--tmpfs' && args[index + 1] === fs.realpathSync.native(dataDir));
         const bindAt = args.findIndex((value, index) => value === '--bind' && args[index + 1] === paths.codexHome);
         expect(tmpfsAt).toBeGreaterThan(-1);
+        // The application's own tree is masked as well: a bare-metal install under
+        // a bound system root would otherwise expose its `.env`.
+        const masked = new Set(args.filter((value, index) => args[index - 1] === '--tmpfs'));
+        for (const root of isolation.maskedRoots()) expect(masked).toContain(root);
+        expect(masked).toContain(fs.realpathSync.native(process.cwd()));
         // Masked after the read-only roots and before the identity binds, so a
         // data directory under /usr is hidden while the runtime tree stays usable.
         expect(bindAt).toBeGreaterThan(tmpfsAt);

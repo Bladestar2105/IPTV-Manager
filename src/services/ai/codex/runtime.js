@@ -74,7 +74,7 @@ function identityStillEligible(ownerKey, connectionId, allowTeardown) {
     try { return !JSON.parse(connection.data_json).teardown; } catch { return true; }
 }
 
-function tryAcquireLease(ownerKey, connectionId, allowTeardown) {
+function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible) {
     const leaseId = randomUUID();
     return db.transaction(() => {
         const now = Date.now();
@@ -82,6 +82,10 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown) {
         const existing = db.prepare('SELECT lease_id,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
         if (existing) return { leaseId: null, blockedBy: existing.state };
         if (!identityStillEligible(ownerKey, connectionId, allowTeardown)) return { leaseId: null, blockedBy: 'ineligible' };
+        // Supplied by the caller so the current AI policy and personal preference
+        // are evaluated where they are defined, inside this transaction. An
+        // administrator can withdraw access while a request waits for a runtime.
+        if (verifyEligible && !verifyEligible()) return { leaseId: null, blockedBy: 'ineligible' };
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
             .run(ownerKey, connectionId, leaseId, process.pid, 'starting', now + LEASE_TTL_MS, now);
         return { leaseId, blockedBy: null };
@@ -91,10 +95,10 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown) {
 // A runtime that is terminating still holds its lease until its child has
 // actually exited, so a replacement waits for that hand-off. Anything else
 // holding the lease is a concurrent operation and is refused immediately.
-async function acquireLease(ownerKey, connectionId, allowTeardown) {
+async function acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible) {
     const deadline = Date.now() + LEASE_HANDOVER_MS;
     for (;;) {
-        const attempt = tryAcquireLease(ownerKey, connectionId, allowTeardown);
+        const attempt = tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible);
         if (attempt.leaseId) return attempt.leaseId;
         if (attempt.blockedBy === 'ineligible') {
             throw codexError('AI_CONNECTION_CHANGED', 'This connection can no longer start a runtime.', 409);
@@ -230,11 +234,11 @@ function violationSink() {
     };
 }
 
-export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false } = {}) {
+export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false, verifyEligible } = {}) {
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
-    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown);
+    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible);
     let session = null;
     try {
         const paths = hydrate(ownerKey, connectionId);
@@ -327,8 +331,8 @@ export function liveRuntime(ownerKey, connectionId) {
 
 // Runs one bounded operation on a fresh runtime and always tears it down. There
 // is no shared process that could be switched between personal logins.
-export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false } = {}) {
-    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown });
+export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false, verifyEligible } = {}) {
+    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown, verifyEligible });
     try { return await handler(session); }
     finally { stopRuntime(session); }
 }
