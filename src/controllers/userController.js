@@ -13,6 +13,7 @@ import {
   upsertMergedUserChannelAssignment
 } from '../services/userChannelAssignmentService.js';
 import { validateStoredMappingAssignment } from '../services/categoryMappingService.js';
+import { purgeIdentity as purgeAiRuntimeIdentity } from '../services/ai/codex/credentials.js';
 
 const getClonedProviderChannelName = (channel) => {
   if (typeof channel.name === 'string' && channel.name.trim()) return channel.name;
@@ -530,7 +531,7 @@ export const updateUser = async (req, res) => {
   }
 };
 
-export const deleteUser = async (req, res) => {
+export const deleteUser = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
@@ -587,10 +588,8 @@ export const deleteUser = async (req, res) => {
     clearChannelsCache(id);
     // Database triggers remove the account's AI records; the personal ChatGPT
     // runtime directory and any sealed credential are removed here as well.
-    try {
-      const {purgeIdentity} = await import('../services/ai/codex/credentials.js');
-      purgeIdentity(`user:${id}`);
-    } catch { /* Optional runtime cleanup never fails an account deletion. */ }
+    try { purgeAiRuntimeIdentity(`user:${id}`); }
+    catch { /* Optional runtime cleanup never fails an account deletion. */ }
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});

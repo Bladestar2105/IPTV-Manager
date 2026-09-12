@@ -383,6 +383,23 @@ describe('personal ChatGPT connection privacy', () => {
         jobs.cancelJob(user, created.id);
     });
 
+    it('refuses to queue a request for an unlinked account and binds a queued job to it', async () => {
+        const connection = await withModel();
+        const queued = jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'bound-key-000001');
+        const stored = JSON.parse(db.prepare('SELECT input_json FROM ai_jobs WHERE id=?').get(queued.id).input_json);
+        expect(stored._account).toMatchObject({ version: expect.any(Number) });
+        expect(typeof stored._account.hash).toBe('string');
+        jobs.cancelJob(user, queued.id);
+        credentials.wipe('user:1', connection.id);
+        expect(thrown(() => jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'unlinked-key-0001')).code).toBe('AI_CODEX_NOT_LINKED');
+        // A diagnosis keeps its local findings and only loses the optional explanation.
+        ai.updateAiSettings(admin, { enabled: true, allow_own_connections: true, allowed_user_ids: [1, 2], functions: ['list', 'search', 'diagnose'], internal_targets: [] });
+        ai.saveConnection(user, { functions: ['list', 'search', 'diagnose'] }, connection.id);
+        let diagnoseError = null;
+        try { jobs.createJob(user, { feature: 'diagnose' }, 'diagnose-key-0001'); } catch (error) { diagnoseError = error; }
+        expect(diagnoseError?.code).not.toBe('AI_CODEX_NOT_LINKED');
+    });
+
     it('requires a linked account before any billable request', async () => {
         const connection = await withModel();
         credentials.wipe('user:1', connection.id);

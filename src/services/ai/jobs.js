@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
-import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage, allowsUnattendedWork } from './connections.js';
+import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage, allowsUnattendedWork, requireLinkedConnection, accountBinding } from './connections.js';
 import { safeText } from './context.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
@@ -67,10 +67,15 @@ export function createJob(actor, input, idempotencyKey = randomUUID(), {automati
   const access = requireAiAccess(fresh,payload.feature,payload.connection_id || null,{requireModel:payload.feature !== 'diagnose'});
   // Unattended work never runs on a provider bound to a personal plan.
   if (automatic && !allowsUnattendedWork(access.connection.id)) fail(409,'ai_codex_manual_only');
+  // A request that needs a model also needs the account behind it. Diagnosis
+  // keeps its local findings and only loses the optional explanation.
+  if (payload.feature !== 'diagnose') requireLinkedConnection(access.connection.id);
   payload.language ??= access.preferences.language;
   payload.timezone ??= access.preferences.timezone;
+  const account = accountBinding(access.connection.id);
   const inputJson = JSON.stringify({...payload,connection_id:access.connection.id,_timeout:payload.full_list === true ? LARGE_JOB_TIMEOUT : JOB_TIMEOUT,
-    _actor_version:fresh.token_version,_model_id:access.preferences.model_id || access.connection.model_id});
+    _actor_version:fresh.token_version,_model_id:access.preferences.model_id || access.connection.model_id,
+    ...(account ? {_account:account} : {})});
   expireJobs();
   const row = db.transaction(() => {
     const existing = db.prepare('SELECT * FROM ai_jobs WHERE owner_key = ? AND idempotency_key = ?').get(ownerKey(fresh),idempotencyKey);
@@ -117,6 +122,12 @@ async function runJob(id) {
     const model = access.preferences.model_id || access.connection.model_id;
     if (access.connection.version !== job.connection_version ||
         (model !== input._model_id && (job.feature !== 'diagnose' || model))) fail(409,'ai_connection_changed');
+    // A sign-out, a re-link or a different linked account ends the job instead
+    // of continuing it against another identity.
+    if (input._account) {
+      const current = accountBinding(job.connection_id);
+      if (!current || current.hash !== input._account.hash || current.version !== input._account.version) fail(409,'ai_connection_changed');
+    }
     return fresh;
   };
   const monitor = setInterval(() => {

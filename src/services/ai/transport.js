@@ -22,7 +22,29 @@ export function aiError(code, status = 400) {
         AI_RESPONSE_TOO_LARGE: 'The API response exceeded the size limit.', AI_MODEL_REQUIRED: 'Select a successfully tested model.',
         AI_MODEL_UNAVAILABLE: 'The selected model is unavailable; test and select a model again.',
         AI_BUSY: 'An AI request is already running.', AI_PAUSED: 'This connection is temporarily paused after repeated failures.',
-        AI_CONNECTION_CHANGED: 'The connection changed during the request. Start again.', AI_NOT_FOUND: 'AI connection not found.'
+        AI_CONNECTION_CHANGED: 'The connection changed during the request. Start again.', AI_NOT_FOUND: 'AI connection not found.',
+        // Personal ChatGPT connection. The management API returns the stable code;
+        // these messages exist for logs and local diagnosis only.
+        AI_CODEX_DISABLED: 'The personal ChatGPT connection is disabled on this server.',
+        AI_CODEX_NOT_READY: 'The personal ChatGPT runtime is not ready yet.',
+        AI_CODEX_BINARY_MISSING: 'The pinned Codex runtime was not found.',
+        AI_CODEX_VERSION_UNSUPPORTED: 'The installed Codex version is outside the tested range.',
+        AI_CODEX_SANDBOX_MISSING: 'No usable runtime sandbox is available on this host.',
+        AI_CODEX_SANDBOX_DISABLED: 'Runtime sandboxing is switched off, so the connection stays disabled.',
+        AI_CODEX_SANDBOX_PROBE_FAILED: 'The runtime sandbox self-test could not be completed.',
+        AI_CODEX_SANDBOX_READ_ESCAPE: 'The runtime sandbox failed its read containment self-test.',
+        AI_CODEX_SANDBOX_WRITE_ESCAPE: 'The runtime sandbox failed its write containment self-test.',
+        AI_CODEX_SANDBOX_GRADE_REJECTED: 'Only a development-grade sandbox is available; it was not accepted.',
+        AI_CODEX_NOT_LINKED: 'No ChatGPT account is connected for this connection.',
+        AI_CODEX_UNEXPECTED_AUTH: 'An unexpected authentication mode was active; the request was refused.',
+        AI_CODEX_TOOL_REQUEST: 'The model requested a capability that is not available; the answer was discarded.',
+        AI_CODEX_POLICY_MISMATCH: 'The runtime applied a weaker policy than requested.',
+        AI_CODEX_HOME_MISMATCH: 'The runtime resolved an unexpected credential directory.',
+        AI_CODEX_ACCOUNT_ALREADY_LINKED: 'This ChatGPT account is already connected here.',
+        AI_CODEX_LOGIN_UNSUPPORTED: 'Device code sign-in is not available for this account.',
+        AI_CODEX_LOGIN_TARGET_BLOCKED: 'The returned sign-in address is not a permitted target.',
+        AI_CODEX_RUNTIME_CLOSED: 'The personal ChatGPT runtime is not available.',
+        AI_CODEX_RUNTIME_FAILED: 'The personal ChatGPT runtime could not be started.'
     };
     return Object.assign(new Error(messages[code] || 'The AI request failed.'), { code, status });
 }

@@ -243,6 +243,18 @@ export function ownedAccountConnection(actor,id) {
     if (!adapterFor(connection).supportsAccountLink) throw aiError('AI_INVALID_INPUT');
     return connection;
 }
+// Identity of the account currently linked to a connection, used to bind a
+// stored job so a re-link to a different account cannot silently continue it.
+export function accountBinding(connectionId) {
+    const connection=loadConnection(connectionId);
+    if (!connection || !adapterFor(connection).supportsAccountLink) return null;
+    const record=readCredentialRecord(connection.owner_key,connection.id);
+    return record ? {hash:record.account_hash,version:record.version} : {hash:null,version:0};
+}
+export function requireLinkedConnection(connectionId) {
+    const connection=loadConnection(connectionId);
+    if (connection) requireLinkedAccount(connection);
+}
 export function connectionProvider(connectionId) {
     const connection=loadConnection(connectionId);
     return connection ? providerOf(connection) : null;
