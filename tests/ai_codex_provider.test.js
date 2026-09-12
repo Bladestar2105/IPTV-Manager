@@ -1124,6 +1124,38 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(fs.existsSync(credentials.identityPaths('user:1', mine.id).authFile)).toBe(false);
     }, 30000);
 
+    it('stops a live runtime before deleting an account-linked connection', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
+            // Deletion must not return while a runtime is still using the
+            // credential the deletion trigger is about to drop.
+            expect(await ai.removeConnection(user, connection.id)).toEqual({ deleted: true });
+            expect(session.stopped).toBe(true);
+            expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+            expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        } finally { runtime.stopRuntime(session); }
+        expect(ai.listConnections(user).some(item => item.id === connection.id)).toBe(false);
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
+    }, 30000);
+
+    it('drops the stored link when a refreshed account read reports none', async () => {
+        // A model is selected so the refusal below is the link check, not the
+        // model gate in front of it.
+        const connection = await withModel();
+        fake({ accountRead: 'none', recordPath, recordApprovalPath: approvalPath });
+        const state = await account.readAccountState(user, ownedRecord(user, connection.id));
+        expect(state).toMatchObject({ linked: false, quota: { known: false } });
+        // Keeping the record would show the account as linked again on reload and
+        // send the next job at a credential that no longer authenticates.
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(ai.listConnections(user).find(item => item.id === connection.id).account.linked).toBe(false);
+        await expect(ai.runInference(user, 'search', { messages: [{ role: 'user', content: 'x' }], schema }))
+            .rejects.toMatchObject({ code: 'AI_CODEX_NOT_LINKED' });
+    }, 30000);
+
     it('confirms a successful remote sign-out separately', async () => {
         const connection = await linkedConnection();
         const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));

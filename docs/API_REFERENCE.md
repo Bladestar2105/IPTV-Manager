@@ -39,7 +39,7 @@ See [setup, data boundaries and limits](AI_INTEGRATION.md).
 | GET / PUT | `/api/ai/settings` | Read policy; administrators may change server enablement, own-connection permission, allowed users/functions and exact internal targets. |
 | GET / PUT | `/api/ai/preferences` | Personal enablement, selected connection/model, language, timezone and automatic sync-summary opt-in. |
 | GET / POST | `/api/ai/connections` | List usable connections or create an owned connection. |
-| PUT / DELETE | `/api/ai/connections/:id` | Change/delete an owned connection. `api_key` is write-only; reads return `has_key` and `editable`. |
+| PUT / DELETE | `/api/ai/connections/:id` | Change/delete an owned connection. `api_key` is write-only; reads return `has_key` and `editable`. Deleting a `chatgpt_account` connection stops its runtime and signs out first, so the response never precedes the end of credential use. |
 | POST | `/api/ai/connections/:id/discover` | Explicitly list models; no inference side effect. |
 | POST | `/api/ai/connections/:id/test` | Test `model_ids` (one to three) with bounded synthetic chat/structured-output checks. |
 | GET | `/api/ai/codex/status` | Read whether the personal ChatGPT adapter is offered on this host, with the pinned Codex version, isolation backend/grade, or a stable unavailability reason. |
@@ -47,7 +47,7 @@ See [setup, data boundaries and limits](AI_INTEGRATION.md).
 | GET | `/api/ai/connections/:id/link/:loginId` | Poll one own attempt: `pending`, `completed`, `failed`, `cancelled` or `expired` with a stable `error_code`. Only the session that started the attempt can read it, and its polling keeps the attempt alive; after two minutes without a poll a later success is discarded. |
 | POST | `/api/ai/connections/:id/link/:loginId/cancel` | Cancel one own pending attempt through the documented cancel call. |
 | POST | `/api/ai/connections/:id/unlink` | Block new work, cancel queued/running work, sign the runtime out and remove the local credential. Reports `remote_logout` separately from local removal. |
-| GET | `/api/ai/connections/:id/account` | Read the masked account label, plan and, where the documented interface reports it, remaining quota and reset time. Missing values stay unknown. |
+| GET | `/api/ai/connections/:id/account` | Read the masked account label, plan and, where the documented interface reports it, remaining quota and reset time. Missing values stay unknown. A refresh that reports no account, or a different authentication mode, removes the stored link instead of reporting it as connected. |
 | GET / POST | `/api/ai/jobs` | List up to 50 personal jobs or enqueue a feature request. |
 | GET | `/api/ai/jobs/:id` | Read status and currently authorized result. |
 | POST | `/api/ai/jobs/:id/cancel` | Best-effort cancellation without replaying a submitted request. |

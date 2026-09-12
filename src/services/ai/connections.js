@@ -222,7 +222,21 @@ export function saveConnection(actor,input,id=null) {
     db.transaction(()=>{ persist(next,id ? old.version : null); if(invalidated || profileChanged) clearModelSelection(next.id); })();
     return publicConnection(next,actor);
 }
+// Raw removal. It performs no runtime teardown; use `removeConnection` for
+// anything reachable from a request.
 export function deleteConnection(actor,id) { owned(actor,id); db.prepare('DELETE FROM ai_connections WHERE id=? AND owner_key=?').run(id,ownerKey(actor)); return {deleted:true}; }
+// Endpoint-level removal. An account-linked connection stops its runtime, waits
+// for the owning worker to acknowledge and signs out before the row disappears;
+// otherwise the deletion trigger drops the lease while a runtime is still using
+// the credential, and the request returns before that use has stopped.
+export async function removeConnection(actor,id) {
+    const connection=owned(actor,id);
+    if (adapterFor(connection).supportsAccountLink) {
+        const {disconnectAccount}=await import('./codex/account.js');
+        try { await disconnectAccount(actor,connection); } catch { /* removal proceeds even when the sign-out fails */ }
+    }
+    return deleteConnection(actor,id);
+}
 
 export function requireAiFeatureAccess(actor,feature) {
     const policy=settings(); eligible(actor,policy);

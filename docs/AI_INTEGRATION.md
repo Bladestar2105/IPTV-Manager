@@ -457,6 +457,9 @@ one-time device code.
   runtime that dies after issuing the device code ends its attempt immediately
   and releases its lease, rather than reporting the sign-in as still running
   until the fifteen-minute expiry.
+* Refreshing the account is also a check: when the interface reports no account
+  for a stored credential, or an authentication mode other than ChatGPT, the
+  local link is removed rather than shown as connected again on the next load.
 * An attempt belongs to the browser session that started it. Only that session
   can poll it, and its polling is what keeps the attempt alive: sign-out in this
   application is client side and does not invalidate the token, so a session that
@@ -479,8 +482,10 @@ identity directory. Without an acknowledgement no second runtime is started at
 all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
-themselves. Deleting an account removes its credential records, attempt history
-and runtime directory.
+themselves. Deleting a connection follows the same path before its row disappears, so a
+runtime never keeps using a credential whose connection is already gone. Deleting
+an account removes its credential records, attempt history and runtime
+directory.
 
 ### Credential storage
 

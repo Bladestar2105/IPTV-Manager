@@ -108,7 +108,9 @@ function handle(message) {
         case 'getAuthStatus':
             return reply({ authMethod: authStatus(), authToken: null, requiresOpenaiAuth: true });
         case 'account/read':
-            return reply({ account: accountPayload(), requiresOpenaiAuth: true });
+            // `none` models a stored credential that no longer authenticates an
+            // account even though the auth mode still reads as ChatGPT.
+            return reply({ account: config.accountRead === 'none' ? null : accountPayload(), requiresOpenaiAuth: true });
         case 'account/login/start': {
             if (config.login === 'unsupported') return failure('device code login is not enabled');
             pendingLoginId = config.loginId || 'login-1';

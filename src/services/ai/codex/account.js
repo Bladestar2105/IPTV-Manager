@@ -395,12 +395,21 @@ export async function readAccountState(actor, connection) {
             quota: { known: false }, unavailable_reason: readiness.reason };
     }
     if (liveRuntime(connection.owner_key, connection.id)) throw aiError('AI_BUSY', 409);
-    return withRuntime(connection.owner_key, connection.id, async session => {
+    // A stored credential that no longer authenticates an account is not a link.
+    // Keeping the record would make the connection read as linked again on the
+    // next load and send later jobs at an invalid credential.
+    let invalidate = false;
+    const state = await withRuntime(connection.owner_key, connection.id, async session => {
         const status = await getAuthStatus(session);
         if (status.authMethod !== 'chatgpt') {
+            invalidate = true;
             return { linked: false, label: null, plan_type: null, auth_method: status.authMethod, quota: { known: false } };
         }
         const account = await readAccount(session, { refreshToken: true });
+        if (!account.linked) {
+            invalidate = true;
+            return { linked: false, label: null, plan_type: null, auth_method: null, quota: { known: false } };
+        }
         const quota = await readRateLimits(session);
         // A refresh performed during this read is captured immediately.
         seal(connection.owner_key, connection.id, {
@@ -416,6 +425,9 @@ export async function readAccountState(actor, connection) {
             quota
         };
     });
+    // Removed after the runtime stopped, so its guard cannot race the teardown.
+    if (invalidate) wipe(connection.owner_key, connection.id);
+    return state;
 }
 
 export function releaseAllAttempts() {

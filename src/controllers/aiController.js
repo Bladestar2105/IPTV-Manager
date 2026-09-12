@@ -22,7 +22,7 @@ export const savePreferences = handle(req => connections.savePreferences(req.use
 export const listConnections = handle(req => connections.listConnections(req.user));
 export const createConnection = handle(req => connections.saveConnection(req.user,req.body));
 export const updateConnection = handle(req => connections.saveConnection(req.user,req.body,req.params.id));
-export const deleteConnection = handle(req => connections.deleteConnection(req.user,req.params.id));
+export const deleteConnection = handle(req => connections.removeConnection(req.user,req.params.id));
 export const discover = handle(req => connections.discoverModels(req.user,req.params.id));
 export const test = handle(req => connections.testModels(req.user,req.params.id,req.body));
 export const createJob = handle(req => jobs.createJob(req.user,req.body,req.get('Idempotency-Key') || req.body.idempotency_key));
