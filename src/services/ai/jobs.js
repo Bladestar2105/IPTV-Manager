@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
-import { requireAiAccess, runInference, pruneUsage } from './connections.js';
+import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage } from './connections.js';
 import { safeText } from './context.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
@@ -169,7 +169,7 @@ export async function getJob(actor, id) {
   const fresh = currentActor(actor);
   const output = {id:row.id,status:row.status,feature:row.feature,created_at:row.created_at,updated_at:row.updated_at,error_code:row.error_code};
   if (row.result_json) {
-    requireAiAccess(fresh,row.feature,row.connection_id,{requireModel:row.feature !== 'diagnose'});
+    requireAiFeatureAccess(fresh,row.feature);
     const {authorizeResult} = await import('./features.js');
     output.result = await authorizeResult(fresh,JSON.parse(row.input_json),JSON.parse(row.result_json));
     if (output.result && typeof output.result === 'object') delete output.result._authorization;

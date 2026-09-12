@@ -36,7 +36,7 @@ beforeAll(async()=>{
       if(mode==='model'){res.writeHead(404);res.end('{"error":{"code":"model_not_found"}}');return;}
       const setup=body.messages.some(message=>message.content.includes('Synthetic compatibility check'));
       res.setHeader('content-type','application/json');
-      res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(setup?{ok:true}:{summary:'Fixture explanation'})}}],usage:{prompt_tokens:1,completion_tokens:1}}));
+      res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(setup?{ok:true}:{summary:'Fixture explanation',...(body.response_format?.json_schema?.schema?.properties?.actions?{actions:[{type:'rename_channel',user_channel_id:997,value:'Reviewed news'}]}:{})})}}],usage:{prompt_tokens:1,completion_tokens:1}}));
     };
     if(mode==='hold')pending.push(send);else send();
   });
@@ -45,7 +45,7 @@ beforeAll(async()=>{
 });
 beforeEach(async()=>{
   mode='ok';release();await waitFor(()=>!db.prepare("SELECT 1 FROM ai_jobs WHERE status IN ('queued','running')").get());
-  for(const table of ['ai_jobs','ai_usage','ai_preferences','ai_connections','ai_sync_snapshots','current_streams','epg_channel_mappings','user_channels','user_categories','provider_channels','providers','users','admin_users'])db.prepare(`DELETE FROM ${table}`).run();
+  for(const table of ['ai_proposals','ai_changes','ai_jobs','ai_usage','ai_preferences','ai_connections','ai_sync_snapshots','current_streams','epg_channel_mappings','user_channels','user_categories','provider_channels','providers','users','admin_users'])db.prepare(`DELETE FROM ${table}`).run();
   db.exec(`INSERT INTO admin_users(id,username,password) VALUES(991,'audit-admin','unused');
     INSERT INTO users(id,username,password) VALUES(992,'audit-owner','unused'),(993,'audit-other','unused');
     INSERT INTO providers(id,name,url,username,password,user_id) VALUES(994,'Audit provider','https://unused.invalid','unused','unused',992);
@@ -99,11 +99,9 @@ describe('local diagnosis through authenticated persisted jobs',()=>{
     const oldToken=bearer();db.prepare('UPDATE users SET token_version=token_version+1 WHERE id=992').run();
     expect((await getJob(create.body.id,oldToken)).status).toBe(401);
   });
-  it.each(['policy','connection','grant','user'])('keeps %s permission checks on stored local fallback results',async scope=>{
+  it.each(['policy','user'])('keeps %s permission checks on stored local fallback results',async scope=>{
     mode='auth';const create=await createJob();expect((await settled(create.body.id)).body.status).toBe('completed');
     if(scope==='policy')api.updateAiSettings(admin,{functions:['search']});
-    if(scope==='connection')api.saveConnection(admin,{functions:['search']},connection.id);
-    if(scope==='grant')api.saveConnection(admin,{allowed_user_ids:[]},connection.id);
     if(scope==='user')db.prepare('UPDATE users SET webui_access=0 WHERE id=992').run();
     expect((await getJob(create.body.id)).status).toBe(403);
   });
@@ -138,5 +136,54 @@ describe('local diagnosis through authenticated persisted jobs',()=>{
     await waitFor(()=>!db.prepare("SELECT 1 FROM ai_usage WHERE status='running'").get());
     const response=await getJob(create.body.id);
     expect(response.body.status).toBe('cancelled');expect(response.body).not.toHaveProperty('result');
+  });
+});
+
+
+describe('completed job access without model setup',()=>{
+  it.each(['cleanup','diagnose'].flatMap(feature=>['deleted','disabled','missing model','model invalidated','connection feature','connection grant'].map(change=>[feature,change])))('keeps completed %s reachable after %s',async(feature,change)=>{
+    api.updateAiSettings(admin,{functions:['cleanup','diagnose','search']});
+    db.prepare('UPDATE user_channels SET is_hidden=0 WHERE id=997').run();
+    const create=await createJob(feature);expect(create.status).toBe(200);
+    await waitFor(()=>db.prepare('SELECT status FROM ai_jobs WHERE id=?').get(create.body.id).status==='completed');
+    if(change==='deleted')api.deleteConnection(admin,connection.id);
+    if(change==='disabled')api.saveConnection(admin,{enabled:false},connection.id);
+    if(change==='missing model')api.saveConnection(admin,{model_id:null},connection.id);
+    if(change==='model invalidated') {
+      mode='model';await expect(api.runInference(user,'cleanup',{messages:[],schema:{type:'object'}})).rejects.toHaveProperty('code','AI_MODEL_UNAVAILABLE');
+    }
+    if(change==='connection feature')api.saveConnection(admin,{functions:['search']},connection.id);
+    if(change==='connection grant')api.saveConnection(admin,{allowed_user_ids:[]},connection.id);
+    const count=requests,usage=db.prepare('SELECT count(*) AS n FROM ai_usage').get().n;
+    const response=await getJob(create.body.id);
+    expect(response.status).toBe(200);expect(response.body.status).toBe('completed');
+    expect(response.body.result).not.toHaveProperty('_authorization');
+    if(feature==='cleanup') {
+      const proposal=await request(app).get('/api/ai/proposals/'+response.body.result.proposal_id).set('Authorization',bearer());
+      expect(proposal.status).toBe(200);expect(proposal.body.actions[0].after.custom_name).toBe('Reviewed news');
+    } else expect(response.body.result.findings.some(item=>item.code==='channel_diagnostics')).toBe(true);
+    expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=997').get().custom_name).toBe('');
+    expect((await createJob('cleanup')).status).not.toBe(200);
+    expect(requests).toBe(count);expect(db.prepare('SELECT count(*) AS n FROM ai_usage').get().n).toBe(usage);
+  });
+  it.each(['server','preference','feature','allowlist','inactive','webui','source revoked','source changed','foreign owner'])('still rejects %s after setup deletion',async change=>{
+    api.updateAiSettings(admin,{functions:['cleanup','diagnose','search']});
+    db.prepare('UPDATE user_channels SET is_hidden=0 WHERE id=997').run();
+    const create=await createJob('cleanup');expect(create.status).toBe(200);
+    await waitFor(()=>db.prepare('SELECT status FROM ai_jobs WHERE id=?').get(create.body.id).status==='completed');
+    api.deleteConnection(admin,connection.id);
+    if(change==='server')api.updateAiSettings(admin,{enabled:false});
+    if(change==='preference')api.savePreferences(user,{enabled:false});
+    if(change==='feature')api.updateAiSettings(admin,{functions:['search']});
+    if(change==='allowlist')api.updateAiSettings(admin,{allowed_user_ids:[]});
+    if(change==='inactive')db.prepare('UPDATE users SET is_active=0 WHERE id=992').run();
+    if(change==='webui')db.prepare('UPDATE users SET webui_access=0 WHERE id=992').run();
+    if(change==='source revoked')db.prepare('UPDATE user_channels SET authorization_revoked=1 WHERE id=997').run();
+    if(change==='source changed')db.prepare("UPDATE provider_channels SET name='Changed source' WHERE id=995").run();
+    const response=await getJob(create.body.id,change==='foreign owner'?bearer(993):bearer());
+    expect(response.status).toBeGreaterThanOrEqual(400);expect(response.body).not.toHaveProperty('result');
+    if(change==='source revoked')expect(response.body.code).toBe('AI_SOURCE_UNAVAILABLE');
+    if(change==='source changed')expect(response.body.code).toBe('AI_STALE_SOURCE');
+    expect(requests).toBe(1);
   });
 });

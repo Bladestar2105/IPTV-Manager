@@ -114,8 +114,11 @@ For example, POST `/api/ai/jobs` with header `Idempotency-Key: cleanup-example-1
 The response contains `id`, `status`, `feature` and `created_at`. Poll the job;
 statuses are `queued`, `running`, `completed`, `failed`, `cancelled`. A completed
 result may include `proposal_id`, `conversation_id`, `enrichment_id`, findings
-and coverage. Fetch a proposal before applying its chosen action IDs. Reusing
-a job idempotency key with changed input returns 409. Application does not
+and coverage. Reading a persisted result requires current account, Web UI and
+AI feature access plus renewed source/ownership checks. It does not require
+the former model connection, its sharing grant or a usable model. New and
+in-flight jobs retain connection/model authorization. Fetch a proposal before
+applying its chosen action IDs. Reusing a job idempotency key with changed input returns 409. Application does not
 repeat inference. Stale sources, revoked rights and undo conflicts reject the
 operation rather than overwriting current data.
 

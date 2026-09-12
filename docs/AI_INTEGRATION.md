@@ -129,11 +129,15 @@ selected for editing. Proposals carry exact source state and dependencies.
 Stale proposals and undo conflicts require a fresh review; Undo does not
 restore a whole backup or overwrite intervening user edits.
 
-Applying a stored proposal and saving confirmed literal rules are local
-operations. They require current account/Web UI access, enabled server/personal
-AI and the relevant feature permission, but can continue after a connection or
-selected model is removed or disabled. They make no inference request. Source,
-ownership, confirmation and conflict checks still apply.
+Reading a completed job, applying a stored proposal and saving confirmed
+literal rules are local operations. They require current account/Web UI access,
+enabled server/personal AI and the relevant feature permission, but can continue
+after a connection or
+selected model is removed or disabled. Completed result reads do not require
+the former connection sharing grant or connection-specific feature access;
+current server/user feature permissions and source rights still apply. They
+make no inference request. Source, ownership, confirmation and conflict checks
+still apply.
 
 Existing channel, assignment and category IDs returned by the model must belong
 to the exact request batch, even when omitted entries belong to the same user.
