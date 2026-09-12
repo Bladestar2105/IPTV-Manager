@@ -391,6 +391,82 @@ describe('personal ChatGPT sign-in ownership across workers and sessions', () =>
 });
 
 describe('personal ChatGPT runtime robustness', () => {
+    it('clears a plaintext credential left behind by a runtime that never tore down', async () => {
+        const connection = await linkedConnection();
+        const paths = credentials.identityPaths('user:1', connection.id);
+        // A killed worker leaves the hydrated file behind; nothing removes it and
+        // it would otherwise reach a data-directory backup.
+        credentials.hydrate('user:1', connection.id);
+        expect(fs.existsSync(paths.authFile)).toBe(true);
+        credentials.resetInterruptedRuntimes();
+        const swept = credentials.sweepOrphans();
+        expect(swept.cleared).toBeGreaterThan(0);
+        expect(fs.existsSync(paths.authFile)).toBe(false);
+        // The sealed record and its directory survive: the account stays linked.
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeTruthy();
+        expect(fs.existsSync(paths.root)).toBe(true);
+    });
+
+    it('leaves a live runtime\'s plaintext credential alone', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+            expect(credentials.sweepOrphans().cleared).toBe(0);
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+        } finally { runtime.stopRuntime(session); }
+    });
+
+    // A supersede routed to another worker leaves that worker's lease in the
+    // shared table while this process has no runtime of its own for it. Holding
+    // only the database lease reproduces exactly that state.
+    const holdForeignLease = connectionId => {
+        const now = Date.now();
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connectionId, 'foreign-lease', 424242, 'running', now + 60000, now);
+    };
+    const dropForeignLease = connectionId =>
+        db.prepare("DELETE FROM ai_codex_runtimes WHERE connection_id=? AND lease_id='foreign-lease'").run(connectionId);
+
+    it('waits for the previous runtime to hand over its lease before replacing it', async () => {
+        fake({ login: 'pending' });
+        const connection = createConnection();
+        holdForeignLease(connection.id);
+        expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+        const released = setTimeout(() => dropForeignLease(connection.id), 500);
+        released.unref?.();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        expect(started.status).toBe('pending');
+        await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
+    }, 30000);
+
+    it('refuses a collision that never hands over, without recording an attempt', async () => {
+        fake({ login: 'pending' });
+        const connection = createConnection();
+        holdForeignLease(connection.id);
+        try {
+            const before = db.prepare('SELECT count(*) AS n FROM ai_codex_logins').get().n;
+            await expect(account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'))
+                .rejects.toMatchObject({ code: 'AI_BUSY' });
+            // No row, so a collision never spends part of the hourly budget.
+            expect(db.prepare('SELECT count(*) AS n FROM ai_codex_logins').get().n).toBe(before);
+        } finally { dropForeignLease(connection.id); }
+    }, 30000);
+
+    it('charges the hourly budget only for attempts that produced a device code', async () => {
+        fake({ login: 'unsupported' });
+        const connection = createConnection();
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+            await expect(account.startAccountLink(user, ownedRecord(user, connection.id), 'fp'))
+                .rejects.toMatchObject({ code: expect.not.stringContaining('AI_RATE_LIMIT') });
+        }
+        expect(db.prepare('SELECT count(*) AS n FROM ai_codex_logins WHERE login_id IS NOT NULL').get().n).toBe(0);
+        fake({ login: 'pending' });
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        expect(started.status).toBe('pending');
+        await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
+    }, 30000);
+
     it('reports a runtime that exits before the first request instead of crashing the worker', async () => {
         fake({ exitOnStart: true, recordPath, recordApprovalPath: approvalPath });
         const connection = createConnection();

@@ -425,8 +425,11 @@ one-time device code.
   other address is reported and never turned into a link.
 * Typing in the panel makes no network request. An attempt is bound to the
   current account, its token version and the current session, and is limited to
-  five starts per owner and hour; clicking again supersedes the previous attempt
-  instead of opening another one.
+  five attempts per owner and hour. Only an attempt that actually produced a
+  device code counts against that budget. Clicking again supersedes the previous
+  attempt instead of opening another one; when that attempt is held by a
+  different worker the replacement waits briefly for its runtime to be handed
+  over, and refuses without recording an attempt if it is not.
 * Cancellation, expiry, refusal, a workspace without device-code sign-in, an
   interrupted worker and success each produce a distinct localized message.
 * An attempt belongs to the browser session that started it. Only that session

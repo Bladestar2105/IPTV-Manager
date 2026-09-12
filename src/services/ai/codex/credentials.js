@@ -158,12 +158,32 @@ function liveDirectories() {
     return live;
 }
 
+// A worker that is killed never runs its teardown, so the plaintext credential
+// it hydrated stays on disk and would otherwise reach a data-directory backup.
+// Any identity whose runtime is no longer leased has no reason to hold one.
+function clearAbandonedPlaintext() {
+    const now = Date.now();
+    let cleared = 0;
+    for (const row of db.prepare('SELECT owner_key,connection_id FROM ai_codex_credentials').all()) {
+        const leased = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND expires_at > ?')
+            .get(row.owner_key, row.connection_id, now);
+        if (leased) continue;
+        const paths = identityPaths(row.owner_key, row.connection_id);
+        if (!fs.existsSync(paths.authFile) && !fs.existsSync(`${paths.authFile}.tmp`)) continue;
+        clearPlaintext(row.owner_key, row.connection_id);
+        cleared += 1;
+    }
+    return cleared;
+}
+
 // Removes directories left behind by deleted accounts, deleted connections and
-// finished sign-ins. Never removes a directory that is still in use.
+// finished sign-ins, and the plaintext credentials of runtimes that are gone.
+// Never removes a directory that is still in use.
 export function sweepOrphans() {
     const root = identitiesRoot();
     let owners;
-    try { owners = fs.readdirSync(root, { withFileTypes: true }); } catch { return { removed: 0 }; }
+    try { owners = fs.readdirSync(root, { withFileTypes: true }); } catch { return { removed: 0, cleared: 0 }; }
+    const cleared = clearAbandonedPlaintext();
     const live = liveDirectories();
     const liveOwners = new Set([...live].map(entry => entry.slice(0, entry.indexOf('/'))));
     let removed = 0;
@@ -182,7 +202,7 @@ export function sweepOrphans() {
             removed += 1;
         }
     }
-    return { removed };
+    return { removed, cleared };
 }
 
 // No sign-in and no runtime lease survives a restart: a device-code attempt

@@ -14,6 +14,11 @@ const LOGIN_TTL_MS = 15 * 60 * 1000;
 // longer than this, the attempt is no longer watched and a completion arriving
 // afterwards is not adopted.
 const LOGIN_SESSION_IDLE_MS = 120000;
+// How long a replacement sign-in waits for the previous one's runtime lease to
+// be released. A supersede handled by another worker is applied by that worker's
+// watchdog, which polls the shared row once a second.
+const LEASE_HANDOVER_TIMEOUT_MS = 6000;
+const ATTEMPT_WATCH_MS = 1000;
 const MAX_LOGINS_PER_HOUR = 5;
 const ACTIVE_STATUSES = ['starting', 'pending'];
 
@@ -68,7 +73,7 @@ function watchAttempt(id) {
     const watchdog = setInterval(() => {
         const row = db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id);
         if (!row || !ACTIVE_STATUSES.includes(row.status)) releaseAttempt(id);
-    }, 5000);
+    }, ATTEMPT_WATCH_MS);
     watchdog.unref?.();
     return watchdog;
 }
@@ -146,6 +151,18 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
     }
 }
 
+// A supersede or cancel handled by another worker is applied by that worker's
+// watchdog, so the replacement waits briefly for the shared lease to disappear
+// instead of colliding with it.
+async function waitForLeaseRelease(ownerKey, connectionId) {
+    const deadline = Date.now() + LEASE_HANDOVER_TIMEOUT_MS;
+    for (;;) {
+        if (!liveRuntime(ownerKey, connectionId) && !runtimeState(ownerKey, connectionId)) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise(resolve => { const timer = setTimeout(resolve, 200); timer.unref?.(); });
+    }
+}
+
 export function codexStatus() {
     const readiness = codexReadinessSnapshot();
     if (!readiness.available) refreshCodexReadiness().catch(() => null);
@@ -164,15 +181,24 @@ export async function startAccountLink(actor, connection, fingerprint) {
     if (!fingerprint) throw aiError('AI_FORBIDDEN', 403);
     const account = actorRow(actor);
     expireLogins();
-    const recent = db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE owner_key=? AND created_at>?").get(ownerKey, Date.now() - 3600000).n;
+    // Only an attempt that actually produced a device code counts against the
+    // budget. A start that never got that far consumed nothing the account
+    // holder could use.
+    const recent = db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE owner_key=? AND created_at>? AND login_id IS NOT NULL")
+        .get(ownerKey, Date.now() - 3600000).n;
     if (recent >= MAX_LOGINS_PER_HOUR) throw aiError('AI_RATE_LIMIT', 429);
     // Repeated clicks supersede the previous attempt rather than opening a new
-    // parallel sign-in for the same identity.
+    // parallel sign-in for the same identity. When the previous attempt lives in
+    // another worker this only marks the shared row; that worker's watchdog then
+    // stops its runtime and releases the lease.
     for (const row of db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN ('starting','pending')").all(ownerKey)) {
         finishLogin(row.id, 'cancelled', 'ai_codex_login_superseded');
         releaseAttempt(row.id);
     }
-    if (liveRuntime(ownerKey, connection.id)) throw aiError('AI_BUSY', 409);
+    // Wait for the handover before claiming the lease, and refuse without
+    // recording an attempt if the previous runtime does not let go, so a
+    // collision never consumes part of the budget.
+    if (!(await waitForLeaseRelease(ownerKey, connection.id))) throw aiError('AI_BUSY', 409);
 
     const id = randomUUID();
     const now = Date.now();
