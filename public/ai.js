@@ -161,6 +161,7 @@ window.aiUI = (() => {
   function beginResult() {
     const stamp = ++resultGeneration;
     proposal = changeId = null; appliedActionIds = [];
+    if (el('refresh-job')) el('refresh-job').hidden = true;
     el('result')?.replaceChildren(); el('proposal')?.replaceChildren();
     el('rule-preview-result')?.replaceChildren(); renderRuleActions();
     return stamp;
@@ -416,13 +417,17 @@ window.aiUI = (() => {
       el('new-search').hidden = select.value !== 'search';
     });
     button(box, 'run', 'run', () => { nextOffset = 0; return startJob(); }, 'primary');
+    button(box, 'refresh-job', 'refreshStatus', () => { status('running'); return poll(); }).hidden = true;
     button(box, 'cancel', 'cancel', async () => {
       if (!jobId) return;
       const id = jobId, resultStamp = resultGeneration;
-      try { await api(`/jobs/${encodeURIComponent(id)}/cancel`, 'POST', {}, resultStamp); }
+      let result;
+      try { result = await api(`/jobs/${encodeURIComponent(id)}/cancel`, 'POST', {}, resultStamp); }
       catch (error) { if (resultStamp !== resultGeneration || jobId !== id) return; throw error; }
       if (resultStamp !== resultGeneration || jobId !== id) return;
-      clearTimeout(timer); jobId = null; status('cancelled');
+      clearTimeout(timer);
+      if (result.status === 'cancelled') { jobId = null; el('refresh-job').hidden = true; status('cancelled'); }
+      else await poll();
     });
     button(box, 'new-search', 'newSearch', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; filterBaseline = {}; nextOffset = 0; el('filters').value = '{}'; el('prompt').value = ''; });
     progress(box, 'work');
@@ -504,7 +509,14 @@ window.aiUI = (() => {
   async function poll() {
     if (!jobId) return;
     const id = jobId, resultStamp = resultGeneration;
-    const job = await api(`/jobs/${encodeURIComponent(id)}`, 'GET', undefined, resultStamp);
+    clearTimeout(timer); el('refresh-job').hidden = true;
+    let job;
+    try { job = await api(`/jobs/${encodeURIComponent(id)}`, 'GET', undefined, resultStamp); }
+    catch (error) {
+      if (jobId !== id || resultStamp !== resultGeneration) return;
+      el('refresh-job').hidden = false;
+      throw error;
+    }
     if (jobId !== id || resultStamp !== resultGeneration) return;
     if (['completed', 'succeeded', 'done'].includes(job.status)) {
       jobId = null; status('completed'); await showResult(job.result || {});

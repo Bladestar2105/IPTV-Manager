@@ -60,7 +60,10 @@ Documented provider profiles are handled as follows:
 Setup and request controls show their current status beside the action, with a
 spinner while a request is queued or running. Model-test selection is validated
 before saving preferences, keys or connection sharing. Rejected empty or oversized
-selections leave those settings unchanged.
+selections leave those settings unchanged. If a status read fails, use **Refresh
+status** beside the request controls to resume polling the same job. This only
+reads status and never submits a new model request. A cancellation that reaches
+the server after completion displays the actual completed result or failure.
 
 Each explicit test accepts at most three model IDs. Per model it sends one
 plain JSON request, then one structured-output request if plain JSON passed.

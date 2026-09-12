@@ -89,6 +89,7 @@
     summarize: ['Summarize', 'Zusammenfassen', 'Résumer', 'Σύνοψη'],
     tags: ['Suggest topic tags', 'Themen-Tags vorschlagen', 'Proposer des étiquettes', 'Πρόταση θεματικών ετικετών'],
     run: ['Create proposal / answer', 'Vorschlag / Antwort erstellen', 'Créer une proposition / réponse', 'Δημιουργία πρότασης / απάντησης'],
+    refreshStatus: ['Refresh status', 'Status aktualisieren', 'Actualiser le statut', 'Ανανέωση κατάστασης'],
     cancel: ['Cancel job', 'Auftrag abbrechen', 'Annuler la tâche', 'Ακύρωση εργασίας'],
     queued: ['Queued', 'Wartend', 'En attente', 'Σε αναμονή'],
     running: ['Working…', 'Wird bearbeitet…', 'Traitement…', 'Επεξεργασία…'],

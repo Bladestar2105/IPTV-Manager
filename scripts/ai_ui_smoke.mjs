@@ -15,7 +15,7 @@ try {
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
   let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
-  let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null;
+  let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
   let cancelGate, releaseJobCreation, jobCreationRequested;
@@ -62,6 +62,7 @@ try {
       jobCount++; pollCount = 0; data = {id: `j${jobCount}`, status: 'queued'};
     }
     else if (/^\/jobs\/j\d+$/.test(path)) {
+      if (pollErrorOnce) { pollErrorOnce = false; await route.fulfill({status: 503, json: {code: 'AI_UNAVAILABLE'}}); return; }
       pollCount++;
       if (nextJobError && pollCount > 1) data = {id: `j${jobCount}`, status: 'failed', error_code: nextJobError};
       else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
@@ -72,7 +73,7 @@ try {
         await new Promise(resolve => { gate.release = resolve; });
         status = gate.status;
       }
-      data = status === 200 ? {status: 'cancelled'} : {code: 'AI_UNAVAILABLE'};
+      data = status === 200 ? {status: cancelResult} : {code: 'AI_UNAVAILABLE'};
     }
     else if (path === '/proposals/p1') data = {id: 'p1', summary: 'Review', actions: [{id: 'a0', label: 'Create category', type: 'create_category', before: null, after: {name: 'News'}}, {id: 'a1', label: '<script>window.hostile=true</script>', type: 'rename_channel', dependencies: ['a0'], before: {name: 'old'}, after: {name: 'new'}}, {id: 'a2', label: 'Second rename', type: 'rename_channel', before: {name: 'second old'}, after: {name: 'second new'}}]};
     else if (path.endsWith('/apply')) { assert.deepEqual(body.action_ids.slice(0, 2), ['a0', 'a1']); assert(body.idempotency_key.length <= 200); data = {change_id: 'change1', status: 'applied'}; }
@@ -335,6 +336,19 @@ try {
   assert.equal(resetSearch.conversation_id, undefined);
   assert.deepEqual(resetSearch.filters, {});
   await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_cancelled');
+  for (const terminalStatus of ['completed', 'failed']) {
+    cancelNext = true;
+    await page.locator('#ai-run').click();
+    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    cancelNext = false; cancelResult = terminalStatus;
+    nextJobError = terminalStatus === 'failed' ? 'AI_TIMEOUT' : null;
+    const posts = requests.filter(r => r.path === '/jobs' && r.method === 'POST').length;
+    await page.locator('#ai-cancel').click();
+    await page.waitForFunction(key => document.getElementById('ai-work-status').dataset.i18n === key, terminalStatus === 'completed' ? 'ai_completed' : 'ai_timeout');
+    if (terminalStatus === 'completed') await page.locator('#ai-action-a1').waitFor();
+    assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').length, posts, 'late cancellation retrieves the existing terminal result without creating a job');
+  }
+  cancelNext = true; cancelResult = 'cancelled'; nextJobError = null;
   for (const cancelStatus of [200, 502]) {
     await page.locator('#ai-feature').selectOption('list');
     await page.locator('#ai-run').click();
@@ -358,6 +372,16 @@ try {
     await page.locator('#ai-cancel').click();
     await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_cancelled');
   }
+  cancelNext = false; pollErrorOnce = true;
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-refresh-job').waitFor({state: 'visible'});
+  const retryJob = `/jobs/j${jobCount}`;
+  const postsBeforeRetry = requests.filter(r => r.path === '/jobs' && r.method === 'POST').length;
+  await page.locator('#ai-refresh-job').click();
+  await page.locator('#ai-action-a1').waitFor();
+  assert.equal(await page.locator('#ai-refresh-job').isVisible(), false);
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').length, postsBeforeRetry, 'retrying status never resubmits an inference job');
+  assert(requests.filter(r => r.path === retryJob && r.method === 'GET').length >= 3, 'polling resumes for the same job through completion');
   await page.locator('details').filter({has: page.locator('#ai-clear-history')}).locator('summary').click();
   await page.locator('#ai-clear-history').click();
   await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_saved');
