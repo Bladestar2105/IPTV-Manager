@@ -178,7 +178,14 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launc
     // symlinked launcher and that target's package root are bound read-only when
     // they live outside the standard roots, so a global npm install or an
     // install under /opt stays reachable inside the namespace.
-    const covered = directory => roots.some(root => directory === root || directory.startsWith(`${root}/`));
+    // A mount below one of the masks is *not* covered by the root bind that
+    // carried it: the tmpfs above hides it again. It has to be bound after the
+    // masks, or a local install under the application tree — the documented
+    // bare-metal layout — could never start.
+    const masks = maskedRoots();
+    const below = (directory, root) => directory === root || directory.startsWith(`${root}/`);
+    const covered = directory => roots.some(root => below(directory, root))
+        && !masks.some(mask => below(directory, mask) || below(realPath(directory), mask));
     const dataDirectory = realPath(DATA_DIR);
     for (const mount of launcherMounts(launcher)) {
         // Belt and braces: availability already refuses such a launcher, so this
@@ -194,7 +201,7 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launc
     return { file: bwrap, args: [...args, '--', ...command] };
 }
 
-function seatbeltProfile({ codexHome, workDir }) {
+function seatbeltProfile({ codexHome, workDir, launcher }) {
     // Seatbelt matches the kernel's resolved path, so every rule lists the given
     // path and its real path; on macOS the temporary and data directories are
     // routinely reached through a symlink.
@@ -205,6 +212,10 @@ function seatbeltProfile({ codexHome, workDir }) {
     };
     const literal = value => variants(value).map(item => `(literal ${JSON.stringify(item)})`).join(' ');
     const subpath = value => variants(value).map(item => `(subpath ${JSON.stringify(item)})`).join(' ');
+    const isDirectory = value => { try { return fs.statSync(value).isDirectory(); } catch { return false; } };
+    // The same launcher mounts bubblewrap rebinds after its masks: without them a
+    // runtime installed inside the application tree could not be read at all.
+    const launcherRules = launcherMounts(launcher).map(mount => (isDirectory(mount) ? subpath(mount) : literal(mount))).join(' ');
     // Seatbelt applies the last matching rule, so the order is deliberate: deny
     // every write and every read of the manager's data directory first, then
     // re-allow exactly this identity's own tree. That keeps the runtime usable
@@ -222,16 +233,17 @@ function seatbeltProfile({ codexHome, workDir }) {
     return `(version 1)
 (allow default)
 (deny file-write*)
-(deny file-read* ${subpath(DATA_DIR)})
-(allow file-read* ${subpath(codexHome)} ${subpath(workDir)})
+(deny file-read* ${maskedRoots().map(root => subpath(root)).join(' ')})
+${launcherRules ? `(allow file-read* ${launcherRules})
+` : ''}(allow file-read* ${subpath(codexHome)} ${subpath(workDir)})
 (allow file-write* ${subpath(codexHome)} ${subpath(workDir)})
 (deny file-read* ${literal(path.join(DATA_DIR, '.env'))} ${literal(path.join(DATA_DIR, 'secret.key'))} ${literal(path.join(DATA_DIR, 'jwt.secret'))})
 `;
 }
 
-function seatbeltArguments(sandboxExec, { codexHome, workDir, environment, command }) {
+function seatbeltArguments(sandboxExec, { codexHome, workDir, environment, command, launcher }) {
     const profile = path.join(codexHome, 'sandbox.sb');
-    fs.writeFileSync(profile, seatbeltProfile({ codexHome, workDir }), { mode: 0o600 });
+    fs.writeFileSync(profile, seatbeltProfile({ codexHome, workDir, launcher }), { mode: 0o600 });
     return { file: sandboxExec, args: ['-f', profile, ...command], environment };
 }
 
@@ -243,7 +255,7 @@ function seatbeltArguments(sandboxExec, { codexHome, workDir, environment, comma
 export function wrapCommand(backend, { codexHome, workDir, command, launcher = command?.[0] }) {
     const environment = sandboxEnvironment(codexHome, workDir, launcherPath(launcher));
     if (backend.name === 'bwrap') return { ...bwrapArguments(backend.path, { codexHome, workDir, environment, command, launcher }), environment: {} };
-    if (backend.name === 'sandbox-exec') return seatbeltArguments(backend.path, { codexHome, workDir, environment, command });
+    if (backend.name === 'sandbox-exec') return seatbeltArguments(backend.path, { codexHome, workDir, environment, command, launcher });
     throw Object.assign(new Error('AI_CODEX_SANDBOX_UNAVAILABLE'), { code: 'AI_CODEX_SANDBOX_UNAVAILABLE' });
 }
 
@@ -264,8 +276,13 @@ async function selfTest(backend, runtimeDir, launcher) {
             try { fs.writeFileSync(canary, token, { mode: 0o600 }); return true; } catch { return false; }
         });
     const forbidden = path.join(DATA_DIR, `.codex-write-probe-${token}`);
-    const script = `${canaries.map(canary => `cat ${JSON.stringify(canary)} 2>/dev/null;`).join(' ')} printf "|"; ` +
-        `(printf x > ${JSON.stringify(forbidden)}) 2>/dev/null && printf WROTE; printf "|done"`;
+    // No redirect anywhere in here: `2>/dev/null` needs a write the sandbox
+    // denies, and a shell that cannot open its redirect skips the command
+    // altogether — which silently turned every canary read into a no-op and made
+    // the self-test pass without proving anything. Diagnostics go to the child's
+    // own stderr, which the caller never inspects.
+    const script = `${canaries.map(canary => `cat ${JSON.stringify(canary)};`).join(' ')} printf "|"; ` +
+        `printf x > ${JSON.stringify(forbidden)} && printf WROTE; printf "|done"`;
     try {
         // Carries the configured launcher's mounts, so a launcher whose location
         // would expose the data directory fails the canary rather than slipping

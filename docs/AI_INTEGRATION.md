@@ -373,7 +373,14 @@ boundary. The adapter is therefore offered only where all of the following hold:
    namespace — each under both its given and its resolved path — so a bare-metal
    installation that lives beneath a mounted system root exposes neither its
    working tree nor the `.env` file loaded from it, whatever `DATA_DIR` points
-   at. Linux uses bubblewrap (`bwrap`), which is the
+   at. A launcher that lives inside one of those masked trees — a local install
+   in the application's own `node_modules` — is bound again after the masks, so
+   the documented bare-metal layout stays usable. The macOS profile denies reads
+   of the same three trees and re-allows exactly those launcher paths. The probe
+   itself uses no shell redirection: a denied `2>/dev/null` makes the shell skip
+   the command entirely, which would let a canary read that never happened count
+   as containment, so every read probe also reads a control file inside its own
+   tree and the result is only accepted when that control appears. Linux uses bubblewrap (`bwrap`), which is the
    only grade accepted for hosted multi-user operation. macOS `sandbox-exec` is
    classified as development grade and refused unless an operator explicitly
    opts in: its profile denies writes outside the identity's own tree and reads

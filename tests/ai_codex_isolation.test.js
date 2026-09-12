@@ -39,6 +39,17 @@ function identity(name) {
     return { root, codexHome, workDir };
 }
 
+// Every read probe carries a control file inside the identity's own tree. A
+// sandbox that stops the command from running at all — a denied redirect used to
+// do exactly that — would otherwise satisfy every "must not contain" assertion
+// without reading anything.
+function control(paths) {
+    const marker = `control-${randomBytes(8).toString('hex')}`;
+    const file = path.join(paths.workDir, 'control');
+    fs.writeFileSync(file, marker, { mode: 0o600 });
+    return { marker, read: `cat ${JSON.stringify(file)};` };
+}
+
 async function inSandbox(paths, script) {
     const description = isolation.wrapCommand(detected.handle, { ...paths, command: ['/bin/sh', '-c', script] });
     try {
@@ -145,6 +156,24 @@ describe('Codex namespace layout', () => {
         expect(bindAt).toBeGreaterThan(tmpfsAt);
         expect(args.slice(0, tmpfsAt)).toContain('--ro-bind');
     });
+
+    it('rebinds a launcher that one of those masks would hide', () => {
+        // The documented bare-metal layout: a local install inside the
+        // application tree. `/usr`-style root binds do not cover it, because the
+        // mask above hides it again — it has to be bound after the masks.
+        const paths = identity('masked-launcher');
+        const launcher = path.join(process.cwd(), 'node_modules', '.bin', 'codex-probe');
+        fs.mkdirSync(path.dirname(launcher), { recursive: true });
+        fs.writeFileSync(launcher, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        try {
+            const args = isolation.wrapCommand({ name: 'bwrap', path: '/usr/bin/bwrap', grade: 'isolated' },
+                { ...paths, command: [launcher], launcher }).args;
+            const maskAt = args.findIndex((value, index) => value === '--tmpfs' && args[index + 1] === fs.realpathSync.native(process.cwd()));
+            const rebindAt = args.findIndex((value, index) => value === '--ro-bind-try' && args[index + 1] === launcher);
+            expect(maskAt).toBeGreaterThan(-1);
+            expect(rebindAt).toBeGreaterThan(maskAt);
+        } finally { fs.rmSync(launcher, { force: true }); }
+    });
 });
 
 describe('Codex isolation backend selection', () => {
@@ -197,14 +226,34 @@ describe('Codex isolation containment', () => {
         const token = randomBytes(16).toString('hex');
         const secret = path.join(dataDir, 'secret.key');
         fs.writeFileSync(secret, token, { mode: 0o600 });
-        const output = await inSandbox(paths, `cat ${JSON.stringify(secret)} 2>/dev/null; printf "|end"`);
+        const proof = control(paths);
+        const output = await inSandbox(paths, `${proof.read} cat ${JSON.stringify(secret)}; printf "|end"`);
+        expect(output).toContain(proof.marker);
         expect(output).not.toContain(token);
+    });
+
+    it.skipIf(!detected?.available)('cannot read the manager application tree', async () => {
+        // Where the manager is installed under a bound system root, the read-only
+        // root bind used to carry its working tree — and the `.env` dotenv loads
+        // from it — into the namespace.
+        const paths = identity('app-root-escape');
+        const token = randomBytes(16).toString('hex');
+        const canary = path.join(process.cwd(), `.codex-test-probe-${token}`);
+        fs.writeFileSync(canary, token, { mode: 0o600 });
+        const proof = control(paths);
+        try {
+            const output = await inSandbox(paths, `${proof.read} cat ${JSON.stringify(canary)}; printf "|end"`);
+            expect(output).toContain(proof.marker);
+            expect(output).not.toContain(token);
+        } finally { fs.rmSync(canary, { force: true }); }
     });
 
     it.skipIf(!detected?.available)('cannot write into the manager data directory', async () => {
         const paths = identity('write-escape');
         const target = path.join(dataDir, `escape-${randomBytes(6).toString('hex')}`);
-        await inSandbox(paths, `(printf x > ${JSON.stringify(target)}) 2>/dev/null; printf "|end"`);
+        const proof = control(paths);
+        const output = await inSandbox(paths, `${proof.read} printf x > ${JSON.stringify(target)}; printf "|end"`);
+        expect(output).toContain(proof.marker);
         expect(fs.existsSync(target)).toBe(false);
     });
 
@@ -213,7 +262,9 @@ describe('Codex isolation containment', () => {
         const theirs = identity('neighbour-b');
         const token = randomBytes(16).toString('hex');
         fs.writeFileSync(path.join(theirs.codexHome, 'auth.json'), token, { mode: 0o600 });
-        const output = await inSandbox(mine, `cat ${JSON.stringify(path.join(theirs.codexHome, 'auth.json'))} 2>/dev/null; printf "|end"`);
+        const proof = control(mine);
+        const output = await inSandbox(mine, `${proof.read} cat ${JSON.stringify(path.join(theirs.codexHome, 'auth.json'))}; printf "|end"`);
+        expect(output).toContain(proof.marker);
         expect(output).not.toContain(token);
     });
 
