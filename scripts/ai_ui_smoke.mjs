@@ -13,7 +13,7 @@ try {
   const page = await browser.newPage();
   page.setDefaultTimeout(8000);
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
-  let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2], functions: features, internal_targets: []};
+  let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
@@ -31,7 +31,8 @@ try {
     const method = request.method(), body = request.postDataJSON();
     requests.push({path, method, body});
     let data = {}, status = 200;
-    if (path === '/settings') { if (method === 'PUT') settings = body; data = settings; }
+    if (url.pathname === '/api/users') data = [{id: 2, username: 'Library owner', plain_password: 'not-for-ai'}, {id: 3, username: '<b>Second library</b>'}];
+    else if (path === '/settings') { if (method === 'PUT') settings = body; data = settings; }
     else if (path === '/preferences') { if (method === 'PUT') preferences = {...preferences, ...body}; data = preferences; }
     else if (path === '/connections') {
       if (method === 'POST') { const {api_key, ...safe} = body; connections.push({...safe, id: 'c1', editable: true, has_key: Boolean(api_key), models: [], capabilities: {}}); data = connections[0]; }
@@ -112,14 +113,22 @@ try {
     switchView('ai');
   });
   await page.locator('#ai-connection').waitFor();
+  assert.equal(await page.locator('#ai-user').evaluate(item => item.tagName), 'SELECT', 'library targets must be selected by name rather than typed IDs');
+  assert.equal(await page.locator('#ai-user').inputValue(), '', 'opening must not silently select a target');
+  assert.deepEqual(await page.locator('#ai-user option').allTextContents(), ['Choose…', '<b>Second library</b>', 'Library owner']);
+  assert.equal(await page.locator('#ai-user b').count(), 0, 'usernames are plain text');
+  assert.deepEqual(await page.locator('#ai-allowed-users').evaluate(select => [...select.selectedOptions].map(option => Number(option.value))), [2, 99], 'saved grants, including unavailable entries, must not silently disappear');
   assert.equal(await page.locator('#ai-provider-id').count(), 0, 'unsupported provider scope must not be offered');
   assert.equal(requests.filter(r => /discover|test/.test(r.path)).length, 0, 'opening never contacts a model');
   await page.locator('details').filter({has: page.locator('#ai-policy-enabled')}).locator('summary').click();
   await page.locator('#ai-policy-enabled').check();
+  await page.locator('#ai-allowed-users').selectOption(['2', '3']);
   await page.locator('#ai-save-policy').click();
   await page.locator('#ai-connection').waitFor();
+  assert.deepEqual(settings.allowed_user_ids, [3, 2], 'grant selections submit stable user IDs');
   await page.locator('#ai-enabled').check();
   await page.locator('#ai-connection').selectOption('new');
+  await page.locator('#ai-connection-users').selectOption(['2', '3']);
   await page.locator('#ai-name').fill('My AI');
   await page.locator('#ai-url').fill('https://model.example/custom/v1');
   await page.locator('#ai-key').fill('synthetic-secret');
@@ -132,6 +141,7 @@ try {
   await page.locator('#ai-discover').click();
   await page.locator('#ai-models option').first().waitFor();
   assert.equal(await page.locator('#ai-key').inputValue(), '', 'key cleared after save');
+  assert.deepEqual(connections[0].allowed_user_ids, [3, 2], 'shared connection grants come from the named user selector');
   assert.deepEqual(await page.locator('#ai-models').evaluate(select => [...select.selectedOptions].map(option => option.value)), [], 'discovery order and model names do not imply compatibility');
   discoveredModels = [{id: 'chat-one'}];
   await page.locator('#ai-discover').click();
@@ -206,7 +216,7 @@ try {
   assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'changing features must clear stale validation feedback');
   await page.locator('#ai-feature').selectOption('list');
   await page.locator('#ai-run').click();
-  await page.locator('#ai-user').fill('2');
+  await page.locator('#ai-user').selectOption('2');
   assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
 
   page.on('dialog', dialog => dialog.accept());
@@ -374,7 +384,7 @@ try {
   await page.locator('#ai-load-programs').click();
   await page.locator('#ai-program option[value="0"]').waitFor({state: 'attached'});
   await page.locator('#ai-program').selectOption('0');
-  await page.locator('#ai-user').fill('3');
+  await page.locator('#ai-user').selectOption('3');
   assert.equal(await page.locator('#ai-program option').count(), 1, 'target-user change clears EPG references');
   assert.equal(await page.locator('#ai-program-description').innerText(), '');
   if (process.env.AI_UI_SCREENSHOT) {
@@ -384,7 +394,10 @@ try {
   connections[0] = {...connections[0], shared: true, editable: false, model_id: 'current-admin-model'};
   preferences.connection_id = 'c1';
   preferences.model_id = 'previous-admin-model';
+  const userListRequests = requests.filter(request => request.path === '/api/users').length;
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; await aiUI.open(); });
+  assert.equal(requests.filter(request => request.path === '/api/users').length, userListRequests, 'normal users never load administrator user choices');
+  assert.equal(await page.locator('#ai-user').count(), 0, 'normal users cannot select another library');
   assert.equal(await page.locator('#ai-key').count(), 0, 'borrowed setup never asks for keys');
   assert.equal(await page.locator('#ai-model').getAttribute('readonly'), '');
   assert.equal(await page.locator('#ai-model').inputValue(), 'current-admin-model', 'shared setup uses the current administrative selection, not stale personal preferences');
@@ -393,12 +406,21 @@ try {
   await page.evaluate(() => aiUI.clear());
   assert.equal(await page.locator('#view-ai').innerText(), '', 'logout cleanup removes all AI state');
   await page.evaluate(() => {
-    const original = fetchJSON;
+    const original = fetchJSON; window.originalAiFetch = original;
     fetchJSON = url => url === '/api/ai/settings' ? new Promise(resolve => { window.releaseAiSettings = () => resolve({enabled: true}); }) : original(url);
     window.pendingAiOpen = aiUI.open();
   });
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 3, is_admin: false}; window.releaseAiSettings(); await window.pendingAiOpen; });
   assert.equal(await page.locator('#view-ai').innerText(), '', 'late prior-user response cannot repopulate UI');
+  await page.evaluate(() => {
+    aiUI.clear(); currentUser = {id: 1, is_admin: true};
+    const original = window.originalAiFetch; window.finishedAiReads = 0;
+    fetchJSON = url => url === '/api/users' ? new Promise(resolve => { window.releaseUserChoices = () => resolve([{id: 8, username: 'Late admin-only name'}]); }) : original(url).then(result => { window.finishedAiReads++; return result; });
+    window.pendingUserChoices = aiUI.open();
+  });
+  await page.waitForFunction(() => typeof window.releaseUserChoices === 'function' && window.finishedAiReads === 3);
+  await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; window.releaseUserChoices(); await window.pendingUserChoices; });
+  assert.equal(await page.locator('#view-ai').innerText(), '', 'late administrator user list cannot repopulate a cleared or different session');
   console.log(`PASS AI UI (${Math.round(performance.now() - startedAt)} ms): setup and all eight functions; confirmed rename rules; follow-up filter patches; delayed history/Undo isolation; read-only cleanup; automatic rule-change history/Undo; local EPG picker and stale-target isolation; analyzed/displayed counts; four languages; session isolation. Synthetic API only.`);
 } finally {
   await browser.close();

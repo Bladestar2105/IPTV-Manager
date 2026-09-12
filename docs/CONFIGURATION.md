@@ -32,7 +32,7 @@ are not restricted by this setting.
 
 AI is configured in the **AI Assistant** Web UI, without additional environment
 variables or services. The central policy is stored in `settings.ai_policy`;
-it defaults to disabled. Administrators explicitly allow user IDs and functions,
+it defaults to disabled. Administrators explicitly select allowed users by name and allowed functions,
 may share an admin connection with selected users, and can allow private user
 connections. A user must also activate their own AI preferences.
 

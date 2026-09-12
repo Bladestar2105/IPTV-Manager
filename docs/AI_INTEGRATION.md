@@ -7,7 +7,7 @@ test users and individual functions before a broader rollout.
 ## Setup
 
 1. Open **AI** in the Web UI as an administrator. Enable the server policy,
-   select allowed user IDs/functions, and decide whether users may configure
+   select allowed users by name and allowed functions, and decide whether users may configure
    their own connections.
 2. Either create an administrator connection and share it with selected users,
    or let an allowed user create a private connection. Users explicitly enable
@@ -21,9 +21,16 @@ test users and individual functions before a broader rollout.
    text and can incur provider charges. Select the tested recommendation or
    another tested model and finish setup. If model discovery is unavailable,
    use a manual model ID and explicitly test it.
-5. Choose a function, describe the task, and inspect the result. List changes
+5. As an administrator, select the library user by name (leave it empty only
+   for global diagnosis). Choose a function, describe the task, and inspect the result. List changes
    require selection and confirmation of the stored before/after proposal.
    Applying or undoing a proposal does not call a model.
+
+User access lists support multiple selections with Ctrl/Cmd-click. Empty access
+lists grant no users access. Previously saved selections that no longer appear
+in the administrator user list are labeled unavailable rather than silently
+removed; they can be deselected. API requests continue to use numeric IDs, and
+current permissions are still checked by the server.
 
 The UI supports German, English, French and Greek. Language and IANA timezone
 are personal preferences. The advanced token option selects `max_tokens` or

@@ -1,7 +1,7 @@
 /* Optional AI management. All service/model values are rendered as plain text. */
 window.aiUI = (() => {
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
-  let generation = 0, owner = '', sessionToken = null, timer, connections = [], settings = {}, preferences = {};
+  let generation = 0, owner = '', sessionToken = null, timer, connections = [], userChoices = [], settings = {}, preferences = {};
   let jobId, proposal, changeId, conversationId, recommendation, nextOffset = 0, resultGeneration = 0;
   let appliedActionIds = [];
   let filterBaseline = {};
@@ -49,6 +49,20 @@ window.aiUI = (() => {
     item.value = val;
     if (key) item.dataset.i18n = `ai_${key}`;
     return item;
+  }
+  function userSelect(parent, id, key, selected = [], multiple = false) {
+    const select = field(parent, id, key, 'select');
+    select.multiple = multiple;
+    if (multiple) {
+      select.size = 4;
+      const hint = label('p', select.parentElement, 'userSelectionHint', 'form-text');
+      hint.id = `${select.id}-help`; select.setAttribute('aria-describedby', hint.id);
+    } else option(select, '', '', 'choose');
+    for (const user of userChoices) option(select, user.id, user.username).selected = selected.includes(user.id);
+    if (multiple) {
+      for (const missing of selected.filter(id => !userChoices.some(user => user.id === id))) option(select, missing, '', 'unavailableUser').selected = true;
+    } else if (!selected.some(id => userChoices.some(user => user.id === id))) select.value = '';
+    return select;
   }
   function button(parent, id, key, callback, style = 'outline-primary') {
     const item = label('button', parent, key, `btn btn-${style} me-2 mb-2`);
@@ -117,7 +131,8 @@ window.aiUI = (() => {
     } finally { if (control?.isConnected) control.disabled = false; }
   }
   function ids(id) {
-    const raw = value(id);
+    const control = el(id);
+    const raw = control?.multiple ? [...control.selectedOptions].map(option => option.value).join(',') : value(id);
     if (!raw) return [];
     const values = raw.split(',').map(part => Number(part.trim()));
     if (values.length > 500 || values.some(n => !Number.isSafeInteger(n) || n <= 0)) throw {code: 'AI_INVALID_INPUT'};
@@ -143,7 +158,7 @@ window.aiUI = (() => {
     generation++;
     resultGeneration++;
     clearTimeout(timer);
-    owner = ''; sessionToken = null; connections = []; settings = {}; preferences = {};
+    owner = ''; sessionToken = null; connections = []; userChoices = []; settings = {}; preferences = {};
     jobId = proposal = changeId = conversationId = recommendation = null;
     appliedActionIds = [];
     filterBaseline = {};
@@ -156,13 +171,17 @@ window.aiUI = (() => {
     clear();
     owner = actor();
     sessionToken = getToken();
+    const stamp = generation, identity = owner, token = sessionToken;
     if (!owner) return;
     label('h2', root(), 'title');
     label('p', root(), 'intro', 'text-muted');
     const state = node('p', root(), undefined, 'alert alert-info');
     state.id = 'ai-status'; state.role = 'status'; state.setAttribute('aria-live', 'polite');
     await run(async () => {
-      [settings, preferences, connections] = await Promise.all([api('/settings'), api('/preferences'), api('/connections')]);
+      const loaded = await Promise.all([api('/settings'), api('/preferences'), api('/connections'),
+        currentUser.is_admin ? fetchJSON('/api/users').then(users => users.map(({id, username}) => ({id, username})).sort((a, b) => a.username.localeCompare(b.username))) : []]);
+      if (stamp !== generation || identity !== actor() || token !== getToken()) return;
+      [settings, preferences, connections, userChoices] = loaded;
       connections = list(connections, 'connections');
       buildPolicy(); buildSetup(); buildWork(); buildRules(); buildHistory();
       status(settings.enabled && preferences.enabled ? 'saved' : 'off');
@@ -173,7 +192,7 @@ window.aiUI = (() => {
     const box = section('policy');
     field(box, 'policy-enabled', 'enabled', 'checkbox', settings.enabled);
     field(box, 'own-allowed', 'ownAllowed', 'checkbox', settings.allow_own_connections);
-    field(box, 'allowed-users', 'users', 'text', (settings.allowed_user_ids || []).join(','));
+    userSelect(box, 'allowed-users', 'users', settings.allowed_user_ids || [], true);
     field(box, 'targets', 'targets', 'textarea', (settings.internal_targets || []).join('\n'));
     featureChecks(box, 'policy-function', settings.functions || []);
     button(box, 'save-policy', 'save', async () => {
@@ -260,7 +279,7 @@ window.aiUI = (() => {
       label('p', box, 'keyInfo', 'small text-muted');
       if (currentUser.is_admin) {
         field(box, 'shared', 'shared', 'checkbox', connection?.shared);
-        field(box, 'connection-users', 'users', 'text', (connection?.allowed_user_ids || []).join(','));
+        userSelect(box, 'connection-users', 'users', connection?.allowed_user_ids || [], true);
         featureChecks(box, 'connection-function', connection?.functions || settings.functions || []);
       }
       el('url').addEventListener('input', destination);
@@ -347,7 +366,7 @@ window.aiUI = (() => {
     const select = field(box, 'feature', 'feature', 'select');
     for (const feature of features) option(select, feature, '', feature).disabled = !(settings.functions || []).includes(feature);
     const diagnosticNote = label('p', box, 'diagnosticScope', 'small text-muted'); diagnosticNote.hidden = true;
-    if (currentUser.is_admin) field(box, 'user', 'user', 'number', typeof selectedUserId !== 'undefined' ? selectedUserId || '' : '');
+    if (currentUser.is_admin) userSelect(box, 'user', 'user', typeof selectedUserId !== 'undefined' && selectedUserId ? [selectedUserId] : []);
     field(box, 'prompt', 'prompt', 'textarea');
     const scope = node('details', box); label('summary', scope, 'scope');
     field(scope, 'full-list', 'fullList', 'checkbox', false);
