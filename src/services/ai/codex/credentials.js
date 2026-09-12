@@ -56,7 +56,10 @@ export function linkedElsewhere(ownerKey, connectionId, accountHash) {
 
 function writeAtomic(target, contents) {
     const temporary = `${target}.tmp`;
-    const handle = fs.openSync(temporary, 'w', 0o600);
+    // The runtime can write in this directory, so never follow a link it may have
+    // put in place of the file being written.
+    fs.rmSync(temporary, { force: true });
+    const handle = fs.openSync(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
     try {
         fs.writeFileSync(handle, contents);
         fs.fsyncSync(handle);
@@ -102,10 +105,30 @@ export function hydrate(ownerKey, connectionId) {
 // `refreshOnly` captures a rotated token for an already linked account but never
 // creates a link. Only a verified, completed sign-in may do that, so a file left
 // behind by a discarded or superseded attempt cannot become a stored credential.
+// The credential file lives in a directory the sandboxed runtime can write, and
+// this read happens on the host, outside that sandbox. A link put in place of the
+// file, or of its directory, would make this read something else entirely — for
+// instance another identity's credential — and seal it into this record. Both
+// are refused rather than followed.
+function readOwnCredential(paths) {
+    try {
+        if (!fs.lstatSync(paths.codexHome).isDirectory()) return null;
+        if (!fs.lstatSync(paths.authFile).isFile()) return null;
+    } catch { return null; }
+    let handle;
+    try { handle = fs.openSync(paths.authFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
+    catch { return null; }
+    try {
+        const stat = fs.fstatSync(handle);
+        if (!stat.isFile() || stat.size > MAX_AUTH_BYTES) return null;
+        return fs.readFileSync(handle, 'utf8');
+    } catch { return null; }
+    finally { fs.closeSync(handle); }
+}
+
 export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = false } = {}) {
     const paths = identityPaths(ownerKey, connectionId);
-    let contents;
-    try { contents = fs.readFileSync(paths.authFile, 'utf8'); } catch { return { sealed: false }; }
+    const contents = readOwnCredential(paths);
     if (!contents || Buffer.byteLength(contents) > MAX_AUTH_BYTES) return { sealed: false };
     // A file caught mid-write must never replace a usable sealed copy.
     try { JSON.parse(contents); } catch { return { sealed: false }; }

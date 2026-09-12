@@ -499,7 +499,9 @@ all: local access is still removed and the unconfirmed sign-out reported. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. Deleting a connection follows the same path before its row disappears, so a
-runtime never keeps using a credential whose connection is already gone. Deleting
+runtime never keeps using a credential whose connection is already gone. It is
+marked as being deleted first, so a sign-in cannot start between the teardown and
+the deletion and leave its credential file behind. Deleting
 an account does the same for every runtime it owns before removing its credential
 records, attempt history and runtime directory.
 

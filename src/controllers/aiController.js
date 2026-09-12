@@ -44,9 +44,9 @@ export const programs = handle(async req => {
 // Personal ChatGPT account link. Every endpoint is owner-only, never returns a
 // token and binds the attempt to the caller's current session.
 const bearer = req => (req.get('Authorization') || '').split(' ')[1] || null;
-const accountConnection = async (req, {requirePolicy = true} = {}) => {
+const accountConnection = async (req, {requirePolicy = true, allowDeleting = false} = {}) => {
   const {ownedAccountConnection} = await import('../services/ai/connections.js');
-  return ownedAccountConnection(req.user, req.params.id, {requirePolicy});
+  return ownedAccountConnection(req.user, req.params.id, {requirePolicy, allowDeleting});
 };
 export const codexStatus = handle(async () => {
   const {codexStatus: status} = await import('../services/ai/codex/account.js');
@@ -68,7 +68,7 @@ export const cancelAccountLink = handle(async req => {
 });
 export const unlinkAccount = handle(async req => {
   const {disconnectAccount} = await import('../services/ai/codex/account.js');
-  return disconnectAccount(req.user, await accountConnection(req, {requirePolicy: false}));
+  return disconnectAccount(req.user, await accountConnection(req, {requirePolicy: false, allowDeleting: true}));
 });
 export const accountState = handle(async req => {
   const {readAccountState} = await import('../services/ai/codex/account.js');

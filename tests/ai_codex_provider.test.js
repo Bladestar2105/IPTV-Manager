@@ -774,6 +774,40 @@ describe('personal ChatGPT connection privacy', () => {
         expect(ai.deleteConnection(user, connection.id)).toEqual({ deleted: true });
     });
 
+    it.each([
+        ['the credential file is a link', paths => {
+            fs.rmSync(paths.authFile, { force: true });
+            fs.symlinkSync(paths.victim, paths.authFile);
+        }],
+        ['the credential directory is a link', paths => {
+            fs.rmSync(paths.codexHome, { recursive: true, force: true });
+            fs.symlinkSync(path.dirname(paths.victim), paths.codexHome);
+        }]
+    ])('never seals another identity\'s credential when %s', async (_label, tamper) => {
+        const mine = await linkedConnection(user);
+        const before = credentials.readCredentialRecord('user:1', mine.id);
+        // A second identity with a plaintext credential of its own.
+        fake({ email: 'second.tester@example.org' });
+        const theirs = createConnection(other);
+        expect((await link(other, theirs)).state.status).toBe('completed');
+        const theirPaths = credentials.identityPaths('user:2', theirs.id);
+        fs.mkdirSync(theirPaths.codexHome, { recursive: true });
+        fs.writeFileSync(theirPaths.authFile, JSON.stringify({ tokens: { access_token: 'victim-token' } }), { mode: 0o600 });
+
+        // The sandboxed runtime can write in its own directory, so it could put a
+        // link where its credential file belongs. Following it would seal the
+        // other account's token into this record.
+        const myPaths = credentials.identityPaths('user:1', mine.id);
+        fs.mkdirSync(myPaths.codexHome, { recursive: true });
+        fs.writeFileSync(myPaths.authFile, '{}', { mode: 0o600 });
+        tamper({ ...myPaths, victim: theirPaths.authFile });
+
+        expect(credentials.seal('user:1', mine.id, {}, { refreshOnly: true })).toEqual({ sealed: false });
+        const after = credentials.readCredentialRecord('user:1', mine.id);
+        expect(after.encrypted_blob).toBe(before.encrypted_blob);
+        expect(after.version).toBe(before.version);
+    }, 30000);
+
     it('never seals a credential file caught mid-write', async () => {
         const connection = await linkedConnection();
         const before = credentials.readCredentialRecord('user:1', connection.id);
@@ -1287,6 +1321,20 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(after.account_hash).toBe(before.account_hash);
         expect(after.encrypted_blob).toBe(before.encrypted_blob);
         expect(fs.existsSync(credentials.identityPaths('user:1', mine.id).authFile)).toBe(false);
+    }, 30000);
+
+    it('refuses a new sign-in on a connection that is being deleted', async () => {
+        const connection = await linkedConnection();
+        // Marked before the teardown, so a sign-in cannot start between the
+        // teardown scan and the deletion and be orphaned by it.
+        const raw = JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json);
+        db.prepare('UPDATE ai_connections SET data_json=?, version=version+1 WHERE id=?')
+            .run(JSON.stringify({ ...raw, deleting: true }), connection.id);
+        expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_CONNECTION_CHANGED');
+        // Disconnecting stays reachable so the teardown itself can run.
+        expect(ai.ownedAccountConnection(user, connection.id, { requirePolicy: false, allowDeleting: true }).id).toBe(connection.id);
+        expect(await ai.removeConnection(user, connection.id)).toEqual({ deleted: true });
+        expect(ai.listConnections(user).some(item => item.id === connection.id)).toBe(false);
     }, 30000);
 
     it('stops a live runtime before deleting an account-linked connection', async () => {
