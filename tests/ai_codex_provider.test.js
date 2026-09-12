@@ -380,6 +380,21 @@ describe('personal ChatGPT sign-in ownership across workers and sessions', () =>
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     });
 
+    it('does not link an account after the attempt was cancelled mid-completion', async () => {
+        // The completion arrives while the account is being read; the cancel
+        // lands in that same window.
+        fake({ login: 'success', loginDelayMs: 250 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_cancelled', updated_at=? WHERE id=?")
+            .run(Date.now(), started.id);
+        await until(() => !runtime.liveRuntime('user:1', connection.id));
+        // An explicitly cancelled sign-in must never leave the account linked.
+        expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('cancelled');
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).authFile)).toBe(false);
+    }, 30000);
+
     it('keeps the attempt running when a completion names another login', async () => {
         fake({ login: 'mismatchThenSuccess', loginDelayMs: 40, secondLoginDelayMs: 400 });
         const connection = createConnection();

@@ -29,7 +29,7 @@ try {
   const programReference = {channel_id: 'real-epg-channel', source_type: 'xmltv', source_id: 7, start: 1800000000};
   // Personal ChatGPT account-link state for the synthetic server.
   let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
-  let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true;
+  let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true, failNextPolls = 0;
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -60,7 +60,10 @@ try {
         loginState = {id: 'L1', status: 'pending', verification_url: verificationUrl, user_code: 'ABCD-1234', error_code: null, expires_at: Date.now() + 900000};
         data = loginState;
       }
-      else if (rest === '/link/L1') data = loginState;
+      else if (rest === '/link/L1') {
+        if (failNextPolls > 0) { failNextPolls -= 1; status = 502; data = {code: 'AI_UNAVAILABLE'}; }
+        else data = loginState;
+      }
       else if (rest === '/link/L1/cancel') { loginState = {...loginState, status: 'cancelled', error_code: 'ai_codex_login_cancelled'}; data = loginState; }
       else if (rest === '/unlink') {
         chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null};
@@ -563,6 +566,12 @@ try {
   assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a pending sign-in can be cancelled');
   const linkRequests = requests.filter(request => request.path.includes('/link'));
   assert.equal(JSON.stringify(linkRequests).includes('token'), false, 'no token is ever sent or echoed by the browser');
+
+  // A transient status failure must not abandon a sign-in that is still open:
+  // the server drops an attempt that stops being polled.
+  failNextPolls = 2;
+  await page.waitForFunction(() => document.getElementById('ai-setup-status')?.dataset.i18n === 'ai_linkRetrying', null, {timeout: 20000});
+  assert.equal(await page.locator('#ai-link-state a').count(), 1, 'the device code stays on screen while retrying');
 
   // The account holder completes the sign-in; the poll adopts only its own attempt.
   chatgptAccount = {linked: true, label: 'p***@example.org', plan_type: 'plus', auth_method: 'chatgpt'};

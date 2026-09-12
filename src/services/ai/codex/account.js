@@ -57,6 +57,13 @@ function finishLogin(id, status, errorCode = null) {
         .run(status, errorCode, Date.now(), id);
 }
 
+// Used only after an attempt was already claimed, where the conditional finish
+// above can no longer match.
+function forceLoginFailure(id, errorCode) {
+    db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=?')
+        .run('failed', errorCode, Date.now(), id);
+}
+
 function releaseAttempt(id) {
     const attempt = attempts.get(id);
     if (!attempt) return;
@@ -95,6 +102,18 @@ function stillOwnsAttempt(row, ownerKey) {
     return Date.now() - (current.last_seen_at ?? current.created_at) <= LOGIN_SESSION_IDLE_MS;
 }
 
+// Claims the attempt in one step, so a cancellation, an unlink or a supersede
+// that lands while the account is being read cannot be overtaken by the seal
+// that follows. Ownership is re-evaluated inside the transaction; only a claim
+// that actually changed the row authorizes storing a credential.
+function claimCompletedLogin(row, ownerKey) {
+    return db.transaction(() => {
+        if (!stillOwnsAttempt(row, ownerKey)) return false;
+        return db.prepare("UPDATE ai_codex_logins SET status='completed', error_code=NULL, updated_at=? WHERE id=? AND status IN ('starting','pending')")
+            .run(Date.now(), row.id).changes > 0;
+    }).immediate();
+}
+
 async function completeLogin(row, ownerKey, connectionId, notification) {
     const attempt = attempts.get(row.id);
     if (!attempt) return;
@@ -131,19 +150,26 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             finishLogin(row.id, 'failed', 'ai_codex_account_already_linked');
             return;
         }
-        const sealed = seal(ownerKey, connectionId, {
+        // The runtime lease serializes sign-ins for one identity and connection,
+        // so a failed claim means this attempt was ended and nothing newer has
+        // linked yet: signing out and removing the local credential is safe.
+        if (!claimCompletedLogin(row, ownerKey)) {
+            await logout(session).catch(() => null);
+            wipe(ownerKey, connectionId);
+            return;
+        }
+        let sealed;
+        try { sealed = seal(ownerKey, connectionId, {
             accountHash: fingerprint,
             accountLabel: maskAccount(account.email),
             planType: typeof account.planType === 'string' ? account.planType.slice(0, 40) : null,
             authMethod: status.authMethod
-        });
+        }); } catch { sealed = { sealed: false }; }
         if (!sealed.sealed) {
             await logout(session).catch(() => null);
             wipe(ownerKey, connectionId);
-            finishLogin(row.id, 'failed', 'ai_codex_credentials_unavailable');
-            return;
+            forceLoginFailure(row.id, 'ai_codex_credentials_unavailable');
         }
-        finishLogin(row.id, 'completed');
     } catch {
         finishLogin(row.id, 'failed', 'ai_codex_login_failed');
     } finally {
@@ -282,9 +308,11 @@ function publicLogin(row) {
 export async function cancelAccountLink(actor, connection, id) {
     actorRow(actor);
     const row = loginRow(connection.owner_key, connection.id, id);
+    // The row is ended first: a completion racing in while the cancel call is in
+    // flight then fails to claim the attempt instead of linking the account.
+    finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
     const attempt = attempts.get(row.id);
     if (attempt && row.login_id) await cancelLogin(attempt.session, row.login_id).catch(() => null);
-    finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
     releaseAttempt(row.id);
     return { id: row.id, status: 'cancelled' };
 }

@@ -9,6 +9,9 @@ window.aiUI = (() => {
   let codex = {available: false, reason: null}, login = null, loginTimer, accountState = null;
   // Mirrors the server-side allowlist so an unexpected address is never linked.
   const LOGIN_HOSTS = ['auth.openai.com', 'chatgpt.com', 'auth.chatgpt.com'];
+  // Roughly a minute of retries, well inside the server's two-minute window for
+  // an attempt that is still being watched.
+  const MAX_LINK_POLL_FAILURES = 15;
   const root = () => document.getElementById('view-ai');
   const el = id => document.getElementById(`ai-${id}`);
   const value = id => el(id)?.value?.trim() || '';
@@ -453,24 +456,37 @@ window.aiUI = (() => {
     status('linkPending', 'setup');
     pollLink(connection.id);
   }
-  function pollLink(connectionId) {
+  function pollLink(connectionId, failures = 0) {
     clearTimeout(loginTimer);
     if (!login || login.status !== 'pending') return;
     const stamp = generation, identity = actor(), token = sessionToken;
-    loginTimer = setTimeout(() => {
+    loginTimer = setTimeout(async () => {
       // A late poll from a previous session or account must never be applied.
       if (stamp !== generation || identity !== actor() || token !== getToken() || !login) return;
-      run(async () => {
+      try {
         const state = await api(`/connections/${encodeURIComponent(connectionId)}/link/${encodeURIComponent(login.id)}`);
         if (!state || stamp !== generation || !login || state.id !== login.id) return;
         login = {...login, ...state};
         renderLogin(connectionId);
-        if (state.status === 'pending') return pollLink(connectionId);
+        if (state.status === 'pending') return pollLink(connectionId, 0);
         await refreshConnections();
         renderAccount(chosen());
         if (state.status === 'completed') { await loadAccount(); status('linkDone', 'setup'); }
         else status(loginStateKey(state), 'setup');
-      });
+      } catch (error) {
+        if (stamp !== generation || !login) return;
+        const key = errorKey(error);
+        // The server drops an attempt that stops being polled, so a transient
+        // failure must not abandon a sign-in the account holder is completing.
+        // A refusal or a missing attempt is final and stops immediately.
+        if (['denied', 'off'].includes(key) || /NOT_FOUND/.test(String(error.response?.code || error.code || '').toUpperCase())
+          || failures + 1 >= MAX_LINK_POLL_FAILURES) {
+          status(key, 'setup');
+          return;
+        }
+        status('linkRetrying', 'setup');
+        pollLink(connectionId, failures + 1);
+      }
     }, 3000);
   }
   async function cancelLink() {
