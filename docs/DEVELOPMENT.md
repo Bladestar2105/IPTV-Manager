@@ -187,6 +187,12 @@ answer or real player playback. Live sign-in and model checks require an
 explicitly provided test account and approved consumption; without one, record
 that acceptance as still open.
 
+Container shutdown is part of this feature's contract: the cluster primary
+forwards the stop signal, suppresses worker restarts and drains the workers so
+their Codex children are reaped and the credential files they hydrated are
+removed. Check that a `docker stop` returns within the grace period and leaves no
+`auth.json` under the runtime directory.
+
 Run the normal lint, full test suite, build, production audit and Docker checks
 as well. A synthetic model response is not evidence of live provider accuracy,
 real stream quality or playback latency. Record the checked commit and any

@@ -1297,6 +1297,22 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
+    it('keeps the teardown marker while an overlapping teardown is still running', async () => {
+        const connection = await linkedConnection();
+        const handle = ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true });
+        // Two teardowns from snapshots that both saw no marker. A boolean would
+        // let the first to finish reopen the connection under the second.
+        ai.adjustConnectionTeardown('user:1', connection.id, 1);
+        ai.adjustConnectionTeardown('user:1', connection.id, 1);
+        ai.adjustConnectionTeardown('user:1', connection.id, -1);
+        expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_CONNECTION_CHANGED');
+        ai.adjustConnectionTeardown('user:1', connection.id, -1);
+        expect(() => ai.ownedAccountConnection(user, connection.id)).not.toThrow();
+        // Never negative, so an extra release cannot unblock a later teardown.
+        expect(ai.adjustConnectionTeardown('user:1', connection.id, -1)).toBe(0);
+        void handle;
+    }, 30000);
+
     it('clears the teardown marker again when an unlink finishes', async () => {
         const connection = await linkedConnection();
         await account.disconnectAccount(user, ownedRecord(user, connection.id, { requirePolicy: false, allowTeardown: true }));

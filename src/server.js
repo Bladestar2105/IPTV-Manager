@@ -74,6 +74,7 @@ let redisClient = null;
     console.info(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
 
     let schedulerPid = null;
+    let shuttingDown = false;
 
     for (let i = 0; i < numCPUs; i++) {
       const env = (i === 0) ? { IS_SCHEDULER: 'true' } : {};
@@ -96,12 +97,44 @@ let redisClient = null;
         releaseWorkerRuntimes(worker.process.pid);
       } catch(e) { console.error('AI runtime cleanup error:', e.message); }
 
+      // A worker that exited because the container is stopping is not replaced.
+      if (shuttingDown) return;
+
       const isScheduler = (worker.process.pid === schedulerPid);
       const env = isScheduler ? { IS_SCHEDULER: 'true' } : {};
 
       const newWorker = cluster.fork(env);
       if (isScheduler) schedulerPid = newWorker.process.pid;
     });
+
+    // In a container the primary is PID 1 and receives the stop signal, while the
+    // runtimes and their cleanup live in the workers. Terminating right away
+    // would kill them before they reap their Codex children and remove the
+    // credential files those children hydrated, so the signal is forwarded, the
+    // workers are drained, and only then does the primary exit.
+    const drainWorkers = async (signal) => {
+      shuttingDown = true;
+      for (const worker of Object.values(cluster.workers)) {
+        try { worker?.process?.kill(signal); } catch { /* already gone */ }
+      }
+      const deadline = Date.now() + 8000;
+      while (Object.values(cluster.workers).some(Boolean) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      try {
+        const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
+        resetInterruptedRuntimes();
+        sweepOrphans();
+      } catch { /* An unavailable optional runtime never blocks shutdown. */ }
+    };
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      const handler = async () => {
+        try { await drainWorkers(signal); } catch { /* shutdown proceeds regardless */ }
+        process.removeListener(signal, handler);
+        process.kill(process.pid, signal);
+      };
+      process.on(signal, handler);
+    }
 
     // Forward stream termination requests to the worker that owns the stream.
     cluster.on('message', (worker, message) => {

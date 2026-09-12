@@ -495,8 +495,9 @@ one-time device code.
 
 Disconnecting marks the connection as being torn down for the whole operation, so
 no sign-in, discovery, compatibility test, queued job or inference can start
-after its scan and have its runtime removed underneath it; the marker is cleared
-again when the unlink finishes, because the connection itself survives. It then
+after its scan and have its runtime removed underneath it; the marker is counted, so an
+overlapping teardown keeps it in place, and it is cleared again once the last one
+finishes, because the connection itself survives an unlink. It then
 cancels queued and running jobs and ends the runtime. A runtime owned by another worker is stopped by marking its lease
 revoked; that worker's guard sees this within a second and releases the lease,
 and only that release counts as an acknowledgement that it has actually stopped.
@@ -552,7 +553,9 @@ is required. The panel is fully localized in German, English, French and Greek.
 On shutdown the server stops every runtime — including one that was already
 terminating, whose child is still alive — and waits, with a bounded timeout, for
 the children to exit and their credential files to be removed before it
-terminates. A departing child removes its credential file while it still holds the lease and
+terminates. In a container the primary process receives the stop signal while the
+runtimes live in the workers, so it forwards the signal, stops replacing workers,
+drains them within a bounded budget and sweeps what is left before exiting. A departing child removes its credential file while it still holds the lease and
 in the same transaction that releases it, so cleanup and acquisition exclude each
 other and it can never touch the files of a runtime that has since taken the same
 identity. Terminating immediately would leave a hydrated credential on disk

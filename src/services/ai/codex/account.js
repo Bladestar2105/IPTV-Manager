@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import db from '../../../database/db.js';
 import { ENCRYPTION_KEY } from '../../../utils/crypto.js';
 import { aiError } from '../transport.js';
-import { requireAiFeatureAccess, setConnectionTeardown } from '../connections.js';
+import { requireAiFeatureAccess, adjustConnectionTeardown } from '../connections.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
@@ -386,14 +386,14 @@ export async function disconnectAccount(actor, connection) {
     actorRow(actor);
     const ownerKey = connection.owner_key;
     // Marked for the whole operation, so work started after the scan below cannot
-    // take the lease and keep using a credential this is about to remove. A
-    // deletion has already marked it and keeps the marker.
-    const ownsMarker = !connection.teardown;
-    if (ownsMarker) setConnectionTeardown(ownerKey, connection.id, true);
+    // take the lease and keep using a credential this is about to remove. The
+    // count keeps the marker in place while an overlapping teardown, such as a
+    // deletion, is still running.
+    adjustConnectionTeardown(ownerKey, connection.id, 1);
     try {
         return await runDisconnect(actor, connection, ownerKey);
     } finally {
-        if (ownsMarker) { try { setConnectionTeardown(ownerKey, connection.id, false); } catch { /* the row may be gone already */ } }
+        try { adjustConnectionTeardown(ownerKey, connection.id, -1); } catch { /* the row may be gone already */ }
     }
 }
 

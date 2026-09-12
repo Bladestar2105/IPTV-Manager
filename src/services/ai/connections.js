@@ -232,14 +232,22 @@ export function deleteConnection(actor,id) { owned(actor,id); db.prepare('DELETE
 // Blocks every path that would start work on a connection for the duration of an
 // unlink or a deletion. Without it, work started after the teardown scan has its
 // runtime removed underneath it.
-export function setConnectionTeardown(ownerKey,id,active) {
-    const connection=loadConnection(id);
-    if (!connection || connection.owner_key!==ownerKey) return null;
-    if (Boolean(connection.teardown)===Boolean(active)) return connection;
-    const next={...connection,teardown:Boolean(active)};
-    if (!next.teardown) delete next.teardown;
-    persist(next,connection.version);
-    return loadConnection(id);
+//
+// Counted rather than a flag: two teardowns can overlap, and a boolean would let
+// whichever finished first reopen the connection while the other was still
+// stopping runtimes. The count is adjusted in one transaction so concurrent
+// callers cannot lose an increment.
+export function adjustConnectionTeardown(ownerKey,id,delta) {
+    return db.transaction(()=>{
+        const row=db.prepare('SELECT * FROM ai_connections WHERE id=? AND owner_key=?').get(id,ownerKey);
+        if (!row) return null;
+        const data=JSON.parse(row.data_json);
+        const next=Math.max(0,(Number(data.teardown)||0)+delta);
+        if (next) data.teardown=next; else delete data.teardown;
+        db.prepare('UPDATE ai_connections SET data_json=?,version=version+1,updated_at=? WHERE id=?')
+            .run(JSON.stringify(data),Date.now(),id);
+        return next;
+    }).immediate();
 }
 export async function removeConnection(actor,id) {
     let connection=owned(actor,id);
@@ -247,7 +255,7 @@ export async function removeConnection(actor,id) {
         // Marked before anything is torn down: a sign-in started after the
         // teardown scan would otherwise take the lease of a connection that is
         // about to disappear, and its credential file would outlive it.
-        setConnectionTeardown(connection.owner_key,id,true);
+        adjustConnectionTeardown(connection.owner_key,id,1);
         connection=loadConnection(id);
         const {disconnectAccount}=await import('./codex/account.js');
         try { await disconnectAccount(actor,connection); } catch { /* removal proceeds even when the sign-out fails */ }
