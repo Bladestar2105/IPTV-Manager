@@ -42,6 +42,12 @@ See [setup, data boundaries and limits](AI_INTEGRATION.md).
 | PUT / DELETE | `/api/ai/connections/:id` | Change/delete an owned connection. `api_key` is write-only; reads return `has_key` and `editable`. |
 | POST | `/api/ai/connections/:id/discover` | Explicitly list models; no inference side effect. |
 | POST | `/api/ai/connections/:id/test` | Test `model_ids` (one to three) with bounded synthetic chat/structured-output checks. |
+| GET | `/api/ai/codex/status` | Read whether the personal ChatGPT adapter is offered on this host, with the pinned Codex version, isolation backend/grade, or a stable unavailability reason. |
+| POST | `/api/ai/connections/:id/link` | Owner-only. Start the documented ChatGPT device-code sign-in for an owned `chatgpt_account` connection. Returns `verification_url`, `user_code` and `expires_at`; never a token. At most five attempts per owner and hour, and a new attempt supersedes the previous one. |
+| GET | `/api/ai/connections/:id/link/:loginId` | Poll one own attempt: `pending`, `completed`, `failed`, `cancelled` or `expired` with a stable `error_code`. |
+| POST | `/api/ai/connections/:id/link/:loginId/cancel` | Cancel one own pending attempt through the documented cancel call. |
+| POST | `/api/ai/connections/:id/unlink` | Block new work, cancel queued/running work, sign the runtime out and remove the local credential. Reports `remote_logout` separately from local removal. |
+| GET | `/api/ai/connections/:id/account` | Read the masked account label, plan and, where the documented interface reports it, remaining quota and reset time. Missing values stay unknown. |
 | GET / POST | `/api/ai/jobs` | List up to 50 personal jobs or enqueue a feature request. |
 | GET | `/api/ai/jobs/:id` | Read status and currently authorized result. |
 | POST | `/api/ai/jobs/:id/cancel` | Best-effort cancellation without replaying a submitted request. |
@@ -59,8 +65,17 @@ See [setup, data boundaries and limits](AI_INTEGRATION.md).
 | GET | `/api/ai/usage` | Up to 200 recent request records, token counts and explicit unknown prices. |
 | DELETE | `/api/ai/history` | Cancel personal jobs and clear jobs, conversations and enrichments; retain change records and rules. |
 
-Connection fields include `name`, `base_url`, `api_key`, `shared`,
+Connection fields include `name`, `provider`, `base_url`, `api_key`, `shared`,
 `allowed_user_ids`, `functions`, `enabled`, `model_id` and `token_parameter`.
+`provider` is `openai_api` (default, including every connection stored before
+this feature) or `chatgpt_account`. It is chosen at creation and can never be
+changed on an existing connection. A `chatgpt_account` connection rejects
+`base_url`, `api_key` and `token_parameter`, is always stored with
+`shared=false` and an empty `allowed_user_ids`, and rejects a request that tries
+to set either; it exposes an `account` object with `linked`, masked `label`,
+`plan_type` and `auth_method` to its owner only. Its model catalog, quota and
+requests come from the pinned Codex app server rather than a user-supplied
+address.
 Model selection requires a successful compatibility test. Shared-connection
 users cannot edit, discover or test the owner's connection or retrieve its key.
 Server policy defaults to disabled, and each user must opt in separately.

@@ -77,7 +77,7 @@ describe('AI connection security', () => {
     });
     it('migrates idempotently without disturbing records', () => {
         const c = configure(); migrateAiSchema(db); expect(ai.listConnections(admin)[0].id).toBe(c.id);
-        expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'").get().n).toBe(10);
+        expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'").get().n).toBe(13);
     });
     it('keeps admin and normal-user IDs separate and never serializes keys', () => {
         const c = configure(); expect(ai.listConnections(user)).toEqual([]);

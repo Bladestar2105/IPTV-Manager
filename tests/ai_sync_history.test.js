@@ -127,7 +127,7 @@ it('processes more than 5000 added assignments and dispatches one independent su
   db.prepare("UPDATE user_channels SET custom_name='Keep mine' WHERE id=?").run(fixture.added[0].id);
   scheduleSyncFollowups(fixture.records);
   await vi.waitFor(()=>expect(createJob).toHaveBeenCalledTimes(1),{timeout:5000});
-  expect(createJob).toHaveBeenCalledWith(fixture.actor,{feature:'sync',snapshot_id:fixture.records[0].id},`sync_${fixture.records[0].id}`);
+  expect(createJob).toHaveBeenCalledWith(fixture.actor,{feature:'sync',snapshot_id:fixture.records[0].id},`sync_${fixture.records[0].id}`,{automatic:true});
   const name=id=>db.prepare('SELECT custom_name,assignment_origin FROM user_channels WHERE id=?').get(id);
   expect(name(fixture.added[0].id)).toEqual({custom_name:'Keep mine',assignment_origin:'manual'});
   expect(name(fixture.added.at(-1).id)).toEqual({custom_name:'Item 5000',assignment_origin:'manual'});
@@ -146,7 +146,7 @@ it('still dispatches the selected summary when a rule transaction fails',async()
   try {
     scheduleSyncFollowups(fixture.records);
     await vi.waitFor(()=>expect(createJob).toHaveBeenCalledTimes(1),{timeout:1000});
-    expect(createJob).toHaveBeenCalledWith(fixture.actor,{feature:'sync',snapshot_id:fixture.records[0].id},`sync_${fixture.records[0].id}`);
+    expect(createJob).toHaveBeenCalledWith(fixture.actor,{feature:'sync',snapshot_id:fixture.records[0].id},`sync_${fixture.records[0].id}`,{automatic:true});
     expect(db.prepare('SELECT custom_name FROM user_channels WHERE id=?').get(fixture.added[0].id).custom_name).toBe('');
     expect(db.prepare("SELECT COUNT(*) AS n FROM ai_changes WHERE json_extract(data_json,'$.rule_id')=?").get(fixture.rule.id).n).toBe(0);
   } finally { db.exec('DROP TRIGGER fail_rule_update'); }

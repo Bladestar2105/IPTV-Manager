@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
-import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage } from './connections.js';
+import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage, allowsUnattendedWork } from './connections.js';
 import { safeText } from './context.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
@@ -60,11 +60,13 @@ function scheduleJob(id) {
   setImmediate(() => runJob(id).catch(() => {}));
 }
 
-export function createJob(actor, input, idempotencyKey = randomUUID()) {
+export function createJob(actor, input, idempotencyKey = randomUUID(), {automatic = false} = {}) {
   const fresh = currentActor(actor);
   const payload = normalizeInput(fresh,input);
   if (typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(idempotencyKey)) fail(400,'ai_invalid_idempotency_key');
   const access = requireAiAccess(fresh,payload.feature,payload.connection_id || null,{requireModel:payload.feature !== 'diagnose'});
+  // Unattended work never runs on a provider bound to a personal plan.
+  if (automatic && !allowsUnattendedWork(access.connection.id)) fail(409,'ai_codex_manual_only');
   payload.language ??= access.preferences.language;
   payload.timezone ??= access.preferences.timezone;
   const inputJson = JSON.stringify({...payload,connection_id:access.connection.id,_timeout:payload.full_list === true ? LARGE_JOB_TIMEOUT : JOB_TIMEOUT,

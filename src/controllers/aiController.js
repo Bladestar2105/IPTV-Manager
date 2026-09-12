@@ -41,6 +41,38 @@ export const programs = handle(async req => {
     ({provider_channel_id,title,description,start,stop,local_start,timezone,program})),truncated:result.truncated};
 });
 
+// Personal ChatGPT account link. Every endpoint is owner-only, never returns a
+// token and binds the attempt to the caller's current session.
+const bearer = req => (req.get('Authorization') || '').split(' ')[1] || null;
+const accountConnection = async req => {
+  const {ownedAccountConnection} = await import('../services/ai/connections.js');
+  return ownedAccountConnection(req.user, req.params.id);
+};
+export const codexStatus = handle(async () => {
+  const {codexStatus: status} = await import('../services/ai/codex/account.js');
+  return status();
+});
+export const startAccountLink = handle(async req => {
+  const {startAccountLink: start, sessionFingerprint} = await import('../services/ai/codex/account.js');
+  return start(req.user, await accountConnection(req), sessionFingerprint(bearer(req)));
+});
+export const accountLinkStatus = handle(async req => {
+  const {readLoginStatus} = await import('../services/ai/codex/account.js');
+  return readLoginStatus(req.user, await accountConnection(req), req.params.loginId);
+});
+export const cancelAccountLink = handle(async req => {
+  const {cancelAccountLink: cancel} = await import('../services/ai/codex/account.js');
+  return cancel(req.user, await accountConnection(req), req.params.loginId);
+});
+export const unlinkAccount = handle(async req => {
+  const {disconnectAccount} = await import('../services/ai/codex/account.js');
+  return disconnectAccount(req.user, await accountConnection(req));
+});
+export const accountState = handle(async req => {
+  const {readAccountState} = await import('../services/ai/codex/account.js');
+  return readAccountState(req.user, await accountConnection(req));
+});
+
 export const getProposal = handle(async req => {
   const {getProposal} = await import('../services/ai/proposals.js');
   return getProposal(req.user,req.params.id);

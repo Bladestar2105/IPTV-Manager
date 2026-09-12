@@ -60,6 +60,13 @@ let redisClient = null;
     // Create default admin
     await createDefaultAdmin();
 
+    // Personal ChatGPT runtimes: remove directories left behind by deleted
+    // accounts, connections or interrupted sign-ins before workers start.
+    try {
+      const {sweepOrphans} = await import('./services/ai/codex/credentials.js');
+      sweepOrphans();
+    } catch { /* An unavailable optional runtime never blocks startup. */ }
+
     const numCPUs = os.cpus().length;
     console.info(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
 
@@ -106,6 +113,12 @@ let redisClient = null;
         console.error('Failed to terminate forwarded stream:', e.message);
       }
     });
+
+    // Resolve the optional Codex isolation backend once per worker, in the
+    // background. Until it resolves, the adapter reads as unavailable.
+    import('./services/ai/codex/readiness.js')
+      .then(module => module.refreshCodexReadiness())
+      .catch(() => null);
 
     // Start Schedulers if flagged
     if (process.env.IS_SCHEDULER === 'true') {
