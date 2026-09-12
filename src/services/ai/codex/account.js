@@ -32,10 +32,22 @@ export const sessionFingerprint = token =>
         ? crypto.createHmac('sha256', Buffer.from(ENCRYPTION_KEY, 'hex')).update(token).digest('hex')
         : null);
 
+// One predicate for every access field an owner must still satisfy, matching the
+// checks the rest of the AI subsystem applies: active account, Web UI access and
+// an unexpired account.
+function usableAccount(ownerKey) {
+    const [kind, id] = ownerKey.split(':');
+    const admin = kind === 'admin';
+    const table = admin ? 'admin_users' : 'users';
+    const row = db.prepare(`SELECT id,is_active,token_version${admin ? '' : ',webui_access,expiry_date'} FROM ${table} WHERE id=?`).get(Number(id));
+    if (!row || !row.is_active) return null;
+    if (!admin && (!row.webui_access || (row.expiry_date && row.expiry_date < Date.now() / 1000))) return null;
+    return row;
+}
+
 function actorRow(actor) {
-    const table = actor.is_admin ? 'admin_users' : 'users';
-    const row = db.prepare(`SELECT id,is_active,token_version${actor.is_admin ? '' : ',webui_access'} FROM ${table} WHERE id=?`).get(actor.id);
-    if (!row || !row.is_active || (!actor.is_admin && !row.webui_access)) throw aiError('AI_FORBIDDEN', 403);
+    const row = usableAccount(`${actor.is_admin ? 'admin' : 'user'}:${actor.id}`);
+    if (!row) throw aiError('AI_FORBIDDEN', 403);
     return row;
 }
 
@@ -99,10 +111,10 @@ function stillOwnsAttempt(row, ownerKey) {
     const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at FROM ai_codex_logins WHERE id=?').get(row.id);
     if (!current || !ACTIVE_STATUSES.includes(current.status)) return false;
     if (current.session_hash !== row.session_hash) return false;
-    const [kind, id] = ownerKey.split(':');
-    const table = kind === 'admin' ? 'admin_users' : 'users';
-    const account = db.prepare(`SELECT is_active,token_version FROM ${table} WHERE id=?`).get(Number(id));
-    if (!account?.is_active || account.token_version !== current.actor_version) return false;
+    // Web UI access can be revoked and an account can expire while the code is
+    // open; adopting the sign-in then would grant what was just taken away.
+    const account = usableAccount(ownerKey);
+    if (!account || account.token_version !== current.actor_version) return false;
     return Date.now() - (current.last_seen_at ?? current.created_at) <= LOGIN_SESSION_IDLE_MS;
 }
 

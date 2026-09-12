@@ -103,7 +103,7 @@ beforeEach(async () => {
     runtime.stopAllRuntimes();
     account.releaseAllAttempts();
     for (const table of ['ai_connections', 'ai_preferences', 'ai_usage', 'ai_jobs', 'ai_codex_credentials', 'ai_codex_logins', 'ai_codex_runtimes']) db.exec(`DELETE FROM ${table}`);
-    db.exec('DELETE FROM settings; UPDATE users SET is_active=1, webui_access=1, token_version=0; UPDATE admin_users SET is_active=1, token_version=0');
+    db.exec('DELETE FROM settings; UPDATE users SET is_active=1, webui_access=1, expiry_date=NULL, token_version=0; UPDATE admin_users SET is_active=1, token_version=0');
     fs.rmSync(path.join(dataDir, 'ai-codex'), { recursive: true, force: true });
     fs.rmSync(recordPath, { force: true });
     fs.rmSync(approvalPath, { force: true });
@@ -367,6 +367,20 @@ describe('personal ChatGPT sign-in ownership across workers and sessions', () =>
         await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
     });
 
+    it.each([
+        ['Web UI access is revoked', () => db.prepare('UPDATE users SET webui_access=0 WHERE id=1').run()],
+        ['the account has expired', () => db.prepare('UPDATE users SET expiry_date=? WHERE id=1').run(Math.floor(Date.now() / 1000) - 60)]
+    ])('discards a success that arrives after %s', async (_label, revoke) => {
+        fake({ login: 'success', loginDelayMs: 500 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        revoke();
+        await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status !== 'pending');
+        expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(started.id))
+            .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_superseded' });
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
     it('discards a success that arrives after the initiating session stopped watching', async () => {
         fake({ login: 'success', loginDelayMs: 600 });
         const connection = createConnection();
@@ -442,6 +456,52 @@ describe('personal ChatGPT runtime robustness', () => {
         // The link itself and its directory survive the worker's death.
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeTruthy();
         expect(fs.existsSync(paths.root)).toBe(true);
+    });
+
+    it('clears the plaintext of a worker that died before its sign-in was sealed', async () => {
+        fake({ login: 'pending' });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        const paths = credentials.identityPaths('user:1', connection.id);
+        // Codex wrote its credential file, but the worker died before sealing, so
+        // there is no credential record for the record-driven pass to find.
+        fs.mkdirSync(paths.codexHome, { recursive: true });
+        fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'unsealed-token' } }), { mode: 0o600 });
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        const pid = db.prepare('SELECT worker_pid FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id).worker_pid;
+        account.releaseAllAttempts();
+        fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'unsealed-token' } }), { mode: 0o600 });
+        db.prepare('INSERT OR REPLACE INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'dead', pid, 'running', Date.now() + 60000, Date.now());
+        expect(credentials.releaseWorkerRuntimes(pid).cleared).toBeGreaterThan(0);
+        expect(fs.existsSync(paths.authFile)).toBe(false);
+        expect(started.status).toBe('pending');
+    }, 30000);
+
+    it('refuses to store a credential for a connection that was deleted meanwhile', async () => {
+        const connection = await linkedConnection();
+        const paths = credentials.identityPaths('user:1', connection.id);
+        const fingerprint = credentials.readCredentialRecord('user:1', connection.id).account_hash;
+        credentials.wipe('user:1', connection.id);
+        fs.mkdirSync(paths.codexHome, { recursive: true });
+        fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'late-token' } }), { mode: 0o600 });
+        // The connection is gone; its deletion trigger has already run.
+        db.prepare('DELETE FROM ai_connections WHERE id=?').run(connection.id);
+        expect(credentials.seal('user:1', connection.id, { accountHash: fingerprint })).toEqual({ sealed: false });
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        // An orphan would have kept this account fingerprint reserved for ever.
+        expect(credentials.linkedElsewhere('user:2', 'other-connection', fingerprint)).toBe(false);
+    });
+
+    it('removes a credential left over from a connection that no longer exists', async () => {
+        const connection = await linkedConnection();
+        const fingerprint = credentials.readCredentialRecord('user:1', connection.id).account_hash;
+        db.prepare('DELETE FROM ai_connections WHERE id=?').run(connection.id);
+        db.prepare(`INSERT OR REPLACE INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,version,updated_at)
+            VALUES('user:1',?,'stale-blob',?,1,?)`).run(connection.id, fingerprint, Date.now());
+        credentials.sweepOrphans();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(credentials.linkedElsewhere('user:2', 'other-connection', fingerprint)).toBe(false);
     });
 
     it('leaves another live worker\'s plaintext credential alone while recovering one', async () => {

@@ -118,12 +118,21 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
         plan_type: metadata.planType ?? existing?.plan_type ?? null,
         auth_method: metadata.authMethod ?? existing?.auth_method ?? null
     };
-    db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,version,updated_at)
-        VALUES(?,?,?,?,?,?,?,1,?)
-        ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
-            account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
-            version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
-        .run(ownerKey, connectionId, blob, next.account_hash, next.account_label, next.plan_type, next.auth_method, Date.now());
+    // The connection can be deleted by another worker between claiming a sign-in
+    // and storing its credential. Its deletion trigger would already have run, so
+    // an insert afterwards leaves an orphan whose unique account fingerprint then
+    // blocks linking that ChatGPT account anywhere else.
+    const stored = db.transaction(() => {
+        if (!db.prepare('SELECT 1 FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey)) return false;
+        db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,version,updated_at)
+            VALUES(?,?,?,?,?,?,?,1,?)
+            ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
+                account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
+                version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
+            .run(ownerKey, connectionId, blob, next.account_hash, next.account_label, next.plan_type, next.auth_method, Date.now());
+        return true;
+    }).immediate();
+    if (!stored) return { sealed: false };
     return { sealed: true, ...next };
 }
 
@@ -161,6 +170,13 @@ function liveDirectories() {
 // A worker that is killed never runs its teardown, so the plaintext credential
 // it hydrated stays on disk and would otherwise reach a data-directory backup.
 // Any identity whose runtime is no longer leased has no reason to hold one.
+function clearIdentityPlaintext(ownerKey, connectionId) {
+    const paths = identityPaths(ownerKey, connectionId);
+    if (!fs.existsSync(paths.authFile) && !fs.existsSync(`${paths.authFile}.tmp`)) return false;
+    clearPlaintext(ownerKey, connectionId);
+    return true;
+}
+
 function clearAbandonedPlaintext() {
     const now = Date.now();
     let cleared = 0;
@@ -168,10 +184,7 @@ function clearAbandonedPlaintext() {
         const leased = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND expires_at > ?')
             .get(row.owner_key, row.connection_id, now);
         if (leased) continue;
-        const paths = identityPaths(row.owner_key, row.connection_id);
-        if (!fs.existsSync(paths.authFile) && !fs.existsSync(`${paths.authFile}.tmp`)) continue;
-        clearPlaintext(row.owner_key, row.connection_id);
-        cleared += 1;
+        if (clearIdentityPlaintext(row.owner_key, row.connection_id)) cleared += 1;
     }
     return cleared;
 }
@@ -183,6 +196,9 @@ export function sweepOrphans() {
     const root = identitiesRoot();
     let owners;
     try { owners = fs.readdirSync(root, { withFileTypes: true }); } catch { return { removed: 0, cleared: 0 }; }
+    // Repairs a credential left behind for a connection that no longer exists;
+    // its unique account fingerprint would otherwise block a fresh link.
+    db.prepare('DELETE FROM ai_codex_credentials WHERE NOT EXISTS (SELECT 1 FROM ai_connections WHERE ai_connections.id=ai_codex_credentials.connection_id AND ai_connections.owner_key=ai_codex_credentials.owner_key)').run();
     const cleared = clearAbandonedPlaintext();
     const live = liveDirectories();
     const liveOwners = new Set([...live].map(entry => entry.slice(0, entry.indexOf('/'))));
@@ -210,8 +226,14 @@ export function sweepOrphans() {
 // running and would otherwise leave the raw token on disk until the whole server
 // restarts. Directories are untouched: other workers may be mid-sign-in.
 export function releaseWorkerRuntimes(workerPid) {
+    // A worker that died during a sign-in wrote a credential file but never
+    // sealed it, so it has no record for the credential-driven pass to find. Its
+    // own leases are the only trace of those identities.
+    const held = db.prepare('SELECT owner_key,connection_id FROM ai_codex_runtimes WHERE worker_pid=?').all(workerPid);
     const leases = db.prepare('DELETE FROM ai_codex_runtimes WHERE worker_pid=?').run(workerPid).changes;
-    return { leases, cleared: clearAbandonedPlaintext() };
+    let cleared = 0;
+    for (const row of held) { if (clearIdentityPlaintext(row.owner_key, row.connection_id)) cleared += 1; }
+    return { leases, cleared: cleared + clearAbandonedPlaintext() };
 }
 
 // No sign-in and no runtime lease survives a restart: a device-code attempt
