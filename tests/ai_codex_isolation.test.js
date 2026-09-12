@@ -135,6 +135,35 @@ describe('Codex launcher location and interpreter', () => {
         expect(mounts).not.toContain(serviceDirectory);
         expect(mounts.every(mount => !mount.endsWith('.env'))).toBe(true);
     });
+
+    it('binds the Codex package of a directly configured entrypoint', () => {
+        // A documented installation points `AI_CODEX_BIN` straight at the
+        // package's entrypoint instead of at a `.bin` symlink. Without the
+        // package root the vendored executable beside it stays hidden by the
+        // application mask, and the sandboxed version probe fails.
+        fs.mkdirSync(runtimeDir, { recursive: true });
+        // Built under the resolved runtime directory on purpose: the whole point
+        // is a configured path that is already canonical, so the symlink branch
+        // that used to be the only caller of the package walk never runs.
+        const packageRoot = path.join(fs.realpathSync.native(runtimeDir), 'pkg', 'node_modules', '@openai', 'codex');
+        const entrypoint = path.join(packageRoot, 'bin', 'codex.js');
+        fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+        fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@openai/codex', version: '0.154.0' }));
+        fs.writeFileSync(entrypoint, '#!/usr/bin/env node\nprocess.exit(0)\n', { mode: 0o755 });
+        expect(fs.realpathSync.native(entrypoint)).toBe(entrypoint);
+        const mounts = isolation.launcherMounts(entrypoint);
+        expect(mounts).toContain(entrypoint);
+        expect(mounts).toContain(packageRoot);
+        // Still only the Codex package: an application package around a launcher
+        // is never bound whole.
+        const foreignRoot = path.join(fs.realpathSync.native(runtimeDir), 'app');
+        const foreign = path.join(foreignRoot, 'bin', 'codex.js');
+        fs.mkdirSync(path.dirname(foreign), { recursive: true });
+        fs.writeFileSync(path.join(foreignRoot, 'package.json'), JSON.stringify({ name: 'iptv-manager' }));
+        fs.writeFileSync(path.join(foreignRoot, '.env'), 'SECRET=value\n', { mode: 0o600 });
+        fs.writeFileSync(foreign, '#!/usr/bin/env node\nprocess.exit(0)\n', { mode: 0o755 });
+        expect(isolation.launcherMounts(foreign)).not.toContain(foreignRoot);
+    });
 });
 
 describe('Codex namespace layout', () => {

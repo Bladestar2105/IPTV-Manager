@@ -96,23 +96,25 @@ export function launcherMounts(binary) {
     const interpreter = launcherInterpreter(binary);
     if (interpreter) mounts.push(process.execPath);
     const real = realPath(binary);
-    if (real !== binary) {
-        mounts.push(real);
-        // Walk up to the package root so a launcher's sibling files and vendored
-        // binaries come with it.
-        let candidate = path.dirname(real);
-        for (let depth = 0; depth < 6; depth += 1) {
-            const parent = path.dirname(candidate);
-            if (parent === candidate) break;
-            if (fs.existsSync(path.join(candidate, 'package.json'))) {
-                // The first package boundary is the answer either way; an
-                // unrecognized one is simply not mounted, so a launcher inside it
-                // fails visibly instead of exposing its neighbours.
-                if (isCodexPackage(candidate)) mounts.push(candidate);
-                break;
-            }
-            candidate = parent;
+    if (real !== binary) mounts.push(real);
+    // Walk up to the package root so a launcher's sibling files and vendored
+    // binaries come with it. Done for a directly configured entrypoint too, not
+    // only for one reached through a `.bin` symlink: pointing straight at
+    // `@openai/codex/bin/codex.js` is a documented installation, and inside a
+    // masked application tree only this walk restores the vendored executable
+    // beside it.
+    let candidate = path.dirname(real);
+    for (let depth = 0; depth < 6; depth += 1) {
+        const parent = path.dirname(candidate);
+        if (parent === candidate) break;
+        if (fs.existsSync(path.join(candidate, 'package.json'))) {
+            // The first package boundary is the answer either way; an
+            // unrecognized one is simply not mounted, so a launcher inside it
+            // fails visibly instead of exposing its neighbours.
+            if (isCodexPackage(candidate)) mounts.push(candidate);
+            break;
         }
+        candidate = parent;
     }
     return [...new Set(mounts)];
 }

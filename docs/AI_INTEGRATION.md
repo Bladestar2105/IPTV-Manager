@@ -374,8 +374,12 @@ boundary. The adapter is therefore offered only where all of the following hold:
    installation that lives beneath a mounted system root exposes neither its
    working tree nor the `.env` file loaded from it, whatever `DATA_DIR` points
    at. A launcher that lives inside one of those masked trees — a local install
-   in the application's own `node_modules` — is bound again after the masks, so
-   the documented bare-metal layout stays usable. The macOS profile denies reads
+   in the application's own `node_modules` — is bound again after the masks,
+   together with its `@openai/codex` package root and the vendored binaries in
+   it, whether the configured path is a `.bin` symlink or the package entrypoint
+   itself. No other package around a launcher is ever bound whole, so the
+   documented bare-metal layout stays usable without carrying an application's
+   own files in. The macOS profile denies reads
    of the same three trees and re-allows exactly those launcher paths. The probe
    itself uses no shell redirection: a denied `2>/dev/null` makes the shell skip
    the command entirely, which would let a canary read that never happened count
