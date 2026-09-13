@@ -2,8 +2,34 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 describe('AI container security profiles', () => {
+    it.skipIf(spawnSync('docker', ['compose', 'version']).status !== 0)('keeps a copied Portainer stack self-contained and enables ChatGPT only with the sandbox override', () => {
+        const directory = fs.mkdtempSync(path.join(tmpdir(), 'iptv-compose-test-'));
+        try {
+            const base = path.join(directory, 'compose.yml');
+            fs.copyFileSync(new URL('../docker-compose.yml', import.meta.url), base);
+            const config = files => {
+                const result = spawnSync('docker', ['compose', ...files.flatMap(file => ['-f', file]), 'config', '--format', 'json'], {
+                    encoding: 'utf8', env: { ...process.env, COMPOSE_PROJECT_NAME: 'iptv-profile-test', COMPOSE_ENV_FILES: '' }
+                });
+                expect(result.status, result.stderr).toBe(0);
+                return JSON.parse(result.stdout).services['iptv-manager'];
+            };
+            const standard = config([base]);
+            expect(standard.security_opt).toBeUndefined();
+            expect(standard.privileged).not.toBe(true);
+            expect(standard.cap_add).toBeUndefined();
+            expect(standard.environment.AI_CODEX_ENABLED).toBe('false');
+            const sandbox = config([base, new URL('../docker-compose.chatgpt.yml', import.meta.url).pathname]);
+            expect(sandbox.security_opt).toEqual(['seccomp=./docker/ai-seccomp.json', 'apparmor=iptv-manager-ai']);
+            expect(sandbox.environment.AI_CODEX_ENABLED).toBe('true');
+        } finally {
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
     it.each([false,true])('tags only the verified image and stops after a failed push (%s)', failPush => {
         const workflow = fs.readFileSync(new URL('../.github/workflows/package.yml', import.meta.url), 'utf8');
         const step = workflow.split('- name: Push verified Docker image')[1].split('  release-package:')[0];

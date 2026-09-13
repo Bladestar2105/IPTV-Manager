@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+- Restored self-contained Docker/Portainer deployment without external sandbox
+  files. Personal ChatGPT host setup now uses an explicit Compose overlay;
+  standard stacks retain Docker security defaults and AI API connections.
+- Documented recovery of existing Portainer stacks without changing data mounts.
+
 ## Stable-26.09.13 - 2026-09-13
 
 - Added an experimental, opt-in AI Assistant with OpenAI-compatible API and

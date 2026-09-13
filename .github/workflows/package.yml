@@ -86,6 +86,17 @@ jobs:
           tags: iptv-manager:runtime-check
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Verify a standalone Portainer-style Compose stack
+        shell: bash
+        run: |
+          directory="$(mktemp -d)"
+          cp docker-compose.yml "$directory/compose.yml"
+          # No repository profiles, bind mounts or published ports in this check.
+          printf '%s\n' '{"services":{"iptv-manager":{"image":"iptv-manager:runtime-check","volumes":[{"type":"tmpfs","target":"/data"}]}}}' > "$directory/verify.json"
+          docker compose -p iptv-default-profile-check -f "$directory/compose.yml" -f "$directory/verify.json" \
+            run --rm --no-deps iptv-manager node -e \
+            'const assert = require("node:assert/strict"); assert.notEqual(process.getuid(), 0); assert.equal(process.env.AI_CODEX_ENABLED, "false"); console.log("Standalone Compose startup passed with Docker defaults.");'
+
       - name: Verify the real container sandbox and app-server
         shell: bash
         run: |
