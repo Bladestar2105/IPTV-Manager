@@ -575,8 +575,11 @@ one-time device code.
 * Refreshing the account is also a check: when the interface reports no account
   for a stored credential, or an authentication mode other than ChatGPT, the
   local link is removed rather than shown as connected again on the next load.
-  That removal waits for the runtime's child to hand the identity back, so a
-  relink never starts beside a process that is still running.
+  The record itself is dropped while the runtime that found it dead still owns
+  the identity, because everything that asks whether a connection is linked
+  reads that row; only the files wait for the child to hand the identity back,
+  so a relink never starts beside a process that is still running and never has
+  its own files removed.
 * An attempt belongs to the browser session that started it. Only that session
   can poll it, and its polling is what keeps the attempt alive: sign-out in this
   application is client side and does not invalidate the token, so a session that
@@ -627,7 +630,11 @@ keep it free, so the removal claims a cleanup reservation in the same
 transaction every acquisition uses. A link request that took the identity in
 that instant therefore keeps its lease and its files, and the stale record is
 left for the next read to drop. Deleting an account revokes its access before anything is torn down, so no
-request that starts during the teardown can still reach the credential. Its
+request that starts during the teardown can still reach the credential. The
+deletion is refused if any of its runtimes did not acknowledge: the deletion's
+own triggers remove the credential and the lease, and a worker that never let go
+is not proof that its child stopped. The account is left as it was and the
+caller can retry. Its
 runtimes are only stopped at that point; the credential and the runtime tree are
 removed after the deletion has committed, because that removal is irreversible
 and a deletion that fails must not cost the account its link. Deleting

@@ -526,9 +526,7 @@ export const updateUser = async (req, res) => {
 
     clearChannelsCache(id);
     res.json({success: true});
-  } catch (e) {
-    res.status(500).json({error: e.message});
-  }
+  } catch (e) { res.status(500).json({error: e.message}); }
 };
 
 export const deleteUser = async (req, res) => {
@@ -550,10 +548,14 @@ export const deleteUser = async (req, res) => {
     // removed. Deletion must not return while that use is still in progress.
     // Only stopped here, not removed: deleting the credential is irreversible and
     // the transaction below can still fail.
-    try {
-      const {stopAccountRuntimes} = await import('../services/ai/codex/account.js');
-      await stopAccountRuntimes(`user:${id}`);
-    } catch { /* Optional runtime cleanup never blocks an account deletion. */ }
+    // Not optional and not best effort: the deletion's own triggers remove the
+    // credential and the lease, so committing it while a child may still be
+    // using them would pull the ground out from under a running process. A
+    // runtime that never acknowledged is not proof that it stopped.
+    const {stopAccountRuntimes} = await import('../services/ai/codex/account.js');
+    if (!(await stopAccountRuntimes(`user:${id}`)).acknowledged) {
+      throw Object.assign(new Error('A personal ChatGPT runtime of this account did not stop. The account was not deleted.'), {status: 409});
+    }
     const ownedProviderUrls = db.prepare('SELECT url FROM providers WHERE user_id = ?').all(id).map(p => p.url);
 
     db.transaction(() => {
@@ -619,6 +621,8 @@ export const deleteUser = async (req, res) => {
       try { db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(previousActive, id); }
       catch { /* the row may already be gone */ }
     }
-    res.status(500).json({error: e.message});
+    // A runtime that did not stop is a conflict the caller can retry, not a
+    // server fault.
+    res.status(e.status || 500).json({error: e.message});
   }
 };

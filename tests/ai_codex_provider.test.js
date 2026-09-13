@@ -2041,7 +2041,21 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
-    it('keeps an invalid credential when a replacement takes the identity in the same instant', async () => {
+    it('reports an unacknowledged runtime instead of pretending the account stopped', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // A worker that never lets go of the identity. Its child may still be
+        // using the credential, so nothing may be removed on that assumption.
+        await seedLease(connection.id, 'foreign-worker-lease', { pid: 987654 });
+        try {
+            expect(await account.stopAccountRuntimes('user:1')).toEqual({ acknowledged: false });
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
+        // And an acknowledged one reports exactly that.
+        await idleRuntimes();
+        expect(await account.stopAccountRuntimes('user:1')).toEqual({ acknowledged: true });
+    }, 30000);
+
+    it('leaves a replacement\'s files alone but still drops the dead record', async () => {
         const connection = await withModel();
         fake({ accountRead: 'none', recordPath, recordApprovalPath: approvalPath });
         // A previous test's child may still be releasing its lease; that release
@@ -2058,10 +2072,14 @@ describe('personal ChatGPT runtime ownership', () => {
             const state = await account.readAccountState(user, ownedRecord(user, connection.id));
             expect(state).toMatchObject({ linked: false });
             // Wiping here would have deleted the replacement's own lease and its
-            // identity tree underneath a live child.
+            // identity tree underneath a live child, so the files stay.
             expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)?.lease_id).toBe('replacement');
-            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
             expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(true);
+            // The record that makes a connection read as linked is dropped while
+            // the runtime that found it dead still owns the identity. Losing the
+            // reservation must not leave a dead credential looking usable.
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+            expect(ai.listConnections(user).find(item => item.id === connection.id).account.linked).toBe(false);
         } finally {
             db.exec('DROP TRIGGER test_relink');
             db.prepare('DELETE FROM ai_codex_runtimes WHERE lease_id=?').run('replacement');

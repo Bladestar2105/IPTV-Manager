@@ -8,7 +8,7 @@ import { accountRow } from './identity.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
-import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, withCleanupLease } from './credentials.js';
+import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, forgetCredential, withCleanupLease } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 // A sign-in belongs to the browser session that started it. That session polls
@@ -608,14 +608,21 @@ export async function readAccountState(actor, connection) {
     // next load and send later jobs at an invalid credential.
     let invalidate = false;
     const state = await withRuntime(connection.owner_key, connection.id, async session => {
+        // The record itself is dropped here, while this runtime still holds the
+        // identity: everything that reads "is this connection linked" reads that
+        // row, and leaving a known-dead credential in place until some later
+        // refresh would keep the connection looking usable. Only the files are
+        // left to the reservation below, which a relink may legitimately win.
         const status = await getAuthStatus(session);
         if (status.authMethod !== 'chatgpt') {
             invalidate = true;
+            forgetCredential(connection.owner_key, connection.id);
             return { linked: false, label: null, plan_type: null, auth_method: status.authMethod, quota: { known: false } };
         }
         const account = await readAccount(session, { refreshToken: true });
         if (!account.linked) {
             invalidate = true;
+            forgetCredential(connection.owner_key, connection.id);
             return { linked: false, label: null, plan_type: null, auth_method: null, quota: { known: false } };
         }
         const quota = await readRateLimits(session);
@@ -655,7 +662,13 @@ async function wipeAfterHandover(ownerKey, connectionId) {
 // returns while a child is still using that account's credential. Removing the
 // credential itself is deliberately separate: it is irreversible, and a deletion
 // that fails afterwards must not have destroyed the account's link.
+//
+// Reports whether every runtime actually acknowledged. A worker that never let
+// go is not proof that its child stopped, and a caller that is about to remove
+// the account's records has to treat that as a failure rather than delete them
+// underneath a live process.
 export async function stopAccountRuntimes(ownerKey) {
+    let acknowledged = true;
     endAttempts(ownerKey);
     for (const row of db.prepare('SELECT connection_id FROM ai_codex_runtimes WHERE owner_key=?').all(ownerKey)) {
         const live = liveRuntime(ownerKey, row.connection_id);
@@ -663,9 +676,13 @@ export async function stopAccountRuntimes(ownerKey) {
         db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
             .run(Date.now(), ownerKey, row.connection_id);
         if (!(await waitForLeaseRelease(ownerKey, row.connection_id))) {
+            // The row is still cleared, so a dead worker cannot wedge the identity
+            // for good, but the caller is told that nothing acknowledged.
+            acknowledged = false;
             db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, row.connection_id);
         }
     }
+    return { acknowledged };
 }
 
 // Stops everything and then removes it. Only for callers that have already

@@ -197,6 +197,13 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
     return { sealed: true, ...next };
 }
 
+// Drops only the record that makes a connection read as linked, leaving the
+// files to a caller that can remove them safely. Used where a credential is
+// known to be dead and the identity is still held by the runtime that found out.
+export function forgetCredential(ownerKey, connectionId) {
+    return db.prepare('DELETE FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId).changes > 0;
+}
+
 // Removes the link itself. The attempt history is deliberately kept so the
 // owner still learns why a sign-in was refused or discarded; it is removed by
 // its own expiry and by account deletion.
