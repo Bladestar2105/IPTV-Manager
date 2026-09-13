@@ -173,6 +173,14 @@ approval-request rejection, policy-echo verification, malformed answers, plan
 limits, runtime ownership and disconnect behaviour. No credential and no live
 model are involved.
 
+Connection-removal regressions inject a failed final SQLite write after sign-out.
+The removal intent is committed before destructive work, keeps new work blocked,
+and permits retrying deletion. Startup finishes pending removals only after their
+credential, staged credential and runtime records are gone; otherwise the owner
+can retry deletion. Ordinary teardown failures before that intent still release
+their temporary block. Direct discovery and compatibility tests also monitor
+authorization during the request and abort when it is revoked.
+
 `ai_codex_isolation.test.js` exercises the **real** backend for the host and
 proves containment by trying to escape it: a canary outside the sandbox must be
 unreadable, `DATA_DIR` unwritable, a neighbouring identity's credential

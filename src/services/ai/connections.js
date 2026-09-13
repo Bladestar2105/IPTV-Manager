@@ -266,18 +266,24 @@ export function adjustConnectionTeardown(ownerKey,id,delta) {
         const row=db.prepare('SELECT * FROM ai_connections WHERE id=? AND owner_key=?').get(id,ownerKey);
         if (!row) return null;
         const data=JSON.parse(row.data_json);
-        const next=Math.max(0,(Number(data.teardown)||0)+delta);
+        const next=Math.max(data.removal_pending ? 1 : 0,(Number(data.teardown)||0)+delta);
         if (next) data.teardown=next; else delete data.teardown;
         db.prepare('UPDATE ai_connections SET data_json=?,version=version+1,updated_at=? WHERE id=?')
             .run(JSON.stringify(data),Date.now(),id);
         return next;
     }).immediate();
 }
-// No teardown survives a restart: a process that died between marking and
-// releasing would otherwise leave a connection blocked for good, because a later
-// unlink increments and decrements back to the same non-zero count.
+// Ordinary teardown counts are process-local work. A committed removal intent
+// instead survives crashes and final-write failures until deletion can finish.
 export function clearAbandonedTeardowns() {
-    return db.prepare("UPDATE ai_connections SET data_json=json_remove(data_json,'$.teardown'),version=version+1 WHERE json_extract(data_json,'$.teardown') IS NOT NULL").run().changes;
+    return db.transaction(()=>{
+        const removed=db.prepare(`DELETE FROM ai_connections WHERE json_extract(data_json,'$.removal_pending')=1
+            AND NOT EXISTS (SELECT 1 FROM ai_codex_credentials WHERE owner_key=ai_connections.owner_key AND connection_id=ai_connections.id)
+            AND NOT EXISTS (SELECT 1 FROM ai_codex_credential_stage WHERE owner_key=ai_connections.owner_key AND connection_id=ai_connections.id)
+            AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes WHERE owner_key=ai_connections.owner_key AND connection_id=ai_connections.id)`).run().changes;
+        return removed+db.prepare(`UPDATE ai_connections SET data_json=json_remove(data_json,'$.teardown'),version=version+1
+            WHERE json_extract(data_json,'$.teardown') IS NOT NULL AND COALESCE(json_extract(data_json,'$.removal_pending'),0)=0`).run().changes;
+    }).immediate();
 }
 export async function removeConnection(actor,id) {
     let connection=owned(actor,id);
@@ -301,16 +307,15 @@ export async function removeConnection(actor,id) {
         // acknowledged, or a credential that could not be removed. Deleting the
         // row then drops the lease and the credential record under a live child,
         // whose own cleanup no longer owns what it would remove.
-        await disconnectAccount(actor,connection);
+        await disconnectAccount(actor,connection,{remove:true});
         // Removed on the ownership already established above, not on a fresh one.
         db.prepare('DELETE FROM ai_connections WHERE id=? AND owner_key=?').run(id,connection.owner_key);
         removed=true;
         return {deleted:true};
     } finally {
-        // A removal that did not happen must not leave the marker behind: it
-        // blocks every kind of work on a connection that still exists, and only
-        // a restart would clear it. The deletion itself can still be refused
-        // here, by a session revoked while the sign-out was running.
+        // Release this caller's count, but never reopen an irreversible removal.
+        // Its durable intent keeps the connection blocked for a retry or startup
+        // recovery even when the final DELETE fails.
         if (!removed) { try { adjustConnectionTeardown(connection.owner_key,id,-1); } catch { /* the row may be gone already */ } }
     }
 }

@@ -593,7 +593,7 @@ function endAttempts(ownerKey, connectionId = null) {
 // Disconnecting blocks new work, ends queued and running work, signs the runtime
 // out and removes the local credential. A failed remote sign-out never keeps
 // local access alive; the difference is reported instead.
-export async function disconnectAccount(actor, connection) {
+export async function disconnectAccount(actor, connection, { remove = false } = {}) {
     actorRow(actor);
     const ownerKey = connection.owner_key;
     // Marked for the whole operation, so work started after the scan below cannot
@@ -602,13 +602,13 @@ export async function disconnectAccount(actor, connection) {
     // deletion, is still running.
     adjustConnectionTeardown(ownerKey, connection.id, 1);
     try {
-        return await runDisconnect(actor, connection, ownerKey);
+        return await runDisconnect(actor, connection, ownerKey, remove);
     } finally {
         try { adjustConnectionTeardown(ownerKey, connection.id, -1); } catch { /* the row may be gone already */ }
     }
 }
 
-async function runDisconnect(actor, connection, ownerKey) {
+async function runDisconnect(actor, connection, ownerKey, remove) {
     endAttempts(ownerKey, connection.id);
     const { cancelJob } = await import('../jobs.js');
     for (const job of db.prepare("SELECT id FROM ai_jobs WHERE owner_key=? AND connection_id=? AND status IN ('queued','running')").all(ownerKey, connection.id)) {
@@ -623,6 +623,11 @@ async function runDisconnect(actor, connection, ownerKey) {
     // make the wait trivially true and allow a second runtime on the same
     // identity directory while the first is still running.
     let acknowledged = await revokeAndWait(ownerKey, connection.id);
+    if (!acknowledged) throw aiError('AI_BUSY', 409);
+    // Commit the removal intent before signing out or destroying credentials.
+    // A later database failure must not reopen an already destroyed link.
+    if (remove) db.prepare("UPDATE ai_connections SET data_json=json_set(data_json,'$.removal_pending',1),version=version+1,updated_at=? WHERE id=? AND owner_key=?")
+        .run(Date.now(), connection.id, ownerKey);
     let remote = false;
     if (acknowledged && readCredentialRecord(ownerKey, connection.id)) {
         // A request authorized before the marker went up can still win the lease

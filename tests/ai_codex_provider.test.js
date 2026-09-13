@@ -732,6 +732,40 @@ describe('personal ChatGPT sign-in', () => {
         await idleRuntimes();
     }, 60000);
 
+    it.each(['retry', 'restart'])('finishes a durable removal after a failed final write by %s', async recovery => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        db.exec(`CREATE TRIGGER test_delete_failure BEFORE DELETE ON ai_connections WHEN OLD.id='${connection.id}'
+            BEGIN SELECT RAISE(ABORT,'connection row busy'); END;`);
+        try {
+            await expect(ai.removeConnection(user, connection.id)).rejects.toThrow('connection row busy');
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+            expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
+            expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_CONNECTION_CHANGED');
+            expect(thrown(() => ai.requireAiAccess(user, 'setup', connection.id)).code).toBe('AI_CONNECTION_CHANGED');
+        } finally { db.exec('DROP TRIGGER test_delete_failure'); }
+        if (recovery === 'retry') expect(await ai.removeConnection(user, connection.id)).toEqual({ deleted: true });
+        else ai.clearAbandonedTeardowns();
+        expect(db.prepare('SELECT 1 FROM ai_connections WHERE id=?').get(connection.id)).toBeUndefined();
+    }, 30000);
+
+    it('keeps interrupted removal blocked while its credential or runtime remains', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        db.prepare("UPDATE ai_connections SET data_json=json_set(data_json,'$.teardown',2,'$.removal_pending',1) WHERE id=?").run(connection.id);
+        ai.clearAbandonedTeardowns();
+        expect(thrown(() => ai.ownedAccountConnection(user, connection.id)).code).toBe('AI_CONNECTION_CHANGED');
+        expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+        await seedLease(connection.id, 'cleanup-in-progress', { state: 'cleanup' });
+        db.prepare('DELETE FROM ai_codex_credentials WHERE connection_id=?').run(connection.id);
+        ai.clearAbandonedTeardowns();
+        expect(db.prepare('SELECT 1 FROM ai_connections WHERE id=?').get(connection.id)).toBeTruthy();
+        expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'cleanup' });
+        db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id);
+        ai.clearAbandonedTeardowns();
+        expect(db.prepare('SELECT 1 FROM ai_connections WHERE id=?').get(connection.id)).toBeUndefined();
+    }, 30000);
+
     it('finishes a removal whose session is revoked while the sign-out runs', async () => {
         const authenticated = { id: 1, is_admin: false, token_version: 0 };
         const connection = await linkedConnection(authenticated);
@@ -2378,6 +2412,7 @@ describe('personal ChatGPT runtime ownership', () => {
             .toBe('ai_codex_account_already_linked');
         // Removing the local copy is not enough: the session the runtime just
         // opened stays alive upstream until it is signed out.
+        await idleRuntimes();
         expect(fs.existsSync(logoutRecordPath)).toBe(true);
         // And the account that was working keeps its link.
         expect(credentials.readCredentialRecord('user:1', mine.id)).not.toBeNull();
@@ -2721,6 +2756,52 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
         expect(fs.existsSync(credentials.identityPaths('user:1', connection.id).root)).toBe(false);
+    }, 30000);
+
+    it.each([
+        ['password reset', () => db.prepare('UPDATE users SET token_version=token_version+1 WHERE id=1').run(), 'AI_FORBIDDEN'],
+        ['deactivation', () => db.prepare('UPDATE users SET is_active=0 WHERE id=1').run(), 'AI_FORBIDDEN'],
+        ['policy withdrawal', () => ai.updateAiSettings(admin, { enabled: false }), 'AI_DISABLED']
+    ])('interrupts a direct compatibility turn after %s', async (_label, revoke, code) => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const turnRecordPath = path.join(dataDir, 'revoked-setup-turn.txt');
+        fs.rmSync(turnRecordPath, { force: true });
+        fake({ turn: 'stall', turnRecordPath });
+        const pending = ai.testModels({ ...user, token_version: 0 }, connection.id, { model_ids: ['model-beta'] }).catch(error => error);
+        try {
+            await until(() => fs.existsSync(turnRecordPath));
+            revoke();
+            const result = await Promise.race([pending, wait(2000).then(() => 'still running')]);
+            expect(result).toMatchObject({ code });
+            await idleRuntimes();
+            expect(runtime.liveRuntime('user:1', connection.id)).toBeNull();
+            expect(db.prepare('SELECT status,error_code FROM ai_usage WHERE connection_id=?').get(connection.id))
+                .toMatchObject({ status: 'failed', error_code: code });
+        } finally {
+            runtime.stopAllRuntimes();
+            await pending;
+            await idleRuntimes();
+        }
+    }, 30000);
+
+    it('interrupts direct model discovery after policy withdrawal', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        fake({ modelDelayMs: 4000 });
+        const pending = ai.discoverModels(user, connection.id).catch(error => error);
+        try {
+            await until(() => runtime.liveRuntime('user:1', connection.id));
+            await wait(100);
+            ai.updateAiSettings(admin, { enabled: false });
+            const result = await Promise.race([pending, wait(2000).then(() => 'still running')]);
+            expect(result).toMatchObject({ code: 'AI_DISABLED' });
+            await idleRuntimes();
+        } finally {
+            runtime.stopAllRuntimes();
+            await pending;
+            await idleRuntimes();
+        }
     }, 30000);
 
     it('removes every personal runtime record when the account is deleted', async () => {

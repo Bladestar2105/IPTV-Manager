@@ -109,7 +109,7 @@ export async function readRateLimits(session) {
 // One deadline for the whole catalog, not one per page: ten pages with their own
 // timeout could hold a runtime for minutes while the reservation that bounds the
 // operation had long expired.
-export async function listModels(session, { limit = 100, timeoutMs = MODEL_LIST_TIMEOUT_MS } = {}) {
+export async function listModels(session, { limit = 100, timeoutMs = MODEL_LIST_TIMEOUT_MS, signal } = {}) {
     const models = [];
     const deadline = Date.now() + timeoutMs;
     let cursor = null;
@@ -118,7 +118,7 @@ export async function listModels(session, { limit = 100, timeoutMs = MODEL_LIST_
         if (remaining <= 0) throw codexError('AI_TIMEOUT', 'Codex request timed out.', 504);
         const result = await session.client.request('model/list',
             cursor ? { limit, cursor, includeHidden: false } : { limit, includeHidden: false },
-            { timeoutMs: Math.min(MODEL_PAGE_TIMEOUT_MS, remaining) });
+            { timeoutMs: Math.min(MODEL_PAGE_TIMEOUT_MS, remaining), signal });
         const data = Array.isArray(result?.data) ? result.data : [];
         for (const model of data) {
             if (!model || typeof model.id !== 'string' || models.length >= MAX_MODELS) continue;
@@ -220,8 +220,7 @@ export async function runTurn(session, { model, messages, schema, structured = t
 
     // Starting a thread can take its own thirty seconds. The caller's recheck
     // therefore runs here, immediately before the billable request, not only
-    // before the thread: a compatibility test has no job monitor and no abort
-    // signal behind it, so this is its last gate.
+    // before the thread or on the authorization monitor's next tick.
     verify?.();
 
     let turn;

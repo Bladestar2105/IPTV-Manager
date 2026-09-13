@@ -65,9 +65,9 @@ let redisClient = null;
     try {
       const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
       const {clearAbandonedTeardowns} = await import('./services/ai/connections.js');
-      // No sign-in, runtime lease or teardown marker survives a restart, so clear
-      // them first; the sweep then sees an accurate set of directories still in
-      // use, and no connection stays blocked by an interrupted teardown.
+      // Stop orphaned runtimes before recovering removals and ordinary teardown
+      // counts. Pending removals with remaining credentials stay blocked until
+      // retried; the sweep cleans directories whose records are already gone.
       await resetInterruptedRuntimes();
       clearAbandonedTeardowns();
       sweepOrphans();
