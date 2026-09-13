@@ -2215,6 +2215,25 @@ describe('personal ChatGPT runtime ownership', () => {
         }
     }, 30000);
 
+    it('holds the cleanup reservation until the identity tree is gone', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const root = credentials.identityPaths('user:1', connection.id).root;
+        expect(fs.existsSync(root)).toBe(true);
+        // The reservation is what keeps a relink off this identity while the
+        // files go. Dropping it first would let a replacement recreate the very
+        // directory this removal then deletes.
+        const heldDuringRemoval = credentials.withCleanupLease('user:1', connection.id, leaseId => {
+            credentials.wipe('user:1', connection.id, { keepLeaseId: leaseId });
+            return db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?')
+                .get('user:1', connection.id)?.lease_id;
+        });
+        expect(heldDuringRemoval).toMatch(/^cleanup-/);
+        expect(fs.existsSync(root)).toBe(false);
+        // And released once the removal is finished.
+        expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id)).toBeUndefined();
+    }, 30000);
+
     it('refuses a cleanup reservation while the identity is leased', async () => {
         const connection = await withModel();
         await seedLease(connection.id, 'holder');

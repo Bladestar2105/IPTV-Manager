@@ -207,9 +207,17 @@ export function forgetCredential(ownerKey, connectionId) {
 // Removes the link itself. The attempt history is deliberately kept so the
 // owner still learns why a sign-in was refused or discarded; it is removed by
 // its own expiry and by account deletion.
-export function wipe(ownerKey, connectionId) {
+export function wipe(ownerKey, connectionId, { keepLeaseId = null } = {}) {
     db.prepare('DELETE FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId);
-    db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId);
+    // A caller that holds a cleanup reservation keeps it: that row is the only
+    // thing keeping a relink off this identity while the files are removed, and
+    // dropping it here would let a replacement recreate the directory this call
+    // is about to delete. Its owner releases it once the removal is finished.
+    if (keepLeaseId) {
+        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id<>?').run(ownerKey, connectionId, keepLeaseId);
+    } else {
+        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId);
+    }
     fs.rmSync(identityPaths(ownerKey, connectionId).root, { recursive: true, force: true });
 }
 
@@ -253,7 +261,9 @@ export function withCleanupLease(ownerKey, connectionId, run) {
         return true;
     }).immediate();
     if (!claimed) return null;
-    try { return run(); }
+    // The lease id is handed to the callback so a removal can keep exactly this
+    // reservation alive while it works.
+    try { return run(leaseId); }
     finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?').run(ownerKey, connectionId, leaseId); }
 }
 

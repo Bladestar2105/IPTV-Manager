@@ -687,7 +687,7 @@ export async function readAccountState(actor, connection) {
 // which is harmless: nothing reports the connection as linked in the meantime.
 async function wipeAfterHandover(ownerKey, connectionId) {
     if (!(await waitForLeaseRelease(ownerKey, connectionId))) return false;
-    return withCleanupLease(ownerKey, connectionId, () => { wipe(ownerKey, connectionId); return true; }) === true;
+    return withCleanupLease(ownerKey, connectionId, leaseId => { wipe(ownerKey, connectionId, { keepLeaseId: leaseId }); return true; }) === true;
 }
 
 // Ends every runtime of an account without removing anything, so a deletion never

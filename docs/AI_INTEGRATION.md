@@ -586,6 +586,8 @@ one-time device code.
 * Refreshing the account is also a check: when the interface reports no account
   for a stored credential, or an authentication mode other than ChatGPT, the
   local link is removed rather than shown as connected again on the next load.
+  The removal keeps its reservation until the last file is gone — dropping it
+  first would let a replacement recreate the very directory being deleted.
   The record itself is dropped while the runtime that found it dead still owns
   the identity, because everything that asks whether a connection is linked
   reads that row; only the files wait for the child to hand the identity back,
