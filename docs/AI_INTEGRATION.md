@@ -489,6 +489,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   backend has no equivalent, and an orphan sharing an identity with its
   replacement would mean two processes on one credential. A process that cannot
   be ended keeps its identity claimed, marked revoked, until its lease expires.
+  What a teardown reads to decide whether an identity came back follows the same
+  rule: an expired lease whose process is still there counts as held, so an
+  unlink or a deletion cannot mistake it for an acknowledgement.
   A lease that names a process is never released on its expiry alone: a
   timestamp from before a restart is already past, and sweeping it would hand a
   live identity to a replacement. Such a lease is released by its owner's exit,

@@ -157,9 +157,15 @@ function releaseLease(ownerKey, connectionId, leaseId) {
 }
 
 export function runtimeState(ownerKey, connectionId) {
-    const row = db.prepare('SELECT state,worker_pid,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND expires_at>=?')
-        .get(ownerKey, connectionId, Date.now());
-    return row || null;
+    const row = db.prepare('SELECT state,worker_pid,expires_at,child_pid FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?')
+        .get(ownerKey, connectionId);
+    if (!row) return null;
+    if (row.expires_at >= Date.now()) return row;
+    // An expired lease that still names a process is not a free identity. This is
+    // what a teardown reads to decide whether the identity was handed back, so
+    // hiding such a row here would let an unlink or a deletion wipe the credential
+    // and the directory underneath a process that is still using them.
+    return row.child_pid && identityProcessAlive(ownerKey, connectionId, row.child_pid) ? row : null;
 }
 
 // Reports whether this host can offer the adapter at all. Every failure is a

@@ -1633,6 +1633,35 @@ describe('personal ChatGPT runtime ownership', () => {
         await idleRuntimes();
     }, 30000);
 
+    it('does not treat an expired lease with a live process as a hand-off', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const paths = credentials.identityPaths('user:1', connection.id);
+        // Another worker's runtime, still running on this identity: its command
+        // line names the identity's own directory, exactly as every sandbox
+        // launch does. This process outlived its worker and its lease's expiry.
+        const foreignRuntime = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', paths.workDir], { detached: true, stdio: 'ignore' });
+        foreignRuntime.unref();
+        const past = Date.now() - 60000;
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at,child_pid) VALUES(?,?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'foreign-expired', 424246, 'running', past, past, foreignRuntime.pid);
+        try {
+            // A teardown reads this to decide whether the identity came back.
+            expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
+            // So an unlink must not mistake the expired row for an acknowledgement
+            // and wipe the credential underneath that process.
+            await expect(account.disconnectAccount(user, ownedRecord(user, connection.id)))
+                .rejects.toMatchObject({ code: 'AI_BUSY' });
+            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+        } finally {
+            try { process.kill(foreignRuntime.pid, 'SIGKILL'); } catch { /* already gone */ }
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id);
+        }
+        await idleRuntimes();
+        // With the process gone the unlink completes.
+        expect(await account.disconnectAccount(user, ownedRecord(user, connection.id))).toMatchObject({ disconnected: true });
+    }, 30000);
+
     it('does not clean up an identity whose expired lease still names a live process', async () => {
         fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
         const connection = await linkedConnection();
