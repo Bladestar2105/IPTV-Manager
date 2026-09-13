@@ -22,6 +22,7 @@ process.env.AI_CODEX_RUNTIME_DIR = runtimeDir;
 process.env.AI_CODEX_SANDBOX = 'auto';
 process.env.AI_CODEX_ALLOW_DEV_SANDBOX = 'true';
 const isolation = await import('../src/services/ai/codex/isolation.js');
+const config = await import('../src/services/ai/codex/config.js');
 const runtime = await import('../src/services/ai/codex/runtime.js');
 isolation.resetIsolationCache();
 const detected = await isolation.resolveIsolation({ force: true });
@@ -206,6 +207,29 @@ describe('Codex namespace layout', () => {
 });
 
 describe('Codex runtime root outside the data directory', () => {
+    it('resolves a relative runtime root before deriving sandbox paths', () => {
+        // `DATA_DIR=./data` is a documented bare-metal setup, and bubblewrap
+        // refuses a relative bind destination or working directory.
+        process.env.AI_CODEX_RUNTIME_DIR = './relative-codex-root';
+        isolation.resetIsolationCache();
+        try {
+            const paths = { codexHome: path.join(config.codexConfig().runtimeDir, 'home'), workDir: path.join(config.codexConfig().runtimeDir, 'work') };
+            expect(path.isAbsolute(config.codexConfig().runtimeDir)).toBe(true);
+            const args = isolation.wrapCommand({ name: 'bwrap', path: '/usr/bin/bwrap', grade: 'isolated' },
+                { ...paths, command: ['/bin/sh', '-c', 'true'] }).args;
+            const chdir = args[args.indexOf('--chdir') + 1];
+            expect(path.isAbsolute(chdir)).toBe(true);
+            for (const [index, value] of args.entries()) {
+                if (value === '--bind' || value === '--ro-bind' || value === '--ro-bind-try' || value === '--tmpfs') {
+                    expect(path.isAbsolute(args[index + 1])).toBe(true);
+                }
+            }
+        } finally {
+            process.env.AI_CODEX_RUNTIME_DIR = runtimeDir;
+            isolation.resetIsolationCache();
+        }
+    });
+
     it('masks and contains a runtime root an operator placed elsewhere', async () => {
         const custom = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ai-codex-custom-')));
         process.env.AI_CODEX_RUNTIME_DIR = custom;

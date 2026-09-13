@@ -622,6 +622,35 @@ describe('personal ChatGPT sign-in', () => {
         await until(() => !fs.existsSync(credentials.identityPaths('user:1', connection.id).root), 10000);
     }, 30000);
 
+    it.each([
+        ['the server policy is switched off',
+            "UPDATE settings SET value=json_set(value,'$.enabled',json('false')) WHERE key='ai_policy'"],
+        ['the owner loses their allowance',
+            "UPDATE settings SET value=json_set(value,'$.allowed_user_ids',json('[2]')) WHERE key='ai_policy'"],
+        ['the owner turns their own AI off',
+            "UPDATE ai_preferences SET data_json=json_set(data_json,'$.enabled',json('false')) WHERE owner_key='user:1'"]
+    ])('does not publish a sign-in finalized after %s', async (_label, revoke) => {
+        ai.savePreferences(user, { enabled: true });
+        const connection = createConnection();
+        await idleRuntimes();
+        // Access is withdrawn in the window between claiming the completion and
+        // publishing it. Polling deliberately reports an attempt without
+        // re-applying the policy, so a link published here would read as working.
+        db.exec(`CREATE TRIGGER test_revoke_policy AFTER UPDATE OF status ON ai_codex_logins WHEN NEW.status='sealing'
+            BEGIN ${revoke}; END;`);
+        try {
+            const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'session-fingerprint');
+            await until(() => !['starting', 'pending', 'sealing'].includes(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status), 10000);
+            expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('failed');
+            // The credential this attempt stored is removed with the rest of its
+            // state: the owner may not use it at all any more.
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally {
+            db.exec('DROP TRIGGER test_revoke_policy');
+            await idleRuntimes();
+        }
+    }, 30000);
+
     it('lets a superseded start lose the identity to the one that replaced it', async () => {
         fake({ login: 'pending', recordPath, recordApprovalPath: approvalPath });
         const connection = createConnection();

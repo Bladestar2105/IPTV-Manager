@@ -279,9 +279,23 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
-        // Published only now, with the credential on record behind it.
-        db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
-            .run('completed', Date.now(), row.id, SEALING_STATUS);
+        // Published only now, with the credential on record behind it — and only
+        // while access still exists. The polling endpoint deliberately reports an
+        // attempt without re-applying the policy, so a sign-in finalized after
+        // access was withdrawn would be reported as a working link.
+        const published = db.transaction(() => {
+            if (!policyAllows(ownerKey)) return false;
+            return db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
+                .run('completed', Date.now(), row.id, SEALING_STATUS).changes > 0;
+        }).immediate();
+        if (!published) {
+            // Nothing is kept: the credential this attempt just stored is removed
+            // with the rest of its own state, because the owner may no longer use
+            // it at all.
+            db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+                .run('failed', 'ai_codex_login_rejected', Date.now(), row.id, SEALING_STATUS);
+            await discardAttempt(session, ownerKey, connectionId, false, row.id);
+        }
     } catch {
         finishLogin(row.id, 'failed', 'ai_codex_login_failed');
     } finally {

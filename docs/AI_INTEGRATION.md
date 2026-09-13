@@ -550,6 +550,11 @@ one-time device code.
   non-terminal state that no cancel or supersede can take either, and the
   attempt is published as completed only once the credential is actually stored;
   a poll on any worker keeps reporting the sign-in as still running until then.
+  Publishing also re-applies the AI policy — the server switch, the owner's
+  allowance and their personal preference — in the same transaction, because
+  polling an attempt deliberately does not: a sign-in finalized after access was
+  withdrawn would otherwise be reported as a working link. What that attempt
+  stored is removed with the rest of its state.
   A worker that dies in that window leaves the attempt claimed but unfinished,
   and the credential store — not the claim — decides how it is resolved on the
   next poll, so a failed seal can never leave a permanent report of a link that

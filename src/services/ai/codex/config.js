@@ -51,7 +51,10 @@ const flag = (name, fallback = false) => {
 export const codexConfig = () => ({
     enabled: flag('AI_CODEX_ENABLED', false),
     binary: process.env.AI_CODEX_BIN || 'codex',
-    runtimeDir: process.env.AI_CODEX_RUNTIME_DIR || path.join(DATA_DIR, 'ai-codex'),
+    // Resolved here: a relative `DATA_DIR=./data` is a documented bare-metal
+    // setup, and the sandbox binds and the working directory it hands the
+    // runtime have to be absolute paths.
+    runtimeDir: path.resolve(process.env.AI_CODEX_RUNTIME_DIR || path.join(DATA_DIR, 'ai-codex')),
     sandbox: (process.env.AI_CODEX_SANDBOX || 'auto').toLowerCase(),
     // Operators who accepted a documented weaker isolation grade opt in explicitly.
     allowDevelopmentSandbox: flag('AI_CODEX_ALLOW_DEV_SANDBOX', false),
