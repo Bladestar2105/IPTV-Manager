@@ -35,11 +35,16 @@ const realPath = value => { try { return fs.realpathSync.native(value); } catch 
 const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 
 // Everything the manager itself lives in: its working directory, where dotenv
-// reads `.env`, and its installation root. A bare-metal install under one of the
-// read-only system roots would otherwise be carried in by that bind.
+// reads `.env`, its installation root, and the root that holds every identity's
+// runtime tree, which an operator can place anywhere. A bare-metal install under
+// one of the read-only system roots would otherwise be carried in by that bind,
+// and a runtime root outside all of them would leave the neighbouring
+// identities readable on a backend that starts from `allow default`. The
+// identity's own directories are restored after the masks by both backends.
 export function maskedRoots() {
     const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-    return [...new Set([DATA_DIR, process.cwd(), moduleRoot].flatMap(directory => [path.resolve(directory), realPath(directory)]))];
+    return [...new Set([DATA_DIR, process.cwd(), moduleRoot, codexConfig().runtimeDir]
+        .flatMap(directory => [path.resolve(directory), realPath(directory)]))];
 }
 
 let cached = null;

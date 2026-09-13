@@ -205,6 +205,43 @@ describe('Codex namespace layout', () => {
     });
 });
 
+describe('Codex runtime root outside the data directory', () => {
+    it('masks and contains a runtime root an operator placed elsewhere', async () => {
+        const custom = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ai-codex-custom-')));
+        process.env.AI_CODEX_RUNTIME_DIR = custom;
+        isolation.resetIsolationCache();
+        try {
+            // Without this the neighbouring identities under a custom root stay
+            // readable on a backend that starts from `allow default`, and the
+            // self-test's own canary makes the documented setting unusable.
+            expect(isolation.maskedRoots()).toContain(custom);
+            const backend = await isolation.resolveIsolation({ force: true });
+            if (!backend.available) {
+                expect(typeof backend.reason).toBe('string');
+                return;
+            }
+            const mine = { codexHome: path.join(custom, 'mine', 'home'), workDir: path.join(custom, 'mine', 'work') };
+            for (const dir of [mine.codexHome, mine.workDir, path.join(mine.workDir, 'tmp')]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+            const token = randomBytes(16).toString('hex');
+            const neighbour = path.join(custom, 'neighbour-auth.json');
+            fs.writeFileSync(neighbour, token, { mode: 0o600 });
+            const proof = control(mine);
+            const description = isolation.wrapCommand(backend.handle,
+                { ...mine, command: ['/bin/sh', '-c', `${proof.read} cat ${JSON.stringify(neighbour)}; printf "|end"`] });
+            const { stdout } = await run(description.file, description.args,
+                { env: description.environment, timeout: 20000, maxBuffer: 64 * 1024 }).catch(error => ({ stdout: `ERROR:${error.message}` }));
+            expect(stdout).toContain(proof.marker);
+            expect(stdout).not.toContain(token);
+            // The identity's own tree stays usable inside the masked root.
+            expect(fs.existsSync(path.join(mine.workDir, 'control'))).toBe(true);
+        } finally {
+            process.env.AI_CODEX_RUNTIME_DIR = runtimeDir;
+            isolation.resetIsolationCache();
+            fs.rmSync(custom, { recursive: true, force: true });
+        }
+    }, 60000);
+});
+
 describe('Codex isolation backend selection', () => {
     it('keeps the adapter unavailable when sandboxing is switched off', async () => {
         process.env.AI_CODEX_SANDBOX = 'none';

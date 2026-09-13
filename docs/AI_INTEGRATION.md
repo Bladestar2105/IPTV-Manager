@@ -380,7 +380,11 @@ boundary. The adapter is therefore offered only where all of the following hold:
    namespace — each under both its given and its resolved path — so a bare-metal
    installation that lives beneath a mounted system root exposes neither its
    working tree nor the `.env` file loaded from it, whatever `DATA_DIR` points
-   at. A launcher that lives inside one of those masked trees — a local install
+   at. The root that holds the per-identity runtime directories is masked the
+   same way wherever an operator places it, and only the identity that is
+   running is restored inside, so a neighbouring identity is unreachable on
+   every backend rather than only where that root happens to sit under the data
+   directory. A launcher that lives inside one of those masked trees — a local install
    in the application's own `node_modules` — is bound again after the masks,
    together with its `@openai/codex` package root and the vendored binaries in
    it, whether the configured path is a `.bin` symlink or the package entrypoint
