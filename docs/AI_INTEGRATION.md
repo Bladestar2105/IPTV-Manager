@@ -345,6 +345,13 @@ the existing `chat/completions` transport.
   suffix included, prerelease and build metadata together — in
   `AI_CODEX_VERSION_OVERRIDE` after validating it separately. The version probe and the runtime handshake read the same token,
   so an allowed build passes both gates rather than one.
+* A compatibility test spends one budget across the whole batch, not one per
+  probe: a slow but working provider would otherwise keep a request — and its
+  billable calls — running for many minutes after the browser gave up. What was
+  proven is kept and the rest is reported as untested.
+* A discarded sign-in is signed out even when the connection keeps an older
+  link, because the runtime authenticated an account either way and only the
+  sign-out ends that session upstream.
 * A request spends one deadline across everything it does: waiting for the
   identity to be handed over, the handshake, the authentication check and then
   the turn or the model catalog. The startup is part of the operation, so a slow

@@ -187,6 +187,8 @@ function handle(message) {
         case 'account/login/cancel':
             return reply({ status: params?.loginId && params.loginId === pendingLoginId ? 'canceled' : 'notFound' });
         case 'account/logout':
+            // Records that the runtime was actually signed out.
+            if (config.logoutRecordPath) { try { fs.writeFileSync(config.logoutRecordPath, 'logged-out'); } catch { /* ignored */ } }
             if (config.logout === 'fail') return failure('logout unavailable');
             fs.rmSync(authFile, { force: true });
             return reply({});

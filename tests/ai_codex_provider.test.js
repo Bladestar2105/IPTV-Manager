@@ -2033,6 +2033,27 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
+    it('signs the runtime out when a rejected relink authenticated another account', async () => {
+        const logoutRecordPath = path.join(dataDir, `logout-${Date.now()}.txt`);
+        const mine = await linkedConnection(user);
+        // Another account already holds the address the replacement will
+        // authenticate, so the replacement is refused after signing in.
+        fake({ email: 'third.tester@example.org' });
+        const theirs = createConnection(other);
+        expect((await link(other, theirs)).state.status).toBe('completed');
+        fake({ login: 'success', loginDelayMs: 100, email: 'third.tester@example.org', logoutRecordPath });
+        await idleRuntimes();
+        const started = await account.startAccountLink(user, ownedRecord(user, mine.id), 'fp');
+        await until(() => !['starting', 'pending', 'sealing'].includes(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status), 10000);
+        expect(db.prepare('SELECT error_code FROM ai_codex_logins WHERE id=?').get(started.id).error_code)
+            .toBe('ai_codex_account_already_linked');
+        // Removing the local copy is not enough: the session the runtime just
+        // opened stays alive upstream until it is signed out.
+        expect(fs.existsSync(logoutRecordPath)).toBe(true);
+        // And the account that was working keeps its link.
+        expect(credentials.readCredentialRecord('user:1', mine.id)).not.toBeNull();
+    }, 30000);
+
     it('keeps the working link when a replacement sign-in is rejected', async () => {
         const mine = await linkedConnection(user);
         const before = credentials.readCredentialRecord('user:1', mine.id);

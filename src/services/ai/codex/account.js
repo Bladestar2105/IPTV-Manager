@@ -214,8 +214,11 @@ function claimCompletedLogin(row, ownerKey) {
 // removal. A hand-off that never completes leaves the directory to the sweep,
 // which removes a runtime directory that has no credential record.
 async function discardAttempt(session, ownerKey, connectionId, hadCredential, attemptId) {
-    if (hadCredential) { clearPlaintext(ownerKey, connectionId); return; }
+    // The runtime authenticated an account even when the attempt is refused, so
+    // the sign-out is sent either way. Only removing the local copy would leave
+    // that freshly opened ChatGPT session alive upstream until it expires.
     await logout(session).catch(() => null);
+    if (hadCredential) { clearPlaintext(ownerKey, connectionId); return; }
     releaseAttempt(attemptId);
     await session.client.exited.catch(() => null);
     await wipeAfterHandover(ownerKey, connectionId);

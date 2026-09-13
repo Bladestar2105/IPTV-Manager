@@ -10,6 +10,16 @@ const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose'
 const DEFAULT_SETTINGS = { enabled: false, allow_own_connections: false, allowed_user_ids: [], functions: FEATURES, internal_targets: [] };
 const DEFAULT_PREFERENCES = { enabled: false, connection_id: null, model_id: null, language: 'en', timezone: 'UTC', auto_sync_summary: false };
 const TEST_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false };
+// The whole compatibility batch, however many models and probes it contains.
+// Configurable because the sensible bound is the one the proxy in front of the
+// manager uses: there is no point in still making billable calls for a request
+// nothing is waiting for any more.
+const DEFAULT_MODEL_TEST_BATCH_MS=300000;
+function modelTestBatchMs() {
+    const configured=Number(process.env.AI_MODEL_TEST_BATCH_MS);
+    if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_MODEL_TEST_BATCH_MS;
+    return Math.min(900000,Math.max(1000,Math.trunc(configured)));
+}
 const MAX_MODEL_PROFILES = 100;
 const ownerKey = actor => `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
 
@@ -453,6 +463,14 @@ export async function discoverModels(actor,id) {
 }
 export async function testModels(actor,id,input) {
     const c=owned(actor,id); inputObject(input);
+    // One budget for the batch, not one per probe. Three models with two probes
+    // each would otherwise keep the request — and its billable calls — running
+    // long after the browser or a proxy in front of it gave up.
+    const batch=new AbortController();
+    const stop=setTimeout(()=>batch.abort(),modelTestBatchMs()); stop.unref?.();
+    try { return await runModelTests(actor,id,c,input,batch); } finally { clearTimeout(stop); }
+}
+async function runModelTests(actor,id,c,input,batch) {
     if (!Array.isArray(input.model_ids) || !input.model_ids.length || input.model_ids.length>3 || new Set(input.model_ids).size!==input.model_ids.length || input.model_ids.some(model=>typeof model!=='string' || !MODEL_ID.test(model))) throw aiError('AI_INVALID_INPUT');
     const usesTokenParameter=adapterFor(c).usesTokenParameter;
     const models=[];
@@ -464,8 +482,9 @@ export async function testModels(actor,id,input) {
             // documented alternate-parameter probe.
             for (let attempt=0;attempt<(structured || !usesTokenParameter ? 1 : 2);attempt++) {
                 try {
+                    if (batch.signal.aborted) throw aiError('AI_TIMEOUT',504);
                     await call(actor,'setup',id,'chat',{model,messages:[{role:'user',content:'Synthetic compatibility check: return {"ok":true}.'}],
-                        schema:TEST_SCHEMA,structured,maxTokens:128,tokenParameter:profile.token_parameter},null,response=>{
+                        schema:TEST_SCHEMA,structured,maxTokens:128,tokenParameter:profile.token_parameter},batch.signal,response=>{
                         const data=parseStructured(response,TEST_SCHEMA);
                         if (data.ok!==true) throw aiError('AI_INVALID_RESPONSE',502);
                         return data;
@@ -474,6 +493,14 @@ export async function testModels(actor,id,input) {
                     profile.status='compatible'; delete profile.error_code;
                     break;
                 } catch(error) {
+                    // The batch ran out of time. What was proven so far is kept
+                    // and the rest is reported as untested rather than failing
+                    // the whole request.
+                    if (batch.signal.aborted) {
+                        profile.error_code='AI_TIMEOUT';
+                        profile.status=profile.chat ? 'json_fallback' : 'unverified';
+                        break;
+                    }
                     if (!['AI_MODEL_UNAVAILABLE','AI_CAPABILITY_UNSUPPORTED','AI_TOKEN_PARAMETER_UNSUPPORTED','AI_INVALID_RESPONSE','AI_RESPONSE_TOO_LARGE'].includes(error.code)) throw error;
                     if (!structured && attempt===0 && usesTokenParameter && error.code==='AI_TOKEN_PARAMETER_UNSUPPORTED' && error.parameter===profile.token_parameter) {
                         profile.token_parameter=profile.token_parameter==='max_tokens'?'max_completion_tokens':'max_tokens';
@@ -486,6 +513,7 @@ export async function testModels(actor,id,input) {
             }
         }
         models.push(profile);
+        if (batch.signal.aborted) break;
     }
     // Remove replacements first so only new IDs evict unrelated profiles.
     for (const profile of models) delete c.capabilities[profile.id];

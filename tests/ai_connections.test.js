@@ -53,6 +53,33 @@ async function selected(actor = admin) {
     return c;
 }
 
+describe('AI compatibility batch', () => {
+    it('bounds the whole batch instead of each probe', async () => {
+        const c = configure();
+        await ai.discoverModels(admin, c.id);
+        // A provider that answers, but slowly. Every probe succeeds on its own,
+        // so only a budget for the batch can stop the request from making
+        // billable calls long after the browser gave up.
+        reply = (req, res) => {
+            setTimeout(() => res.end(JSON.stringify(req.method === 'GET'
+                ? { data: [{ id: 'synthetic-model' }] }
+                : { choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }], usage: { prompt_tokens: 4, completion_tokens: 3 } })), 400);
+        };
+        // Two models, two probes each: four answers at 400 ms cannot fit into the
+        // batch budget, while every single probe stays well inside its own.
+        process.env.AI_MODEL_TEST_BATCH_MS = '1000';
+        try {
+            const before = requests.filter(entry => entry.body).length;
+            const result = await ai.testModels(admin, c.id, { model_ids: ['synthetic-model', 'second-model'] });
+            // Whatever was proven is kept; the rest is reported as untested
+            // instead of failing the request or running on.
+            expect(result.models.some(model => model.error_code === 'AI_TIMEOUT')).toBe(true);
+            expect(result.models.some(model => model.status === 'compatible')).toBe(true);
+            expect(requests.filter(entry => entry.body).length - before).toBeLessThan(4);
+        } finally { delete process.env.AI_MODEL_TEST_BATCH_MS; }
+    }, 30000);
+});
+
 describe('AI connection security', () => {
     it('normalizes known suffixes while retaining proxy prefixes', () => {
         expect(transport.normalizeBaseUrl('https://example.com/proxy/v1/chat/completions/')).toBe('https://example.com/proxy/v1');
