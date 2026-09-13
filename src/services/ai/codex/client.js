@@ -161,9 +161,23 @@ function turnInput(messages, schema) {
 // the token budget, because a token can be far more than a few bytes and that
 // would reject valid answers well below the promised limit.
 const MAX_STREAM_BYTES = 512 * 1024;
+// The documented app-server handshake budget for opening a thread, and never
+// more than what is left of the turn's own deadline.
+const THREAD_START_TIMEOUT_MS = 30000;
 
 export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000, verify }) {
     const { developer, text } = turnInput(messages, schema);
+    // One deadline for the whole turn: starting the thread, submitting it and
+    // waiting for its completion. Giving each phase the full budget would let a
+    // slow server hold the runtime for a multiple of the limit the caller
+    // reserved, and the reservation that bounds the operation would expire while
+    // it was still running.
+    const deadline = Date.now() + timeoutMs;
+    const budget = cap => {
+        const left = deadline - Date.now();
+        if (left <= 0) throw codexError('AI_TIMEOUT', 'Codex request timed out.', 504);
+        return cap ? Math.min(cap, left) : left;
+    };
     const started = await session.client.request('thread/start', {
         cwd: session.paths.workDir,
         model,
@@ -171,7 +185,7 @@ export async function runTurn(session, { model, messages, schema, structured = t
         sandbox: 'read-only',
         ephemeral: true,
         developerInstructions: developer || null
-    }, { timeoutMs: 30000, signal });
+    }, { timeoutMs: budget(THREAD_START_TIMEOUT_MS), signal });
     const threadId = started?.thread?.id;
     if (typeof threadId !== 'string') throw codexError('AI_INVALID_RESPONSE', 'Codex did not return a thread.');
     // The server echoes the effective policy; a weaker one than requested is a
@@ -221,13 +235,12 @@ export async function runTurn(session, { model, messages, schema, structured = t
             // schema-constrained output is recorded as a JSON fallback rather
             // than as incompatible, and stays usable afterwards.
             ...(structured ? { outputSchema: schema } : {})
-        }, { timeoutMs, signal });
+        }, { timeoutMs: budget(), signal });
     } catch (error) {
         await session.client.request('turn/interrupt', { threadId, turnId: 'unknown' }, { timeoutMs: 5000 }).catch(() => null);
         throw error;
     }
 
-    const deadline = Date.now() + timeoutMs;
     while (!state.done && Date.now() < deadline) {
         if (signal?.aborted) {
             await session.client.request('turn/interrupt', { threadId, turnId: turn?.turn?.id || '' }, { timeoutMs: 5000 }).catch(() => null);

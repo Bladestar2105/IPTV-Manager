@@ -345,6 +345,10 @@ the existing `chat/completions` transport.
   suffix included, prerelease and build metadata together — in
   `AI_CODEX_VERSION_OVERRIDE` after validating it separately. The version probe and the runtime handshake read the same token,
   so an allowed build passes both gates rather than one.
+* A turn spends one deadline across all of its phases — opening the thread,
+  submitting it and waiting for the answer — so a slow server cannot hold a
+  runtime for a multiple of the caller's limit and outlive the reservation that
+  bounds the request.
 * Access is checked once more immediately before a turn is submitted, not only
   before the thread is started: starting a thread has its own thirty-second
   budget, and a compatibility test has neither a job monitor nor an abort signal

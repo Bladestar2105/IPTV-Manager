@@ -230,8 +230,11 @@ function handle(message) {
                         error: { message: 'schema unsupported', codexErrorInfo: 'badRequest', additionalDetails: null, misalignment: null } } }));
                 return undefined;
             }
-            reply({ turn: { id: turnId, items: [], itemsView: 'complete', status: 'inProgress', error: null } });
-            later(config.turnDelayMs ?? 20, () => completeTurn(params?.threadId || 'thread-1', turnId));
+            // A slow acknowledgement of the turn itself, separate from how long
+            // the answer then takes.
+            const acknowledge = () => reply({ turn: { id: turnId, items: [], itemsView: 'complete', status: 'inProgress', error: null } });
+            if (config.turnStartDelayMs) later(config.turnStartDelayMs, acknowledge); else acknowledge();
+            later((config.turnStartDelayMs ?? 0) + (config.turnDelayMs ?? 20), () => completeTurn(params?.threadId || 'thread-1', turnId));
             return undefined;
         }
         case 'turn/interrupt':

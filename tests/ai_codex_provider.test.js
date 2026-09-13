@@ -171,6 +171,23 @@ describe('personal ChatGPT adapter availability', () => {
         expect(fs.existsSync(recordPath)).toBe(false);
     });
 
+    it('spends one deadline across the whole turn, not one per phase', async () => {
+        // A server that is slow to acknowledge the turn and then never completes
+        // it. Giving each phase its own budget would hold the runtime for a
+        // multiple of the caller's limit, past the reservation that bounds it.
+        fake({ threadDelayMs: 150, turnStartDelayMs: 400, turn: 'stall', recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        const started = Date.now();
+        try {
+            await expect(client.runTurn(session, {
+                model: 'model-beta', messages: [{ role: 'user', content: 'x' }], schema, timeoutMs: 800
+            })).rejects.toMatchObject({ code: 'AI_TIMEOUT' });
+        } finally { runtime.stopRuntime(session); }
+        // Well under the two budgets the phases would otherwise each consume.
+        expect(Date.now() - started).toBeLessThan(1300);
+    }, 30000);
+
     it('rechecks access immediately before submitting a billable turn', async () => {
         const turnRecordPath = path.join(dataDir, `turn-${Date.now()}.txt`);
         // Starting the thread takes long enough for access to change, and a
