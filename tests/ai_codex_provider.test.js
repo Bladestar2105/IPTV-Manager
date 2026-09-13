@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 
 // The personal ChatGPT adapter is exercised against a synthetic app server that
 // speaks the real newline-delimited JSON-RPC protocol, so the manager's own
@@ -1672,6 +1672,28 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).lease_id).not.toBe('gone');
         runtime.stopRuntime(session);
         await idleRuntimes();
+    }, 30000);
+
+    it('treats a process it cannot inspect as still running', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // Whatever the host offers for looking at a process can be absent or
+        // refuse the question — BusyBox `ps` in the container image has no `-p`
+        // at all. An unanswerable question must never read as "gone", because
+        // that frees a live identity and deletes the files it is working in.
+        const sleeper = spawn('/bin/sh', ['-c', 'sleep 30'], { detached: true, stdio: 'ignore' });
+        sleeper.unref();
+        const pid = sleeper.pid;
+        expect(() => process.kill(pid, 0)).not.toThrow();
+        try {
+            // The host cannot answer what this process is.
+            expect(credentials.identityProcessAlive('user:1', connection.id, pid, () => null)).toBe(true);
+            // It can, and the answer is something else entirely.
+            expect(credentials.identityProcessAlive('user:1', connection.id, pid, () => '/usr/bin/unrelated')).toBe(false);
+            // And a process that is gone stays gone whatever the host says.
+            const dead = spawnSync('/bin/sh', ['-c', 'exit 0']).pid;
+            expect(credentials.identityProcessAlive('user:1', connection.id, dead, () => null)).toBe(false);
+        } finally { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
     }, 30000);
 
     it('never signals a recycled pid that is not this identity\'s runtime', async () => {

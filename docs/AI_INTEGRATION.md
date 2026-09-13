@@ -495,7 +495,10 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   A recorded process is only ever signalled when it still looks like that
   identity's own runtime — every sandbox command carries the identity's
   directory — because a recorded number is meaningless once it has been recycled,
-  which across a restart it usually has.
+  which across a restart it usually has. That question is asked of `/proc` on
+  Linux, because the container image ships BusyBox, whose `ps` does not take a
+  process number at all; a host that cannot answer it is told that the process is
+  still running, since the opposite guess frees a live identity.
 * One runtime per identity and connection, held by a database lease with a
   heartbeat. The lease is the promise that no process is using that identity, so
   a stopping runtime keeps it until its child has actually exited — closing only

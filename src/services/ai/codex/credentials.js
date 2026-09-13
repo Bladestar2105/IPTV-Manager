@@ -349,14 +349,36 @@ function processGone(pid) {
 // was — so it is only ever signalled when the process still looks like this very
 // identity's runtime. Every sandbox command carries the identity's own
 // directory, which no unrelated process has in its arguments.
-export function identityProcessAlive(ownerKey, connectionId, pid) {
-    return runsThisIdentity(pid, identityPaths(ownerKey, connectionId).root);
+// `inspect` is only ever supplied by a test: reading another process's command
+// line is exactly the part that differs between hosts, and it has to be possible
+// to ask what this decides when the host cannot answer.
+export function identityProcessAlive(ownerKey, connectionId, pid, inspect = processArguments) {
+    return runsThisIdentity(pid, identityPaths(ownerKey, connectionId).root, inspect);
 }
 
-function runsThisIdentity(pid, root) {
+function runsThisIdentity(pid, root, inspect = processArguments) {
     if (processGone(pid)) return false;
-    try { return execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 }).includes(root); }
-    catch { return false; }
+    const args = inspect(pid);
+    // The process exists but could not be inspected. Assuming it is this
+    // identity's runtime is the only safe answer: guessing the other way frees a
+    // live identity and deletes the files it is working in.
+    if (args === null) return true;
+    return args.includes(root);
+}
+
+// `/proc` on Linux, because the container image ships BusyBox, whose `ps` has no
+// `-p` and would fail — silently turning every live child into an absent one.
+// `ps` elsewhere, where there is no `/proc`. A failure to read either is not an
+// answer and is reported as such.
+function processArguments(pid) {
+    if (process.platform === 'linux') {
+        try { return fs.readFileSync(`/proc/${pid}/cmdline`).toString('utf8').replace(/\0/g, ' '); }
+        catch { return null; }
+    }
+    try {
+        const listed = execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 });
+        return listed.trim() ? listed : null;
+    } catch { return null; }
 }
 
 // Ends a sandboxed runtime whose worker died. Its lease is only released once
