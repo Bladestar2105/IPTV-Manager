@@ -11,6 +11,7 @@ export function migrateAiSchema(db) {
         CREATE TABLE IF NOT EXISTS ai_enrichments (id TEXT PRIMARY KEY, owner_key TEXT NOT NULL, user_id INTEGER NOT NULL, provider_channel_id INTEGER NOT NULL, source_hash TEXT NOT NULL, language TEXT NOT NULL, feature TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT NOT NULL, data_json TEXT NOT NULL, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_sync_snapshots (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, provider_id INTEGER NOT NULL, data_json TEXT NOT NULL, created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_codex_credentials (owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, encrypted_blob TEXT NOT NULL, account_hash TEXT, account_label TEXT, plan_type TEXT, auth_method TEXT, version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, PRIMARY KEY (owner_key, connection_id));
+        CREATE TABLE IF NOT EXISTS ai_codex_credential_stage (owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, encrypted_blob TEXT NOT NULL, account_hash TEXT, account_label TEXT, plan_type TEXT, auth_method TEXT, login_id TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (owner_key, connection_id));
         CREATE TABLE IF NOT EXISTS ai_codex_logins (id TEXT PRIMARY KEY, owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, login_id TEXT, status TEXT NOT NULL, verification_url TEXT, user_code TEXT, actor_version INTEGER, session_hash TEXT NOT NULL, error_code TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_codex_runtimes (owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, lease_id TEXT NOT NULL, worker_pid INTEGER NOT NULL, state TEXT NOT NULL, expires_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (owner_key, connection_id));
         CREATE INDEX IF NOT EXISTS idx_ai_connections_owner ON ai_connections(owner_key, updated_at);
@@ -79,16 +80,19 @@ export function migrateAiSchema(db) {
     db.exec(`
         CREATE TRIGGER IF NOT EXISTS ai_codex_delete_user AFTER DELETE ON users BEGIN
             DELETE FROM ai_codex_credentials WHERE owner_key='user:' || OLD.id;
+            DELETE FROM ai_codex_credential_stage WHERE owner_key='user:' || OLD.id;
             DELETE FROM ai_codex_logins WHERE owner_key='user:' || OLD.id;
             DELETE FROM ai_codex_runtimes WHERE owner_key='user:' || OLD.id;
         END;
         CREATE TRIGGER IF NOT EXISTS ai_codex_delete_admin AFTER DELETE ON admin_users BEGIN
             DELETE FROM ai_codex_credentials WHERE owner_key='admin:' || OLD.id;
+            DELETE FROM ai_codex_credential_stage WHERE owner_key='admin:' || OLD.id;
             DELETE FROM ai_codex_logins WHERE owner_key='admin:' || OLD.id;
             DELETE FROM ai_codex_runtimes WHERE owner_key='admin:' || OLD.id;
         END;
         CREATE TRIGGER IF NOT EXISTS ai_codex_delete_connection AFTER DELETE ON ai_connections BEGIN
             DELETE FROM ai_codex_credentials WHERE owner_key=OLD.owner_key AND connection_id=OLD.id;
+            DELETE FROM ai_codex_credential_stage WHERE owner_key=OLD.owner_key AND connection_id=OLD.id;
             DELETE FROM ai_codex_logins WHERE owner_key=OLD.owner_key AND connection_id=OLD.id;
             DELETE FROM ai_codex_runtimes WHERE owner_key=OLD.owner_key AND connection_id=OLD.id;
         END;

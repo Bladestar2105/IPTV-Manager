@@ -132,7 +132,7 @@ function readOwnCredential(paths) {
     finally { fs.closeSync(handle); }
 }
 
-export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = false } = {}) {
+export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = false, stage = false } = {}) {
     const paths = identityPaths(ownerKey, connectionId);
     const contents = readOwnCredential(paths);
     if (!contents || Buffer.byteLength(contents) > MAX_AUTH_BYTES) return { sealed: false };
@@ -179,6 +179,19 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
         // credential now would put one back behind the teardown, where nothing
         // is watching for it any more.
         try { if (JSON.parse(connection.data_json).teardown) return false; } catch { /* an unreadable payload is not a teardown */ }
+        // A sign-in stores its credential beside the record, not over it. Nothing
+        // reads a staged row as a link, and a worker that dies before the sign-in
+        // is published therefore cannot take the credential that was working with
+        // it — the replacement is simply never promoted.
+        if (stage) {
+            db.prepare(`INSERT INTO ai_codex_credential_stage(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,login_id,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
+                    account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
+                    login_id=excluded.login_id,created_at=excluded.created_at`)
+                .run(ownerKey, connectionId, blob, next.account_hash, next.account_label, next.plan_type, next.auth_method, next.login_id, Date.now());
+            return true;
+        }
         db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,login_id,version,updated_at)
             VALUES(?,?,?,?,?,?,?,?,1,?)
             ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
@@ -202,17 +215,35 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
     return { sealed: true, ...next };
 }
 
-// Puts a previously stored record back after a replacement sign-in was refused
-// at the last gate. The replacement has already overwritten it by then, and the
-// account that was working must not lose its link to a sign-in that failed.
-export function restoreCredential(record) {
-    db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,login_id,version,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
-            account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
-            login_id=excluded.login_id,version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
-        .run(record.owner_key, record.connection_id, record.encrypted_blob, record.account_hash, record.account_label,
-            record.plan_type, record.auth_method, record.login_id, Number(record.version || 1), Date.now());
+export function readStagedCredential(ownerKey, connectionId) {
+    return db.prepare('SELECT * FROM ai_codex_credential_stage WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId) || null;
+}
+
+export function discardStagedCredential(ownerKey, connectionId) {
+    db.prepare('DELETE FROM ai_codex_credential_stage WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId);
+}
+
+// Turns a staged sign-in into the connection's link. Only here does a credential
+// become the one everything else reads, and only for the attempt that stored it.
+// The unique account fingerprint is enforced by this insert, which is what
+// decides a race between two connections signing into the same ChatGPT account.
+export function promoteStagedCredential(ownerKey, connectionId, loginId) {
+    const staged = readStagedCredential(ownerKey, connectionId);
+    if (!staged || staged.login_id !== loginId) return { promoted: false };
+    try {
+        db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,login_id,version,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,1,?)
+            ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
+                account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
+                login_id=excluded.login_id,version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
+            .run(ownerKey, connectionId, staged.encrypted_blob, staged.account_hash, staged.account_label,
+                staged.plan_type, staged.auth_method, staged.login_id, Date.now());
+    } catch (error) {
+        if (String(error?.code || '').startsWith('SQLITE_CONSTRAINT')) return { promoted: false, reason: 'duplicate' };
+        throw error;
+    }
+    discardStagedCredential(ownerKey, connectionId);
+    return { promoted: true };
 }
 
 // Drops only the record that makes a connection read as linked, leaving the
@@ -227,6 +258,7 @@ export function forgetCredential(ownerKey, connectionId) {
 // its own expiry and by account deletion.
 export function wipe(ownerKey, connectionId, { keepLeaseId = null } = {}) {
     db.prepare('DELETE FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId);
+    db.prepare('DELETE FROM ai_codex_credential_stage WHERE owner_key=? AND connection_id=?').run(ownerKey, connectionId);
     // A caller that holds a cleanup reservation keeps it: that row is the only
     // thing keeping a relink off this identity while the files are removed, and
     // dropping it here would let a replacement recreate the directory this call
@@ -493,6 +525,7 @@ export async function resetInterruptedRuntimes() {
 // also delete the directory of an account that is signing in right now.
 export function purgeIdentity(ownerKey) {
     db.prepare('DELETE FROM ai_codex_credentials WHERE owner_key=?').run(ownerKey);
+    db.prepare('DELETE FROM ai_codex_credential_stage WHERE owner_key=?').run(ownerKey);
     db.prepare('DELETE FROM ai_codex_logins WHERE owner_key=?').run(ownerKey);
     db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=?').run(ownerKey);
     fs.rmSync(path.join(identitiesRoot(), ownerDirectory(ownerKey)), { recursive: true, force: true });

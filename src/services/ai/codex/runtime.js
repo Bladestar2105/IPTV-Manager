@@ -23,6 +23,8 @@ const LEASE_HANDOVER_MS = 5000;
 // Long enough to cover the protocol client's own escalation to SIGKILL.
 const SHUTDOWN_WAIT_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 20000;
+// Executing the runtime just to read its version is part of a caller's budget.
+const VERSION_PROBE_TIMEOUT_MS = 15000;
 const live = new Map();
 // A runtime that was told to stop is not live any more, but its child can run for
 // a few more seconds. Shutdown has to know about those too, or their credential
@@ -36,7 +38,7 @@ const run = promisify(execFile);
 // for its version happens inside the verified sandbox. Running it on the host
 // first would hand it the data directory and the key files before any boundary
 // exists.
-export async function probeCodexVersion(backend, binary, runtimeDir) {
+export async function probeCodexVersion(backend, binary, runtimeDir, { timeoutMs = VERSION_PROBE_TIMEOUT_MS, signal } = {}) {
     if (!backend || !binary) return null;
     fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
     const probeRoot = fs.mkdtempSync(path.join(runtimeDir, 'version-'));
@@ -46,7 +48,9 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
     try {
         const description = wrapCommand(backend, { codexHome, workDir, command: [binary, '--version'], launcher: binary });
         const { stdout } = await run(description.file, description.args,
-            { env: description.environment, timeout: 15000, maxBuffer: 64 * 1024 });
+            // `signal` is only passed when there is one: the child process API
+            // rejects any other value outright.
+            { env: description.environment, timeout: Math.max(1, timeoutMs), maxBuffer: 64 * 1024, ...(signal ? { signal } : {}) });
         // The whole version token, prerelease and build metadata included: a
         // `0.154.0-beta.1` truncated to `0.154.0` would pass the range check as
         // the tested stable release.
@@ -171,7 +175,7 @@ export function runtimeState(ownerKey, connectionId) {
 // Reports whether this host can offer the adapter at all. Every failure is a
 // stable reason code; nothing here silently downgrades to an unsandboxed or
 // unpinned runtime.
-export async function codexAvailability({ force = false } = {}) {
+export async function codexAvailability({ force = false, timeoutMs, signal } = {}) {
     const config = codexConfig();
     if (!config.enabled) return { available: false, reason: 'AI_CODEX_DISABLED' };
     // The same absolute path is probed here and launched later, so a runtime
@@ -185,7 +189,7 @@ export async function codexAvailability({ force = false } = {}) {
     // runtime and must therefore already be contained.
     const isolation = await resolveIsolation({ force });
     if (!isolation.available) return { available: false, reason: isolation.reason, backend: isolation.backend, grade: isolation.grade };
-    const version = await probeCodexVersion(isolation.handle, binary, config.runtimeDir);
+    const version = await probeCodexVersion(isolation.handle, binary, config.runtimeDir, { timeoutMs, signal });
     if (!version) return { available: false, reason: 'AI_CODEX_BINARY_MISSING' };
     if (!versionSupported(version) && config.versionOverride !== version) {
         return { available: false, reason: 'AI_CODEX_VERSION_UNSUPPORTED', version };
@@ -278,7 +282,10 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
         return Math.min(cap, left);
     };
     budget(0);
-    const availability = await codexAvailability();
+    // Probing the runtime is part of the operation too: it executes the binary,
+    // and a caller whose budget is already spent must not wait out its own
+    // timeout.
+    const availability = await codexAvailability({ timeoutMs: budget(VERSION_PROBE_TIMEOUT_MS), signal });
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
     const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion, budget(LEASE_HANDOVER_MS), signal);

@@ -2233,6 +2233,30 @@ describe('personal ChatGPT runtime ownership', () => {
         }
     }, 30000);
 
+    it('keeps a working link when the worker dies before its replacement is published', async () => {
+        const connection = await linkedConnection();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        await idleRuntimes();
+        const now = Date.now();
+        // A relink that sealed and then lost its worker: the replacement exists
+        // only as a staged credential, and the attempt is resolved by recovery.
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('crashed-relink','user:1',?,'login-8','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+            .run(connection.id, now, now, now + 600000, now);
+        db.prepare(`INSERT OR REPLACE INTO ai_codex_credential_stage(owner_key,connection_id,encrypted_blob,account_hash,login_id,created_at)
+            VALUES('user:1',?,'replacement-blob','hash-replacement','crashed-relink',?)`).run(connection.id, now);
+        const handle = ai.ownedAccountConnection(user, connection.id, { requirePolicy: false });
+        // The browser stopped watching, so this sign-in cannot be adopted.
+        db.prepare('UPDATE ai_codex_logins SET last_seen_at=?, created_at=? WHERE id=?').run(now - 600000, now - 600000, 'crashed-relink');
+        expect(account.readLoginStatus(user, handle, 'crashed-relink', 'fp').status).toBe('failed');
+        // Refusing it must not take the link that was working with it, and the
+        // replacement must not be left staged for a later pass to adopt.
+        const after = credentials.readCredentialRecord('user:1', connection.id);
+        expect(after.encrypted_blob).toBe(before.encrypted_blob);
+        expect(after.account_hash).toBe(before.account_hash);
+        expect(credentials.readStagedCredential('user:1', connection.id)).toBeNull();
+    }, 30000);
+
     it('gives a working link back when its replacement is refused at the last gate', async () => {
         const connection = await linkedConnection();
         const before = credentials.readCredentialRecord('user:1', connection.id);
@@ -2240,7 +2264,7 @@ describe('personal ChatGPT runtime ownership', () => {
         // A relink that authenticates a different account and is then refused
         // after sealing, because the session was revoked in that window.
         fake({ login: 'success', loginDelayMs: 50, email: 'fourth.tester@example.org', recordPath, recordApprovalPath: approvalPath });
-        db.exec(`CREATE TRIGGER test_revoke_after_reseal AFTER UPDATE OF encrypted_blob ON ai_codex_credentials WHEN NEW.connection_id='${connection.id}'
+        db.exec(`CREATE TRIGGER test_revoke_after_reseal AFTER INSERT ON ai_codex_credential_stage WHEN NEW.connection_id='${connection.id}'
             BEGIN UPDATE users SET token_version=token_version+1 WHERE id=1; END;`);
         try {
             const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
@@ -2253,6 +2277,8 @@ describe('personal ChatGPT runtime ownership', () => {
             expect(after.account_hash).toBe(before.account_hash);
             expect(after.encrypted_blob).toBe(before.encrypted_blob);
             expect(after.login_id).toBe(before.login_id);
+            // Nothing of the refused sign-in is left staged either.
+            expect(credentials.readStagedCredential('user:1', connection.id)).toBeNull();
         } finally {
             db.exec('DROP TRIGGER test_revoke_after_reseal');
             db.prepare('UPDATE users SET token_version=0 WHERE id=1').run();
@@ -2264,7 +2290,9 @@ describe('personal ChatGPT runtime ownership', () => {
         const connection = createConnection();
         await idleRuntimes();
         // The reset lands after sealing, which the seal-time check cannot see.
-        db.exec(`CREATE TRIGGER test_revoke_after_seal AFTER INSERT ON ai_codex_credentials WHEN NEW.connection_id='${connection.id}'
+        // The moment the credential is stored: a sign-in stages it, and only a
+        // published sign-in turns that into the connection's link.
+        db.exec(`CREATE TRIGGER test_revoke_after_seal AFTER INSERT ON ai_codex_credential_stage WHEN NEW.connection_id='${connection.id}'
             BEGIN UPDATE users SET token_version=token_version+1 WHERE id=1; END;`);
         try {
             const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'session-fingerprint');

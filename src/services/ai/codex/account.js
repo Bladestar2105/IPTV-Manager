@@ -8,7 +8,7 @@ import { accountRow } from './identity.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
-import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, forgetCredential, restoreCredential, withCleanupLease } from './credentials.js';
+import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, forgetCredential, readStagedCredential, promoteStagedCredential, discardStagedCredential, withCleanupLease } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 // A sign-in belongs to the browser session that started it. That session polls
@@ -87,21 +87,27 @@ function expireLogins() {
     for (const row of db.prepare(`SELECT id,owner_key,connection_id,actor_version,created_at,last_seen_at FROM ai_codex_logins WHERE status=?
         AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
             AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
-        // Only the credential this attempt stored is evidence of its success.
-        // Presence alone would adopt the record a relink was about to replace,
-        // and any advance of the version would adopt an ordinary token refresh,
-        // which seals against the same record.
+        // Either the worker died after publishing — the link already names this
+        // attempt — or its credential is still staged and nothing has adopted it.
         const record = readCredentialRecord(row.owner_key, row.connection_id);
-        const stored = Boolean(record) && record.login_id === row.id;
+        const published = Boolean(record) && record.login_id === row.id;
+        const staged = readStagedCredential(row.owner_key, row.connection_id);
+        const pending = Boolean(staged) && staged.login_id === row.id;
         // Recovery is a completion like any other, so it answers to the same
         // gates. A crash window is not a way past a withdrawn policy, a revoked
-        // session or a browser that stopped watching — and a credential that
-        // cannot be adopted is not kept.
-        const linked = stored && completionAllowed(row.owner_key, row);
-        if (stored && !linked) forgetCredential(row.owner_key, row.connection_id);
+        // session or a browser that stopped watching.
+        const allowed = completionAllowed(row.owner_key, row);
+        let linked = published && allowed;
+        if (published && !allowed) forgetCredential(row.owner_key, row.connection_id);
+        if (!published && pending) {
+            // A staged credential is promoted or dropped, never left behind: the
+            // link that was working — if there was one — is untouched either way.
+            if (allowed) linked = promoteStagedCredential(row.owner_key, row.connection_id, row.id).promoted;
+            if (!linked) discardStagedCredential(row.owner_key, row.connection_id);
+        }
         db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
             .run(linked ? 'completed' : 'failed',
-                linked ? null : (stored ? 'ai_codex_login_rejected' : 'ai_codex_login_interrupted'), now, row.id, SEALING_STATUS);
+                linked ? null : ((published || pending) ? 'ai_codex_login_rejected' : 'ai_codex_login_interrupted'), now, row.id, SEALING_STATUS);
     }
     db.prepare(`DELETE FROM ai_codex_logins WHERE status NOT IN (${UNFINISHED_STATUSES.map(() => '?').join(',')}) AND updated_at < ?`)
         .run(...UNFINISHED_STATUSES, now - 86400000);
@@ -228,12 +234,10 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
     const attempt = attempts.get(row.id);
     if (!attempt) return;
     // Read before anything this attempt could store; an attempt never seals on
-    // teardown, so only its own success can add a record. The whole row is kept,
-    // not just whether there was one: a replacement that is refused at the last
-    // gate has already overwritten it, and the account that was working must get
-    // its link back.
-    const previous = readCredentialRecord(ownerKey, connectionId);
-    const hadCredential = Boolean(previous);
+    // teardown, so only its own success can add a record. A sign-in stages its
+    // credential rather than writing over this one, so a link that exists here
+    // survives every way the new sign-in can still fail.
+    const hadCredential = Boolean(readCredentialRecord(ownerKey, connectionId));
     // Not our completion: leave the attempt and its runtime alone so the real
     // one can still arrive. Returning inside the try below would run its
     // `finally` and stop the pending runtime.
@@ -296,7 +300,7 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             accountLabel: maskAccount(account.email),
             planType: typeof account.planType === 'string' ? account.planType.slice(0, 40) : null,
             authMethod: status.authMethod
-        }); } catch { sealed = { sealed: false }; }
+        }, { stage: true }); } catch { sealed = { sealed: false }; }
         if (!sealed.sealed) {
             // Only while the attempt is still this one's: a teardown that ended
             // it already recorded the truer reason.
@@ -316,21 +320,26 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             // that stopped watching in that window each mean this sign-in must not
             // become a link.
             const current = db.prepare('SELECT actor_version,connection_id,created_at,last_seen_at FROM ai_codex_logins WHERE id=?').get(row.id);
-            if (!current || !completionAllowed(ownerKey, current)) return false;
-            return db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
-                .run('completed', Date.now(), row.id, SEALING_STATUS).changes > 0;
+            if (!current || !completionAllowed(ownerKey, current)) return { ok: false };
+            // Promoting the staged credential and publishing the attempt are one
+            // step: a link exists exactly when the sign-in that produced it does.
+            const promotion = promoteStagedCredential(ownerKey, connectionId, row.id);
+            if (!promotion.promoted) return { ok: false, reason: promotion.reason };
+            return { ok: db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
+                .run('completed', Date.now(), row.id, SEALING_STATUS).changes > 0 };
         }).immediate();
-        if (!published) {
+        if (!published.ok) {
             // Nothing is kept: the credential this attempt just stored is removed
             // with the rest of its own state, because the owner may no longer use
             // it at all.
             db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
-                .run('failed', 'ai_codex_login_rejected', Date.now(), row.id, SEALING_STATUS);
-            // The replacement is signed out and dropped; a link that existed
-            // before it is restored, because refusing a new sign-in is not a
-            // reason to disconnect the account that was working.
+                .run('failed', published.reason === 'duplicate' ? 'ai_codex_account_already_linked' : 'ai_codex_login_rejected',
+                    Date.now(), row.id, SEALING_STATUS);
+            // The replacement is signed out and its staged credential dropped. A
+            // link that existed before it was never touched, because refusing a
+            // new sign-in is not a reason to disconnect the account that worked.
+            discardStagedCredential(ownerKey, connectionId);
             await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
-            if (previous) restoreCredential(previous);
         }
     } catch {
         finishLogin(row.id, 'failed', 'ai_codex_login_failed');
