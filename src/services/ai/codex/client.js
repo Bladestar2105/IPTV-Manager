@@ -162,7 +162,7 @@ function turnInput(messages, schema) {
 // would reject valid answers well below the promised limit.
 const MAX_STREAM_BYTES = 512 * 1024;
 
-export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000 }) {
+export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000, verify }) {
     const { developer, text } = turnInput(messages, schema);
     const started = await session.client.request('thread/start', {
         cwd: session.paths.workDir,
@@ -202,6 +202,12 @@ export async function runTurn(session, { model, messages, schema, structured = t
         if (method === 'thread/tokenUsage/updated' && params?.tokenUsage?.total) state.usage = params.tokenUsage.total;
         if (method === 'turn/completed' && params?.turn) state.done = params.turn;
     };
+
+    // Starting a thread can take its own thirty seconds. The caller's recheck
+    // therefore runs here, immediately before the billable request, not only
+    // before the thread: a compatibility test has no job monitor and no abort
+    // signal behind it, so this is its last gate.
+    verify?.();
 
     let turn;
     try {

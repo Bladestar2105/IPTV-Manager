@@ -155,14 +155,20 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
         // The owner can be deactivated, expire or lose Web UI access while a
         // completion is in flight on another worker — an account deletion revokes
         // access before it tears anything down for exactly this reason.
-        if (!accountRow(ownerKey)) return false;
+        const account = accountRow(ownerKey);
+        if (!account) return false;
         // And the attempt this credential belongs to must still be the one that
         // claimed the identity. A teardown ends claimed attempts, so a sign-in it
         // cancelled cannot store a credential behind it.
         if (metadata.loginId) {
-            const attempt = db.prepare('SELECT status FROM ai_codex_logins WHERE id=? AND owner_key=? AND connection_id=?')
+            const attempt = db.prepare('SELECT status,actor_version FROM ai_codex_logins WHERE id=? AND owner_key=? AND connection_id=?')
                 .get(metadata.loginId, ownerKey, connectionId);
             if (attempt?.status !== 'sealing') return false;
+            // The session that started the sign-in can be revoked while its
+            // completion is in flight. A password reset advances the version the
+            // attempt recorded, and storing a credential for a revoked session
+            // would hand it exactly what the reset took away.
+            if (Number.isInteger(attempt.actor_version) && attempt.actor_version !== account.token_version) return false;
         }
         // A disconnect or a deletion is already removing this link. Storing a
         // credential now would put one back behind the teardown, where nothing

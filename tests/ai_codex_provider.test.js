@@ -171,6 +171,30 @@ describe('personal ChatGPT adapter availability', () => {
         expect(fs.existsSync(recordPath)).toBe(false);
     });
 
+    it('rechecks access immediately before submitting a billable turn', async () => {
+        const turnRecordPath = path.join(dataDir, `turn-${Date.now()}.txt`);
+        // Starting the thread takes long enough for access to change, and a
+        // compatibility test has no job monitor and no abort signal behind it.
+        fake({ threadDelayMs: 400, turnRecordPath, recordPath, recordApprovalPath: approvalPath });
+        const connection = await withModel();
+        await idleRuntimes();
+        // The setup above ran its own turns; only what happens after this counts.
+        fs.rmSync(turnRecordPath, { force: true });
+        const pending = ai.testModels(user, connection.id, { model_ids: ['model-beta'] });
+        await wait(150);
+        ai.updateAiSettings(admin, { enabled: false });
+        try {
+            const result = await pending.catch(error => error);
+            // Either the request is refused outright or the profile records the
+            // refusal; what must not happen is a submitted turn.
+            expect(fs.existsSync(turnRecordPath)).toBe(false);
+            if (result instanceof Error) expect(['AI_CONNECTION_CHANGED', 'AI_DISABLED', 'AI_FORBIDDEN']).toContain(result.code);
+        } finally {
+            ai.updateAiSettings(admin, { enabled: true });
+            await idleRuntimes();
+        }
+    }, 30000);
+
     it('bounds the whole model catalog by one deadline, not one per page', async () => {
         // Ten pages with their own timeout could hold a runtime for minutes while
         // the reservation that bounds the operation had long expired.
@@ -342,6 +366,20 @@ describe('personal ChatGPT adapter availability', () => {
         db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_cancelled' WHERE id='late'").run();
         expect(seal()).toBe(false);
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('refuses to store a credential for a sign-in whose session was revoked', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        expect(inFlightSeal(connection.id)()).toBe(true);
+        const seal = inFlightSeal(connection.id);
+        // A password reset while the completion is in flight: the attempt still
+        // names the version it was started with.
+        db.prepare('UPDATE users SET token_version=7 WHERE id=1').run();
+        try {
+            expect(seal()).toBe(false);
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally { db.prepare('UPDATE users SET token_version=0 WHERE id=1').run(); }
     }, 30000);
 
     it('refuses to store a credential for an owner whose access was revoked', async () => {

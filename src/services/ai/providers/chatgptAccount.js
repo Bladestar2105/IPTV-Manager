@@ -55,7 +55,11 @@ export const chatgptAccountProvider = {
                     structured: payload.structured !== false,
                     maxTokens: payload.maxTokens,
                     signal,
-                    timeoutMs: CODEX_TURN_TIMEOUT_MS
+                    timeoutMs: CODEX_TURN_TIMEOUT_MS,
+                    // Re-checked once more inside, immediately before the turn is
+                    // submitted, because starting the thread can take long enough
+                    // for access to change.
+                    verify: beforeSend
                 });
                 // A token refreshed during the turn is captured before teardown.
                 seal(ownerKey, connection.id, {}, { refreshOnly: true });

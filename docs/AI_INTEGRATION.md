@@ -345,6 +345,10 @@ the existing `chat/completions` transport.
   suffix included, prerelease and build metadata together — in
   `AI_CODEX_VERSION_OVERRIDE` after validating it separately. The version probe and the runtime handshake read the same token,
   so an allowed build passes both gates rather than one.
+* Access is checked once more immediately before a turn is submitted, not only
+  before the thread is started: starting a thread has its own thirty-second
+  budget, and a compatibility test has neither a job monitor nor an abort signal
+  behind it, so that is its last gate before a billable request.
 * Model discovery pages through `model/list` under one deadline for the whole
   catalog, matching the provider's advertised setup timeout, so a slow or
   endlessly paging server cannot hold a runtime past the reservation that bounds
@@ -508,7 +512,10 @@ one-time device code.
   connection exists and is not tearing down, that the owner still passes the
   subsystem's access rule — one definition, shared by the lease, the account
   service and the credential store — and that the attempt the credential belongs
-  to is still the one that claimed the identity. A deletion revokes access
+  to is still the one that claimed the identity, with the session version that
+  attempt was started under still current — a password reset during a completion
+  revokes the session, and storing the credential would hand it exactly what the
+  reset took away. A deletion revokes access
   before it tears anything down, so a completion in flight on another worker
   cannot slip a credential in behind it, whether or not the deletion then
   succeeds.

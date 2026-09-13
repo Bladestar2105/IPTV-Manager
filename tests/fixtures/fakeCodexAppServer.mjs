@@ -200,8 +200,10 @@ function handle(message) {
             // overall budget runs out while a per-page timeout would not.
             if (config.modelDelayMs) { later(config.modelDelayMs, () => reply(modelPage(params))); return undefined; }
             return reply(modelPage(params));
-        case 'thread/start':
-            return reply({
+        case 'thread/start': {
+            // A slow thread start: long enough for access to change before the
+            // billable turn is submitted.
+            const started = () => reply({
                 thread: { id: 'thread-1', environments: [] },
                 model: params?.model || 'model-alpha',
                 modelProvider: 'openai',
@@ -213,8 +215,13 @@ function handle(message) {
                 sandbox: config.sandboxEcho || { type: 'readOnly', networkAccess: false },
                 reasoningEffort: null
             });
+            if (config.threadDelayMs) { later(config.threadDelayMs, started); return undefined; }
+            return started();
+        }
         case 'turn/start': {
             const turnId = 'turn-1';
+            // Records that a billable turn was actually submitted.
+            if (config.turnRecordPath) { try { fs.writeFileSync(config.turnRecordPath, 'started'); } catch { /* ignored */ } }
             // Models a model that answers plain JSON but rejects a schema.
             if (config.rejectStructured && params?.outputSchema) {
                 reply({ turn: { id: turnId, items: [], itemsView: 'complete', status: 'inProgress', error: null } });
