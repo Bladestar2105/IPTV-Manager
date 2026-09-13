@@ -52,6 +52,7 @@ vi.mock('../src/services/ai/codex/isolation.js', async () => {
 let db, ai, jobs, account, credentials, readiness, runtime, client, migrateAiSchema;
 // Captured right after the modules load and before any runtime exists.
 let signalListenersAfterImport = null;
+let exitListenersAfterImport = [];
 const admin = { id: 1, is_admin: true };
 const user = { id: 1, is_admin: false };
 const other = { id: 2, is_admin: false };
@@ -105,6 +106,7 @@ beforeAll(async () => {
     runtime = await import('../src/services/ai/codex/runtime.js');
     client = await import('../src/services/ai/codex/client.js');
     signalListenersAfterImport = process.listenerCount('SIGTERM');
+    exitListenersAfterImport = process.listeners('exit');
     await readiness.refreshCodexReadiness({ force: true });
 });
 
@@ -1961,6 +1963,33 @@ describe('personal ChatGPT runtime ownership', () => {
         await runtime.shutdownRuntimes({ timeoutMs: 10000 });
         expect(fs.existsSync(session.paths.authFile)).toBe(false);
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it.each([false, true])('retains an unreaped child for primary cleanup on synchronous exit (already stopping=%s)', async alreadyStopping => {
+        const connection = await linkedConnection();
+        fake({ ignoreTerm: true, slowExitMs: 30000 });
+        const session = await runtime.startRuntime('user:1', connection.id);
+        const exitHandler = process.listeners('exit').find(listener => !exitListenersAfterImport.includes(listener));
+        expect(exitHandler).toBeTypeOf('function');
+        try {
+            if (alreadyStopping) runtime.stopRuntime(session);
+            // Invoke only this module's synchronous exit callback: no event-loop
+            // continuation or delayed SIGKILL can run before these assertions.
+            exitHandler();
+            expect(() => process.kill(session.client.pid, 0)).not.toThrow();
+            expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'stopping', child_pid: session.client.pid });
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+            // The persisted child identity lets the primary finish the handoff.
+            db.prepare('UPDATE ai_codex_runtimes SET worker_pid=? WHERE connection_id=?').run(424246, connection.id);
+            expect((await credentials.releaseWorkerRuntimes(424246)).retained).toBe(0);
+            expect(() => process.kill(session.client.pid, 0)).toThrow();
+            expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+            expect(fs.existsSync(session.paths.authFile)).toBe(false);
+        } finally {
+            runtime.stopRuntime(session);
+            await session.client.exited;
+            await idleRuntimes();
+        }
     }, 30000);
 
     it('lets a replacement wait for a terminating runtime but refuses a live one', async () => {

@@ -17,6 +17,7 @@ try {
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
+  let nextJobResult = null;
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
   let cancelGate, releaseJobCreation, jobCreationRequested;
   let delayJobCreation = true;
@@ -101,7 +102,7 @@ try {
       if (pollErrorOnce) { pollErrorOnce = false; await route.fulfill({status: 503, json: {code: 'AI_UNAVAILABLE'}}); return; }
       pollCount++;
       if (nextJobError && pollCount > 1) data = {id: `j${jobCount}`, status: 'failed', error_code: nextJobError};
-      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
+      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: nextJobResult || {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
     } else if (path.endsWith('/cancel')) {
       if (cancelGate?.path === path) {
         const gate = cancelGate;
@@ -353,8 +354,13 @@ try {
   await page.locator('#ai-keep-first').fill('1');
   for (const feature of ['cleanup', 'duplicates', 'epg', 'sync', 'diagnose', 'text']) {
     await page.locator('#ai-feature').selectOption(feature);
+    if (feature === 'text') nextJobResult = {feature:'text',summary:'',text:'Translated description',tags:['Sport']};
     await page.locator('#ai-run').click();
-    await page.locator('#ai-action-a1').waitFor();
+    if (feature === 'text') {
+      await page.getByText('Translated description', {exact:true}).waitFor();
+      assert.doesNotMatch(await page.locator('#ai-result').innerText(), /No results/);
+      nextJobResult = null;
+    } else await page.locator('#ai-action-a1').waitFor();
     const input = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
     assert.equal(input.feature, feature);
     assert.deepEqual(input.pinned_ids, [6]);

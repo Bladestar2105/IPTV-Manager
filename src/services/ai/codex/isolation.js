@@ -325,10 +325,11 @@ function candidates(requested) {
 }
 
 // The readiness probe and the sandboxed launch must use the same executable.
-// Resolving once, to an absolute path, prevents the case where the probe finds
-// `codex` on the host PATH while the sandbox's narrow PATH cannot.
+// Use the canonical entrypoint: binding an npm symlink outside system roots
+// dereferences it, otherwise breaking the launcher's relative package imports.
 export function resolveCodexBinary(binary) {
-    return which(binary);
+    const resolved = which(binary);
+    return resolved ? realPath(resolved) : null;
 }
 
 // Resolves the isolation backend once per process. A failure is a stable reason

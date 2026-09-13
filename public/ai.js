@@ -781,7 +781,9 @@ window.aiUI = (() => {
     const resultStamp = beginResult();
     const box = el('result');
     label('h3', box, 'result', 'h5');
-    node('p', box, result.summary || tr(result.explanation_unavailable ? 'localOnly' : 'empty'));
+    if (result.summary || (!result.text && !result.tags?.length)) {
+      node('p', box, result.summary || tr(result.explanation_unavailable ? 'localOnly' : 'empty'));
+    }
     const coverage = result.coverage || {};
     for (const [key, shown, total] of [
       ['analyzedCount', coverage.processed, coverage.total],

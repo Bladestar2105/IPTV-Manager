@@ -65,6 +65,16 @@ function isTokenExpired() {
   }
 }
 
+function isAuthenticationFailure(status, error) {
+  return status === 401 || (status === 403 && [
+    'Invalid or expired token',
+    'User is inactive or deleted',
+    'Token revoked (password changed)',
+    'WebUI access revoked',
+    'Access denied from your region'
+  ].includes(error));
+}
+
 async function fetchJSON(url, options = {}) {
   // Add JWT token to requests
   const token = getToken();
@@ -84,15 +94,7 @@ async function fetchJSON(url, options = {}) {
       errorData = await res.clone().json();
     } catch {}
 
-    const authenticationFailure = res.status === 401 || [
-      'Invalid or expired token',
-      'User is inactive or deleted',
-      'Token revoked (password changed)',
-      'WebUI access revoked',
-      'Access denied from your region'
-    ].includes(errorData?.error);
-
-    if (authenticationFailure) {
+    if (isAuthenticationFailure(res.status, errorData?.error)) {
       clearSessionSensitiveState();
       removeToken();
       showLoginModal();
@@ -4986,8 +4988,8 @@ async function handleLogout() {
         signal: AbortSignal.timeout(10000)
       });
       if (!response.ok) {
-        const error = [401, 403].includes(response.status) ? (await response.json()).error : null;
-        if (!['Invalid or expired token', 'Token revoked (password changed)'].includes(error)) throw new Error();
+        const error = response.status === 403 ? (await response.json()).error : null;
+        if (!isAuthenticationFailure(response.status, error)) throw new Error();
       }
     } catch {
       if (getToken() === token) showToast(t('error'), 'danger');

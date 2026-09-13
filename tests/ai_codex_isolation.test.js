@@ -127,6 +127,27 @@ describe('Codex runtime environment', () => {
 });
 
 describe('Codex launcher location and interpreter', () => {
+    it('resolves a packaged launcher symlink before probing outside system roots', async () => {
+        const prefix = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-codex-prefix-'));
+        try {
+            const packageRoot = path.join(prefix, 'lib/node_modules/@openai/codex');
+            const entrypoint = path.join(packageRoot, 'bin/codex.js');
+            const dependency = path.join(packageRoot, 'node_modules/runtime-version');
+            const alias = path.join(prefix, 'bin/codex');
+            for (const dir of [path.dirname(entrypoint), dependency, path.dirname(alias)]) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@openai/codex', type: 'module' }));
+            fs.writeFileSync(path.join(dependency, 'index.js'), 'module.exports = "0.154.0";');
+            fs.writeFileSync(entrypoint, '#!/usr/bin/env node\nimport { createRequire } from "node:module";\nconsole.log("codex-cli " + createRequire(import.meta.url)("runtime-version"));\n', { mode: 0o755 });
+            fs.symlinkSync('../lib/node_modules/@openai/codex/bin/codex.js', alias);
+            const binary = isolation.resolveCodexBinary(alias);
+            expect(binary).toBe(fs.realpathSync.native(entrypoint));
+            expect(isolation.resolveCodexBinary(path.join(prefix, 'missing'))).toBeNull();
+            if (detected.available) {
+                expect(await runtime.probeCodexVersion(detected.handle, binary, runtimeDir)).toBe('0.154.0');
+            }
+        } finally { fs.rmSync(prefix, { recursive: true, force: true }); }
+    });
+
     it('refuses a launcher that cannot be mounted without exposing the data directory', () => {
         const inside = path.join(dataDir, 'codex');
         fs.writeFileSync(inside, '#!/bin/sh\nexit 0\n', { mode: 0o755 });

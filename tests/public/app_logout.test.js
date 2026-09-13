@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../../public/app.js', import.meta.url), 'utf8')
-  .match(/(?:async )?function handleLogout\(\) \{[\s\S]*?\n\}/)[0];
+  .match(/(?:async )?function (?:handleLogout|isAuthenticationFailure)\([^)]*\) \{[\s\S]*?\n\}/g).join('\n');
 
 function browser(fetch) {
   let token = 'current-session';
@@ -51,7 +51,11 @@ test.each(['network', 'server'])('failed %s cancellation keeps logout retryable'
 
 test.each([
   [401, 'Token revoked (password changed)'],
-  [403, 'Invalid or expired token']
+  [401, 'No token provided'],
+  [401, 'User is inactive or deleted'],
+  [403, 'Invalid or expired token'],
+  [403, 'WebUI access revoked'],
+  [403, 'Access denied from your region']
 ])('an unusable session can still be cleared locally (%s %s)', async (status, error) => {
   const app = browser(async () => ({ ok: false, status, json: async () => ({ error }) }));
   await app.context.handleLogout();
@@ -60,10 +64,9 @@ test.each([
 });
 
 test.each([
-  [403, 'Access denied from your region'],
-  [403, 'WebUI access revoked'],
-  [401, 'User is inactive or deleted']
-])('a reversible access denial does not acknowledge cancellation (%s %s)', async (status, error) => {
+  [403, 'Access denied'],
+  [403, 'AI_CODEX_UNAVAILABLE']
+])('a non-authentication denial does not acknowledge cancellation (%s %s)', async (status, error) => {
   const app = browser(async () => ({ ok: false, status, json: async () => ({ error }) }));
   await app.context.handleLogout();
   expect(app.token()).toBe('current-session');

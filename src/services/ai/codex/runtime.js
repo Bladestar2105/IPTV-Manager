@@ -443,29 +443,10 @@ function installShutdownHandlers() {
     if (signalsInstalled) return;
     signalsInstalled = true;
     process.on('exit', () => {
-        // Nothing asynchronous can run any more, so the plaintext of whatever is
-        // still live is removed synchronously here.
-        const remaining = [...live.values(), ...terminating];
+        // Exit cannot await child reaping or run the delayed SIGKILL. Keep each
+        // lease and its child PID so the primary (or restart recovery) can stop
+        // an orphan before clearing plaintext and admitting a replacement.
         stopAllRuntimes('AI_CODEX_RUNTIME_CLOSED');
-        for (const session of remaining) {
-            // Only while this session still owns the lease: another worker may
-            // already have started a replacement for the same identity.
-            try {
-                // Claimed in one short transaction, removed outside it: a
-                // synchronous directory deletion inside would hold the writer
-                // lock and time out every other worker's writes. The reservation
-                // is what keeps a replacement off this identity meanwhile.
-                const claimed = db.transaction(() => db.prepare("UPDATE ai_codex_runtimes SET state='cleanup', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
-                    .run(Date.now(), session.ownerKey, session.connectionId, session.leaseId).changes > 0).immediate();
-                try { if (claimed) clearPlaintext(session.ownerKey, session.connectionId); }
-                finally {
-                    if (claimed) {
-                        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
-                            .run(session.ownerKey, session.connectionId, session.leaseId);
-                    }
-                }
-            } catch { /* best effort on exit */ }
-        }
     });
     for (const signal of ['SIGINT', 'SIGTERM']) {
         const handler = async () => {
