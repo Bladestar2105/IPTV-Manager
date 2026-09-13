@@ -2326,6 +2326,29 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
+    it('drops a staged credential when the completion itself fails', async () => {
+        const connection = await linkedConnection();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        await idleRuntimes();
+        // A relink that stages its credential and then fails while being
+        // published. Leaving the attempt sealing would let a later poll promote
+        // that credential over the link that is working.
+        fake({ login: 'success', loginDelayMs: 50, email: 'fifth.tester@example.org', recordPath, recordApprovalPath: approvalPath });
+        // The credential stages successfully; publishing it is what fails.
+        db.exec(`CREATE TRIGGER test_break_publication BEFORE UPDATE ON ai_codex_logins WHEN NEW.status='completed'
+            BEGIN SELECT RAISE(ABORT,'publication failed'); END;`);
+        try {
+            const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+            await until(() => !['starting', 'pending', 'sealing'].includes(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status), 10000);
+            expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('failed');
+            expect(credentials.readStagedCredential('user:1', connection.id)).toBeNull();
+            expect(credentials.readCredentialRecord('user:1', connection.id).encrypted_blob).toBe(before.encrypted_blob);
+        } finally {
+            db.exec('DROP TRIGGER test_break_publication');
+            await idleRuntimes();
+        }
+    }, 30000);
+
     it('signs the runtime out when the sign-in cannot be read back', async () => {
         const logoutRecordPath = path.join(dataDir, `logout-read-${Date.now()}.txt`);
         // The device authorization succeeded and the runtime is authenticated;
@@ -2538,6 +2561,21 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(fs.existsSync(root)).toBe(false);
         // And released once the removal is finished.
         expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id)).toBeUndefined();
+    }, 30000);
+
+    it('leaves a slow cleanup alone when the whole account is torn down', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const now = Date.now();
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'cleanup-account', process.pid, 'cleanup', now - 60000, now - 60000);
+        try {
+            // Marking it revoked would make the wait succeed while the files are
+            // still going, and the deletion would then purge the identity from
+            // underneath that removal.
+            expect(await account.stopAccountRuntimes('user:1')).toEqual({ acknowledged: false });
+            expect(db.prepare('SELECT state FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).state).toBe('cleanup');
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
     }, 30000);
 
     it('does not let a teardown mistake a slow cleanup for a hand-off', async () => {

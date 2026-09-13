@@ -493,8 +493,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   What a teardown reads to decide whether an identity came back follows the same
   rule: an expired lease whose process is still there counts as held, so an
   unlink or a deletion cannot mistake it for an acknowledgement.
-  A teardown sees such a reservation as a held identity, and does not revoke it:
-  there is no runtime behind it to stop, only files still being removed.
+  A teardown sees such a reservation as a held identity, and does not revoke it —
+  an unlink and an account deletion alike: there is no runtime behind it to stop,
+  only files still being removed.
   A cleanup reservation is not released on its expiry either: the removal it
   guards runs synchronously and cannot renew its own lease, so a large tree or a
   slow data directory would otherwise let a replacement take the identity and
@@ -514,11 +515,16 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   process number at all; a host that cannot answer it keeps the identity claimed —
   the opposite guess frees a live one — but nothing is ever signalled then,
   because an unidentifiable number may belong to any other process of this user.
+* A completion that fails while it is being published ends its attempt outright
+  and drops the credential it had staged. Leaving that attempt claimed would let
+  a later poll promote a sign-in this path has already signed out, over a link
+  that is working.
 * Removing a stopped runtime's files happens outside the database transaction,
   between two short ones: deleting a work directory is synchronous and would
   otherwise hold SQLite's writer lock for its whole duration and time out every
   other worker's writes. Exclusivity comes from the lease, which stays claimed as
-  a cleanup reservation throughout, not from the lock.
+  a cleanup reservation throughout, not from the lock. The same holds for the
+  removal a worker does as it exits.
 * One runtime per identity and connection, held by a database lease with a
   heartbeat. The lease is the promise that no process is using that identity, so
   a stopping runtime keeps it until its child has actually exited — closing only

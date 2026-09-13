@@ -451,11 +451,19 @@ function installShutdownHandlers() {
             // Only while this session still owns the lease: another worker may
             // already have started a replacement for the same identity.
             try {
-                db.transaction(() => {
-                    const stillOurs = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
-                        .get(session.ownerKey, session.connectionId, session.leaseId);
-                    if (stillOurs) clearPlaintext(session.ownerKey, session.connectionId);
-                }).immediate();
+                // Claimed in one short transaction, removed outside it: a
+                // synchronous directory deletion inside would hold the writer
+                // lock and time out every other worker's writes. The reservation
+                // is what keeps a replacement off this identity meanwhile.
+                const claimed = db.transaction(() => db.prepare("UPDATE ai_codex_runtimes SET state='cleanup', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
+                    .run(Date.now(), session.ownerKey, session.connectionId, session.leaseId).changes > 0).immediate();
+                try { if (claimed) clearPlaintext(session.ownerKey, session.connectionId); }
+                finally {
+                    if (claimed) {
+                        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
+                            .run(session.ownerKey, session.connectionId, session.leaseId);
+                    }
+                }
             } catch { /* best effort on exit */ }
         }
     });

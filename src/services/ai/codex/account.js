@@ -342,7 +342,12 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
         }
     } catch {
-        finishLogin(row.id, 'failed', 'ai_codex_login_failed');
+        // Unconditional, because the attempt may already have been claimed: a
+        // conditional finish cannot end a sealing one, and leaving it sealing
+        // would let a later poll promote the credential of a sign-in this path
+        // has just signed out.
+        forceLoginFailure(row.id, 'ai_codex_login_failed');
+        discardStagedCredential(ownerKey, connectionId);
         // The sign-in itself succeeded — the runtime is authenticated — and only
         // reading it back failed. Ending the attempt without signing out would
         // leave that ChatGPT session alive upstream with nothing pointing at it.
@@ -731,11 +736,16 @@ async function wipeAfterHandover(ownerKey, connectionId) {
 export async function stopAccountRuntimes(ownerKey) {
     let acknowledged = true;
     endAttempts(ownerKey);
-    for (const row of db.prepare('SELECT connection_id FROM ai_codex_runtimes WHERE owner_key=?').all(ownerKey)) {
+    for (const row of db.prepare('SELECT connection_id,state FROM ai_codex_runtimes WHERE owner_key=?').all(ownerKey)) {
         const live = liveRuntime(ownerKey, row.connection_id);
         if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
-        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
-            .run(Date.now(), ownerKey, row.connection_id);
+        // A cleanup reservation is left exactly as it is, for the same reason a
+        // disconnect leaves it: nothing runs behind it, and marking it revoked
+        // would only make the wait below succeed while its files are still going.
+        if (row.state !== 'cleanup') {
+            db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+                .run(Date.now(), ownerKey, row.connection_id);
+        }
         // The lease stays exactly where it is. Its child may still be running on
         // that identity, and clearing the row would let the next authenticated
         // request take it — including one made after a refused deletion put the
