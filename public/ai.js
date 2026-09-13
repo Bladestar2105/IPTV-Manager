@@ -46,7 +46,8 @@ window.aiUI = (() => {
     if (type === 'textarea') { item.rows = 3; item.maxLength = 8000; }
     if (type === 'number') { item.min = '0'; item.step = '1'; }
     for (const event of ['input', 'change']) item.addEventListener(event, () => {
-      if (['ai_invalid', 'ai_targetUserRequired', 'ai_modelTestSelection'].includes(el('status')?.dataset.i18n)) status('inputChanged', item.closest('[data-ai-section]')?.dataset.aiSection);
+      const scope = item.closest('[data-ai-section]')?.dataset.aiSection;
+      if (['ai_invalid', 'ai_targetUserRequired', 'ai_modelTestSelection'].includes(el(`${scope}-status`)?.dataset.i18n)) status('inputChanged', scope);
     });
     return item;
   }
@@ -85,17 +86,18 @@ window.aiUI = (() => {
   }
   function progress(parent, scope) {
     const box = node('div', parent, undefined, 'alert alert-info'); box.id = `ai-${scope}-progress`;
+    box.hidden = true; box.role = 'status'; box.setAttribute('aria-live', 'polite');
     const spinner = node('span', box, undefined, 'spinner-border spinner-border-sm me-2');
     spinner.setAttribute('aria-hidden', 'true'); spinner.hidden = true;
     node('span', box).id = `ai-${scope}-status`;
   }
   function status(key, scope = 'work') {
-    for (const id of ['status', `${scope}-status`]) {
-      const item = el(id); if (!item) continue;
-      item.dataset.i18n = `ai_${key}`; item.textContent = tr(key);
-    }
+    const item = el(`${scope}-status`) || el('status');
+    if (!item) return;
+    item.hidden = false; item.dataset.i18n = `ai_${key}`; item.textContent = tr(key);
     const box = el(`${scope}-progress`);
     if (box) {
+      box.hidden = false;
       const busy = ['queued', 'running'].includes(key);
       box.setAttribute('aria-busy', String(busy)); box.querySelector('.spinner-border').hidden = !busy;
     }
@@ -147,7 +149,12 @@ window.aiUI = (() => {
   }
   async function run(callback, control) {
     const stamp = generation;
-    if (control) control.disabled = true;
+    if (control) {
+      control.disabled = true;
+      // Setup actions can be above or below the model picker. Keep their
+      // shared feedback beside the button that initiated the action.
+      if (control.closest('[data-ai-section]')?.dataset.aiSection === 'setup') control.after(el('setup-progress'));
+    }
     try { await callback(); }
     catch (error) {
       if (stamp !== generation) return;
@@ -205,7 +212,7 @@ window.aiUI = (() => {
     label('h2', root(), 'title');
     label('p', root(), 'intro', 'text-muted');
     const state = node('p', root(), undefined, 'alert alert-info');
-    state.id = 'ai-status'; state.role = 'status'; state.setAttribute('aria-live', 'polite');
+    state.id = 'ai-status'; state.hidden = true; state.role = 'status'; state.setAttribute('aria-live', 'polite');
     await run(async () => {
       const loaded = await Promise.all([api('/settings'), api('/preferences'), api('/connections'),
         currentUser.is_admin ? fetchJSON('/api/users').then(users => users.map(({id, username}) => ({id, username})).sort((a, b) => a.username.localeCompare(b.username))) : [],
@@ -229,8 +236,11 @@ window.aiUI = (() => {
     featureChecks(box, 'policy-function', settings.functions || []);
     button(box, 'save-policy', 'save', async () => {
       settings = await api('/settings', 'PUT', {enabled: checked('policy-enabled'), allow_own_connections: checked('own-allowed'), allowed_user_ids: ids('allowed-users'), functions: selectedFeatures('policy-function'), internal_targets: value('targets').split('\n').map(s => s.trim()).filter(Boolean)});
-      await open(); status(settings.enabled ? 'saved' : 'off');
+      await open();
+      el('policy-progress').closest('details').open = true;
+      status(settings.enabled ? 'saved' : 'off', 'policy');
     });
+    progress(box, 'policy');
   }
   function buildSetup() {
     const box = section('setup', true);
@@ -364,7 +374,7 @@ window.aiUI = (() => {
   }
   function renderAccountPanel(box, connection) {
     const panel = node('div', box, undefined, 'border rounded p-3 mb-3');
-    panel.id = 'ai-account-panel';
+    panel.id = 'ai-account-panel'; panel.dataset.aiSection = 'account';
     label('p', panel, 'chatgptDisclosure', 'small text-muted');
     node('div', panel).id = 'ai-account-state';
     const controls = node('div', panel);
@@ -372,6 +382,7 @@ window.aiUI = (() => {
     button(controls, 'link-cancel', 'linkCancel', cancelLink, 'outline-secondary');
     button(controls, 'account-refresh', 'accountRefresh', loadAccount);
     button(controls, 'unlink', 'unlink', unlink, 'outline-danger');
+    progress(panel, 'account');
     node('div', panel).id = 'ai-link-state';
     renderAccount(connection);
   }
@@ -429,7 +440,12 @@ window.aiUI = (() => {
         const anchor = node('a', box, url, 'd-block mb-1');
         anchor.href = url; anchor.target = '_blank'; anchor.rel = 'noopener noreferrer';
       } else label('p', box, 'linkTargetBlocked', 'mb-1 text-danger');
-      node('p', node('p', box, undefined, 'mb-1'), `${tr('linkCode')}: ${login.user_code || ''}`, 'fs-5 fw-bold');
+      const row = node('p', box, undefined, 'mb-1');
+      label('span', row, 'linkCode'); node('span', row, ': ');
+      const code = node('button', row, login.user_code || '', 'btn btn-outline-secondary fs-5 fw-bold');
+      code.id = 'ai-link-code'; code.type = 'button'; code.disabled = !login.user_code;
+      code.dataset.copyText = login.user_code || '';
+      code.title = t('copyToClipboardAction'); code.setAttribute('aria-label', code.title);
     } else label('p', box, loginStateKey(login), login.status === 'completed' ? 'mb-1 text-success' : 'mb-1 text-warning');
     if (el('link-cancel')) el('link-cancel').hidden = login.status !== 'pending';
     void connectionId;
@@ -459,10 +475,10 @@ window.aiUI = (() => {
     await enableSetup();
     const connection = await saveConnection();
     if (!connection) throw {code: 'AI_INVALID_INPUT'};
-    status('running', 'setup');
+    status('running', 'account');
     login = await api(`/connections/${encodeURIComponent(connection.id)}/link`, 'POST', {});
     renderLogin(connection.id); renderAccount(connection);
-    status('linkPending', 'setup');
+    status('linkPending', 'account');
     pollLink(connection.id);
   }
   function pollLink(connectionId, failures = 0) {
@@ -480,8 +496,8 @@ window.aiUI = (() => {
         if (state.status === 'pending') return pollLink(connectionId, 0);
         await refreshConnections();
         renderAccount(chosen());
-        if (state.status === 'completed') { await loadAccount(); status('linkDone', 'setup'); }
-        else status(loginStateKey(state), 'setup');
+        if (state.status === 'completed') { await loadAccount(); status('linkDone', 'account'); }
+        else status(loginStateKey(state), 'account');
       } catch (error) {
         if (stamp !== generation || !login) return;
         const key = errorKey(error);
@@ -490,10 +506,10 @@ window.aiUI = (() => {
         // A refusal or a missing attempt is final and stops immediately.
         if (['denied', 'off'].includes(key) || /NOT_FOUND/.test(String(error.response?.code || error.code || '').toUpperCase())
           || failures + 1 >= MAX_LINK_POLL_FAILURES) {
-          status(key, 'setup');
+          status(key, 'account');
           return;
         }
-        status('linkRetrying', 'setup');
+        status('linkRetrying', 'account');
         pollLink(connectionId, failures + 1);
       }
     }, 3000);
@@ -508,10 +524,10 @@ window.aiUI = (() => {
     // A completion can win the race. It may also still be storing its
     // credential, which reads as pending: the sign-in is not cancelled and can
     // still succeed, so polling has to continue instead of reporting an end.
-    if (login.status === 'pending') { status('linkPending', 'setup'); return pollLink(connection.id); }
+    if (login.status === 'pending') { status('linkPending', 'account'); return pollLink(connection.id); }
     if (login.status === 'completed') { await refreshConnections(); await loadAccount(); }
     renderAccount(chosen());
-    status(loginStateKey(login), 'setup');
+    status(loginStateKey(login), 'account');
   }
   async function unlink() {
     const connection = chosen();
@@ -521,18 +537,18 @@ window.aiUI = (() => {
     accountState = null;
     await refreshConnections();
     renderConnection();
-    status(result?.remote_logout === false ? 'unlinkRemoteFailed' : 'unlinkDone', 'setup');
+    status(result?.remote_logout === false ? 'unlinkRemoteFailed' : 'unlinkDone', 'account');
   }
   async function loadAccount() {
     const connection = chosen();
     if (!connection?.account?.linked) { accountState = null; renderAccount(connection); return; }
-    status('running', 'setup');
+    status('running', 'account');
     accountState = await api(`/connections/${encodeURIComponent(connection.id)}/account`);
     renderAccount(connection);
     // A refresh that reports the account as no longer connected leaves the
     // refreshed state on screen — re-rendering the connection would fall back to
     // the stored record and show it as connected again.
-    status(accountState && !accountState.linked ? 'notLinked' : 'saved', 'setup');
+    status(accountState && !accountState.linked ? 'notLinked' : 'saved', 'account');
   }
   function destination() {
     if (pendingProvider() === 'chatgpt_account') { el('destination').textContent = tr('managedDestination'); return; }
@@ -587,6 +603,7 @@ window.aiUI = (() => {
     const selection = value('connection');
     const provider = pendingProvider();
     if (!editable(connection)) return connection;
+    if (!value('name') && provider === 'chatgpt_account') el('name').value = 'ChatGPT';
     if (!value('name')) throw {code: 'AI_INVALID_INPUT'};
     const input = {name: value('name'), enabled: true};
     // The provider is fixed at creation; an existing connection never sends it.
@@ -813,6 +830,14 @@ window.aiUI = (() => {
     appliedActionIds = []; renderRuleActions();
     let confirmation;
     label('h3', box, 'preview', 'h5'); node('p', box, activeProposal.summary || '');
+    const selectionControls = !activeProposal.change_id && activeProposal.actions?.length
+      ? node('div', box, undefined, 'mb-2') : null;
+    if (selectionControls) for (const [id, key, selected] of [['select-all', 'selectAll', true], ['deselect-all', 'deselectAll', false]]) {
+      button(selectionControls, id, key, () => {
+        if (resultStamp !== resultGeneration) return;
+        box.querySelectorAll('[data-ai-action]:not(:disabled)').forEach(input => { input.checked = selected; });
+      });
+    }
     for (const action of activeProposal.actions || []) {
       const card = node('div', box, undefined, 'border rounded p-3 mb-2');
       const toggle = field(card, `action-${action.id}`, 'select', 'checkbox', false);
@@ -844,6 +869,7 @@ window.aiUI = (() => {
       if (resultStamp !== resultGeneration) return;
       changeId = result.change_id;
       appliedActionIds = actionIds; renderRuleActions();
+      selectionControls?.remove();
       box.querySelectorAll('input').forEach(input => { input.disabled = true; });
       el('apply').hidden = true; status('saved');
       renderUndo(box, result.change_id, resultStamp);
@@ -880,16 +906,17 @@ window.aiUI = (() => {
       draft = {id: saved.id, signature: JSON.stringify(data), resultStamp};
       el('rule-preview-result').textContent = printable(saved.preview || []);
       checked('rule-enabled') && (el('rule-enabled').checked = false);
-      status('saved');
+      status('saved', 'rules');
     });
     node('pre', box).id = 'ai-rule-preview-result';
     button(box, 'save-rule', 'saveRule', async () => {
       const data = input();
       if (!draft || draft.signature !== JSON.stringify(data)) throw {code: 'AI_RULE_PREVIEW_REQUIRED'};
       await api(`/rules/${encodeURIComponent(draft.id)}`, 'PUT', {...data, enabled: checked('rule-enabled')});
-      await loadRules(); status('saved');
+      await loadRules(); status('saved', 'rules');
     });
     button(box, 'refresh-rules', 'refresh', loadRules);
+    progress(box, 'rules');
     node('div', box).id = 'ai-rules';
   }
   function renderRuleActions() {
@@ -907,7 +934,7 @@ window.aiUI = (() => {
     for (const rule of rules) {
       const row = node('div', box, undefined, 'border rounded p-2 mb-2'); node('p', row, rule.name);
       const enabled = field(row, `rule-active-${rule.id}`, 'automatic', 'checkbox', rule.enabled);
-      button(row, `rule-save-${rule.id}`, 'save', async () => { await api(`/rules/${encodeURIComponent(rule.id)}`, 'PUT', {...rule, enabled: enabled.checked}); status('saved'); });
+      button(row, `rule-save-${rule.id}`, 'save', async () => { await api(`/rules/${encodeURIComponent(rule.id)}`, 'PUT', {...rule, enabled: enabled.checked}); status('saved', 'rules'); });
       button(row, `rule-delete-${rule.id}`, 'delete', async () => { if (confirm(tr('confirmDelete'))) { await api(`/rules/${encodeURIComponent(rule.id)}`, 'DELETE'); await loadRules(); } }, 'outline-danger');
     }
     if (!rules.length) label('p', box, 'empty');
@@ -924,7 +951,7 @@ window.aiUI = (() => {
           if (resultStamp !== resultGeneration) return;
           if (fresh.result) await showResult(fresh.result);
           else if (['queued', 'running'].includes(fresh.status)) { jobId = fresh.id; await poll(); }
-          else status(fresh.status === 'cancelled' ? 'cancelled' : 'failed');
+          else status(fresh.status === 'cancelled' ? 'cancelled' : 'failed', 'history');
         });
       }
       for (const change of list(changes, 'changes')) {
@@ -954,8 +981,9 @@ window.aiUI = (() => {
       await api('/history', 'DELETE');
       beginResult();
       conversationId = null; filterBaseline = {}; jobId = null; clearTimeout(timer);
-      el('history').replaceChildren(); el('result').replaceChildren(); el('filters').value = '{}'; status('saved');
+      el('history').replaceChildren(); el('result').replaceChildren(); el('filters').value = '{}'; status('saved', 'history');
     }, 'outline-danger');
+    progress(box, 'history');
     node('div', box).id = 'ai-history';
   }
   function syncActor() { if (owner && (owner !== actor() || sessionToken !== getToken())) clear(); }

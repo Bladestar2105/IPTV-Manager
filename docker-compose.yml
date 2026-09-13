@@ -3,6 +3,11 @@ services:
     image: ghcr.io/bladestar2105/iptv-manager:latest
     container_name: iptv-manager
     restart: unless-stopped
+    # Load docker/ai-apparmor on the Docker host before starting (see README).
+    # On hosts without AppArmor, omit only its line; keep the seccomp profile.
+    security_opt:
+      - seccomp=./docker/ai-seccomp.json
+      - apparmor=iptv-manager-ai
     ports:
       - "0.0.0.0:3000:3000"
     volumes:
@@ -10,6 +15,7 @@ services:
     environment:
       - DATA_DIR=/data
       - NODE_ENV=production
+      - AI_CODEX_ENABLED=true
       # - TRUST_PROXY=true # Set to true if running behind a reverse proxy (e.g. Traefik, Nginx)
       # - INITIAL_ADMIN_PASSWORD=change_me_on_first_login
 

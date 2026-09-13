@@ -26,6 +26,13 @@ builds run only after validation and verify the image without logging in to the
 registry or publishing it. Tagged release archives depend on both validation
 and the Docker job, so failed lint, tests, builds, or audits block publishing.
 
+Validation also provisions the pinned native ChatGPT runtime and requires
+`npm run check:ai-runtime` to pass as the non-root runner. The Docker job runs
+the same preflight in the built image with the supplied restricted profiles
+before publishing. Neither check signs in or submits a model request. This
+prevents a missing/blocked real sandbox from being mistaken for passing mock
+tests. A real Proxmox host remains a separate manual acceptance requirement.
+
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
 `npm install` after changing Node versions to keep native bindings aligned with

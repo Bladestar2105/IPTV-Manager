@@ -205,14 +205,14 @@ export async function codexAvailability({ force = false, timeoutMs, signal } = {
     return { available: true, version, binary, backend: isolation.backend, grade: isolation.grade };
 }
 
-function spawnDescription(isolation, paths, binary) {
+export function spawnDescription(isolation, paths, binary) {
     const command = [binary, 'app-server', '--listen', 'stdio://', '--strict-config',
         ...DISABLED_CODEX_FEATURES.flatMap(feature => ['--disable', feature]),
         ...CODEX_CONFIG_OVERRIDES.flatMap(override => ['-c', override])];
     return wrapCommand(isolation.handle, { codexHome: paths.codexHome, workDir: paths.workDir, command });
 }
 
-async function handshake(client, paths, expectedVersion, timeoutMs = HANDSHAKE_TIMEOUT_MS, signal) {
+export async function handshake(client, paths, expectedVersion, timeoutMs = HANDSHAKE_TIMEOUT_MS, signal) {
     const result = await client.request('initialize', {
         clientInfo: { name: 'iptv-manager', title: 'IPTV-Manager', version: '1.0.0' },
         // No experimental surface and no attestation callbacks are accepted.

@@ -56,13 +56,14 @@ include AI connections. Re-enter credentials and retest after importing a user.
 
 A second, separate AI connection type lets each user and each administrator link
 **their own** ChatGPT account through the official Codex sign-in, without an
-OpenAI platform API key. It is **disabled by default** and is offered only when
+OpenAI platform API key. Packaged installations enable the runtime; AI access
+still requires the administrator's policy and each user's preferences. It is offered only when
 the server can prove that the Codex runtime is contained by an operating-system
 sandbox. It never replaces the API connection type described above.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `AI_CODEX_ENABLED` | `false` | Master switch. While false, nothing is started and the connection type is not offered. |
+| `AI_CODEX_ENABLED` | `true` in the image, installer and example environment; otherwise `false` | Master switch. While false, nothing is started and the connection type is not offered. Existing explicit settings are preserved by the updater. |
 | `AI_CODEX_BIN` | `codex` | Path to the pinned Codex CLI, or a bare name resolved once against `PATH`. A relative path is resolved against the manager's working directory. The resolved absolute path is both version-probed and launched; the executable, the target of a symlinked launcher and the interpreter of a script launcher are bound read-only as individual files, and a resolved package root as a directory, so a global npm install works without carrying a launcher's unrelated neighbours into the sandbox. A launcher placed in or above `DATA_DIR` is refused (`AI_CODEX_BINARY_UNSAFE_LOCATION`), because mounting it would expose the database and the encryption key; keep it in a normal system location. Its reported version must fall inside the tested range (see [AI setup](AI_INTEGRATION.md)). |
 | `AI_MODEL_TEST_BATCH_MS` | `300000` | Budget for one whole compatibility test, however many models and probes it contains (clamped to 1 s – 15 min). Set it to the timeout of the proxy in front of the manager: there is no point in still making billable calls for a request nothing is waiting for. Models the batch could not reach are reported as untested. |
 | `AI_CODEX_RUNTIME_DIR` | `$DATA_DIR/ai-codex` | Root for per-identity runtime directories, created with mode `0700`. A relative path — including one inherited from a relative `DATA_DIR` — is resolved against the working directory, because the sandbox needs absolute paths. Wherever it is placed, the sandbox masks the whole root and restores only the identity that is running, so one identity never reaches another's. |
@@ -85,6 +86,45 @@ The Codex credential file exists in clear text only inside the identity's own
 `0700` directory while its runtime is live and is removed when it stops. The
 server operator can read the application key by design; this is not encryption
 against the operator.
+
+### AI installation verification
+
+The standard Docker image and Debian/Ubuntu installer provision Codex **0.154.0**
+and bubblewrap. Manual Debian/Ubuntu installations run
+`sudo bash scripts/install-ai-runtime.sh` after installing Node.js and npm.
+Proxmox delegates to that same installer inside its unprivileged, nesting-enabled
+container. Existing explicit `AI_CODEX_ENABLED=false` settings are not changed.
+
+Run `npm run check:ai-runtime` **as the application user, not root**. It uses
+temporary data, checks real filesystem containment, probes the installed
+version, starts the app-server with the production restrictions and completes
+its protocol handshake. It never signs in, loads existing credentials, or calls
+a model. A missing/blocked runtime produces a nonzero exit code. Install/update
+run it with `--if-enabled`; a failure warns rather than stopping the ordinary
+server and API connection path.
+
+Docker needs the supplied `docker/ai-seccomp.json` and, on AppArmor hosts, the
+loaded `iptv-manager-ai` profile in `docker/ai-apparmor`. Keep Docker's default
+masked/read-only paths, capability set and PID isolation. Do **not** use
+`privileged`, `SYS_ADMIN`, `seccomp=unconfined`, `apparmor=unconfined` or
+`systempaths=unconfined`. The runtime uses a read-only synthetic `/proc` containing
+only its fixed executable link; it exposes no process tree and does not need
+to mount procfs inside Docker. The profile provenance and permissions are in
+[docker/SECURITY-PROFILES.md](../docker/SECURITY-PROFILES.md).
+
+On AppArmor-enabled Debian/Ubuntu hosts the helper installs a private,
+root-owned bubblewrap executable under `/usr/local/lib/iptv-manager/bwrap`
+and its enforced `iptv-manager-bwrap` profile. The application selects that
+executable when present, otherwise the system bubblewrap. This leaves the
+system-wide unprivileged-user-namespace restriction and other applications'
+bubblewrap unchanged. A container that cannot load this profile needs its host
+administrator; the helper reports that restriction rather than disabling it.
+
+After a green preflight, configure the AI policy/preferences and complete a real
+Web UI account link, model discovery/test, and disconnect. API-key connections
+require their own endpoint/key/model test. These account-dependent checks are
+separate from installation verification. Proxmox remains runtime-unverified
+until this is exercised on a real Proxmox host.
 
 ## Network and Proxy
 

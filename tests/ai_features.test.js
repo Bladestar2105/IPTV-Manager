@@ -37,6 +37,48 @@ beforeEach(() => {
 afterAll(() => { epg?.close(); db?.close(); fs.rmSync(dataDir, {recursive:true,force:true}); });
 
 describe('authorized AI features', () => {
+  it.each([0,1,-1])('keeps no-change batch summaries only when the whole proposal is empty (changed batch=%s)',async changedBatch=>{
+    for(let i=0;i<80;i++) db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Sports ${i}`);
+    let batch=0;
+    const result=await executeFeature(user,{feature:'list',full_list:true},{infer:async()=>{
+      const changed=batch++===changedBatch;
+      return {data:{summary:changed?'Sports proposed':'No assignments proposed',actions:changed?[{type:'create_category',key:'sports',name:'Sports',category_type:'live'}]:[]},model:'synthetic'};
+    }});
+    expect(batch).toBe(2);
+    expect(result.summary).toBe(changedBatch===-1?'No assignments proposed\nNo assignments proposed':'Sports proposed');
+  });
+  it.each([false,true])('reuses identical category declarations across list batches (conflicting=%s)',async conflicting=>{
+    for(let i=0;i<80;i++) {
+      db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Sports ${i}`);
+      db.prepare('INSERT INTO user_channels(id,user_category_id,provider_channel_id,sort_order) VALUES(?,1001,?,?)').run(3000+i,2000+i,i+2);
+    }
+    let calls=0;
+    const category={type:'create_category',key:'sports',name:'Sports',category_type:'live'};
+    const run=executeFeature(user,{feature:'list',full_list:true},{infer:async request=>{
+      const data=JSON.parse(request.messages[1].content);
+      if(calls++) expect(data.planned_categories).toEqual([category]);
+      return {data:{summary:'Sports',actions:[
+        {...category,...(conflicting&&calls===2?{name:'Different'}:{})},
+        {type:'assign_channel',provider_channel_id:data.items[0].provider_channel_id,category_key:'sports'}
+      ]},model:'synthetic'};
+    }});
+    if(conflicting) {
+      await expect(run).rejects.toThrow(/AI_INVALID_ACTION/);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+    } else {
+      const result=await run;
+      const {getProposal,applyProposal,undoChange}=await import('../src/services/ai/proposals.js');
+      const proposal=getProposal(user,result.proposal_id);
+      expect(proposal.actions.map(action=>action.type)).toEqual(['create_category','assign_channel','assign_channel']);
+      expect(proposal.actions.slice(1).every(action=>action.dependencies[0]===proposal.actions[0].id)).toBe(true);
+      const before=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+      const change=applyProposal(user,proposal.id,{action_ids:proposal.actions.map(action=>action.id),idempotency_key:'batch-list'});
+      expect(db.prepare('SELECT COUNT(*) AS n FROM user_channels').get().n).toBe(before.length+2);
+      undoChange(user,change.change_id);
+      expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(before);
+    }
+    expect(calls).toBe(2);
+  });
   it.each([
     ['list',['create_category','rename_category','assign_channel','rename_channel','hide_channel','reorder_channel']],
     ['cleanup',['rename_category','rename_channel','hide_channel','reorder_channel']],
@@ -97,6 +139,8 @@ describe('authorized AI features', () => {
     expect(sent).toContain('DE | News');
     expect(sent).not.toContain('Private channel');
     expect(sent).not.toContain('secret.invalid');
+    expect(sent).toContain('general knowledge of channel brands');
+    expect(sent).toContain('every matching numbered or quality variant');
     expect(() => authorizeResult(other,{feature:'list'},result)).toThrow();
     db.prepare('UPDATE user_channels SET authorization_revoked=1 WHERE id=1101').run();
     expect(() => authorizeResult(user,{feature:'list'},result)).toThrow();
@@ -436,6 +480,19 @@ describe('authorized AI features', () => {
     };
     await executeFeature(user,{feature:'list'},{infer:async request=>{visit(request.schema);return {data:{summary:'Ready',actions:[]},model:'test'};}});
     await executeFeature(user,{feature:'search'},{infer:async request=>{visit(request.schema);return {data:{summary:'Found',filters:{}},model:'test'};}});
+  });
+  it.each(['list','cleanup','duplicates','epg','sync','search','diagnose','text'])('declares explicit response types for %s, including constants and enums',async feature=>{
+    const {featureResultSchema}=await import('../src/services/ai/features.js');
+    const {validateJson}=await import('../src/services/ai/transport.js');
+    const visit=(schema,path='$')=>{
+      if(!schema.anyOf) expect(['object','array','string','integer','number','boolean','null'],path).toContain(schema.type);
+      if(Object.hasOwn(schema,'const')) expect(validateJson(schema.const,schema),path).toBe(true);
+      for(const value of schema.enum||[]) expect(validateJson(value,schema),path).toBe(true);
+      for(const [key,child] of Object.entries(schema.properties||{})) visit(child,`${path}.${key}`);
+      if(schema.items) visit(schema.items,`${path}[]`);
+      schema.anyOf?.forEach((child,index)=>visit(child,`${path}.anyOf[${index}]`));
+    };
+    visit(featureResultSchema(feature));
   });
   it('keeps a 2000-row metadata-rich full analysis within job and transport limits',async()=>{
     db.exec('DELETE FROM user_channels; DELETE FROM provider_channels');

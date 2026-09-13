@@ -171,7 +171,11 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launc
     const args = [
         '--die-with-parent', '--new-session', '--clearenv',
         '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--unshare-cgroup',
-        '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run', '--tmpfs', '/var'
+        // Codex needs its executable path, not a process tree. A synthetic proc
+        // avoids Docker's locked proc mounts without exposing any manager PIDs
+        // or removing the container's masked paths. PID isolation stays intact.
+        '--tmpfs', '/proc', '--dir', '/proc/self', '--symlink', launcher || command[0], '/proc/self/exe',
+        '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run', '--tmpfs', '/var'
     ];
     const roots = existingReadOnlyRoots();
     for (const root of roots) args.push('--ro-bind', root, root);
@@ -204,6 +208,10 @@ function bwrapArguments(bwrap, { codexHome, workDir, environment, command, launc
     // directory, .env, key files, other identities and any container socket are
     // simply absent from the mount namespace.
     args.push('--bind', codexHome, codexHome, '--bind', workDir, workDir, '--chdir', workDir);
+    // A writable replacement tmpfs would still permit writes at the manager's
+    // path. Seal the parents after mounting the identity's writable children;
+    // mount-level read-only cannot be undone with chmod by the runtime owner.
+    for (const directory of [...masks, '/proc']) args.push('--remount-ro', directory);
     for (const [key, value] of Object.entries(environment)) args.push('--setenv', key, value);
     return { file: bwrap, args: [...args, '--', ...command] };
 }
@@ -330,7 +338,9 @@ export async function resolveIsolation({ force = false } = {}) {
     const config = codexConfig();
     fs.mkdirSync(config.runtimeDir, { recursive: true, mode: 0o700 });
     for (const name of candidates(config.sandbox)) {
-        const resolved = which(name);
+        // Ubuntu's per-executable AppArmor user-namespace permission belongs to
+        // our installed helper, never to every use of the system bubblewrap.
+        const resolved = (name === 'bwrap' && which('/usr/local/lib/iptv-manager/bwrap')) || which(name);
         if (!resolved) continue;
         const backend = { name, path: resolved, grade: name === 'bwrap' ? 'isolated' : 'development' };
         const probe = await selfTest(backend, config.runtimeDir, which(config.binary));

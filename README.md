@@ -61,22 +61,42 @@ For production environments, it is strongly recommended to set `NODE_ENV=product
 ## 🐳 Docker Installation (Recommended)
 
 ### Using Docker Compose
-1.  Create `docker-compose.yml`:
-    ```yaml
-    services:
-      iptv-manager:
-        image: ghcr.io/bladestar2105/iptv-manager:latest
-        container_name: iptv-manager
-        restart: unless-stopped
-        ports:
-          - "3000:3000"
-        volumes:
-          - ./data:/data
-        environment:
-          - DATA_DIR=/data
-    ```
-2.  Run `docker compose up -d`.
-3.  Access at `http://localhost:3000`.
+The image includes the pinned ChatGPT runtime. Download the Compose file and
+its restricted sandbox profiles together:
+
+```bash
+mkdir -p iptv-manager/docker && cd iptv-manager
+base=https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main
+curl -fsSL "$base/docker-compose.yml" -o docker-compose.yml
+curl -fsSL "$base/docker/ai-seccomp.json" -o docker/ai-seccomp.json
+curl -fsSL "$base/docker/ai-apparmor" -o docker/ai-apparmor
+```
+
+On a Docker host with AppArmor (`docker info` lists it under Security Options),
+install and load the named profile **on that Linux host** before starting:
+
+```bash
+sudo install -o root -g root -m 0644 docker/ai-apparmor /etc/apparmor.d/iptv-manager-ai
+sudo apparmor_parser -r -W /etc/apparmor.d/iptv-manager-ai
+```
+
+Keep the host's AppArmor boot service enabled so the installed profile is loaded
+again before Docker restarts containers after a reboot.
+
+On a host without AppArmor, remove only `apparmor=iptv-manager-ai` from
+`security_opt` in Compose; keep `seccomp=./docker/ai-seccomp.json`. Do not disable
+another host security module. For a remote daemon or a Docker VM, loading a
+profile on the client computer is not sufficient.
+
+```bash
+docker compose up -d
+docker compose exec -T --user app iptv-manager npm run check:ai-runtime
+```
+
+Access `http://localhost:3000`. The check must pass before testing a ChatGPT
+link. It makes no sign-in or model request. Existing Docker installations must
+also adopt the profiles and Compose settings when updating; replacing the image
+alone is not sufficient. See [configuration](docs/CONFIGURATION.md#ai-installation-verification).
 
 ## 🔧 Bare Metal / Manual Installation (Debian/Ubuntu)
 
@@ -101,9 +121,14 @@ sudo ./scripts/update.sh
 
 ### Manual Installation (Development)
 1.  Clone repo: `git clone https://github.com/Bladestar2105/IPTV-Manager.git`
-2.  Install: `npm install`
-3.  Configure: `cp .env.example .env` (edit as needed)
-4.  Run: `npm start`
+2.  Install application dependencies: `npm ci`
+3.  On Debian/Ubuntu, provision the ChatGPT runtime: `sudo bash scripts/install-ai-runtime.sh`
+4.  Configure: `cp .env.example .env` (edit as needed)
+5.  As the non-root application user, run `npm run check:ai-runtime`, then `npm start`.
+
+The automated installer and updater perform this provisioning and check for
+you, preserving explicit disable settings. A failed ChatGPT preflight is printed
+as a warning; API-key connections and the server remain usable.
 
 Runtime databases, secrets, uploads, and caches are stored under `DATA_DIR`.
 Local runs use the repository root by default; the Docker example uses
@@ -119,6 +144,21 @@ curl -fsSL https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main/scr
 chmod +x proxmox.sh
 ./proxmox.sh
 ```
+
+This uses an unprivileged LXC with nesting enabled and the same Debian/Ubuntu
+installer. The container's real runtime preflight must pass; host LXC/AppArmor
+restrictions can still require administrator configuration. Do not switch to a
+privileged or unconfined container. Proxmox has not yet been verified on a real
+test host; Docker and Ubuntu checks do not substitute for that acceptance test.
+
+### AI setup after installation
+
+All paths use the same [AI setup](docs/AI_INTEGRATION.md): enable AI in the
+administrator policy, allow the required users/functions, then enable personal
+AI preferences. For API connections, configure the endpoint/key and test a
+model. For ChatGPT, run the installation preflight first, then link your own
+account in the Web UI and test a model. Runtime checks do not prove account
+eligibility or a live model response.
 
 ### Development
 - **Linting**: `npm run lint`

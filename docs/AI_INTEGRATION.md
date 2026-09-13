@@ -150,6 +150,12 @@ on newly proposed categories remain available regardless of their declaration
 order in the response. Category creation precedes dependent actions in the
 preview; other action order is preserved. References to earlier batches must
 be present in the planned-category context actually supplied to the model.
+Identical category declarations repeated by a later batch reuse the original
+declaration; conflicting names or types for the same key are rejected. Thematic
+list suggestions use channel names and general brand knowledge, including
+numbered/quality variants, rather than requiring a literal topic keyword.
+When some list batches propose edits and others have no matches, the combined
+summary describes the proposed edits rather than appending no-change summaries.
 
 The output schema, proposal creation and Apply share a closed action contract:
 `list` allows category creation/renaming, assignment, personal renaming, hiding
@@ -776,7 +782,7 @@ while the service is offline.
 A pending device-code sign-in lives only in the worker that started it; losing
 that worker ends the attempt (`ai_codex_login_interrupted`) rather than letting
 another worker adopt it. After a process failure a request that was already sent
-is never replayed automatically. Setting `AI_CODEX_ENABLED=false` (the default)
+is never replayed automatically. Setting `AI_CODEX_ENABLED=false`
 stops the connection type from being offered and starts nothing; existing API
 connections, playback, playlists, EPG and provider sync are unaffected in every
 case.

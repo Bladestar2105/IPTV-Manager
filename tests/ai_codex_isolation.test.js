@@ -67,6 +67,43 @@ afterAll(() => {
 beforeEach(() => { isolation.resetIsolationCache(); });
 
 describe('Codex runtime environment', () => {
+    it.skipIf(!detected.available || detected.backend !== 'bwrap')('has no process tree and cannot chmod sealed masks writable', async () => {
+        const paths = identity('sealed-linux');
+        const probe = control(paths);
+        const output = await inSandbox(paths, `${probe.read}
+            test -e /proc/1/environ && echo PROCESS_LEAK;
+            test -e /proc/self/environ && echo PROCESS_LEAK;
+            test -L /proc/self/exe && echo FIXED_EXE;
+            chmod 777 ${JSON.stringify(dataDir)} && echo CHMOD_ESCAPE;
+            echo x > ${JSON.stringify(path.join(dataDir, 'forbidden'))} && echo WRITE_ESCAPE;
+            rm /proc/self/exe && echo PROC_ESCAPE;
+            echo ok > ${JSON.stringify(path.join(paths.codexHome, 'own'))};
+            echo ok > ${JSON.stringify(path.join(paths.workDir, 'own'))}; echo DONE`);
+        expect(output).toContain(probe.marker);
+        expect(output).toContain('FIXED_EXE');
+        expect(output).toContain('DONE');
+        expect(output).not.toMatch(/PROCESS_LEAK|CHMOD_ESCAPE|WRITE_ESCAPE|PROC_ESCAPE/);
+        expect(fs.readFileSync(path.join(paths.codexHome, 'own'), 'utf8')).toBe('ok\n');
+        expect(fs.readFileSync(path.join(paths.workDir, 'own'), 'utf8')).toBe('ok\n');
+    });
+
+    it('keeps process isolation without mounting procfs and seals masked roots read-only', () => {
+        const paths = identity('linux-layout');
+        const description = isolation.wrapCommand({ name: 'bwrap', path: '/usr/bin/bwrap' }, {
+            ...paths, command: ['/bin/sh', '-c', 'true'], launcher: '/bin/sh'
+        });
+        const args = description.args;
+        expect(args).toContain('--unshare-pid');
+        expect(args).not.toContain('--proc');
+        expect(args.slice(args.indexOf('--symlink'), args.indexOf('--symlink') + 3))
+            .toEqual(['--symlink', '/bin/sh', '/proc/self/exe']);
+        const sealed = args.flatMap((arg, index) => arg === '--remount-ro' ? [args[index + 1]] : []);
+        expect(sealed).toEqual([...isolation.maskedRoots(), '/proc']);
+        expect(args.indexOf('--remount-ro')).toBeGreaterThan(args.lastIndexOf('--bind'));
+        expect(sealed).not.toContain(paths.codexHome);
+        expect(sealed).not.toContain(paths.workDir);
+    });
+
     it('builds the runtime environment from scratch and inherits nothing', () => {
         process.env.OPENAI_API_KEY = 'inherited-platform-key';
         process.env.OPENAI_BASE_URL = 'https://inherited.example/v1';

@@ -28,6 +28,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Provision the native ChatGPT runtime
+        run: sudo env "PATH=$PATH" bash scripts/install-ai-runtime.sh
+
+      - name: Verify the real native sandbox and app-server
+        run: npm run check:ai-runtime
+
       - name: Lint
         run: npm run lint
 
@@ -72,7 +78,26 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
 
-      - name: Build and push Docker image
+      - name: Build Docker image for runtime verification
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: iptv-manager:runtime-check
+
+      - name: Verify the real container sandbox and app-server
+        shell: bash
+        run: |
+          security=(--security-opt seccomp=./docker/ai-seccomp.json)
+          if docker info --format '{{json .SecurityOptions}}' | grep -q apparmor; then
+            sudo apparmor_parser -r -W docker/ai-apparmor
+            security+=(--security-opt apparmor=iptv-manager-ai)
+          fi
+          docker run --name iptv-ai-runtime-check "${security[@]}" \
+            iptv-manager:runtime-check npm run check:ai-runtime
+
+      - name: Push verified Docker image
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v7
         with:
           context: .

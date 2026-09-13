@@ -109,6 +109,8 @@
     before: ['Before', 'Vorher', 'Avant', 'Πριν'],
     after: ['After', 'Nachher', 'Après', 'Μετά'],
     select: ['Select action', 'Aktion auswählen', 'Sélectionner l’action', 'Επιλογή ενέργειας'],
+    selectAll: ['Select all actions', 'Alle Aktionen auswählen', 'Sélectionner toutes les actions', 'Επιλογή όλων των ενεργειών'],
+    deselectAll: ['Clear selection', 'Auswahl aufheben', 'Effacer la sélection', 'Αποεπιλογή όλων'],
     apply: ['Apply selected changes', 'Ausgewählte Änderungen übernehmen', 'Appliquer les modifications sélectionnées', 'Εφαρμογή επιλεγμένων αλλαγών'],
     confirm: ['Apply exactly these selected changes?', 'Genau diese ausgewählten Änderungen übernehmen?', 'Appliquer exactement ces modifications sélectionnées ?', 'Εφαρμογή ακριβώς αυτών των επιλεγμένων αλλαγών;'],
     undo: ['Undo this change', 'Änderung rückgängig machen', 'Annuler cette modification', 'Αναίρεση αλλαγής'],

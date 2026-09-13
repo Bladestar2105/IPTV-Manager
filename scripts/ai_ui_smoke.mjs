@@ -180,7 +180,9 @@ try {
   const beforeRejectedTest = JSON.stringify({settings, preferences, connections});
   const writesBeforeRejectedTest = requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length;
   await page.locator('#ai-test').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_modelTestSelection');
+  assert.equal(await page.locator('#ai-status').isVisible(), false, 'section errors must not be mirrored at the page top');
+  assert.equal(await page.locator('#ai-setup-progress').getAttribute('role'), 'status', 'local feedback remains accessible to screen readers');
   assert.equal(JSON.stringify({settings, preferences, connections}), beforeRejectedTest, 'invalid model choices must not enable preferences, save a connection or sharing grants');
   assert.equal(requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length, writesBeforeRejectedTest, 'reject invalid model choices before any persistent request');
   assert.equal(await page.locator('#ai-key').inputValue(), 'synthetic-secret', 'rejected selection must leave the unsubmitted key in its field');
@@ -199,7 +201,7 @@ try {
   const beforeTooManyModels = JSON.stringify({settings, preferences, connections});
   const writesBeforeTooManyModels = requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length;
   await page.locator('#ai-test').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_modelTestSelection');
   assert.equal(JSON.stringify({settings, preferences, connections}), beforeTooManyModels);
   assert.equal(requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length, writesBeforeTooManyModels, 'too many candidates must not update an existing connection');
   assert.equal(await page.locator('#ai-key').inputValue(), 'unsubmitted-replacement');
@@ -249,19 +251,19 @@ try {
   assert.equal(await page.evaluate(() => Object.values(localStorage).some(item => item.includes('synthetic-secret'))), false);
   discoverFails = true;
   await page.locator('#ai-discover').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_network');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_network');
   for (const [status, code, message] of [[409, 'AI_BUSY', 'busy'], [429, 'AI_PAUSED', 'paused'], [504, 'AI_TIMEOUT', 'timeout']]) {
     discoverError = {status, code};
     await page.locator('#ai-discover').click();
-    await page.waitForFunction(key => document.getElementById('ai-status').dataset.i18n === `ai_${key}`, message);
-    assert.notEqual(await page.locator('#ai-status').innerText(), `ai_${message}`, 'connection-state explanations must be translated');
+    await page.waitForFunction(key => document.getElementById('ai-setup-status').dataset.i18n === `ai_${key}`, message);
+    assert.notEqual(await page.locator('#ai-setup-status').innerText(), `ai_${message}`, 'connection-state explanations must be translated');
   }
   await page.locator('summary[data-i18n="ai_advanced"]').click();
   await page.locator('#ai-model').fill('');
   await page.locator('#ai-models').selectOption([]);
   const testsBeforeEmptySelection = requests.filter(request => request.path.endsWith('/test')).length;
   await page.locator('#ai-test').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_modelTestSelection');
   assert.equal(requests.filter(request => request.path.endsWith('/test')).length, testsBeforeEmptySelection, 'empty model selection must not start a provider test');
   await page.locator('#ai-model').fill('manual-alias');
   await page.locator('#ai-models').selectOption([]);
@@ -271,15 +273,15 @@ try {
   await page.locator('#ai-prompt').fill('Review my list');
   const jobsBeforeMissingUser = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
   await page.locator('#ai-run').click();
-  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_targetUserRequired', 'missing administrator target must not be reported as a model-test problem');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_targetUserRequired', 'missing administrator target must not be reported as a model-test problem');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'ai-user', 'focus the missing target field');
   assert.equal(requests.filter(request => request.path === '/jobs' && request.method === 'POST').length, jobsBeforeMissingUser, 'missing target cannot submit inference');
   await page.locator('#ai-feature').selectOption('cleanup');
-  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'changing features must clear stale validation feedback');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_inputChanged', 'changing features must clear stale validation feedback');
   await page.locator('#ai-feature').selectOption('list');
   await page.locator('#ai-run').click();
   await page.locator('#ai-user').selectOption('2');
-  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
 
   page.on('dialog', dialog => dialog.accept());
   await page.locator('#ai-run').click();
@@ -301,9 +303,16 @@ try {
   assert.match(await page.locator('#ai-result').innerText(), /Analyzed items: 2000 \/ 2000/);
   assert.match(await page.locator('#ai-result').innerText(), /Displayed item examples: 20 \/ 2000/);
   assert.equal(await page.locator('#ai-action-a1').isChecked(), false, 'changes never preselected');
+  const beforeSelection = requests.length;
+  await page.locator('#ai-select-all').click();
+  assert.equal(await page.locator('#ai-proposal [data-ai-action]:checked').count(), 3);
+  await page.locator('#ai-deselect-all').click();
+  assert.equal(await page.locator('#ai-proposal [data-ai-action]:checked').count(), 0);
+  assert.equal(requests.length, beforeSelection, 'bulk selection is local and never applies changes');
   await page.locator('#ai-action-a1').check();
   await page.locator('#ai-apply').click();
   await page.locator('#ai-undo').waitFor();
+  assert.equal(await page.locator('#ai-select-all').count(), 0, 'applied actions cannot be selected again');
   assert.deepEqual(await page.locator('#ai-rule-action option').evaluateAll(options => options.map(option => option.value)), ['a1'], 'only actually applied renames can source a rule');
   await page.locator('summary[data-i18n="ai_rules"]').click();
   await page.locator('#ai-rule-name').fill('My cleanup');
@@ -317,14 +326,15 @@ try {
   assert.equal(requests.find(r => r.path === '/rules' && r.method === 'POST').body.action_id, 'a1', 'rule uses confirmed rename, not its checked category dependency');
   await page.locator('#ai-rule-enabled').check();
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/ai/rules/r1') && response.request().method() === 'PUT'), page.locator('#ai-save-rule').click()]);
+  await page.waitForFunction(() => document.getElementById('ai-rules-status')?.dataset.i18n === 'ai_saved');
+  assert.equal(await page.locator('#ai-rules-progress').isVisible(), true, 'rule feedback appears inside the open rules section');
   assert.equal(requests.find(r => r.path === '/rules/r1' && r.method === 'PUT').body.enabled, true);
   assert.deepEqual(requests.find(r => r.path === '/rules' && r.method === 'POST').body.exceptions, ['Regional', 'HD']);
   await page.locator('#ai-undo').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_undone');
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_undone');
   await page.locator('#ai-run').click();
   await page.locator('#ai-action-a1').waitFor();
-  await page.locator('#ai-action-a1').check();
-  await page.locator('#ai-action-a2').check();
+  await page.locator('#ai-select-all').click();
   await page.locator('#ai-apply').click();
   await page.locator('#ai-undo').waitFor();
   assert.deepEqual(await page.locator('#ai-rule-action option').evaluateAll(options => options.map(option => option.value)), ['', 'a1', 'a2']);
@@ -371,11 +381,11 @@ try {
   const resetSearch = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
   assert.equal(resetSearch.conversation_id, undefined);
   assert.deepEqual(resetSearch.filters, {});
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_cancelled');
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
   for (const terminalStatus of ['completed', 'failed']) {
     cancelNext = true;
     await page.locator('#ai-run').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
     cancelNext = false; cancelResult = terminalStatus;
     nextJobError = terminalStatus === 'failed' ? 'AI_TIMEOUT' : null;
     const posts = requests.filter(r => r.path === '/jobs' && r.method === 'POST').length;
@@ -388,7 +398,7 @@ try {
   for (const cancelStatus of [200, 502]) {
     await page.locator('#ai-feature').selectOption('list');
     await page.locator('#ai-run').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
     let cancelStarted;
     const started = new Promise(resolve => { cancelStarted = resolve; });
     cancelGate = {path: `/jobs/j${jobCount}/cancel`, status: cancelStatus, started: cancelStarted};
@@ -396,17 +406,17 @@ try {
     await started;
     await page.locator('#ai-feature').selectOption('duplicates');
     await page.locator('#ai-run').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
     const newJobPath = `/jobs/j${jobCount}`;
     await Promise.all([page.waitForResponse(response => response.url().endsWith(cancelGate.path)), Promise.resolve().then(() => cancelGate.release())]);
     await page.waitForFunction(() => !document.getElementById('ai-cancel').disabled);
-    assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_running', `late cancel ${cancelStatus} cannot replace newer running-job status`);
+    assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_running', `late cancel ${cancelStatus} cannot replace newer running-job status`);
     const pollsBefore = requests.filter(request => request.path === newJobPath && request.method === 'GET').length;
     await page.waitForResponse(response => response.url().endsWith(newJobPath) && response.request().method() === 'GET');
     assert(requests.filter(request => request.path === newJobPath && request.method === 'GET').length > pollsBefore, `new job keeps polling after late cancel ${cancelStatus}`);
     cancelGate = null;
     await page.locator('#ai-cancel').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_cancelled');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
   }
   cancelNext = false; pollErrorOnce = true;
   await page.locator('#ai-run').click();
@@ -420,7 +430,7 @@ try {
   assert(requests.filter(r => r.path === retryJob && r.method === 'GET').length >= 3, 'polling resumes for the same job through completion');
   await page.locator('details').filter({has: page.locator('#ai-clear-history')}).locator('summary').click();
   await page.locator('#ai-clear-history').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_saved');
+  await page.waitForFunction(() => document.getElementById('ai-history-status').dataset.i18n === 'ai_saved');
   assert(requests.some(r => r.path === '/history' && r.method === 'DELETE'));
   await page.locator('#ai-refresh-history').click();
   await page.locator('#ai-history-historyA').waitFor();
@@ -552,25 +562,34 @@ try {
     'the disclosure states that no platform API key is needed');
   assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'nothing can be disconnected before a sign-in');
 
-  await page.locator('#ai-name').fill('My ChatGPT');
+  assert.equal(await page.locator('#ai-name').inputValue(), '', 'a new account link starts without a custom name');
   await page.locator('#ai-enabled').check();
   await Promise.all([
     page.waitForResponse(response => response.url().includes('/connections/c2/link') && response.request().method() === 'POST'),
     page.locator('#ai-link-start').click()
   ]);
   await page.locator('#ai-link-state a').waitFor();
+  assert.equal(connections.find(item => item.id === 'c2').name, 'ChatGPT',
+    'connecting without a custom name uses ChatGPT rather than silently blocking sign-in');
   assert.equal(await page.locator('#ai-link-state a').getAttribute('href'), 'https://auth.openai.com/codex/device',
     'only the approved verification address becomes a link');
   assert.equal(await page.locator('#ai-link-state a').getAttribute('rel'), 'noopener noreferrer');
   assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'the device code is shown');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.locator('#ai-link-code').click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'ABCD-1234',
+    'clicking the device code copies only the code, not its caption or verification URL');
+  await page.waitForFunction(() => document.getElementById('ai-link-code').getAttribute('aria-label') === t('copied'));
   assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a pending sign-in can be cancelled');
+  assert.equal(await page.locator('#ai-account-progress').isVisible(), true, 'account feedback stays beside the account controls');
+  assert.equal(await page.locator('#ai-status').isVisible(), false, 'account sign-in does not require scrolling to the page header');
   const linkRequests = requests.filter(request => request.path.includes('/link'));
   assert.equal(JSON.stringify(linkRequests).includes('token'), false, 'no token is ever sent or echoed by the browser');
 
   // A transient status failure must not abandon a sign-in that is still open:
   // the server drops an attempt that stops being polled.
   failNextPolls = 2;
-  await page.waitForFunction(() => document.getElementById('ai-setup-status')?.dataset.i18n === 'ai_linkRetrying', null, {timeout: 20000});
+  await page.waitForFunction(() => document.getElementById('ai-account-status')?.dataset.i18n === 'ai_linkRetrying', null, {timeout: 20000});
   assert.equal(await page.locator('#ai-link-state a').count(), 1, 'the device code stays on screen while retrying');
 
   // The account holder completes the sign-in; the poll adopts only its own attempt.
