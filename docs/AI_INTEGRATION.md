@@ -489,7 +489,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   A lease that names a process is never released on its expiry alone: a
   timestamp from before a restart is already past, and sweeping it would hand a
   live identity to a replacement. Such a lease is released by its owner's exit,
-  by those reapers, or by an acquisition that first proves the process is gone.
+  by those reapers, or by an acquisition that first proves the process is gone —
+  and the same holds for the cleanup that removes an identity's files, which
+  refuses to claim an identity whose recorded process is still running.
   A recorded process is only ever signalled when it still looks like that
   identity's own runtime — every sandbox command carries the identity's
   directory — because a recorded number is meaningless once it has been recycled,

@@ -258,8 +258,22 @@ function liveDirectories() {
 export function withCleanupLease(ownerKey, connectionId, run) {
     const leaseId = `cleanup-${randomUUID()}`;
     const now = Date.now();
+    // An expired lease that still names a sandbox process is not stale. Reaping
+    // it here would free the identity for a replacement and then delete the files
+    // the orphan is working in. Only a lease whose process is proven gone — or
+    // that never had one — may be cleared, and that question is asked of the
+    // operating system before the transaction opens.
+    const stale = db.prepare('SELECT lease_id,child_pid,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+    let reapable = null;
+    if (stale && stale.expires_at < now) {
+        if (stale.child_pid && runsThisIdentity(stale.child_pid, identityPaths(ownerKey, connectionId).root)) return null;
+        reapable = stale.lease_id;
+    }
     const claimed = db.transaction(() => {
-        db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND expires_at < ?').run(ownerKey, connectionId, now);
+        if (reapable) {
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=? AND expires_at < ?')
+                .run(ownerKey, connectionId, reapable, now);
+        }
         if (db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId)) return false;
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
             .run(ownerKey, connectionId, leaseId, process.pid, 'cleanup', now + 30000, now);

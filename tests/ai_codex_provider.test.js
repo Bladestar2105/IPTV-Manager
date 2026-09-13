@@ -1617,6 +1617,26 @@ describe('personal ChatGPT runtime ownership', () => {
         await idleRuntimes();
     }, 30000);
 
+    it('does not clean up an identity whose expired lease still names a live process', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            db.prepare('UPDATE ai_codex_runtimes SET expires_at=?, updated_at=? WHERE connection_id=?')
+                .run(Date.now() - 60000, Date.now() - 60000, connection.id);
+            // Cleanup would take the identity, remove the hydrated credential and
+            // the work directory, and free it for a replacement — all while that
+            // process is still working in exactly those files.
+            expect(credentials.withCleanupLease('user:1', connection.id, () => 'ran')).toBeNull();
+            expect(credentials.sweepOrphans().cleared).toBe(0);
+            expect(fs.existsSync(session.paths.authFile)).toBe(true);
+            expect(fs.existsSync(session.paths.workDir)).toBe(true);
+        } finally { runtime.stopRuntime(session); }
+        await idleRuntimes();
+        // With the process gone the same cleanup claim succeeds.
+        expect(credentials.withCleanupLease('user:1', connection.id, () => 'ran')).toBe('ran');
+    }, 30000);
+
     it('does not hand an identity on because a live runtime\'s lease looks expired', async () => {
         fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
         const connection = await linkedConnection();
