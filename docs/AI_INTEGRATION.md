@@ -577,6 +577,9 @@ sign-in shows the verification address supplied by the official flow and the
 one-time device code.
 Click the device code to copy it, open the verification address, and enter the
 code there. Connection feedback appears in the setup area, beside its controls.
+Navigation within the application preserves the pending sign-in. If status
+updates stop after a connection outage, **Refresh status** beside the device code
+resumes watching the same attempt without creating a new sign-in.
 
 * The address is checked against the documented targets (`auth.openai.com`,
   `chatgpt.com`, `auth.chatgpt.com`) on the server and again in the browser. Any

@@ -711,6 +711,11 @@ try {
   assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'transport retry exhaustion retains the pending identity');
   assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a transport outage does not remove cancellation');
   assert.equal(await page.locator('#ai-connection').isDisabled(), true);
+  const linksBeforeRecovery = requests.filter(request => request.path === '/connections/c2/link' && request.method === 'POST').length;
+  await page.locator('#ai-link-refresh').click();
+  await page.waitForResponse(response => response.url().endsWith('/connections/c2/link/L1') && response.request().method() === 'GET');
+  assert.equal(requests.filter(request => request.path === '/connections/c2/link' && request.method === 'POST').length, linksBeforeRecovery, 'status retry resumes the same attempt without creating a new link');
+  assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/);
   await page.locator('#ai-link-cancel').click();
   await page.waitForFunction(() => document.getElementById('ai-account-status').dataset.i18n === 'ai_linkCancelled');
   await page.locator('#ai-link-start').click();

@@ -406,6 +406,9 @@ window.aiUI = (() => {
     const controls = node('div', panel);
     button(controls, 'link-start', 'linkStart', startLink, 'primary');
     button(controls, 'link-cancel', 'linkCancel', cancelLink, 'outline-secondary');
+    button(controls, 'link-refresh', 'refreshStatus', () => {
+      if (login?.status === 'pending' && chosen()) { status('linkPending', 'account'); pollLink(chosen().id); }
+    });
     button(controls, 'account-refresh', 'accountRefresh', loadAccount);
     button(controls, 'unlink', 'unlink', unlink, 'outline-danger');
     progress(panel, 'account');
@@ -438,7 +441,7 @@ window.aiUI = (() => {
     if (el('link-start')) el('link-start').hidden = linked || teardownOnly;
     if (el('unlink')) el('unlink').hidden = !linked;
     if (el('account-refresh')) el('account-refresh').hidden = !linked || teardownOnly;
-    if (el('link-cancel')) el('link-cancel').hidden = !login || login.status !== 'pending';
+    for (const id of ['link-cancel', 'link-refresh']) if (el(id)) el(id).hidden = login?.status !== 'pending';
   }
   // Quota is shown only where the documented interface reported it; anything
   // else stays explicitly unknown, with no prices and no derived request counts.
@@ -473,7 +476,7 @@ window.aiUI = (() => {
       code.dataset.copyText = login.user_code || '';
       code.title = t('copyToClipboardAction'); code.setAttribute('aria-label', code.title);
     } else label('p', box, loginStateKey(login), login.status === 'completed' ? 'mb-1 text-success' : 'mb-1 text-warning');
-    if (el('link-cancel')) el('link-cancel').hidden = login.status !== 'pending';
+    for (const id of ['link-cancel', 'link-refresh']) if (el(id)) el(id).hidden = login.status !== 'pending';
     void connectionId;
   }
   function loginStateKey(state) {
@@ -523,7 +526,7 @@ window.aiUI = (() => {
       if (stamp !== generation || identity !== actor() || token !== getToken() || login?.id !== id) return;
       try {
         const state = await api(`/connections/${encodeURIComponent(connectionId)}/link/${encodeURIComponent(id)}`);
-        if (!state || stamp !== generation || !login || state.id !== login.id) return;
+        if (!state || stamp !== generation || login?.status !== 'pending' || state.id !== login.id) return;
         login = {...login, ...state};
         renderLogin(connectionId);
         if (state.status === 'pending') return pollLink(connectionId, 0);
@@ -532,7 +535,7 @@ window.aiUI = (() => {
         if (state.status === 'completed') { await loadAccount(); status('linkDone', 'account'); }
         else status(loginStateKey(state), 'account');
       } catch (error) {
-        if (stamp !== generation || login?.id !== id) return;
+        if (stamp !== generation || login?.id !== id || login.status !== 'pending') return;
         const key = errorKey(error);
         // The server drops an attempt that stops being polled, so a transient
         // failure must not abandon a sign-in the account holder is completing.
