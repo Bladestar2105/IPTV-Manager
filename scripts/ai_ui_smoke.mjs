@@ -31,7 +31,7 @@ try {
   // Personal ChatGPT account-link state for the synthetic server.
   let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
   let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true, failNextPolls = 0;
-  let policyGate;
+  let policyGate, linkGate, failLinkCancel = false, missingLink = false;
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -65,14 +65,19 @@ try {
       const rest = path.slice('/connections/c2'.length);
       if (rest === '' && method === 'PUT') { const {api_key: _chatgptKey, ...safe} = body; Object.assign(stored(), safe); data = stored(); }
       else if (rest === '/link' && method === 'POST') {
+        if (linkGate) { linkGate.started(); await new Promise(resolve => { linkGate.release = resolve; }); }
         loginState = {id: 'L1', status: 'pending', verification_url: verificationUrl, user_code: 'ABCD-1234', error_code: null, expires_at: Date.now() + 900000};
         data = loginState;
       }
       else if (rest === '/link/L1') {
-        if (failNextPolls > 0) { failNextPolls -= 1; status = 502; data = {code: 'AI_UNAVAILABLE'}; }
+        if (missingLink) { missingLink = false; status = 404; data = {code: 'AI_NOT_FOUND'}; }
+        else if (failNextPolls > 0) { failNextPolls -= 1; status = 502; data = {code: 'AI_UNAVAILABLE'}; }
         else data = loginState;
       }
-      else if (rest === '/link/L1/cancel') { loginState = {...loginState, status: 'cancelled', error_code: 'ai_codex_login_cancelled'}; data = loginState; }
+      else if (rest === '/link/L1/cancel') {
+        if (failLinkCancel) { failLinkCancel = false; status = 502; data = {code: 'AI_UNAVAILABLE'}; }
+        else { loginState = {...loginState, status: 'cancelled', error_code: 'ai_codex_login_cancelled'}; data = loginState; }
+      }
       else if (rest === '/unlink') {
         chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null};
         Object.assign(stored(), {account: chatgptAccount});
@@ -647,11 +652,36 @@ try {
 
   assert.equal(await page.locator('#ai-name').inputValue(), '', 'a new account link starts without a custom name');
   await page.locator('#ai-enabled').check();
-  await Promise.all([
-    page.waitForResponse(response => response.url().includes('/connections/c2/link') && response.request().method() === 'POST'),
-    page.locator('#ai-link-start').click()
-  ]);
+  let resetBeforeLink;
+  const pendingLinkReset = new Promise(resolve => { resetBeforeLink = resolve; });
+  policyGate = {started: resetBeforeLink};
+  await page.locator('details').filter({has: page.locator('#ai-policy-enabled')}).locator('summary').click();
+  await page.locator('#ai-save-policy').click();
+  await pendingLinkReset;
+  await page.locator('#ai-cancel').click();
+  assert.equal(await page.locator('#ai-link-start').isDisabled(), true, 'a delayed reset cannot race link creation');
+  policyGate.release(); policyGate = null;
+  await page.waitForFunction(() => document.getElementById('ai-policy-status')?.dataset.i18n === 'ai_saved');
+  await page.locator('#ai-connection').selectOption('new-chatgpt');
+  await page.locator('#ai-enabled').check();
+  let linkStarted;
+  const pendingLink = new Promise(resolve => { linkStarted = resolve; });
+  linkGate = {started: linkStarted};
+  await page.locator('#ai-link-start').click();
+  await pendingLink;
+  for (const id of ['connection', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'run']) {
+    assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot abandon link creation`);
+  }
+  await page.locator('#nav-dashboard').click();
+  await page.locator('#nav-ai').click();
+  assert.equal(await page.locator('#ai-link-start').isDisabled(), true, 'navigation retains pending link creation');
+  linkGate.release(); linkGate = null;
   await page.locator('#ai-link-state a').waitFor();
+  await page.locator('#nav-ai').click();
+  await page.locator('#nav-dashboard').click();
+  await page.locator('#nav-ai').click();
+  assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'navigation retains the same device code');
+  await page.waitForResponse(response => response.url().endsWith('/connections/c2/link/L1') && response.request().method() === 'GET');
   assert.equal(connections.find(item => item.id === 'c2').name, 'ChatGPT',
     'connecting without a custom name uses ChatGPT rather than silently blocking sign-in');
   assert.equal(await page.locator('#ai-link-state a').getAttribute('href'), 'https://auth.openai.com/codex/device',
@@ -666,6 +696,31 @@ try {
   assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a pending sign-in can be cancelled');
   assert.equal(await page.locator('#ai-account-progress').isVisible(), true, 'account feedback stays beside the account controls');
   assert.equal(await page.locator('#ai-status').isVisible(), false, 'account sign-in does not require scrolling to the page header');
+  failLinkCancel = true;
+  await page.locator('#ai-link-cancel').click();
+  await page.waitForFunction(() => document.getElementById('ai-account-status').dataset.i18n === 'ai_network');
+  assert.equal(await page.locator('#ai-connection').isDisabled(), true, 'failed cancellation retains the pending sign-in');
+  await page.waitForResponse(response => response.url().endsWith('/connections/c2/link/L1') && response.request().method() === 'GET');
+  assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'failed cancellation resumes watching the same code');
+
+  failNextPolls = 15;
+  for (let failure = 0; failure < 15; failure++) {
+    await page.waitForResponse(response => response.url().endsWith('/connections/c2/link/L1') && response.status() === 502);
+  }
+  await page.waitForFunction(() => document.getElementById('ai-account-status').dataset.i18n === 'ai_network');
+  assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'transport retry exhaustion retains the pending identity');
+  assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a transport outage does not remove cancellation');
+  assert.equal(await page.locator('#ai-connection').isDisabled(), true);
+  await page.locator('#ai-link-cancel').click();
+  await page.waitForFunction(() => document.getElementById('ai-account-status').dataset.i18n === 'ai_linkCancelled');
+  await page.locator('#ai-link-start').click();
+  await page.locator('#ai-link-code').waitFor();
+  missingLink = true;
+  await page.waitForFunction(() => document.getElementById('ai-connection').disabled === false);
+  assert.equal(await page.locator('#ai-link-start').isDisabled(), false, 'a definitively missing attempt permits a fresh sign-in');
+  assert.equal(await page.locator('#ai-link-code').count(), 0, 'an expired attempt no longer exposes an active device code');
+  await page.locator('#ai-link-start').click();
+  await page.locator('#ai-link-code').waitFor();
   const linkRequests = requests.filter(request => request.path.includes('/link'));
   assert.equal(JSON.stringify(linkRequests).includes('token'), false, 'no token is ever sent or echoed by the browser');
 
@@ -730,6 +785,9 @@ try {
   await page.locator('#ai-link-state').waitFor();
   assert.equal(await page.locator('#ai-link-state a').count(), 0, 'an unapproved verification address is never turned into a link');
   assert.match(await page.locator('#ai-link-state').innerText(), /not an approved target/i);
+  await page.locator('#ai-link-cancel').click();
+  await page.waitForFunction(() => document.getElementById('ai-account-status').dataset.i18n === 'ai_linkCancelled');
+  assert.equal(await page.locator('#ai-connection').isDisabled(), false, 'acknowledged cancellation unlocks the connection');
   await page.evaluate(() => aiUI.clear());
 
   console.log(`PASS AI UI (${Math.round(performance.now() - startedAt)} ms): setup and all eight functions; confirmed rename rules; follow-up filter patches; delayed history/Undo isolation; read-only cleanup; automatic rule-change history/Undo; local EPG picker and stale-target isolation; analyzed/displayed counts; four languages; personal ChatGPT link, quota, disconnect and blocked verification target; session isolation. Synthetic API only.`);

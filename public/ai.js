@@ -2,7 +2,7 @@
 window.aiUI = (() => {
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
   let generation = 0, owner = '', sessionToken = null, timer, connections = [], userChoices = [], settings = {}, preferences = {};
-  let submittingJob = false;
+  let submittingJob = false, submittingLink = false;
   const pendingResets = new Set();
   let jobId, proposal, changeId, conversationId, recommendation, nextOffset = 0, resultGeneration = 0;
   let appliedActionIds = [];
@@ -96,12 +96,14 @@ window.aiUI = (() => {
   function updateJobControls() {
     // Keep the tracked job reachable until completion or acknowledged cancellation,
     // including the interval before POST /jobs returns its ID.
-    const busy = submittingJob || Boolean(jobId);
+    const linking = submittingLink || login?.status === 'pending';
+    const busy = submittingJob || Boolean(jobId) || linking;
     for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
       if (el(id)) el(id).disabled = busy || pendingResets.has(el(id));
     }
     el('history')?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
-    if (el('run')) el('run').disabled = submittingJob || pendingResets.size > 0;
+    if (el('run')) el('run').disabled = submittingJob || linking || pendingResets.size > 0;
+    if (el('link-start')) el('link-start').disabled = busy || pendingResets.size > 0;
   }
   function status(key, scope = 'work') {
     updateJobControls();
@@ -215,7 +217,7 @@ window.aiUI = (() => {
     clearTimeout(loginTimer);
     login = null; accountState = null; codex = {available: false, reason: null};
     owner = ''; sessionToken = null; connections = []; userChoices = []; settings = {}; preferences = {};
-    submittingJob = false; pendingResets.clear();
+    submittingJob = submittingLink = false; pendingResets.clear();
     jobId = proposal = changeId = conversationId = recommendation = null;
     appliedActionIds = [];
     filterBaseline = {};
@@ -225,9 +227,9 @@ window.aiUI = (() => {
     root()?.replaceChildren();
   }
   async function open(refresh = false) {
-    // Navigation within the same login must not discard work still in flight.
-    if (!refresh && owner && owner === actor() && sessionToken === getToken()
-      && (submittingJob || jobId || pendingResets.size)) return;
+    // Navigation reuses the initialized view, including pending work and sign-in.
+    // Settings mutations force a rebuild; changed logins always start fresh.
+    if (!refresh && owner && owner === actor() && sessionToken === getToken() && el('connection')) return;
     clear();
     owner = actor();
     sessionToken = getToken();
@@ -496,24 +498,31 @@ window.aiUI = (() => {
     if (el('connection')) el('connection').value = selection;
   }
   async function startLink() {
-    await enableSetup();
-    const connection = await saveConnection();
-    if (!connection) throw {code: 'AI_INVALID_INPUT'};
-    status('running', 'account');
-    login = await api(`/connections/${encodeURIComponent(connection.id)}/link`, 'POST', {});
-    renderLogin(connection.id); renderAccount(connection);
-    status('linkPending', 'account');
-    pollLink(connection.id);
+    if (submittingLink || login?.status === 'pending' || submittingJob || jobId || pendingResets.size) return;
+    const stamp = generation;
+    submittingLink = true; updateJobControls();
+    try {
+      await enableSetup();
+      const connection = await saveConnection();
+      if (!connection) throw {code: 'AI_INVALID_INPUT'};
+      status('running', 'account');
+      login = await api(`/connections/${encodeURIComponent(connection.id)}/link`, 'POST', {});
+      renderLogin(connection.id); renderAccount(connection);
+      status('linkPending', 'account');
+      pollLink(connection.id);
+    } finally {
+      if (stamp === generation) { submittingLink = false; updateJobControls(); }
+    }
   }
   function pollLink(connectionId, failures = 0) {
     clearTimeout(loginTimer);
     if (!login || login.status !== 'pending') return;
-    const stamp = generation, identity = actor(), token = sessionToken;
+    const stamp = generation, identity = actor(), token = sessionToken, id = login.id;
     loginTimer = setTimeout(async () => {
       // A late poll from a previous session or account must never be applied.
-      if (stamp !== generation || identity !== actor() || token !== getToken() || !login) return;
+      if (stamp !== generation || identity !== actor() || token !== getToken() || login?.id !== id) return;
       try {
-        const state = await api(`/connections/${encodeURIComponent(connectionId)}/link/${encodeURIComponent(login.id)}`);
+        const state = await api(`/connections/${encodeURIComponent(connectionId)}/link/${encodeURIComponent(id)}`);
         if (!state || stamp !== generation || !login || state.id !== login.id) return;
         login = {...login, ...state};
         renderLogin(connectionId);
@@ -523,13 +532,17 @@ window.aiUI = (() => {
         if (state.status === 'completed') { await loadAccount(); status('linkDone', 'account'); }
         else status(loginStateKey(state), 'account');
       } catch (error) {
-        if (stamp !== generation || !login) return;
+        if (stamp !== generation || login?.id !== id) return;
         const key = errorKey(error);
         // The server drops an attempt that stops being polled, so a transient
         // failure must not abandon a sign-in the account holder is completing.
         // A refusal or a missing attempt is final and stops immediately.
-        if (['denied', 'off'].includes(key) || /NOT_FOUND/.test(String(error.response?.code || error.code || '').toUpperCase())
-          || failures + 1 >= MAX_LINK_POLL_FAILURES) {
+        const refused = ['denied', 'off'].includes(key) || /NOT_FOUND/.test(String(error.response?.code || error.code || '').toUpperCase());
+        if (refused || failures + 1 >= MAX_LINK_POLL_FAILURES) {
+          if (refused) {
+            login = {...login, status: 'failed'};
+            renderLogin(connectionId); renderAccount(chosen());
+          }
           status(key, 'account');
           return;
         }
@@ -541,8 +554,15 @@ window.aiUI = (() => {
   async function cancelLink() {
     const connection = chosen();
     if (!connection || !login) return;
+    const stamp = generation, id = login.id;
     clearTimeout(loginTimer);
-    const result = await api(`/connections/${encodeURIComponent(connection.id)}/link/${encodeURIComponent(login.id)}/cancel`, 'POST', {});
+    let result;
+    try { result = await api(`/connections/${encodeURIComponent(connection.id)}/link/${encodeURIComponent(id)}/cancel`, 'POST', {}); }
+    catch (error) {
+      if (stamp === generation && chosen()?.id === connection.id && login?.id === id && login.status === 'pending') pollLink(connection.id);
+      throw error;
+    }
+    if (stamp !== generation || chosen()?.id !== connection.id || login?.id !== id || login.status !== 'pending') return;
     login = {...login, ...result};
     renderLogin(connection.id);
     // A completion can win the race. It may also still be storing its
@@ -773,7 +793,7 @@ window.aiUI = (() => {
     return result;
   }
   async function startJob() {
-    if (submittingJob || jobId || pendingResets.size) return;
+    if (submittingJob || jobId || submittingLink || login?.status === 'pending' || pendingResets.size) return;
     if (!settings.enabled || !preferences.enabled) { status('off'); return; }
     const input = payload(); input.idempotency_key = crypto.randomUUID();
     const resultStamp = beginResult(), stamp = generation;
