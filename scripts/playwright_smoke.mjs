@@ -33,7 +33,10 @@ async function waitForLoginModal(page) {
   await page.locator('#login-modal').waitFor({state: 'visible', timeout: 15000});
   await page.waitForFunction(() => {
     const modal = document.getElementById('login-modal');
-    return modal?.classList.contains('show') && modal.getAttribute('aria-modal') === 'true';
+    // Bootstrap ignores hide() during its entry transition; wait for the
+    // actual ready state before an automated, near-instant login submission.
+    return modal?.classList.contains('show') && modal.getAttribute('aria-modal') === 'true'
+      && modal.getAnimations({subtree:true}).every(animation => animation.playState === 'finished');
   }, undefined, {timeout: 15000});
 }
 

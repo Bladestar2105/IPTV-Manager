@@ -60,10 +60,24 @@ let redisClient = null;
     // Create default admin
     await createDefaultAdmin();
 
+    // Personal ChatGPT runtimes: remove directories left behind by deleted
+    // accounts, connections or interrupted sign-ins before workers start.
+    try {
+      const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
+      const {clearAbandonedTeardowns} = await import('./services/ai/connections.js');
+      // Stop orphaned runtimes before recovering removals and ordinary teardown
+      // counts. Pending removals with remaining credentials stay blocked until
+      // retried; the sweep cleans directories whose records are already gone.
+      await resetInterruptedRuntimes();
+      clearAbandonedTeardowns();
+      sweepOrphans();
+    } catch { /* An unavailable optional runtime never blocks startup. */ }
+
     const numCPUs = os.cpus().length;
     console.info(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
 
     let schedulerPid = null;
+    let shuttingDown = false;
 
     for (let i = 0; i < numCPUs; i++) {
       const env = (i === 0) ? { IS_SCHEDULER: 'true' } : {};
@@ -78,12 +92,52 @@ let redisClient = null;
         await streamManager.cleanupWorkerStreams(worker.process.pid);
       } catch(e) { console.error('Cleanup error:', e); }
 
+      // A dead worker keeps neither a runtime lease nor a hydrated credential.
+      // The primary survives a worker restart, so this cannot wait for the next
+      // full startup sweep.
+      try {
+        const {releaseWorkerRuntimes} = await import('./services/ai/codex/credentials.js');
+        await releaseWorkerRuntimes(worker.process.pid);
+      } catch(e) { console.error('AI runtime cleanup error:', e.message); }
+
+      // A worker that exited because the container is stopping is not replaced.
+      if (shuttingDown) return;
+
       const isScheduler = (worker.process.pid === schedulerPid);
       const env = isScheduler ? { IS_SCHEDULER: 'true' } : {};
 
       const newWorker = cluster.fork(env);
       if (isScheduler) schedulerPid = newWorker.process.pid;
     });
+
+    // In a container the primary is PID 1 and receives the stop signal, while the
+    // runtimes and their cleanup live in the workers. Terminating right away
+    // would kill them before they reap their Codex children and remove the
+    // credential files those children hydrated, so the signal is forwarded, the
+    // workers are drained, and only then does the primary exit.
+    const drainWorkers = async (signal) => {
+      shuttingDown = true;
+      for (const worker of Object.values(cluster.workers)) {
+        try { worker?.process?.kill(signal); } catch { /* already gone */ }
+      }
+      const deadline = Date.now() + 8000;
+      while (Object.values(cluster.workers).some(Boolean) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      try {
+        const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
+        await resetInterruptedRuntimes();
+        sweepOrphans();
+      } catch { /* An unavailable optional runtime never blocks shutdown. */ }
+    };
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      const handler = async () => {
+        try { await drainWorkers(signal); } catch { /* shutdown proceeds regardless */ }
+        process.removeListener(signal, handler);
+        process.kill(process.pid, signal);
+      };
+      process.on(signal, handler);
+    }
 
     // Forward stream termination requests to the worker that owns the stream.
     cluster.on('message', (worker, message) => {
@@ -106,6 +160,12 @@ let redisClient = null;
         console.error('Failed to terminate forwarded stream:', e.message);
       }
     });
+
+    // Resolve the optional Codex isolation backend once per worker, in the
+    // background. Until it resolves, the adapter reads as unavailable.
+    import('./services/ai/codex/readiness.js')
+      .then(module => module.refreshCodexReadiness())
+      .catch(() => null);
 
     // Start Schedulers if flagged
     if (process.env.IS_SCHEDULER === 'true') {

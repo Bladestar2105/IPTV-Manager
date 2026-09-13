@@ -50,12 +50,19 @@ cd "$INSTALL_DIR"
 # Install application dependencies
 echo ">> Installing application dependencies..."
 npm install
+if ! bash scripts/install-ai-runtime.sh; then
+    echo ">> WARNING: ChatGPT setup could not be completed; continuing the IPTV-Manager installation. Review the errors above."
+fi
 
 # Create an initial admin password so it is always visible in non-interactive installs
 if [ ! -f ".env" ]; then
     echo ">> Setting up .env file..."
     cp .env.example .env
     echo ">> .env file created. Please configure it later if needed."
+fi
+
+if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?AI_CODEX_ENABLED([[:space:]]*=|:[[:space:]]+)' .env; then
+    printf '\nAI_CODEX_ENABLED=true\n' >> .env
 fi
 
 if ! grep -q '^INITIAL_ADMIN_PASSWORD=' .env || [ -z "$(grep '^INITIAL_ADMIN_PASSWORD=' .env | cut -d'=' -f2-)" ]; then
@@ -102,6 +109,11 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
+echo ">> Checking ChatGPT availability as the service user..."
+if ! runuser -u iptv-manager -- node scripts/check-ai-runtime.mjs --if-enabled; then
+    echo ">> WARNING: ChatGPT is unavailable; API connections remain usable. Review the runtime check above."
+fi
+
 # Reload systemd, enable and start service
 echo ">> Starting IPTV-Manager service..."
 systemctl daemon-reload
@@ -109,7 +121,7 @@ systemctl enable iptv-manager
 systemctl start iptv-manager
 
 echo "========================================="
-echo "   Installation Completed Successfully!"
+echo "   Installation Finished"
 echo "========================================="
 echo ">> IPTV-Manager is now running as a background service."
 echo ">> You can access the application at: http://$(hostname -I | awk '{print $1}'):3000"

@@ -346,6 +346,7 @@ export const playerApi = async (req, res) => {
                     );
                     ep.id = newId;
                     ep.container_extension = normalizeContainerExtension(ep.container_extension);
+                    ep.direct_source = '';
 
                     // Cache the episode name for the active streams dashboard
                     const seriesName = data.info ? data.info.name : 'Unknown Series';

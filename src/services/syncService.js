@@ -7,6 +7,7 @@ import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
 import { createXtreamClient, fetchProviderCatalog } from './providerCatalogSyncService.js';
+import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
 
 /**
  * Delete one provider channel without violating the dependent foreign keys.
@@ -150,6 +151,7 @@ export async function performSync(providerId, userId, options = {}) {
   let categoriesAdded = 0;
   let errorMessage = null;
   let config = null;
+  let aiSnapshot = null;
 
   try {
     config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
@@ -345,6 +347,7 @@ export async function performSync(providerId, userId, options = {}) {
 
     // Execute all DB operations in a single transaction
     db.transaction(() => {
+      aiSnapshot = captureSyncSnapshot(providerId);
       // Pre-calculate max sort order for optimization
       const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
       let currentSortOrder = maxSortRow?.max_sort ?? -1;
@@ -697,6 +700,8 @@ export async function performSync(providerId, userId, options = {}) {
     `).run(providerId, userId, startTime, 'success', channelsAdded, channelsUpdated, categoriesAdded);
 
     console.info(`✅ Sync completed: ${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`);
+
+    scheduleSyncFollowups(recordSyncSnapshot(providerId,aiSnapshot));
 
     // Fetch series episodes in the background so get.php can expand series
     // into per-episode entries. Fire-and-forget: manual syncs return fast.

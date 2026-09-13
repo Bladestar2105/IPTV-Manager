@@ -65,6 +65,16 @@ function isTokenExpired() {
   }
 }
 
+function isAuthenticationFailure(status, error) {
+  return status === 401 || (status === 403 && [
+    'Invalid or expired token',
+    'User is inactive or deleted',
+    'Token revoked (password changed)',
+    'WebUI access revoked',
+    'Access denied from your region'
+  ].includes(error));
+}
+
 async function fetchJSON(url, options = {}) {
   // Add JWT token to requests
   const token = getToken();
@@ -84,15 +94,7 @@ async function fetchJSON(url, options = {}) {
       errorData = await res.clone().json();
     } catch {}
 
-    const authenticationFailure = res.status === 401 || [
-      'Invalid or expired token',
-      'User is inactive or deleted',
-      'Token revoked (password changed)',
-      'WebUI access revoked',
-      'Access denied from your region'
-    ].includes(errorData?.error);
-
-    if (authenticationFailure) {
+    if (isAuthenticationFailure(res.status, errorData?.error)) {
       clearSessionSensitiveState();
       removeToken();
       showLoginModal();
@@ -1551,6 +1553,7 @@ function initCategorySortable() {
 let providerCategories = [];
 
 function clearSessionSensitiveState({preserveUserState = false} = {}) {
+  window.aiUI?.clear();
   if (!preserveUserState) {
     sessionGeneration += 1;
     userCategoryChannelsData = [];
@@ -3641,6 +3644,7 @@ function switchView(viewName) {
   document.getElementById('view-statistics').classList.add('d-none');
   document.getElementById('view-security').classList.add('d-none');
   document.getElementById('view-import-export').classList.add('d-none');
+  document.getElementById('view-ai').classList.add('d-none');
 
   // Stop stats interval if running
   if (statsInterval) {
@@ -3655,7 +3659,12 @@ function switchView(viewName) {
   });
 
   // Show selected view
-  if (viewName === 'dashboard') {
+  if (viewName === 'ai') {
+    document.getElementById('view-ai').classList.remove('d-none');
+    document.getElementById('nav-ai').classList.add('active');
+    document.getElementById('nav-ai').setAttribute('aria-current', 'page');
+    window.aiUI?.open();
+  } else if (viewName === 'dashboard') {
     document.getElementById('view-dashboard').classList.remove('d-none');
     document.getElementById('nav-dashboard').classList.add('active');
     document.getElementById('nav-dashboard').setAttribute('aria-current', 'page');
@@ -4754,6 +4763,7 @@ async function checkAuthentication() {
 }
 
 function applyPermissions({preserveUserState = false} = {}) {
+    window.aiUI?.syncActor();
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
     const userSection = document.getElementById('user-section');
@@ -4967,7 +4977,27 @@ async function disableOtp() {
     }
 }
 
-function handleLogout() {
+async function handleLogout() {
+  const token = getToken();
+  if (token) {
+    try {
+      const response = await fetch('/api/ai/codex/session/end', {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: '{}',
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) {
+        const error = response.status === 403 ? (await response.json()).error : null;
+        if (!isAuthenticationFailure(response.status, error)) throw new Error();
+      }
+    } catch {
+      if (getToken() === token) showToast(t('error'), 'danger');
+      return;
+    }
+    // A response for the old session must not sign out a newer login.
+    if (getToken() !== token) return;
+  }
   clearSessionSensitiveState();
   currentUser = null;
   removeToken();

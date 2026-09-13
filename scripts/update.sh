@@ -55,12 +55,26 @@ sudo -u iptv-manager git pull origin main
 
 echo ">> Updating application dependencies..."
 sudo -u iptv-manager npm install
+if ! bash scripts/install-ai-runtime.sh; then
+    echo ">> WARNING: ChatGPT setup could not be completed; continuing the IPTV-Manager update. Review the errors above."
+fi
+
+# Enable newly provisioned ChatGPT support without replacing explicit choices.
+if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?AI_CODEX_ENABLED([[:space:]]*=|:[[:space:]]+)' .env 2>/dev/null; then
+    printf '\nAI_CODEX_ENABLED=true\n' >> .env
+    chown iptv-manager:iptv-manager .env
+fi
+
+echo ">> Checking ChatGPT availability as the service user..."
+if ! runuser -u iptv-manager -- node scripts/check-ai-runtime.mjs --if-enabled; then
+    echo ">> WARNING: ChatGPT is unavailable; API connections remain usable. Review the runtime check above."
+fi
 
 echo ">> Restarting the service..."
 systemctl start "$SERVICE_NAME"
 
 echo "========================================="
-echo "   Update Completed Successfully!"
+echo "   Update Finished"
 echo "========================================="
 echo ">> You can check the logs using: sudo journalctl -u $SERVICE_NAME -f"
 echo ">> The application is running at http://$(hostname -I | awk '{print $1}'):3000"

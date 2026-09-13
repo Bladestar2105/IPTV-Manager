@@ -13,6 +13,7 @@ import {
   upsertMergedUserChannelAssignment
 } from '../services/userChannelAssignmentService.js';
 import { validateStoredMappingAssignment } from '../services/categoryMappingService.js';
+import { purgeIdentity as purgeAiRuntimeIdentity } from '../services/ai/codex/credentials.js';
 
 const getClonedProviderChannelName = (channel) => {
   if (typeof channel.name === 'string' && channel.name.trim()) return channel.name;
@@ -525,15 +526,36 @@ export const updateUser = async (req, res) => {
 
     clearChannelsCache(id);
     res.json({success: true});
-  } catch (e) {
-    res.status(500).json({error: e.message});
-  }
+  } catch (e) { res.status(500).json({error: e.message}); }
 };
 
-export const deleteUser = (req, res) => {
+export const deleteUser = async (req, res) => {
+  // Declared outside the block so the failure path can restore what the
+  // revocation below changed.
+  let previousActive;
+  let deleted = false;
+  const id = Number(req.params.id);
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const id = Number(req.params.id);
+    // Access is revoked before anything is torn down. Otherwise a request that
+    // starts after the runtime scan below still passes the account checks, can
+    // hydrate the credential, and outlives the response. The previous state is
+    // kept so a failed deletion does not leave the account present but disabled.
+    previousActive = db.prepare('SELECT is_active FROM users WHERE id = ?').get(id)?.is_active;
+    db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(id);
+    // A personal ChatGPT runtime keeps using this account's credential until it
+    // is told to stop, so it is ended and acknowledged before anything is
+    // removed. Deletion must not return while that use is still in progress.
+    // Only stopped here, not removed: deleting the credential is irreversible and
+    // the transaction below can still fail.
+    // Not optional and not best effort: the deletion's own triggers remove the
+    // credential and the lease, so committing it while a child may still be
+    // using them would pull the ground out from under a running process. A
+    // runtime that never acknowledged is not proof that it stopped.
+    const {stopAccountRuntimes} = await import('../services/ai/codex/account.js');
+    if (!(await stopAccountRuntimes(`user:${id}`)).acknowledged) {
+      throw Object.assign(new Error('A personal ChatGPT runtime of this account did not stop. The account was not deleted.'), {status: 409});
+    }
     const ownedProviderUrls = db.prepare('SELECT url FROM providers WHERE user_id = ?').all(id).map(p => p.url);
 
     db.transaction(() => {
@@ -583,10 +605,24 @@ export const deleteUser = (req, res) => {
       db.prepare('DELETE FROM user_backups WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
+    deleted = true;
 
     clearChannelsCache(id);
+    // The deletion committed, so removing the credential and the runtime tree is
+    // safe. Database triggers have already removed the account's AI records.
+    try { purgeAiRuntimeIdentity(`user:${id}`); }
+    catch { /* Optional runtime cleanup never fails an account deletion. */ }
     res.json({success: true});
   } catch (e) {
-    res.status(500).json({error: e.message});
+    // A deletion that failed must leave the account as it was, not present and
+    // permanently disabled. Its sessions stay invalidated, which only requires a
+    // fresh sign-in.
+    if (!deleted && previousActive !== undefined) {
+      try { db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(previousActive, id); }
+      catch { /* the row may already be gone */ }
+    }
+    // A runtime that did not stop is a conflict the caller can retry, not a
+    // server fault.
+    res.status(e.status || 500).json({error: e.message});
   }
 };

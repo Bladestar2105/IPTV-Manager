@@ -28,6 +28,109 @@ their own provider names/options and catalog rows so they can edit channel,
 movie, and series lists, including category-scoped EPG mappings. Administrators
 are not restricted by this setting.
 
+## Optional AI
+
+The AI integration is **experimental**, including both API and ChatGPT connections.
+API connections are configured in the **AI Assistant** Web UI, without additional
+environment variables or services. Personal ChatGPT connections also need the
+runtime described below. The central policy is stored in `settings.ai_policy`;
+it defaults to disabled. Administrators explicitly select allowed users by name and allowed functions,
+may share an admin connection with selected users, and can allow private user
+connections. A user must also activate their own AI preferences.
+
+Automatic cleanup rules recheck account and Web UI access, the applicable user
+and function allowlists, and both server and personal AI enablement before
+applying. Revoked access skips application without deleting the stored rule.
+Already confirmed literal rules do not require a model connection to run.
+
+Public API targets require HTTPS. `internal_targets` allows exact normalized
+base URLs (including proxy prefixes) for administrator-approved internal
+services; it never allows CIDR ranges, metadata addresses, redirects or insecure
+TLS. An approved internal endpoint may use HTTP and no key. This policy does
+not change IPTV provider/EPG networking. See [AI setup](AI_INTEGRATION.md).
+
+Connection API keys use the existing `ENCRYPTION_KEY`/`secret.key` AES-GCM
+encryption. Keep that key backed up separately from the database; access to both
+allows decryption. Ordinary user backups, clones and system exports do not
+include AI connections. Re-enter credentials and retest after importing a user.
+
+## Optional personal ChatGPT connection
+
+A second, separate AI connection type lets each user and each administrator link
+**their own** ChatGPT account through the official Codex sign-in, without an
+OpenAI platform API key. Packaged installations enable the runtime; AI access
+still requires the administrator's policy and each user's preferences. It is offered only when
+the server can prove that the Codex runtime is contained by an operating-system
+sandbox. It never replaces the API connection type described above.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AI_CODEX_ENABLED` | `true` in the image, installer and example environment; otherwise `false` | Master switch. While false, nothing is started and the connection type is not offered. Existing explicit settings are preserved by the updater. |
+| `AI_CODEX_BIN` | `codex` | Path to the pinned Codex CLI, or a bare name resolved once against `PATH`. A relative path is resolved against the manager's working directory. The resolved absolute path is both version-probed and launched; the executable, the target of a symlinked launcher and the interpreter of a script launcher are bound read-only as individual files, and a resolved package root as a directory, so a global npm install works without carrying a launcher's unrelated neighbours into the sandbox. A launcher placed in or above `DATA_DIR` is refused (`AI_CODEX_BINARY_UNSAFE_LOCATION`), because mounting it would expose the database and the encryption key; keep it in a normal system location. Its reported version must fall inside the tested range (see [AI setup](AI_INTEGRATION.md)). |
+| `AI_MODEL_TEST_BATCH_MS` | `300000` | Budget for one whole compatibility test, however many models and probes it contains (clamped to 1 s – 15 min). Set it to the timeout of the proxy in front of the manager: there is no point in still making billable calls for a request nothing is waiting for. Models the batch could not reach are reported as untested. |
+| `AI_CODEX_RUNTIME_DIR` | `$DATA_DIR/ai-codex` | Root for per-identity runtime directories, created with mode `0700`. A relative path — including one inherited from a relative `DATA_DIR` — is resolved against the working directory, because the sandbox needs absolute paths. Wherever it is placed, the sandbox masks the whole root and restores only the identity that is running, so one identity never reaches another's. |
+| `AI_CODEX_SANDBOX` | `auto` | Isolation backend: `auto`, `bwrap`, `sandbox-exec`, or `none` to keep the adapter disabled. |
+| `AI_CODEX_ALLOW_DEV_SANDBOX` | `false` | Accept a development-grade backend (macOS `sandbox-exec`). Not intended for hosted multi-user operation. |
+| `AI_CODEX_VERSION_OVERRIDE` | unset | Accept one exact Codex version outside the tested range. Use only for a deliberate, separately validated upgrade. |
+
+On Linux the supported backend is **bubblewrap** (`bwrap`), which gives the
+runtime its own mount, PID, IPC, UTS and cgroup namespaces with only its own
+identity directory writable. Install it in the image or host (`apt-get install
+-y bubblewrap`) and keep the web process unprivileged; no Docker socket and no
+host administration rights are required or granted. On startup the server runs a
+canary self-test that must fail to read a file outside the sandbox and fail to
+write into `DATA_DIR`. If the backend is missing, the self-test fails, or the
+grade is only development, the adapter stays unavailable with a specific reason
+and the connection type is not offered.
+
+Credentials are stored encrypted with the same `ENCRYPTION_KEY`/`secret.key`.
+The Codex credential file exists in clear text only inside the identity's own
+`0700` directory while its runtime is live and is removed when it stops. The
+server operator can read the application key by design; this is not encryption
+against the operator.
+
+### AI installation verification
+
+The standard Docker image and Debian/Ubuntu installer provision Codex **0.154.0**
+and bubblewrap. Manual Debian/Ubuntu installations run
+`sudo bash scripts/install-ai-runtime.sh` after installing Node.js and npm.
+Proxmox delegates to that same installer inside its unprivileged, nesting-enabled
+container. Existing explicit `AI_CODEX_ENABLED=false` settings are not changed.
+If optional ChatGPT provisioning fails during install/update, a warning is
+reported and the core server installation/restart continues. Correct the reported
+dependency problem and rerun the helper before using ChatGPT.
+
+Run `npm run check:ai-runtime` **as the application user, not root**. It uses
+temporary data, checks real filesystem containment, probes the installed
+version, starts the app-server with the production restrictions and completes
+its protocol handshake. It never signs in, loads existing credentials, or calls
+a model. A missing/blocked runtime produces a nonzero exit code. Install/update
+run it with `--if-enabled`; a failure warns rather than stopping the ordinary
+server and API connection path.
+
+Docker needs the supplied `docker/ai-seccomp.json` and, on AppArmor hosts, the
+loaded `iptv-manager-ai` profile in `docker/ai-apparmor`. Keep Docker's default
+masked/read-only paths, capability set and PID isolation. Do **not** use
+`privileged`, `SYS_ADMIN`, `seccomp=unconfined`, `apparmor=unconfined` or
+`systempaths=unconfined`. The runtime uses a read-only synthetic `/proc` containing
+only its fixed executable link; it exposes no process tree and does not need
+to mount procfs inside Docker. The profile provenance and permissions are in
+[docker/SECURITY-PROFILES.md](../docker/SECURITY-PROFILES.md).
+
+On AppArmor-enabled Debian/Ubuntu hosts the helper installs a private,
+root-owned bubblewrap executable under `/usr/local/lib/iptv-manager/bwrap`
+and its enforced `iptv-manager-bwrap` profile. The application selects that
+executable when present, otherwise the system bubblewrap. This leaves the
+system-wide unprivileged-user-namespace restriction and other applications'
+bubblewrap unchanged. A container that cannot load this profile needs its host
+administrator; the helper reports that restriction rather than disabling it.
+
+After a green preflight, configure the AI policy/preferences and complete a real
+Web UI account link, model discovery/test, and disconnect. API-key connections
+require their own endpoint/key/model test. These account-dependent checks are
+separate from installation verification. Proxmox remains runtime-unverified
+until this is exercised on a real Proxmox host.
+
 ## Network and Proxy
 
 - `TRUST_PROXY`: Express trust proxy setting. Use this behind a reverse proxy

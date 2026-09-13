@@ -10,6 +10,7 @@ jwt.secret
 cache/
 temp_*/
 temp_uploads/
+ai-codex/
 coverage/
 test-results/
 playwright-report/

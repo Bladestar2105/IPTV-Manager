@@ -22,6 +22,171 @@ transaction. It also clears the handling worker's credential and token caches.
 Admin password changes affect only the administrator account, even when a normal
 user has the same numeric ID.
 
+## Optional AI assistance
+
+The AI integration is **experimental**, for API and personal ChatGPT connections.
+
+All `/api/ai/*` routes require the current Web UI JWT in an
+`Authorization: Bearer ...` header. Query, player, Stalker and share tokens
+cannot authorize AI management. Mutations require same-origin browser requests
+and JSON bodies (DELETE does not require a body). Responses are `no-store`.
+The origin check respects `TRUST_PROXY` for forwarded host/protocol headers and
+normalizes default ports. Forwarded headers from untrusted peers are ignored.
+Concurrent connection edits check the stored version before writing. An edit
+that loses this race returns `AI_CONNECTION_CHANGED` (409); reload before retrying.
+See [setup, data boundaries and limits](AI_INTEGRATION.md).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET / PUT | `/api/ai/settings` | Read policy; administrators may change server enablement, own-connection permission, allowed users/functions and exact internal targets. |
+| GET / PUT | `/api/ai/preferences` | Personal enablement, selected connection/model, language, timezone and automatic sync-summary opt-in. |
+| GET / POST | `/api/ai/connections` | List usable connections or create an owned connection. |
+| PUT / DELETE | `/api/ai/connections/:id` | Change/delete an owned connection. `api_key` is write-only; reads return `has_key` and `editable`. Deleting a `chatgpt_account` connection stops its runtime and signs out first, so the response never precedes the end of credential use. |
+| POST | `/api/ai/connections/:id/discover` | Explicitly list models; no inference side effect. |
+| POST | `/api/ai/connections/:id/test` | Test `model_ids` (one to three) with bounded synthetic chat/structured-output checks. |
+| GET | `/api/ai/codex/status` | Read whether the personal ChatGPT adapter is offered on this host, with the pinned Codex version, isolation backend/grade, or a stable unavailability reason. |
+| POST | `/api/ai/codex/session/end` | End unfinished account-link attempts belonging to this signed, unexpired bearer session before Web UI logout. Idempotent and available even after regional, account, WebUI, token-version or AI-policy access is revoked; it grants no management access. Completed links and other sessions are unchanged. |
+| POST | `/api/ai/connections/:id/link` | Owner-only. Start the documented ChatGPT device-code sign-in for an owned `chatgpt_account` connection. Returns `verification_url`, `user_code` and `expires_at`; never a token. At most five attempts per owner and hour, and a new attempt supersedes the previous one. |
+| GET | `/api/ai/connections/:id/link/:loginId` | Poll one own attempt: `pending`, `completed`, `failed`, `cancelled` or `expired` with a stable `error_code`. `completed` is only reported once the credential is stored; a sign-in that has been claimed but not yet stored still reads as `pending`. Only the session that started the attempt can read it, and its polling keeps the attempt alive; after two minutes without a poll a later success is discarded. |
+| POST | `/api/ai/connections/:id/link/:loginId/cancel` | Cancel one own pending attempt through the documented cancel call. |
+| POST | `/api/ai/connections/:id/unlink` | Block new work, cancel queued/running work, sign the runtime out and remove the local credential. Reports `remote_logout` separately from local removal. After AI access is withdrawn the owner's linked connections stay listed with `teardown_only: true`, offering only this call. |
+| GET | `/api/ai/connections/:id/account` | Read the masked account label, plan and, where the documented interface reports it, remaining quota and reset time. Missing values stay unknown. A refresh that reports no account, or a different authentication mode, removes the stored link instead of reporting it as connected. |
+| GET / POST | `/api/ai/jobs` | List up to 50 personal jobs or enqueue a feature request. |
+| GET | `/api/ai/jobs/:id` | Read status and currently authorized result. |
+| POST | `/api/ai/jobs/:id/cancel` | Best-effort cancellation without replaying a submitted request. |
+| GET | `/api/ai/proposals/:id` | Read the stored before/after actions and dependencies. |
+| POST | `/api/ai/proposals/:id/apply` | Apply selected `action_ids` and their dependencies with an `idempotency_key`. |
+| GET | `/api/ai/changes/:id` | Read the authorized change record. |
+| GET | `/api/ai/changes` | List up to 50 personal change records, including automatic rule applications; optional target `user_id`. |
+| POST | `/api/ai/changes/:id/undo` | Conditionally restore only the recorded changed fields. |
+| GET / POST | `/api/ai/rules` | List personal rules (`user_id` for administrators) or save a rule from an applied rename. |
+| PUT / DELETE | `/api/ai/rules/:id` | Update/enable or delete a confirmed literal rule. Name and enabled-state updates survive history expiry; transformation changes require an available applied rename. |
+| GET / DELETE | `/api/ai/conversations/:id` | Read structured search criteria or delete a conversation. |
+| POST | `/api/ai/conversations/:id/messages` | Enqueue a search follow-up for the stored target user. |
+| GET | `/api/ai/enrichments/:id` | Read the marked derived description and its current original. |
+| GET | `/api/ai/channels/:id/programs` | Select an authorized EPG description for a provider channel; optional `user_id`/`timezone`, up to 100 programs in the next 24 hours, no model request. |
+| GET | `/api/ai/usage` | Up to 200 recent request records, token counts and explicit unknown prices. |
+| DELETE | `/api/ai/history` | Cancel personal jobs and clear jobs, conversations and enrichments; retain change records and rules. |
+
+Connection fields include `name`, `provider`, `base_url`, `api_key`, `shared`,
+`allowed_user_ids`, `functions`, `enabled`, `model_id` and `token_parameter`.
+`provider` is `openai_api` (default, including every connection stored before
+this feature) or `chatgpt_account`. It is chosen at creation and can never be
+changed on an existing connection. A `chatgpt_account` connection rejects
+`base_url`, `api_key` and `token_parameter`, is always stored with
+`shared=false` and an empty `allowed_user_ids`, and rejects a request that tries
+to set either; it exposes an `account` object with `linked`, masked `label`,
+`plan_type` and `auth_method` to its owner only. Its model catalog, quota and
+requests come from the pinned Codex app server rather than a user-supplied
+address.
+Model selection requires a successful compatibility test. Shared-connection
+users cannot edit, discover or test the owner's connection or retrieve its key.
+Server policy defaults to disabled, and each user must opt in separately.
+
+Proposal Apply and rule POST/PUT operations do not require an available model
+connection or tested model. They make no provider request and retain current
+account, Web UI, server/personal AI and feature authorization, ownership,
+confirmation and source/conflict checks. Removing model setup does not prevent
+an authorized user from confirming stored work or disabling a confirmed rule.
+Inference and connection setup retain their connection/model permission checks.
+
+Discovery returns model IDs with a bounded `candidate` hint (`text`, `other`,
+`unknown`), without changing saved selection. A compatibility profile includes
+`chat`, `structured`, `status`, `token_parameter`, `tested_at`, and a stable
+`error_code` on failure. `unverified` does not mean incompatible. Tests accept
+at most three models and three requests/model (128 output tokens/request);
+one alternate token profile is allowed only after an explicit 400/422
+unsupported-parameter rejection. Adopt an alternate profile by explicitly
+setting the successfully tested `model_id` and matching `token_parameter`
+together, then saving the personal selection. Other profile changes invalidate
+compatibility. Authentication, permission and rate errors stop a test batch;
+there is no automatic retry after a timeout or uncertain response.
+Connections expose/store at most 100 capability profiles, retaining the current
+connection and owner-personal selections plus recent tests. Evicted unselected
+models require another explicit test. Retesting retained IDs only replaces
+their profiles; unrelated profiles are evicted only for added IDs. Existing
+oversized maps are capped in read responses and trimmed on their next normal
+connection write.
+Discovery and tests also perform bounded usage retention through the shared
+request reservation: up to 100 inactive records older than 30 days per request.
+
+Error categories are `AI_AUTH_FAILED`, `AI_PERMISSION_DENIED`, `AI_RATE_LIMIT`,
+`AI_UNAVAILABLE`/`AI_TIMEOUT`, `AI_MODEL_UNAVAILABLE`,
+`AI_CAPABILITY_UNSUPPORTED`, and `AI_TOKEN_PARAMETER_UNSUPPORTED`.
+`AI_PAUSED` is reserved for repeated connection outages. Error bodies from the
+upstream service are never returned.
+
+Job `feature` is one of `list`, `cleanup`, `duplicates`, `epg`, `sync`,
+`search`, `diagnose`, `text`. Common inputs are `prompt`, `language`, `timezone`,
+`connection_id`, `user_id`, `category_id`, `channel_ids` (provider channel IDs),
+`selected_ids` / `pinned_ids` (user assignment IDs), and `keep_first`.
+Administrators must specify `user_id` for catalog work; omitting it is allowed
+for aggregate diagnosis. A normal user can target only their own account.
+
+For example, POST `/api/ai/jobs` with header `Idempotency-Key: cleanup-example-1`:
+
+```json
+{"feature":"cleanup","prompt":"Remove country prefixes from my channel names","language":"en","timezone":"Europe/Berlin","keep_first":10}
+```
+
+The response contains `id`, `status`, `feature` and `created_at`. Poll the job;
+statuses are `queued`, `running`, `completed`, `failed`, `cancelled`. Only an
+explicit cancellation uses `cancelled`. Overall deadlines use `failed` with
+`AI_TIMEOUT`; internal permission/connection aborts retain their error code in
+polling, history and usage. Interrupted requests can still have unknown billing
+status and are not automatically retried. A completed
+result may include `proposal_id`, `conversation_id`, `enrichment_id`, findings
+and coverage. Reading a persisted result requires current account, Web UI and
+AI feature access plus renewed source/ownership checks. It does not require
+the former model connection, its sharing grant or a usable model. New and
+in-flight jobs retain connection/model authorization. Fetch a proposal before
+applying its chosen action IDs. Reusing a job idempotency key with changed input returns 409. Application does not
+repeat inference. Stale sources, revoked rights and undo conflicts reject the
+operation rather than overwriting current data.
+
+For reordering, confirm all companion moves needed to keep the affected positions
+unique within each category. Collisions reject the whole application with
+`AI_REORDER_CONFLICT` (409). Undo also rejects occupied original positions.
+Every stored action must belong to its declared feature's closed contract,
+including unselected actions. Invalid legacy proposals fail before any mutation.
+EPG mappings require `feature: "epg"`, current EPG permission and source evidence;
+list/cleanup cannot carry them. Feature revocation after preview rejects Apply.
+
+`full_list:true` raises the bounded page size. Follow `coverage.next_offset`
+with `offset`; retain the reported partial status until the requested scope has
+actually been examined. Search accepts `conversation_id` and explicit `filters`
+patches with `query`, `type`, `genre`, `language`, `region`, `start`, `end`,
+`max_duration` and `interests`. Null/empty values remove a filter. Program times
+must have an explicit UTC offset; time windows are bounded to 14 days. Text
+requests use `provider_channel_id`, `operation` and optionally an actual
+`program` reference. Sync requests may select a recorded `snapshot_id`.
+Sync `diff.counts` covers all currently authorized recorded changes. The
+`diff.changes` preview is limited to 20 rows; `diff.preview.total`, `shown` and
+`partial` describe its coverage. Revoking access to an off-preview change also
+invalidates the bound result. Stored results using the former snapshot-only
+evidence hash need a new analysis; requests are not automatically replayed.
+Proposal responses may reference only existing channel, assignment and category
+IDs supplied in that exact model request. This includes the bounded sync
+candidates and EPG review cases; ownership alone does not admit an omitted ID.
+
+Program search uses stable channel/source/start pagination. `truncated:true`
+reports unexamined rows or a capped source catalog even when there are no
+matches. Exact completed page/budget boundaries can return `truncated:false`.
+Diagnosis accepts selected own editable hidden assignments without exposing
+foreign/revoked entries. Findings carry `certainty: proven|possible|unknown`;
+`channel_diagnostics` describes local assignment/export filters/EPG configuration,
+and `local_user_connections` describes a timestamped local session/limit snapshot.
+`explanation_unavailable:true` leaves those findings available if inference fails.
+`coverage.diagnostic_entries_shown/total/partial` describes the bounded detail
+preview. [Unimplemented diagnostic measurements](AI_INTEGRATION.md#local-diagnosis-coverage)
+remain explicit unknowns; no diagnostic domain operation mutates state.
+
+Errors contain a stable `code`/`error`, never upstream bodies or credentials.
+Invalid input is 400, denied access 403, missing/expired private records 404,
+stale/conflicting work 409, and rate/busy limits 429. Network/provider failures
+have safe 5xx errors. Clients should translate the code and require explicit
+retesting/selection after connection changes.
+
 ## Users
 
 - `GET /api/users`
@@ -351,6 +516,10 @@ credentials, and token-authenticated share routes use the same IDs. Cached
 provider- or assignment-based legacy IDs are accepted only when they resolve to
 exactly one currently authorized series and episode, otherwise playback fails
 closed.
+
+`get_series_info` returns an empty episode `direct_source`, as live/movie
+catalogs do. Clients therefore use the managed episode route and the selected
+provider's credentials, including when providers use different DNS names.
 
 Channel visibility requires `is_hidden = 0`, `authorization_revoked = 0`, and
 either matching provider/category ownership or `granted_by_admin = 1`.

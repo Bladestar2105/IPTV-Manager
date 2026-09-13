@@ -2,10 +2,21 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## Stable-26.09.13 - 2026-09-13
 
+- Added an experimental, opt-in AI Assistant with OpenAI-compatible API and
+  personal ChatGPT connections, eight functions, confirmed list changes and Undo.
+- Added select-all/clear-selection controls, local action feedback and clickable
+  device-code copying; documented setup for Docker, Debian/Ubuntu and Proxmox.
+- Preserved pending jobs and ChatGPT sign-ins across navigation, prevented setup
+  changes from interrupting active work, and added recoverable sign-in status.
+- Kept core installation and service restarts working when optional ChatGPT
+  provisioning fails.
+- Completed missing German, English, French and Greek UI translations.
+- Kept series playback on the selected provider when an upstream panel supplies
+  a direct-play URL, including providers with different DNS names.
 - Added a per-user provider-access setting that hides upstream provider
-  management and catalog data from normal users by default while preserving
+  management and connection details from normal users by default while preserving
   their channel, movie, series, and category-scoped EPG mapping edits.
 - Added isolated API and Playwright regression coverage for provider visibility,
   session cleanup, and retained list editing.

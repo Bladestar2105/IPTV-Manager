@@ -5,6 +5,13 @@ WORKDIR /app
 # Install build dependencies for native modules
 RUN apk add --no-cache python3 make g++ su-exec
 
+# Ship the same pinned account runtime as the Debian/Ubuntu installer.
+# The host must also permit the nested sandbox (see docs/CONFIGURATION.md).
+ARG INSTALL_AI_CODEX_SANDBOX=true
+RUN if [ "$INSTALL_AI_CODEX_SANDBOX" = "true" ]; then \
+      apk add --no-cache bubblewrap && npm install --global @openai/codex@0.154.0; \
+    fi
+
 # Copy package files
 COPY package.json package-lock.json ./
 
@@ -15,11 +22,13 @@ RUN npm ci --omit=dev
 COPY src ./src
 COPY public ./public
 COPY .env.example ./.env.example
+COPY scripts/check-ai-runtime.mjs ./scripts/check-ai-runtime.mjs
 
 # Set environment variables
 ENV DATA_DIR=/data
 ENV PORT=3000
 ENV NODE_ENV=production
+ENV AI_CODEX_ENABLED=true
 
 # Create data directory
 RUN mkdir -p /data

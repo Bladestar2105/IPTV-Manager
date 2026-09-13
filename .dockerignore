@@ -1,11 +1,13 @@
 node_modules
 .git
 .github
+.superpowers
 .env
 data
 cache
 temp_*
 temp_uploads
+ai-codex
 db.sqlite*
 epg.db*
 secret.key

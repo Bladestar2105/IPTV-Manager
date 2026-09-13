@@ -351,6 +351,7 @@ export function initDb(isPrimary) {
                 migrations.migrateUserChannelDeduplicationV1(db);
             }
             migrations.migrateStalkerTables(db);
+            migrations.migrateAiSchema(db);
 
             // Clear ephemeral streams
             db.exec('DELETE FROM current_streams');

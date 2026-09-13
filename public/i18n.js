@@ -4,6 +4,18 @@
  */
 const translations = {
   en: {
+    casting: 'Casting',
+    nativePlayback: 'Native playback',
+    nativeHlsPlayback: 'Native HLS playback',
+    castLabel: 'Cast',
+    channelsFetchError: 'Channel loading failed',
+    seriesInfoFetchError: 'Series information loading failed',
+    resetting: 'Resetting...',
+    creating: 'Creating...',
+    restore: 'Restore',
+    date: 'Date',
+    allChannels: 'All Channels',
+    epgMaxPastReached: 'Maximum catch-up history reached',
     // Accessibility
     skipToContent: 'Skip to content',
     selectLanguage: 'Select Language',
@@ -573,6 +585,18 @@ const translations = {
   },
 
   de: {
+    casting: 'Wiedergabe auf externem Gerät',
+    nativePlayback: 'Native Wiedergabe',
+    nativeHlsPlayback: 'Native HLS-Wiedergabe',
+    castLabel: 'Besetzung',
+    channelsFetchError: 'Sender konnten nicht geladen werden',
+    seriesInfoFetchError: 'Serieninformationen konnten nicht geladen werden',
+    resetting: 'Wird zurückgesetzt...',
+    creating: 'Wird erstellt...',
+    restore: 'Wiederherstellen',
+    date: 'Datum',
+    allChannels: 'Alle Sender',
+    epgMaxPastReached: 'Maximaler Catch-up-Zeitraum erreicht',
     // Accessibility
     skipToContent: 'Zum Inhalt springen',
     selectLanguage: 'Sprache wählen',
@@ -1141,6 +1165,18 @@ const translations = {
   },
 
   fr: {
+    casting: 'Diffusion sur un appareil externe',
+    nativePlayback: 'Lecture native',
+    nativeHlsPlayback: 'Lecture HLS native',
+    castLabel: 'Distribution',
+    channelsFetchError: 'Échec du chargement des chaînes',
+    seriesInfoFetchError: 'Échec du chargement des informations de la série',
+    resetting: 'Réinitialisation...',
+    creating: 'Création...',
+    restore: 'Restaurer',
+    date: 'Date',
+    allChannels: 'Toutes les chaînes',
+    epgMaxPastReached: 'Limite de l’historique de rattrapage atteinte',
     // Accessibility
     skipToContent: 'Aller au contenu',
     selectLanguage: 'Choisir la langue',
@@ -1709,6 +1745,18 @@ const translations = {
   },
 
   el: {
+    casting: 'Μετάδοση σε εξωτερική συσκευή',
+    nativePlayback: 'Εγγενής αναπαραγωγή',
+    nativeHlsPlayback: 'Εγγενής αναπαραγωγή HLS',
+    castLabel: 'Διανομή ρόλων',
+    channelsFetchError: 'Αποτυχία φόρτωσης καναλιών',
+    seriesInfoFetchError: 'Αποτυχία φόρτωσης πληροφοριών σειράς',
+    resetting: 'Επαναφορά...',
+    creating: 'Δημιουργία...',
+    restore: 'Επαναφορά',
+    date: 'Ημερομηνία',
+    allChannels: 'Όλα τα κανάλια',
+    epgMaxPastReached: 'Συμπληρώθηκε το μέγιστο ιστορικό ετεροχρονισμένης προβολής',
     // Accessibility
     skipToContent: 'Μετάβαση στο περιεχόμενο',
     selectLanguage: 'Επιλογή Γλώσσας',

@@ -1,0 +1,96 @@
+import { aiError } from '../transport.js';
+import { withRuntime, liveRuntime } from '../codex/runtime.js';
+import { requireChatGptAuth, listModels, runTurn } from '../codex/client.js';
+import { seal } from '../codex/credentials.js';
+import { MODEL_ID } from './openaiApi.js';
+
+export const CODEX_TURN_TIMEOUT_MS = 170000;
+export const CODEX_SETUP_TIMEOUT_MS = 60000;
+
+// A Codex error code is translated once, here, into the existing AI error
+// vocabulary so the shared limiter, outage breaker and UI keep one contract.
+function translate(error) {
+    if (error?.code?.startsWith('AI_')) return error;
+    return aiError('AI_UNAVAILABLE', 502);
+}
+
+// Personal ChatGPT sign-in. The runtime is started for this identity only, used
+// for exactly one bounded operation and torn down again; there is no shared
+// process that could be switched between personal logins.
+export const chatgptAccountProvider = {
+    id: 'chatgpt_account',
+    // Private by construction: an administrator may enable the feature but can
+    // never hand their own sign-in to another account as a service.
+    shareable: false,
+    requiresBaseUrl: false,
+    usesTokenParameter: false,
+    supportsAccountLink: true,
+    supportsQuota: true,
+    // Only deliberately triggered work runs on a personal plan. Automatic sync
+    // summaries and unattended catalog analysis stay blocked for this provider.
+    allowsUnattended: false,
+    requestTimeout(operation) { return operation === 'models' ? CODEX_SETUP_TIMEOUT_MS : CODEX_TURN_TIMEOUT_MS; },
+    async execute({ connection, ownerKey, operation, payload, signal, beforeSend, tokenVersion }) {
+        if (liveRuntime(ownerKey, connection.id)) throw aiError('AI_BUSY', 409);
+        // One deadline for everything this request does, established before the
+        // runtime is started. Waiting for a hand-off, the handshake and the
+        // authentication check are part of the operation; leaving them outside
+        // the budget let a slow host outlive the reservation that bounds it.
+        const deadline = Date.now() + chatgptAccountProvider.requestTimeout(operation);
+        const remaining = () => Math.max(1, deadline - Date.now());
+        const controller = new AbortController();
+        const abort = () => controller.abort(signal.reason);
+        if (signal?.aborted) abort();
+        else signal?.addEventListener('abort', abort, { once: true });
+        let authorizationError;
+        // Setup requests have no job monitor. Recheck their authorization while
+        // the runtime is working, not only before submitting a billable turn.
+        const monitor = setInterval(() => {
+            if (controller.signal.aborted) return;
+            try { beforeSend?.(); } catch (error) {
+                authorizationError = error;
+                controller.abort(error);
+            }
+        }, 500);
+        monitor.unref?.();
+        try {
+            // The orchestrator's own recheck, evaluated inside the lease
+            // transaction as well: access can be withdrawn while this request
+            // waits for a runtime.
+            const verifyEligible = () => { try { beforeSend?.(); return true; } catch { return false; } };
+            return await withRuntime(ownerKey, connection.id, async session => {
+                if (controller.signal.aborted) throw aiError('AI_TIMEOUT', 504);
+                await requireChatGptAuth(session, { timeoutMs: remaining(), signal: controller.signal });
+                // Re-checked immediately before the billable request, exactly as the
+                // API transport does.
+                beforeSend?.();
+                if (operation === 'models') {
+                    const models = await listModels(session, { timeoutMs: remaining(), signal: controller.signal });
+                    const usable = models.filter(model => MODEL_ID.test(model.id));
+                    if (!usable.length) throw aiError('AI_INVALID_RESPONSE', 502);
+                    return { result: { models: usable }, usage: { prompt_tokens: null, completion_tokens: null } };
+                }
+                const turn = await runTurn(session, {
+                    model: payload.model,
+                    messages: payload.messages,
+                    schema: payload.schema,
+                    structured: payload.structured !== false,
+                    maxTokens: payload.maxTokens,
+                    signal: controller.signal,
+                    timeoutMs: remaining(),
+                    // Re-checked once more inside, immediately before the turn is
+                    // submitted, because starting the thread can take long enough
+                    // for access to change.
+                    verify: beforeSend
+                });
+                // A token refreshed during the turn is captured before teardown.
+                seal(ownerKey, connection.id, {}, { refreshOnly: true });
+                return { result: { content: turn.content }, usage: turn.usage };
+            }, { verifyEligible, tokenVersion, deadline, signal: controller.signal });
+        } catch (error) { throw translate(authorizationError || error); }
+        finally {
+            clearInterval(monitor);
+            signal?.removeEventListener('abort', abort);
+        }
+    }
+};
