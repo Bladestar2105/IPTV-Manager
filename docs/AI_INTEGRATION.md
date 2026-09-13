@@ -493,6 +493,11 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   What a teardown reads to decide whether an identity came back follows the same
   rule: an expired lease whose process is still there counts as held, so an
   unlink or a deletion cannot mistake it for an acknowledgement.
+  A cleanup reservation is not released on its expiry either: the removal it
+  guards runs synchronously and cannot renew its own lease, so a large tree or a
+  slow data directory would otherwise let a replacement take the identity and
+  recreate the files being deleted. It ends when its holder is done, or when
+  that worker's rows are cleared on its exit or on the next start.
   A lease that names a process is never released on its expiry alone: a
   timestamp from before a restart is already past, and sweeping it would hand a
   live identity to a replacement. Such a lease is released by its owner's exit,

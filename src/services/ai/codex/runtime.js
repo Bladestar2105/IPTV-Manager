@@ -91,7 +91,10 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, 
         // the process behind it may still be running, and only a check that it is
         // really gone may free that identity. Those rows are released by their
         // owner's exit, by the verified reapers, or by the guarded step below.
-        db.prepare('DELETE FROM ai_codex_runtimes WHERE expires_at < ? AND child_pid IS NULL').run(now);
+        // Nor is a cleanup reservation: its holder is removing files right now,
+        // synchronously, so no timer of its own can extend it. It is released by
+        // that holder, or by the sweeps that clear a dead worker's rows.
+        db.prepare("DELETE FROM ai_codex_runtimes WHERE expires_at < ? AND child_pid IS NULL AND state<>'cleanup'").run(now);
         const existing = db.prepare('SELECT lease_id,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
         if (existing) return { leaseId: null, blockedBy: existing.state };
         if (!identityStillEligible(ownerKey, connectionId, allowTeardown, tokenVersion)) return { leaseId: null, blockedBy: 'ineligible' };

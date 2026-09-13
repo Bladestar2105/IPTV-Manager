@@ -2540,6 +2540,24 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id)).toBeUndefined();
     }, 30000);
 
+    it('keeps a slow cleanup\'s reservation even once its lease looks expired', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const now = Date.now();
+        // Removing an identity tree runs synchronously and can outlast any lease
+        // deadline; nothing can extend the reservation while it does.
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'cleanup-slow', process.pid, 'cleanup', now - 60000, now - 60000);
+        try {
+            // No replacement may take the identity and recreate the files the
+            // removal is still deleting.
+            await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_BUSY' });
+            expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).lease_id).toBe('cleanup-slow');
+            // And no second cleanup works in the same files either.
+            expect(credentials.withCleanupLease('user:1', connection.id, () => 'ran')).toBeNull();
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
+    }, 30000);
+
     it('refuses a cleanup reservation while the identity is leased', async () => {
         const connection = await withModel();
         await seedLease(connection.id, 'holder');

@@ -12,6 +12,11 @@ const AUTH_FILE = 'auth.json';
 // look at it again. It is never swept on the timestamp alone; this only keeps it
 // from looking expired in the meantime.
 const ORPHAN_HOLD_MS = 300000;
+// Only a hint for anything looking at the row: a cleanup reservation is never
+// released on this timestamp, because the removal it guards runs synchronously
+// and cannot extend it. Its holder releases it, and a dead holder's rows are
+// cleared when that worker exits or on the next start.
+const CLEANUP_LEASE_MS = 300000;
 const MAX_AUTH_BYTES = 256 * 1024;
 
 // Codex owns its credential file. It is only ever materialized inside the
@@ -308,10 +313,14 @@ export function withCleanupLease(ownerKey, connectionId, run) {
     // the orphan is working in. Only a lease whose process is proven gone — or
     // that never had one — may be cleared, and that question is asked of the
     // operating system before the transaction opens.
-    const stale = db.prepare('SELECT lease_id,child_pid,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+    const stale = db.prepare('SELECT lease_id,child_pid,expires_at,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
     let reapable = null;
     if (stale && stale.expires_at < now) {
         if (stale.child_pid && identityProcessState(stale.child_pid, identityPaths(ownerKey, connectionId).root) !== 'gone') return null;
+        // Another cleanup is working in these files. Removing them from two
+        // places at once is exactly what this reservation exists to prevent, and
+        // a removal cannot renew its own lease while it runs.
+        if (stale.state === 'cleanup') return null;
         reapable = stale.lease_id;
     }
     const claimed = db.transaction(() => {
@@ -321,7 +330,7 @@ export function withCleanupLease(ownerKey, connectionId, run) {
         }
         if (db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId)) return false;
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run(ownerKey, connectionId, leaseId, process.pid, 'cleanup', now + 30000, now);
+            .run(ownerKey, connectionId, leaseId, process.pid, 'cleanup', now + CLEANUP_LEASE_MS, now);
         return true;
     }).immediate();
     if (!claimed) return null;
