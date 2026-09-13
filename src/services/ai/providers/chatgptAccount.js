@@ -44,6 +44,7 @@ export const chatgptAccountProvider = {
             // waits for a runtime.
             const verifyEligible = () => { try { beforeSend?.(); return true; } catch { return false; } };
             return await withRuntime(ownerKey, connection.id, async session => {
+                if (signal?.aborted) throw aiError('AI_TIMEOUT', 504);
                 await requireChatGptAuth(session, { timeoutMs: remaining() });
                 // Re-checked immediately before the billable request, exactly as the
                 // API transport does.
@@ -70,7 +71,7 @@ export const chatgptAccountProvider = {
                 // A token refreshed during the turn is captured before teardown.
                 seal(ownerKey, connection.id, {}, { refreshOnly: true });
                 return { result: { content: turn.content }, usage: turn.usage };
-            }, { verifyEligible, tokenVersion, deadline });
+            }, { verifyEligible, tokenVersion, deadline, signal });
         } catch (error) { throw translate(error); }
     }
 };

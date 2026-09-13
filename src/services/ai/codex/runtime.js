@@ -104,9 +104,10 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, 
 // A runtime that is terminating still holds its lease until its child has
 // actually exited, so a replacement waits for that hand-off. Anything else
 // holding the lease is a concurrent operation and is refused immediately.
-async function acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion, handoverMs = LEASE_HANDOVER_MS) {
+async function acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion, handoverMs = LEASE_HANDOVER_MS, signal) {
     const deadline = Date.now() + handoverMs;
     for (;;) {
+        if (signal?.aborted) throw codexError('AI_TIMEOUT', 'Codex request timed out.', 504);
         // An expired lease that still names a process is only released once that
         // process is proven gone. Checked here, outside the transaction, because
         // it asks the operating system rather than the database.
@@ -193,12 +194,12 @@ function spawnDescription(isolation, paths, binary) {
     return wrapCommand(isolation.handle, { codexHome: paths.codexHome, workDir: paths.workDir, command });
 }
 
-async function handshake(client, paths, expectedVersion, timeoutMs = HANDSHAKE_TIMEOUT_MS) {
+async function handshake(client, paths, expectedVersion, timeoutMs = HANDSHAKE_TIMEOUT_MS, signal) {
     const result = await client.request('initialize', {
         clientInfo: { name: 'iptv-manager', title: 'IPTV-Manager', version: '1.0.0' },
         // No experimental surface and no attestation callbacks are accepted.
         capabilities: { experimentalApi: false, requestAttestation: false }
-    }, { timeoutMs });
+    }, { timeoutMs, signal });
     // Proves the sandboxed CODEX_HOME took effect instead of a host profile.
     if (result?.codexHome && ![paths.codexHome, `/private${paths.codexHome}`].includes(result.codexHome)) {
         throw codexError('AI_CODEX_HOME_MISMATCH', 'Codex resolved an unexpected credential directory.');
@@ -256,20 +257,25 @@ function violationSink() {
     };
 }
 
-export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false, verifyEligible, tokenVersion, deadline } = {}) {
+export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false, verifyEligible, tokenVersion, deadline, signal } = {}) {
     // A caller with an overall deadline — the reservation that bounds its request
     // — gets the startup charged against it too. Waiting for a hand-off and
     // shaking hands are part of the operation, not free time before it.
     const budget = cap => {
+        // The caller's own cancellation counts here as well: a compatibility
+        // batch that has run out of time must not spend the provider's much
+        // longer deadline on starting yet another runtime.
+        if (signal?.aborted) throw codexError('AI_TIMEOUT', 'Codex request timed out.', 504);
         if (!deadline) return cap;
         const left = deadline - Date.now();
         if (left <= 0) throw codexError('AI_TIMEOUT', 'Codex request timed out.', 504);
         return Math.min(cap, left);
     };
+    budget(0);
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
-    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion, budget(LEASE_HANDOVER_MS));
+    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion, budget(LEASE_HANDOVER_MS), signal);
     let session = null;
     try {
         const paths = hydrate(ownerKey, connectionId);
@@ -300,7 +306,7 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
             db.prepare('UPDATE ai_codex_runtimes SET child_pid=? WHERE owner_key=? AND connection_id=? AND lease_id=?')
                 .run(client.pid, ownerKey, connectionId, leaseId);
         }
-        await handshake(client, paths, availability.version, budget(HANDSHAKE_TIMEOUT_MS));
+        await handshake(client, paths, availability.version, budget(HANDSHAKE_TIMEOUT_MS), signal);
         // The handshake may outlast a revocation's wait, after which the unlink
         // has already forced the lease away, wiped the credential and cleared its
         // marker. Returning the session then would hand its caller a runtime that
@@ -368,8 +374,8 @@ export function liveRuntime(ownerKey, connectionId) {
 
 // Runs one bounded operation on a fresh runtime and always tears it down. There
 // is no shared process that could be switched between personal logins.
-export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false, verifyEligible, tokenVersion, deadline } = {}) {
-    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown, verifyEligible, tokenVersion, deadline });
+export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false, verifyEligible, tokenVersion, deadline, signal } = {}) {
+    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown, verifyEligible, tokenVersion, deadline, signal });
     try { return await handler(session); }
     finally { stopRuntime(session); }
 }

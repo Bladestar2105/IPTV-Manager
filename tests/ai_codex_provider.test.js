@@ -177,6 +177,22 @@ describe('personal ChatGPT adapter availability', () => {
         expect(fs.existsSync(recordPath)).toBe(false);
     });
 
+    it('gives up starting a runtime once the compatibility batch is over', async () => {
+        const connection = await withModel();
+        await idleRuntimes();
+        // The batch budget runs out while the runtime is still starting. Without
+        // the abort reaching that far, the request would sit through the
+        // provider's own, much longer deadline instead.
+        fake({ initializeDelayMs: 4000, recordPath, recordApprovalPath: approvalPath });
+        process.env.AI_MODEL_TEST_BATCH_MS = '1000';
+        const started = Date.now();
+        try {
+            const result = await ai.testModels(user, connection.id, { model_ids: ['model-beta'] });
+            expect(result.models[0]).toMatchObject({ error_code: 'AI_TIMEOUT' });
+        } finally { delete process.env.AI_MODEL_TEST_BATCH_MS; await idleRuntimes(); }
+        expect(Date.now() - started).toBeLessThan(4000);
+    }, 30000);
+
     it('charges runtime startup against the caller\'s deadline', async () => {
         // The handshake is part of the operation. Left outside the budget, a slow
         // host outlives the reservation that bounds the request.
@@ -1674,6 +1690,27 @@ describe('personal ChatGPT runtime ownership', () => {
         await idleRuntimes();
     }, 30000);
 
+    it('never signals a process it cannot identify', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const sleeper = spawn('/bin/sh', ['-c', 'sleep 30'], { detached: true, stdio: 'ignore' });
+        sleeper.unref();
+        const now = Date.now();
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at,child_pid) VALUES(?,?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'unknown-child', 424245, 'running', now + 60000, now, sleeper.pid);
+        try {
+            // A recycled number can belong to any other process of this user — a
+            // stream, a helper, the manager itself. The identity stays claimed,
+            // and nothing is sent to that process.
+            expect(await credentials.releaseWorkerRuntimes(424245, () => null)).toMatchObject({ retained: 1 });
+            expect(() => process.kill(sleeper.pid, 0)).not.toThrow();
+            expect(db.prepare('SELECT state FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).state).toBe('revoked');
+        } finally {
+            try { process.kill(sleeper.pid, 'SIGKILL'); } catch { /* already gone */ }
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id);
+        }
+    }, 30000);
+
     it('treats a process it cannot inspect as still running', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();
@@ -2188,6 +2225,19 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(await account.disconnectAccount(user, ownedRecord(user, connection.id)))
             .toMatchObject({ disconnected: true });
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('signs the runtime out when the sign-in cannot be read back', async () => {
+        const logoutRecordPath = path.join(dataDir, `logout-read-${Date.now()}.txt`);
+        // The device authorization succeeded and the runtime is authenticated;
+        // only reading the account back fails.
+        fake({ login: 'success', authStatus: 'fail', logoutRecordPath, recordPath, recordApprovalPath: approvalPath });
+        const connection = createConnection();
+        const { state } = await link(user, connection);
+        expect(state.status).toBe('failed');
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        // Nothing points at that ChatGPT session any more, so it has to be ended.
+        expect(fs.existsSync(logoutRecordPath)).toBe(true);
     }, 30000);
 
     it('signs the runtime out when a rejected relink authenticated another account', async () => {

@@ -266,7 +266,7 @@ export function withCleanupLease(ownerKey, connectionId, run) {
     const stale = db.prepare('SELECT lease_id,child_pid,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
     let reapable = null;
     if (stale && stale.expires_at < now) {
-        if (stale.child_pid && runsThisIdentity(stale.child_pid, identityPaths(ownerKey, connectionId).root)) return null;
+        if (stale.child_pid && identityProcessState(stale.child_pid, identityPaths(ownerKey, connectionId).root) !== 'gone') return null;
         reapable = stale.lease_id;
     }
     const claimed = db.transaction(() => {
@@ -352,18 +352,22 @@ function processGone(pid) {
 // `inspect` is only ever supplied by a test: reading another process's command
 // line is exactly the part that differs between hosts, and it has to be possible
 // to ask what this decides when the host cannot answer.
+// Whether an identity may be taken over: only a process that is really gone
+// frees it. One that cannot be identified holds it just as firmly as its own
+// runtime does — it simply must not be signalled.
 export function identityProcessAlive(ownerKey, connectionId, pid, inspect = processArguments) {
-    return runsThisIdentity(pid, identityPaths(ownerKey, connectionId).root, inspect);
+    return identityProcessState(pid, identityPaths(ownerKey, connectionId).root, inspect) !== 'gone';
 }
 
-function runsThisIdentity(pid, root, inspect = processArguments) {
-    if (processGone(pid)) return false;
+// Three answers, not two. A process that exists but cannot be identified is
+// neither this identity's runtime nor gone: the identity stays claimed, and
+// nothing is signalled, because a recycled number can belong to any other
+// process of this user — a stream, a helper, the manager itself.
+function identityProcessState(pid, root, inspect = processArguments) {
+    if (processGone(pid)) return 'gone';
     const args = inspect(pid);
-    // The process exists but could not be inspected. Assuming it is this
-    // identity's runtime is the only safe answer: guessing the other way frees a
-    // live identity and deletes the files it is working in.
-    if (args === null) return true;
-    return args.includes(root);
+    if (args === null) return 'unknown';
+    return args.includes(root) ? 'ours' : 'gone';
 }
 
 // `/proc` on Linux, because the container image ships BusyBox, whose `ps` has no
@@ -385,8 +389,13 @@ function processArguments(pid) {
 // the process is really gone: bubblewrap dies with its parent, but the macOS
 // backend has no equivalent, so an orphan can outlive the worker that spawned
 // it and would otherwise share an identity with its replacement.
-async function endOrphan(pid, root) {
-    if (!runsThisIdentity(pid, root)) return true;
+async function endOrphan(pid, root, inspect = processArguments) {
+    const state = identityProcessState(pid, root, inspect);
+    // 'gone' includes a number that now belongs to something else: there is
+    // nothing of ours to end, and nothing of anyone else's to touch.
+    if (state === 'gone') return true;
+    // Not identifiable: keep the identity claimed and send nothing.
+    if (state === 'unknown') return false;
     for (const signal of ['SIGTERM', 'SIGKILL']) {
         try { process.kill(pid, signal); } catch { /* it may have exited in between */ }
         for (let waited = 0; waited < (signal === 'SIGTERM' ? 20 : 10); waited += 1) {
@@ -397,7 +406,7 @@ async function endOrphan(pid, root) {
     return processGone(pid);
 }
 
-export async function releaseWorkerRuntimes(workerPid) {
+export async function releaseWorkerRuntimes(workerPid, inspect = processArguments) {
     // A worker that died during a sign-in wrote a credential file but never
     // sealed it, so it has no record for the credential-driven pass to find. Its
     // own leases are the only trace of those identities.
@@ -409,7 +418,7 @@ export async function releaseWorkerRuntimes(workerPid) {
         // The identity stays claimed while its process lives. Handing it on now
         // would let a replacement hydrate the same credential beside an orphan
         // that is still running on it.
-        if (!(await endOrphan(row.child_pid, identityPaths(row.owner_key, row.connection_id).root))) {
+        if (!(await endOrphan(row.child_pid, identityPaths(row.owner_key, row.connection_id).root, inspect))) {
             db.prepare("UPDATE ai_codex_runtimes SET state='revoked', expires_at=?, updated_at=? WHERE owner_key=? AND connection_id=? AND worker_pid=?")
                 .run(Date.now() + ORPHAN_HOLD_MS, Date.now(), row.owner_key, row.connection_id, workerPid);
             retained += 1;

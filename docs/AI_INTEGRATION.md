@@ -349,11 +349,14 @@ the existing `chat/completions` transport.
   probe: a slow but working provider would otherwise keep a request — and its
   billable calls — running for many minutes after the browser gave up. What was
   proven is kept, and every model the batch could not reach is reported as
-  untested and replaces its stored profile, so a retest never leaves an obsolete
+  untested and replaces its stored profile. The budget covers starting a runtime
+  as well, not only the request it then makes, so a retest never leaves an obsolete
   model marked compatible.
 * A discarded sign-in is signed out even when the connection keeps an older
   link, because the runtime authenticated an account either way and only the
-  sign-out ends that session upstream.
+  sign-out ends that session upstream. That includes a sign-in that could not be
+  read back: the authorization succeeded, so the session exists whether or not
+  the manager managed to look at it.
 * A request spends one deadline across everything it does: waiting for the
   identity to be handed over, the handshake, the authentication check and then
   the turn or the model catalog. The startup is part of the operation, so a slow
@@ -497,8 +500,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   directory — because a recorded number is meaningless once it has been recycled,
   which across a restart it usually has. That question is asked of `/proc` on
   Linux, because the container image ships BusyBox, whose `ps` does not take a
-  process number at all; a host that cannot answer it is told that the process is
-  still running, since the opposite guess frees a live identity.
+  process number at all; a host that cannot answer it keeps the identity claimed —
+  the opposite guess frees a live one — but nothing is ever signalled then,
+  because an unidentifiable number may belong to any other process of this user.
 * One runtime per identity and connection, held by a database lease with a
   heartbeat. The lease is the promise that no process is using that identity, so
   a stopping runtime keeps it until its child has actually exited — closing only

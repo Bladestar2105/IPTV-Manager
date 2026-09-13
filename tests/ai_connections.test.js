@@ -82,6 +82,9 @@ describe('AI compatibility batch', () => {
             const stored = ai.listConnections(admin).find(item => item.id === c.id).capabilities;
             expect(Object.keys(stored).sort()).toEqual(['second-model', 'synthetic-model', 'third-model']);
             expect(stored['third-model']).toMatchObject({ status: 'unverified', error_code: 'AI_TIMEOUT' });
+            // The batch is over before the last model, so its probe never starts
+            // — not even the runtime behind it.
+            expect(requests.filter(entry => entry.body && entry.body.model === 'third-model')).toHaveLength(0);
         } finally { delete process.env.AI_MODEL_TEST_BATCH_MS; }
     }, 30000);
 });

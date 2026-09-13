@@ -140,6 +140,8 @@ function handle(message) {
             return answer();
         }
         case 'getAuthStatus':
+            // Models a transient read failure after the sign-in itself worked.
+            if (config.authStatus === 'fail') return failure('auth status unavailable');
             return reply({ authMethod: authStatus(), authToken: null, requiresOpenaiAuth: true });
         case 'account/read':
             // `none` models a stored credential that no longer authenticates an

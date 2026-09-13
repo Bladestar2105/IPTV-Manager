@@ -326,6 +326,11 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         }
     } catch {
         finishLogin(row.id, 'failed', 'ai_codex_login_failed');
+        // The sign-in itself succeeded — the runtime is authenticated — and only
+        // reading it back failed. Ending the attempt without signing out would
+        // leave that ChatGPT session alive upstream with nothing pointing at it.
+        try { await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id); }
+        catch { /* the runtime may already be gone; nothing is kept either way */ }
     } finally {
         releaseAttempt(row.id);
     }
