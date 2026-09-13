@@ -229,8 +229,8 @@ describe('personal ChatGPT adapter availability', () => {
         await idleRuntimes();
         const now = Date.now();
         // The completion claimed the attempt first and is storing its credential.
-        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at,credential_version)
-            VALUES('raced-cancel','user:1',?,'login-1','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?,0)`)
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('raced-cancel','user:1',?,'login-1','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
             .run(connection.id, now, now, now + 600000, now);
         // Not cancelled, and not an internal state the browser has no handling
         // for: the sign-in is still running and can still succeed.
@@ -239,36 +239,78 @@ describe('personal ChatGPT adapter availability', () => {
         expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get('raced-cancel').status).toBe('sealing');
     }, 30000);
 
+    function abandonedRelink(connectionId, id) {
+        const now = Date.now();
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES(?,'user:1',?,'login-2','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+            .run(id, connectionId, now, now, now + 600000, now);
+    }
+
     it('does not recover a relink on the credential it was about to replace', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();
-        const before = db.prepare('SELECT version FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
-        const now = Date.now();
+        const before = db.prepare('SELECT login_id,version FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
         // A second sign-in for an already linked connection, claimed and then
-        // abandoned by a dying worker. The old credential is still on record.
-        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at,credential_version)
-            VALUES('dead-relink','user:1',?,'login-2','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?,?)`)
-            .run(connection.id, now, now, now + 600000, now, before.version);
+        // abandoned by a dying worker. The credential of the first one is still
+        // on record, and an ordinary token refresh advances its version without
+        // being this attempt's own result.
+        abandonedRelink(connection.id, 'dead-relink');
+        db.prepare('UPDATE ai_codex_credentials SET version=version+1 WHERE owner_key=? AND connection_id=?').run('user:1', connection.id);
         // Reporting success here would tell the account holder the new sign-in
         // worked while the previous account stays linked.
         expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'dead-relink', 'fp'))
             .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
-        expect(db.prepare('SELECT version FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?')
-            .get('user:1', connection.id).version).toBe(before.version);
+        expect(db.prepare('SELECT login_id FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?')
+            .get('user:1', connection.id).login_id).toBe(before.login_id);
     }, 30000);
 
     it('reports a relink whose replacement credential was stored as completed', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();
-        const before = db.prepare('SELECT version FROM ai_codex_credentials WHERE owner_key=? AND connection_id=?').get('user:1', connection.id);
-        const now = Date.now();
-        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at,credential_version)
-            VALUES('stored-relink','user:1',?,'login-2','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?,?)`)
-            .run(connection.id, now, now, now + 600000, now, before.version);
-        // The seal did commit before the worker died: the version advanced.
-        db.prepare('UPDATE ai_codex_credentials SET version=version+1 WHERE owner_key=? AND connection_id=?').run('user:1', connection.id);
+        abandonedRelink(connection.id, 'stored-relink');
+        // The seal did commit before the worker died, naming this attempt.
+        db.prepare('UPDATE ai_codex_credentials SET login_id=?, version=version+1 WHERE owner_key=? AND connection_id=?')
+            .run('stored-relink', 'user:1', connection.id);
         expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'stored-relink', 'fp'))
             .toMatchObject({ status: 'completed', error_code: null });
+    }, 30000);
+
+    it('ends a claimed sign-in when the connection is disconnected under it', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // Another worker claimed a relink and is storing its credential while the
+        // owner disconnects. Leaving the attempt claimed would let that
+        // completion publish a successful sign-in after the link was removed.
+        abandonedRelink(connection.id, 'unlinked-sealer');
+        await account.disconnectAccount(user, ownedRecord(user, connection.id));
+        expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get('unlinked-sealer'))
+            .toMatchObject({ status: 'cancelled', error_code: 'ai_codex_login_cancelled' });
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'unlinked-sealer', 'fp').status).toBe('cancelled');
+    }, 30000);
+
+    it('refuses to store a credential while the connection is tearing down', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // A sign-in's plaintext credential, as a completion still in flight would
+        // have left it on disk.
+        const plant = () => {
+            const paths = credentials.identityPaths('user:1', connection.id);
+            credentials.wipe('user:1', connection.id);
+            fs.mkdirSync(path.dirname(paths.authFile), { recursive: true, mode: 0o700 });
+            fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'synthetic' } }), { mode: 0o600 });
+        };
+        // Control: the very same call stores the credential when nothing is
+        // tearing down, so the refusal below is the teardown and not a missing
+        // file.
+        plant();
+        expect(credentials.seal('user:1', connection.id, { loginId: 'late', accountHash: 'hash-late' }).sealed).toBe(true);
+        plant();
+        ai.adjustConnectionTeardown('user:1', connection.id, 1);
+        try {
+            expect(credentials.seal('user:1', connection.id, { loginId: 'late', accountHash: 'hash-late' }).sealed).toBe(false);
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally { ai.adjustConnectionTeardown('user:1', connection.id, -1); }
     }, 30000);
 
     it.each([
@@ -286,8 +328,8 @@ describe('personal ChatGPT adapter availability', () => {
             VALUES('dead-sealer','user:1',?,'login-1','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
             .run(connection.id, now, now, now + 600000, now);
         if (storeCredential) {
-            db.prepare(`INSERT OR REPLACE INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,version,updated_at)
-                VALUES('user:1',?,'blob','hash-dead-sealer',1,?)`).run(connection.id, now);
+            db.prepare(`INSERT OR REPLACE INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,login_id,version,updated_at)
+                VALUES('user:1',?,'blob','hash-dead-sealer','dead-sealer',1,?)`).run(connection.id, now);
         }
         expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'dead-sealer', 'fp')).toMatchObject(expected);
     }, 30000);

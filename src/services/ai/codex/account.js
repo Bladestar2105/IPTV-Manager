@@ -84,15 +84,15 @@ function expireLogins() {
     // leaves the row sealing. A live seal always holds the identity's lease, so
     // the absence of one is the signal that nobody is finishing it — and the
     // stored credential, not the claim, decides whether it succeeded.
-    for (const row of db.prepare(`SELECT id,owner_key,connection_id,credential_version FROM ai_codex_logins WHERE status=?
+    for (const row of db.prepare(`SELECT id,owner_key,connection_id FROM ai_codex_logins WHERE status=?
         AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
             AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
-        // Presence alone is not evidence for this attempt: relinking an already
-        // linked connection would find the credential it was about to replace and
-        // report the new sign-in as successful while the old account stays linked.
-        // Only a version past the one claimed against was written by this attempt.
+        // Only the credential this attempt stored is evidence of its success.
+        // Presence alone would adopt the record a relink was about to replace,
+        // and any advance of the version would adopt an ordinary token refresh,
+        // which seals against the same record.
         const record = readCredentialRecord(row.owner_key, row.connection_id);
-        const linked = Boolean(record) && Number(record.version || 0) > Number(row.credential_version ?? 0);
+        const linked = Boolean(record) && record.login_id === row.id;
         db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
             .run(linked ? 'completed' : 'failed', linked ? null : 'ai_codex_login_interrupted', now, row.id, SEALING_STATUS);
     }
@@ -113,9 +113,9 @@ function finishLogin(id, status, errorCode = null) {
 
 // Used only after an attempt was already claimed, where the conditional finish
 // above can no longer match.
-function forceLoginFailure(id, errorCode) {
+function forceLoginFailure(id, errorCode, status = 'failed') {
     db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=?')
-        .run('failed', errorCode, Date.now(), id);
+        .run(status, errorCode, Date.now(), id);
 }
 
 function releaseAttempt(id) {
@@ -174,12 +174,11 @@ function stillOwnsAttempt(row, ownerKey) {
 // for good. The attempt moves to a non-terminal `sealing` state instead, which no
 // cancel or supersede can claim either, and only a stored credential publishes
 // the completion.
-function claimCompletedLogin(row, ownerKey, connectionId) {
+function claimCompletedLogin(row, ownerKey) {
     return db.transaction(() => {
         if (!stillOwnsAttempt(row, ownerKey)) return false;
-        const current = readCredentialRecord(ownerKey, connectionId);
-        return db.prepare("UPDATE ai_codex_logins SET status=?, error_code=NULL, credential_version=?, updated_at=? WHERE id=? AND status IN ('starting','pending')")
-            .run(SEALING_STATUS, Number(current?.version || 0), Date.now(), row.id).changes > 0;
+        return db.prepare("UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status IN ('starting','pending')")
+            .run(SEALING_STATUS, Date.now(), row.id).changes > 0;
     }).immediate();
 }
 
@@ -246,12 +245,13 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         // The runtime lease serializes sign-ins for one identity and connection,
         // so a failed claim means this attempt was ended and nothing newer has
         // linked yet: signing out and removing the local credential is safe.
-        if (!claimCompletedLogin(row, ownerKey, connectionId)) {
+        if (!claimCompletedLogin(row, ownerKey)) {
             await discardAttempt(session, ownerKey, connectionId, hadCredential);
             return;
         }
         let sealed;
         try { sealed = seal(ownerKey, connectionId, {
+            loginId: row.id,
             accountHash: fingerprint,
             accountLabel: maskAccount(account.email),
             planType: typeof account.planType === 'string' ? account.planType.slice(0, 40) : null,
@@ -455,6 +455,23 @@ export async function cancelAccountLink(actor, connection, id) {
     return { id: row.id, status: publicStatus(current?.status ?? 'cancelled'), error_code: current?.error_code ?? null };
 }
 
+// Ends every attempt a teardown must not leave running. A claimed one is ended
+// too: its seal is refused while the connection is tearing down, and leaving it
+// `sealing` would let the completion publish a successful sign-in after the
+// credential behind it was already removed. The publish is conditional on the
+// attempt still being claimed, so ending it here is what stops that.
+function endAttempts(ownerKey, connectionId = null) {
+    const rows = connectionId
+        ? db.prepare(`SELECT id FROM ai_codex_logins WHERE owner_key=? AND connection_id=? AND status IN (${UNFINISHED_STATUSES.map(() => '?').join(',')})`)
+            .all(ownerKey, connectionId, ...UNFINISHED_STATUSES)
+        : db.prepare(`SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN (${UNFINISHED_STATUSES.map(() => '?').join(',')})`)
+            .all(ownerKey, ...UNFINISHED_STATUSES);
+    for (const row of rows) {
+        forceLoginFailure(row.id, 'ai_codex_login_cancelled', 'cancelled');
+        releaseAttempt(row.id);
+    }
+}
+
 // Disconnecting blocks new work, ends queued and running work, signs the runtime
 // out and removes the local credential. A failed remote sign-out never keeps
 // local access alive; the difference is reported instead.
@@ -474,10 +491,7 @@ export async function disconnectAccount(actor, connection) {
 }
 
 async function runDisconnect(actor, connection, ownerKey) {
-    for (const row of db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND connection_id=? AND status IN ('starting','pending')").all(ownerKey, connection.id)) {
-        finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
-        releaseAttempt(row.id);
-    }
+    endAttempts(ownerKey, connection.id);
     const { cancelJob } = await import('../jobs.js');
     for (const job of db.prepare("SELECT id FROM ai_jobs WHERE owner_key=? AND connection_id=? AND status IN ('queued','running')").all(ownerKey, connection.id)) {
         try { cancelJob(actor, job.id); } catch { /* already finished */ }
@@ -588,10 +602,7 @@ async function discardInvalidCredential(ownerKey, connectionId) {
 // credential itself is deliberately separate: it is irreversible, and a deletion
 // that fails afterwards must not have destroyed the account's link.
 export async function stopAccountRuntimes(ownerKey) {
-    for (const row of db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN ('starting','pending')").all(ownerKey)) {
-        finishLogin(row.id, 'cancelled', 'ai_codex_login_cancelled');
-        releaseAttempt(row.id);
-    }
+    endAttempts(ownerKey);
     for (const row of db.prepare('SELECT connection_id FROM ai_codex_runtimes WHERE owner_key=?').all(ownerKey)) {
         const live = liveRuntime(ownerKey, row.connection_id);
         if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');

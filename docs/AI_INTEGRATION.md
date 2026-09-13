@@ -504,9 +504,10 @@ one-time device code.
   A worker that dies in that window leaves the attempt claimed but unfinished,
   and the credential store — not the claim — decides how it is resolved on the
   next poll, so a failed seal can never leave a permanent report of a link that
-  does not exist. What counts there is the stored credential's version, not its
-  presence: an attempt records the version it claimed against, so relinking an
-  already linked connection is only reported as successful once its own
+  does not exist. What counts there is which attempt stored the credential, not
+  that one exists or that its version moved: a record names the sign-in that
+  wrote it, an ordinary token refresh keeps that name, and relinking an already
+  linked connection is therefore only reported as successful once its own
   replacement is on record. A cancel that arrives while a completion is storing
   its credential reports the sign-in as still running, and the browser keeps
   polling it: the attempt was not cancelled and can still succeed.
@@ -541,9 +542,13 @@ after its scan and have its runtime removed underneath it; the marker is counted
 overlapping teardown keeps it in place, and it is cleared again once the last one
 finishes, because the connection itself survives an unlink. A marker abandoned by
 a process that died mid-teardown is cleared on the next start, so no connection
-stays blocked. Recording a sign-in re-checks the marker in the same transaction,
-so a request that was already authorized cannot relink after an unlink completed
-while it waited. It then
+stays blocked. Storing a credential re-checks the marker in the same transaction,
+so a sign-in that was already authorized — including one whose completion is in
+flight on another worker — cannot put a credential back behind a teardown. A
+teardown also ends every attempt that is still running, a claimed one included:
+the completion publishes its success only while the attempt is still claimed, so
+ending it is what stops a disconnected connection from later reporting a
+successful sign-in. It then
 cancels queued and running jobs and ends the runtime. A runtime owned by another worker is stopped by marking its lease
 revoked; that worker's guard sees this within a second and releases the lease,
 and only that release counts as an acknowledgement that it has actually stopped.

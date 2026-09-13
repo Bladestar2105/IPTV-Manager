@@ -139,20 +139,28 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
         account_hash: metadata.accountHash ?? existing?.account_hash ?? null,
         account_label: metadata.accountLabel ?? existing?.account_label ?? null,
         plan_type: metadata.planType ?? existing?.plan_type ?? null,
-        auth_method: metadata.authMethod ?? existing?.auth_method ?? null
+        auth_method: metadata.authMethod ?? existing?.auth_method ?? null,
+        // Only a sign-in names itself here; a refresh keeps whatever stored the
+        // record, so the attempt that owns a credential stays identifiable.
+        login_id: metadata.loginId ?? existing?.login_id ?? null
     };
     // The connection can be deleted by another worker between claiming a sign-in
     // and storing its credential. Its deletion trigger would already have run, so
     // an insert afterwards leaves an orphan whose unique account fingerprint then
     // blocks linking that ChatGPT account anywhere else.
     const stored = db.transaction(() => {
-        if (!db.prepare('SELECT 1 FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey)) return false;
-        db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,version,updated_at)
-            VALUES(?,?,?,?,?,?,?,1,?)
+        const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
+        if (!connection) return false;
+        // A disconnect or a deletion is already removing this link. Storing a
+        // credential now would put one back behind the teardown, where nothing
+        // is watching for it any more.
+        try { if (JSON.parse(connection.data_json).teardown) return false; } catch { /* an unreadable payload is not a teardown */ }
+        db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,login_id,version,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,1,?)
             ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
                 account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
-                version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
-            .run(ownerKey, connectionId, blob, next.account_hash, next.account_label, next.plan_type, next.auth_method, Date.now());
+                login_id=excluded.login_id,version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
+            .run(ownerKey, connectionId, blob, next.account_hash, next.account_label, next.plan_type, next.auth_method, next.login_id, Date.now());
         return true;
     }).immediate();
     if (!stored) return { sealed: false };
