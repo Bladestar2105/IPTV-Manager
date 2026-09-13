@@ -4975,7 +4975,27 @@ async function disableOtp() {
     }
 }
 
-function handleLogout() {
+async function handleLogout() {
+  const token = getToken();
+  if (token) {
+    try {
+      const response = await fetch('/api/ai/codex/session/end', {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+        body: '{}',
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) {
+        const error = [401, 403].includes(response.status) ? (await response.json()).error : null;
+        if (!['Invalid or expired token', 'Token revoked (password changed)'].includes(error)) throw new Error();
+      }
+    } catch {
+      if (getToken() === token) showToast(t('error'), 'danger');
+      return;
+    }
+    // A response for the old session must not sign out a newer login.
+    if (getToken() !== token) return;
+  }
   clearSessionSensitiveState();
   currentUser = null;
   removeToken();

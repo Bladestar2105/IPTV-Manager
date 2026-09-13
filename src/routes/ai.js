@@ -34,6 +34,7 @@ router.delete('/connections/:id',controller.deleteConnection);
 router.post('/connections/:id/discover',controller.discover);
 router.post('/connections/:id/test',controller.test);
 router.get('/codex/status',controller.codexStatus);
+router.post('/codex/session/end',controller.endAccountSession);
 router.post('/connections/:id/link',controller.startAccountLink);
 router.get('/connections/:id/link/:loginId',controller.accountLinkStatus);
 router.post('/connections/:id/link/:loginId/cancel',controller.cancelAccountLink);

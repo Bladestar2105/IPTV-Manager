@@ -121,7 +121,7 @@ beforeEach(async () => {
     runtime.stopAllRuntimes();
     account.releaseAllAttempts();
     await idleRuntimes().catch(() => null);
-    for (const table of ['ai_connections', 'ai_preferences', 'ai_usage', 'ai_jobs', 'ai_codex_credentials', 'ai_codex_logins', 'ai_codex_runtimes']) db.exec(`DELETE FROM ${table}`);
+    for (const table of ['ai_connections', 'ai_preferences', 'ai_usage', 'ai_jobs', 'ai_codex_credentials', 'ai_codex_logins', 'ai_codex_runtimes', 'ai_codex_ended_sessions']) db.exec(`DELETE FROM ${table}`);
     db.exec('DELETE FROM settings; UPDATE users SET is_active=1, webui_access=1, expiry_date=NULL, token_version=0; UPDATE admin_users SET is_active=1, token_version=0');
     fs.rmSync(path.join(dataDir, 'ai-codex'), { recursive: true, force: true });
     fs.rmSync(recordPath, { force: true });
@@ -2803,6 +2803,102 @@ describe('personal ChatGPT runtime ownership', () => {
             await idleRuntimes();
         }
     }, 30000);
+
+    it('never lets a pending link outlive its authenticated session expiry', async () => {
+        fake({ loginDelayMs: 500 });
+        const connection = createConnection();
+        const expiresAt = Date.now() + 300;
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'expiring-session', expiresAt);
+        try {
+            expect(started.expires_at).toBe(expiresAt);
+            await wait(600);
+            await idleRuntimes();
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally { account.releaseAllAttempts(); await idleRuntimes(); }
+    }, 30000);
+
+    it('ends a pending sign-in immediately when its browser session ends', async () => {
+        fake({ loginDelayMs: 400 });
+        const connection = createConnection();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'ending-session');
+        expect(account.endAccountSession(user, 'ending-session')).toEqual({ ended: true });
+        expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('cancelled');
+        await wait(600);
+        await idleRuntimes();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        await expect(account.startAccountLink(user, ownedRecord(user, connection.id), 'ending-session'))
+            .rejects.toMatchObject({ code: 'AI_FORBIDDEN' });
+    }, 30000);
+
+    it('rejects a session-ended start that has not recorded its login yet', async () => {
+        const connection = createConnection();
+        await seedLease(connection.id, 'session-handover', { state: 'stopping' });
+        const pending = account.startAccountLink(user, ownedRecord(user, connection.id), 'before-recording').catch(error => error);
+        try {
+            expect(db.prepare('SELECT count(*) AS n FROM ai_codex_logins').get().n).toBe(0);
+            account.endAccountSession(user, 'before-recording');
+        } finally { db.prepare("DELETE FROM ai_codex_runtimes WHERE lease_id='session-handover'").run(); }
+        expect(await pending).toMatchObject({ code: 'AI_FORBIDDEN' });
+        expect(db.prepare('SELECT count(*) AS n FROM ai_codex_logins').get().n).toBe(0);
+    }, 30000);
+
+    it.each(['claim', 'publication'])('does not adopt a session ended at the %s boundary', async phase => {
+        const connection = createConnection();
+        const event = phase === 'claim'
+            ? "AFTER UPDATE OF status ON ai_codex_logins WHEN NEW.status='sealing'"
+            : 'AFTER INSERT ON ai_codex_credential_stage';
+        db.exec(`CREATE TRIGGER test_end_link_session ${event} BEGIN
+            INSERT INTO ai_codex_ended_sessions(owner_key,session_hash,expires_at)
+            VALUES('user:1','boundary-session',${Date.now() + 600000});
+        END;`);
+        try {
+            const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'boundary-session');
+            await until(() => db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status === 'failed');
+            await idleRuntimes();
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+            expect(credentials.readStagedCredential('user:1', connection.id)).toBeNull();
+        } finally { db.exec('DROP TRIGGER test_end_link_session'); }
+    }, 30000);
+
+    it('ends only its own unfinished session links and preserves completed credentials', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        const now = Date.now();
+        const insert = db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,status,session_hash,actor_version,created_at,updated_at,expires_at,last_seen_at)
+            VALUES(?,?,?,?,?,0,?,?,?,?)`);
+        for (const [id, owner, status, fingerprint] of [
+            ['ending-start','user:1','starting','mine'], ['ending-pending','user:1','pending','mine'],
+            ['ending-seal','user:1','sealing','mine'], ['ending-completed','user:1','completed','mine'],
+            ['other-session','user:1','pending','theirs'], ['other-owner','user:2','pending','mine']
+        ]) insert.run(id, owner, connection.id, status, fingerprint, now, now, now + 600000, now);
+        db.prepare(`INSERT INTO ai_codex_credential_stage(owner_key,connection_id,encrypted_blob,login_id,created_at)
+            VALUES('user:1',?,'replacement','ending-seal',?)`).run(connection.id, now);
+        expect(account.endAccountSession(user, 'mine')).toEqual({ ended: true });
+        expect(account.endAccountSession(user, 'mine')).toEqual({ ended: true });
+        for (const id of ['ending-start','ending-pending','ending-seal']) {
+            expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id).status).toBe('cancelled');
+        }
+        expect(db.prepare("SELECT status FROM ai_codex_logins WHERE id='ending-completed'").get().status).toBe('completed');
+        for (const id of ['other-session','other-owner']) expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id).status).toBe('pending');
+        expect(credentials.readStagedCredential('user:1', connection.id)).toBeNull();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toEqual(before);
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'ending-seal', 'mine').status).toBe('cancelled');
+    }, 30000);
+
+    it.each(['ended', 'expired'])('never recovers a staged link after its session %s', async reason => {
+        const connection = createConnection();
+        const now = Date.now();
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,status,session_hash,actor_version,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('recovery-session','user:1',?,'sealing','recovery',0,?,?,?,?)`)
+            .run(connection.id, now, now, reason === 'expired' ? now - 1 : now + 600000, now);
+        db.prepare(`INSERT INTO ai_codex_credential_stage(owner_key,connection_id,encrypted_blob,login_id,created_at)
+            VALUES('user:1',?,'replacement','recovery-session',?)`).run(connection.id, now);
+        if (reason === 'ended') db.prepare("INSERT INTO ai_codex_ended_sessions VALUES('user:1','recovery',?)").run(now + 600000);
+        expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'recovery-session', 'recovery').status).toBe('failed');
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        expect(credentials.readStagedCredential('user:1', connection.id)).toBeNull();
+    });
 
     it('removes every personal runtime record when the account is deleted', async () => {
         const connection = await linkedConnection();

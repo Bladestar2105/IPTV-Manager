@@ -1,5 +1,6 @@
 import * as connections from '../services/ai/connections.js';
 import * as jobs from '../services/ai/jobs.js';
+import jwt from 'jsonwebtoken';
 
 // Avoid exposing upstream errors, database details, prompts or keys through the
 // management API. Domain errors supply stable translated codes.
@@ -44,6 +45,8 @@ export const programs = handle(async req => {
 // Personal ChatGPT account link. Every endpoint is owner-only, never returns a
 // token and binds the attempt to the caller's current session.
 const bearer = req => (req.get('Authorization') || '').split(' ')[1] || null;
+// Authentication already verified this token; only its expiry is read here.
+const sessionExpiry = req => jwt.decode(bearer(req))?.exp * 1000;
 const accountConnection = async (req, {requirePolicy = true, allowTeardown = false} = {}) => {
   const {ownedAccountConnection} = await import('../services/ai/connections.js');
   return ownedAccountConnection(req.user, req.params.id, {requirePolicy, allowTeardown});
@@ -54,7 +57,11 @@ export const codexStatus = handle(async () => {
 });
 export const startAccountLink = handle(async req => {
   const {startAccountLink: start, sessionFingerprint} = await import('../services/ai/codex/account.js');
-  return start(req.user, await accountConnection(req), sessionFingerprint(bearer(req)));
+  return start(req.user, await accountConnection(req), sessionFingerprint(bearer(req)), sessionExpiry(req));
+});
+export const endAccountSession = handle(async req => {
+  const {endAccountSession: end, sessionFingerprint} = await import('../services/ai/codex/account.js');
+  return end(req.user, sessionFingerprint(bearer(req)), sessionExpiry(req));
 });
 export const accountLinkStatus = handle(async req => {
   const {readLoginStatus, sessionFingerprint} = await import('../services/ai/codex/account.js');

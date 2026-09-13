@@ -39,6 +39,32 @@ export const sessionFingerprint = token =>
         ? crypto.createHmac('sha256', Buffer.from(ENCRYPTION_KEY, 'hex')).update(token).digest('hex')
         : null);
 
+const sessionEnded = (ownerKey, fingerprint) => Boolean(db.prepare('SELECT 1 FROM ai_codex_ended_sessions WHERE owner_key=? AND session_hash=? AND expires_at>?')
+    .get(ownerKey, fingerprint, Date.now()));
+
+// A row tombstone also stops starts still waiting to record their login. This
+// affects personal account linking only, not bearer authentication or playback.
+export function endAccountSession(actor, fingerprint, expiresAt) {
+    actorRow(actor);
+    if (typeof fingerprint !== 'string' || !fingerprint) throw aiError('AI_FORBIDDEN', 403);
+    const ownerKey = `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
+    const now = Date.now();
+    const rows = db.transaction(() => {
+        db.prepare('DELETE FROM ai_codex_ended_sessions WHERE rowid IN (SELECT rowid FROM ai_codex_ended_sessions WHERE expires_at<? ORDER BY expires_at LIMIT 100)').run(now);
+        db.prepare(`INSERT INTO ai_codex_ended_sessions(owner_key,session_hash,expires_at) VALUES(?,?,?)
+            ON CONFLICT(owner_key,session_hash) DO UPDATE SET expires_at=MAX(expires_at,excluded.expires_at)`)
+            .run(ownerKey, fingerprint, Math.max(now + LOGIN_TTL_MS, Number.isFinite(expiresAt) ? expiresAt : 0));
+        const rows = db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND session_hash=? AND status IN ('starting','pending','sealing')").all(ownerKey, fingerprint);
+        for (const row of rows) {
+            db.prepare('DELETE FROM ai_codex_credential_stage WHERE owner_key=? AND login_id=?').run(ownerKey, row.id);
+            forceLoginFailure(row.id, 'ai_codex_login_cancelled', 'cancelled');
+        }
+        return rows;
+    }).immediate();
+    for (const row of rows) releaseAttempt(row.id);
+    return { ended: true };
+}
+
 // One predicate for every access field an owner must still satisfy, matching the
 // checks the rest of the AI subsystem applies: active account, Web UI access and
 // an unexpired account.
@@ -84,30 +110,33 @@ function expireLogins() {
     // leaves the row sealing. A live seal always holds the identity's lease, so
     // the absence of one is the signal that nobody is finishing it — and the
     // stored credential, not the claim, decides whether it succeeded.
-    for (const row of db.prepare(`SELECT id,owner_key,connection_id,actor_version,created_at,last_seen_at FROM ai_codex_logins WHERE status=?
+    for (const row of db.prepare(`SELECT id,owner_key,connection_id,actor_version,session_hash,created_at,last_seen_at,expires_at FROM ai_codex_logins WHERE status=?
         AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
             AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
-        // Either the worker died after publishing — the link already names this
-        // attempt — or its credential is still staged and nothing has adopted it.
-        const record = readCredentialRecord(row.owner_key, row.connection_id);
-        const published = Boolean(record) && record.login_id === row.id;
-        const staged = readStagedCredential(row.owner_key, row.connection_id);
-        const pending = Boolean(staged) && staged.login_id === row.id;
-        // Recovery is a completion like any other, so it answers to the same
-        // gates. A crash window is not a way past a withdrawn policy, a revoked
-        // session or a browser that stopped watching.
-        const allowed = completionAllowed(row.owner_key, row);
-        let linked = published && allowed;
-        if (published && !allowed) forgetCredential(row.owner_key, row.connection_id);
-        if (!published && pending) {
-            // A staged credential is promoted or dropped, never left behind: the
-            // link that was working — if there was one — is untouched either way.
-            if (allowed) linked = promoteStagedCredential(row.owner_key, row.connection_id, row.id).promoted;
-            if (!linked) discardStagedCredential(row.owner_key, row.connection_id);
-        }
-        db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
-            .run(linked ? 'completed' : 'failed',
-                linked ? null : ((published || pending) ? 'ai_codex_login_rejected' : 'ai_codex_login_interrupted'), now, row.id, SEALING_STATUS);
+        db.transaction(() => {
+            if (db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(row.id)?.status !== SEALING_STATUS) return;
+            // Either the worker died after publishing — the link already names this
+            // attempt — or its credential is still staged and nothing has adopted it.
+            const record = readCredentialRecord(row.owner_key, row.connection_id);
+            const published = Boolean(record) && record.login_id === row.id;
+            const staged = readStagedCredential(row.owner_key, row.connection_id);
+            const pending = Boolean(staged) && staged.login_id === row.id;
+            // Recovery is a completion like any other, so it answers to the same
+            // gates. A crash window is not a way past a withdrawn policy, a revoked
+            // session or a browser that stopped watching.
+            const allowed = completionAllowed(row.owner_key, row);
+            let linked = published && allowed;
+            if (published && !allowed) forgetCredential(row.owner_key, row.connection_id);
+            if (!published && pending) {
+                // A staged credential is promoted or dropped, never left behind: the
+                // link that was working — if there was one — is untouched either way.
+                if (allowed) linked = promoteStagedCredential(row.owner_key, row.connection_id, row.id).promoted;
+                if (!linked) discardStagedCredential(row.owner_key, row.connection_id);
+            }
+            db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+                .run(linked ? 'completed' : 'failed',
+                    linked ? null : ((published || pending) ? 'ai_codex_login_rejected' : 'ai_codex_login_interrupted'), now, row.id, SEALING_STATUS);
+        }).immediate();
     }
     db.prepare(`DELETE FROM ai_codex_logins WHERE status NOT IN (${UNFINISHED_STATUSES.map(() => '?').join(',')}) AND updated_at < ?`)
         .run(...UNFINISHED_STATUSES, now - 86400000);
@@ -171,6 +200,7 @@ function watchAttempt(id) {
 // it — the one that adopts a notification and the one that resolves an attempt a
 // dead worker left claimed — because either of them turns a sign-in into a link.
 function completionAllowed(ownerKey, attempt) {
+    if (attempt.expires_at <= Date.now() || sessionEnded(ownerKey, attempt.session_hash)) return false;
     // Web UI access can be revoked and an account can expire while the code is
     // open; adopting the sign-in then would grant what was just taken away.
     const account = usableAccount(ownerKey);
@@ -184,7 +214,7 @@ function completionAllowed(ownerKey, attempt) {
 }
 
 function stillOwnsAttempt(row, ownerKey) {
-    const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at,connection_id FROM ai_codex_logins WHERE id=?').get(row.id);
+    const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at,connection_id,expires_at FROM ai_codex_logins WHERE id=?').get(row.id);
     if (!current || !ACTIVE_STATUSES.includes(current.status)) return false;
     if (current.session_hash !== row.session_hash) return false;
     return completionAllowed(ownerKey, current);
@@ -319,7 +349,7 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             // a password reset, a withdrawn policy, a started unlink or a browser
             // that stopped watching in that window each mean this sign-in must not
             // become a link.
-            const current = db.prepare('SELECT actor_version,connection_id,created_at,last_seen_at FROM ai_codex_logins WHERE id=?').get(row.id);
+            const current = db.prepare('SELECT actor_version,connection_id,session_hash,created_at,last_seen_at,expires_at FROM ai_codex_logins WHERE id=?').get(row.id);
             if (!current || !completionAllowed(ownerKey, current)) return { ok: false };
             // Promoting the staged credential and publishing the attempt are one
             // step: a link exists exactly when the sign-in that produced it does.
@@ -413,11 +443,12 @@ function attemptsThisHour(ownerKey) {
         .get(ownerKey, Date.now() - 3600000).n;
 }
 
-export async function startAccountLink(actor, connection, fingerprint) {
+export async function startAccountLink(actor, connection, fingerprint, sessionExpiresAt) {
     const ownerKey = connection.owner_key;
     const readiness = codexReadinessSnapshot();
     if (!readiness.available) throw aiError(readiness.reason, 503);
     if (!fingerprint) throw aiError('AI_FORBIDDEN', 403);
+    if (sessionEnded(ownerKey, fingerprint)) throw aiError('AI_FORBIDDEN', 403);
     const account = actorRow(actor);
     expireLogins();
     // Only an attempt that actually produced a device code counts against the
@@ -440,16 +471,18 @@ export async function startAccountLink(actor, connection, fingerprint) {
 
     const id = randomUUID();
     const now = Date.now();
+    const expiresAt = Math.min(now + LOGIN_TTL_MS, Number.isFinite(sessionExpiresAt) ? sessionExpiresAt : Infinity);
     // The route checked the teardown marker before this call waited for the lease
     // hand-off, and an unlink can have started in between. Recording the attempt
     // and rechecking the marker happen in one transaction, so either this attempt
     // exists before the unlink's cancel scan or it is refused outright.
     const opened = db.transaction(() => {
+        if (expiresAt <= Date.now() || sessionEnded(ownerKey, fingerprint)) throw aiError('AI_FORBIDDEN', 403);
         const row = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connection.id, ownerKey);
         if (!row || JSON.parse(row.data_json).teardown) return false;
         db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
             VALUES(?,?,?,NULL,'starting',NULL,NULL,?,?,?,?,?,?)`)
-            .run(id, ownerKey, connection.id, account.token_version, fingerprint, now, now, now + LOGIN_TTL_MS, now);
+            .run(id, ownerKey, connection.id, account.token_version, fingerprint, now, now, expiresAt, now);
         return true;
     }).immediate();
     if (!opened) throw aiError('AI_CONNECTION_CHANGED', 409);
@@ -476,7 +509,7 @@ export async function startAccountLink(actor, connection, fingerprint) {
             // at once instead of waiting out the fifteen-minute expiry.
             onClosed: () => { finishLogin(id, 'failed', 'ai_codex_login_interrupted'); releaseAttempt(id); }
         });
-        const timer = setTimeout(() => { finishLogin(id, 'expired', 'ai_codex_login_expired'); releaseAttempt(id); }, LOGIN_TTL_MS);
+        const timer = setTimeout(() => { finishLogin(id, 'expired', 'ai_codex_login_expired'); releaseAttempt(id); }, Math.max(1, expiresAt - Date.now()));
         timer.unref?.();
         attempts.set(id, { session, timer, watchdog: watchAttempt(id) });
         const device = await startDeviceLogin(session);
@@ -493,7 +526,7 @@ export async function startAccountLink(actor, connection, fingerprint) {
         // fetched; reporting it as pending would be untrue.
         if (opened === 'gone') throw aiError('AI_CODEX_RUNTIME_CLOSED', 503);
         row.login_id = device.loginId;
-        return { id, status: 'pending', verification_url: device.verificationUrl, user_code: device.userCode, expires_at: now + LOGIN_TTL_MS };
+        return { id, status: 'pending', verification_url: device.verificationUrl, user_code: device.userCode, expires_at: expiresAt };
     } catch (error) {
         finishLogin(id, 'failed', /^AI_CODEX_[A-Z_]+$/.test(error?.code || '') ? error.code.toLowerCase() : 'ai_codex_login_failed');
         releaseAttempt(id);

@@ -650,11 +650,11 @@ one-time device code.
   reads that row; only the files wait for the child to hand the identity back,
   so a relink never starts beside a process that is still running and never has
   its own files removed.
-* An attempt belongs to the browser session that started it. Only that session
-  can poll it, and its polling is what keeps the attempt alive: sign-out in this
-  application is client side and does not invalidate the token, so a session that
-  stops watching its own attempt for more than two minutes no longer owns it. A
-  success arriving after that, after a cancellation, after the attempt was
+* An attempt belongs to the browser session that started it. Web UI sign-out
+  ends that session's unfinished attempts before clearing the browser session;
+  already completed links and other sessions are unchanged. Only the initiating
+  session can poll an attempt. If it stops watching for more than two minutes,
+  the attempt also expires. A success arriving after sign-out, after a cancellation, after the attempt was
   superseded, or after the account was disabled or its tokens invalidated, is
   discarded — the runtime is signed out again and nothing is kept.
 * Polling is not pinned to a worker. Whether a sign-in is still running is read

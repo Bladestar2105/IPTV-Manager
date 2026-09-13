@@ -14,6 +14,14 @@ export function migrateAiSchema(db) {
         CREATE TABLE IF NOT EXISTS ai_codex_credential_stage (owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, encrypted_blob TEXT NOT NULL, account_hash TEXT, account_label TEXT, plan_type TEXT, auth_method TEXT, login_id TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (owner_key, connection_id));
         CREATE TABLE IF NOT EXISTS ai_codex_logins (id TEXT PRIMARY KEY, owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, login_id TEXT, status TEXT NOT NULL, verification_url TEXT, user_code TEXT, actor_version INTEGER, session_hash TEXT NOT NULL, error_code TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_codex_runtimes (owner_key TEXT NOT NULL, connection_id TEXT NOT NULL, lease_id TEXT NOT NULL, worker_pid INTEGER NOT NULL, state TEXT NOT NULL, expires_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (owner_key, connection_id));
+        CREATE TABLE IF NOT EXISTS ai_codex_ended_sessions (owner_key TEXT NOT NULL, session_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (owner_key, session_hash));
+        CREATE INDEX IF NOT EXISTS idx_ai_codex_ended_sessions_expiry ON ai_codex_ended_sessions(expires_at);
+        CREATE TRIGGER IF NOT EXISTS ai_codex_end_sessions_user AFTER DELETE ON users BEGIN
+            DELETE FROM ai_codex_ended_sessions WHERE owner_key='user:' || OLD.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS ai_codex_end_sessions_admin AFTER DELETE ON admin_users BEGIN
+            DELETE FROM ai_codex_ended_sessions WHERE owner_key='admin:' || OLD.id;
+        END;
         CREATE INDEX IF NOT EXISTS idx_ai_connections_owner ON ai_connections(owner_key, updated_at);
         CREATE INDEX IF NOT EXISTS idx_ai_jobs_owner ON ai_jobs(owner_key, created_at);
         CREATE INDEX IF NOT EXISTS idx_ai_jobs_active ON ai_jobs(status, updated_at);

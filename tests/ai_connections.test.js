@@ -113,9 +113,8 @@ describe('AI connection security', () => {
     });
     it('migrates idempotently without disturbing records', () => {
         const c = configure(); migrateAiSchema(db); expect(ai.listConnections(admin)[0].id).toBe(c.id);
-        // 13 stores plus the staging table a sign-in writes into before its
-        // credential becomes the connection's link.
-        expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'").get().n).toBe(14);
+        // 13 stores plus staged credentials and ended account-link sessions.
+        expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'").get().n).toBe(15);
     });
     it('keeps admin and normal-user IDs separate and never serializes keys', () => {
         const c = configure(); expect(ai.listConnections(user)).toEqual([]);

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -69,6 +69,22 @@ function removeModelSetup(fixture,kind) {
 }
 
 describe('AI management boundary', () => {
+  it('gives same-second sign-ins distinct tokens without changing authentication claims', async () => {
+    const {generateToken}=await import('../src/services/authService.js');
+    const {default:jwt}=await import('jsonwebtoken');
+    const {JWT_SECRET}=await import('../src/utils/crypto.js');
+    const clock=vi.spyOn(Date,'now').mockReturnValue(Date.now());
+    try {
+      const first=generateToken(user),second=generateToken(user);
+      expect(first).not.toBe(second);
+      const {jti:firstId,...firstClaims}=jwt.verify(first,JWT_SECRET);
+      const {jti:secondId,...secondClaims}=jwt.verify(second,JWT_SECRET);
+      expect(firstId).toBeTypeOf('string');
+      expect(firstId).not.toBe(secondId);
+      expect(firstClaims).toEqual(secondClaims);
+    } finally { clock.mockRestore(); }
+  });
+
   it('requires a WebUI header bearer even when a valid token is in the query', async () => {
     expect((await request(app).get('/api/ai/settings')).status).toBe(401);
     expect((await request(app).get('/api/ai/settings').query({token: userToken})).status).toBe(401);
@@ -86,6 +102,27 @@ describe('AI management boundary', () => {
     const response = await request(app).put('/api/ai/settings').auth(adminToken,{type:'bearer'})
       .set('Origin','https://attacker.invalid').set('Sec-Fetch-Site','cross-site').send({enabled:true});
     expect(response.status).toBe(403);
+  });
+
+  it('ends only the authenticated AI session while policy is disabled', async () => {
+    const endpoint = '/api/ai/codex/session/end';
+    expect((await request(app).post(endpoint).send({})).status).toBe(401);
+    expect((await request(app).post(endpoint).auth(userToken,{type:'bearer'})
+      .set('Sec-Fetch-Site','cross-site').send({})).status).toBe(403);
+    for (let attempt=0;attempt<2;attempt++) {
+      const response=await request(app).post(endpoint).auth(userToken,{type:'bearer'}).send({owner_key:`user:${other.id}`});
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ended:true});
+    }
+    const {sessionFingerprint}=await import('../src/services/ai/codex/account.js');
+    const ended=db.prepare('SELECT owner_key,session_hash,expires_at FROM ai_codex_ended_sessions').all();
+    expect(ended).toHaveLength(1);
+    expect(ended[0]).toMatchObject({owner_key:`user:${user.id}`,session_hash:sessionFingerprint(userToken)});
+    const expiry=JSON.parse(Buffer.from(userToken.split('.')[1],'base64url').toString()).exp*1000;
+    expect(ended[0].expires_at).toBeGreaterThanOrEqual(expiry);
+    // This endpoint cancels pending links, not authentication or completed links.
+    expect((await request(app).get('/api/ai/settings').auth(userToken,{type:'bearer'})).status).toBe(200);
+    expect(db.prepare('SELECT token_version,is_active FROM users WHERE id=?').get(user.id)).toMatchObject({token_version:0,is_active:1});
   });
 
   it.each([

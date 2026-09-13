@@ -126,7 +126,7 @@ export function generateToken(user) {
       token_version: user.token_version || 0
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN, algorithm: 'HS256' }
+    { expiresIn: JWT_EXPIRES_IN, algorithm: 'HS256', jwtid: crypto.randomUUID() }
   );
 }
 

@@ -181,6 +181,12 @@ can retry deletion. Ordinary teardown failures before that intent still release
 their temporary block. Direct discovery and compatibility tests also monitor
 authorization during the request and abort when it is revoked.
 
+Web UI logout acknowledges `/api/ai/codex/session/end` before dropping the
+bearer. Session-end markers prevent a lease-waiting start or a sealing/crash
+recovery completion from publishing after logout; they do not revoke unrelated
+JWT sessions or delete completed links. Tests cover session/owner isolation,
+completion races, and a delayed logout response arriving after a newer login.
+
 `ai_codex_isolation.test.js` exercises the **real** backend for the host and
 proves containment by trying to escape it: a canary outside the sandbox must be
 unreadable, `DATA_DIR` unwritable, a neighbouring identity's credential
