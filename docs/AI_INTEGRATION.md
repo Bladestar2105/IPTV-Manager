@@ -342,8 +342,8 @@ the existing `chat/completions` transport.
   `< 0.156.0`, release versions only. A version outside that range, and any
   prerelease or build-tagged binary whose numbers fall inside it, keeps the
   adapter unavailable unless an operator names that exact version string —
-  suffix included — in `AI_CODEX_VERSION_OVERRIDE` after validating it
-  separately. The version probe and the runtime handshake read the same token,
+  suffix included, prerelease and build metadata together — in
+  `AI_CODEX_VERSION_OVERRIDE` after validating it separately. The version probe and the runtime handshake read the same token,
   so an allowed build passes both gates rather than one.
 * Model discovery pages through `model/list` under one deadline for the whole
   catalog, matching the provider's advertised setup timeout, so a slow or
@@ -492,7 +492,10 @@ one-time device code.
 * Typing in the panel makes no network request. An attempt is bound to the
   current account, its token version and the current session, and is limited to
   five attempts per owner and hour. Only an attempt that actually produced a
-  device code counts against that budget. Clicking again supersedes the previous
+  device code counts against that budget, and the count is taken in the same
+  transaction that records one, so starts on several connections — which hold
+  separate runtime leases and therefore really do run side by side — cannot all
+  read the same count and each publish a code. Clicking again supersedes the previous
   attempt instead of opening another one; when that attempt is held by a
   different worker the replacement waits briefly for its runtime to be handed
   over, and refuses without recording an attempt if it is not.

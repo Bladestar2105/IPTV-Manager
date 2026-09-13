@@ -326,6 +326,13 @@ export function codexStatus() {
     };
 }
 
+// Device codes issued for this owner in the last hour. Only a published one
+// counts, because only that is something the account holder could use.
+function attemptsThisHour(ownerKey) {
+    return db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE owner_key=? AND created_at>? AND login_id IS NOT NULL")
+        .get(ownerKey, Date.now() - 3600000).n;
+}
+
 export async function startAccountLink(actor, connection, fingerprint) {
     const ownerKey = connection.owner_key;
     const readiness = codexReadinessSnapshot();
@@ -335,10 +342,9 @@ export async function startAccountLink(actor, connection, fingerprint) {
     expireLogins();
     // Only an attempt that actually produced a device code counts against the
     // budget. A start that never got that far consumed nothing the account
-    // holder could use.
-    const recent = db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE owner_key=? AND created_at>? AND login_id IS NOT NULL")
-        .get(ownerKey, Date.now() - 3600000).n;
-    if (recent >= MAX_LOGINS_PER_HOUR) throw aiError('AI_RATE_LIMIT', 429);
+    // holder could use. This is the early refusal, before a runtime is started;
+    // the binding one is taken in the transaction that publishes the code.
+    if (attemptsThisHour(ownerKey) >= MAX_LOGINS_PER_HOUR) throw aiError('AI_RATE_LIMIT', 429);
     // Repeated clicks supersede the previous attempt rather than opening a new
     // parallel sign-in for the same identity. When the previous attempt lives in
     // another worker this only marks the shared row; that worker's watchdog then
@@ -390,11 +396,18 @@ export async function startAccountLink(actor, connection, fingerprint) {
         timer.unref?.();
         attempts.set(id, { session, timer, watchdog: watchAttempt(id) });
         const device = await startDeviceLogin(session);
-        const opened = db.prepare("UPDATE ai_codex_logins SET login_id=?,status='pending',verification_url=?,user_code=?,updated_at=? WHERE id=? AND status='starting'")
-            .run(device.loginId, device.verificationUrl, device.userCode, Date.now(), id);
+        // Counting and recording in one transaction. Leases are per connection,
+        // so starts on several connections run side by side and would otherwise
+        // all read the same count before any of them recorded a code.
+        const opened = db.transaction(() => {
+            if (attemptsThisHour(ownerKey) >= MAX_LOGINS_PER_HOUR) return 'budget';
+            return db.prepare("UPDATE ai_codex_logins SET login_id=?,status='pending',verification_url=?,user_code=?,updated_at=? WHERE id=? AND status='starting'")
+                .run(device.loginId, device.verificationUrl, device.userCode, Date.now(), id).changes ? 'opened' : 'gone';
+        }).immediate();
+        if (opened === 'budget') throw aiError('AI_RATE_LIMIT', 429);
         // The attempt may already have been ended while the device code was being
         // fetched; reporting it as pending would be untrue.
-        if (!opened.changes) throw aiError('AI_CODEX_RUNTIME_CLOSED', 503);
+        if (opened === 'gone') throw aiError('AI_CODEX_RUNTIME_CLOSED', 503);
         row.login_id = device.loginId;
         return { id, status: 'pending', verification_url: device.verificationUrl, user_code: device.userCode, expires_at: now + LOGIN_TTL_MS };
     } catch (error) {

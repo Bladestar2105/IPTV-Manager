@@ -194,7 +194,7 @@ describe('personal ChatGPT adapter availability', () => {
         expect(result).toMatchObject({ available: false, reason: 'AI_CODEX_VERSION_UNSUPPORTED' });
     });
 
-    it.each([['0.154.0-beta.1'], ['0.155.0-rc.2'], ['0.154.0+build.7']])('refuses an untested prerelease build (%s)', async version => {
+    it.each([['0.154.0-beta.1'], ['0.155.0-rc.2'], ['0.154.0+build.7'], ['0.154.0-beta.1+build.5']])('refuses an untested prerelease build (%s)', async version => {
         // The numbers alone fall inside the pinned range; a prerelease of them is
         // not the tested release and must not pass as one.
         fake({ version });
@@ -525,6 +525,25 @@ describe('personal ChatGPT sign-in', () => {
         expect(fs.existsSync(exitRecordPath)).toBe(true);
         await until(() => !fs.existsSync(credentials.identityPaths('user:1', connection.id).root), 10000);
     }, 30000);
+
+    it('never issues more device codes than the hourly budget, even from parallel starts', async () => {
+        fake({ login: 'pending', recordPath, recordApprovalPath: approvalPath });
+        // One lease per connection, so these starts really do run side by side.
+        const connections = [];
+        for (let index = 0; index < 6; index += 1) connections.push(createConnection());
+        const results = await Promise.allSettled(connections.map(connection =>
+            account.startAccountLink(user, ownedRecord(user, connection.id), `fp-${connection.id}`)));
+        const issued = results.filter(result => result.status === 'fulfilled');
+        const refused = results.filter(result => result.status === 'rejected');
+        expect(issued.length).toBe(5);
+        expect(refused.every(result => result.reason?.code === 'AI_RATE_LIMIT')).toBe(true);
+        // The budget counts published codes, so the refused attempt recorded none.
+        expect(db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE owner_key='user:1' AND login_id IS NOT NULL").get().n).toBe(5);
+        for (const connection of connections) {
+            await account.disconnectAccount(user, ownedRecord(user, connection.id)).catch(() => null);
+        }
+        await idleRuntimes();
+    }, 60000);
 
     it('refuses to link one external account twice', async () => {
         await linkedConnection(user);
