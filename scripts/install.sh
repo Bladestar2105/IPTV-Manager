@@ -50,7 +50,9 @@ cd "$INSTALL_DIR"
 # Install application dependencies
 echo ">> Installing application dependencies..."
 npm install
-bash scripts/install-ai-runtime.sh
+if ! bash scripts/install-ai-runtime.sh; then
+    echo ">> WARNING: ChatGPT setup could not be completed; continuing the IPTV-Manager installation. Review the errors above."
+fi
 
 # Create an initial admin password so it is always visible in non-interactive installs
 if [ ! -f ".env" ]; then

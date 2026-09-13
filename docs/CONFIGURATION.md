@@ -96,6 +96,9 @@ and bubblewrap. Manual Debian/Ubuntu installations run
 `sudo bash scripts/install-ai-runtime.sh` after installing Node.js and npm.
 Proxmox delegates to that same installer inside its unprivileged, nesting-enabled
 container. Existing explicit `AI_CODEX_ENABLED=false` settings are not changed.
+If optional ChatGPT provisioning fails during install/update, a warning is
+reported and the core server installation/restart continues. Correct the reported
+dependency problem and rerun the helper before using ChatGPT.
 
 Run `npm run check:ai-runtime` **as the application user, not root**. It uses
 temporary data, checks real filesystem containment, probes the installed

@@ -2,6 +2,8 @@
 window.aiUI = (() => {
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
   let generation = 0, owner = '', sessionToken = null, timer, connections = [], userChoices = [], settings = {}, preferences = {};
+  let submittingJob = false;
+  const pendingResets = new Set();
   let jobId, proposal, changeId, conversationId, recommendation, nextOffset = 0, resultGeneration = 0;
   let appliedActionIds = [];
   let filterBaseline = {};
@@ -91,7 +93,18 @@ window.aiUI = (() => {
     spinner.setAttribute('aria-hidden', 'true'); spinner.hidden = true;
     node('span', box).id = `ai-${scope}-status`;
   }
+  function updateJobControls() {
+    // Keep the tracked job reachable until completion or acknowledged cancellation,
+    // including the interval before POST /jobs returns its ID.
+    const busy = submittingJob || Boolean(jobId);
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+      if (el(id)) el(id).disabled = busy || pendingResets.has(el(id));
+    }
+    el('history')?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
+    if (el('run')) el('run').disabled = submittingJob || pendingResets.size > 0;
+  }
   function status(key, scope = 'work') {
+    updateJobControls();
     const item = el(`${scope}-status`) || el('status');
     if (!item) return;
     item.hidden = false; item.dataset.i18n = `ai_${key}`; item.textContent = tr(key);
@@ -151,6 +164,9 @@ window.aiUI = (() => {
     const stamp = generation;
     if (control) {
       control.disabled = true;
+      if (['ai-save-policy', 'ai-save-preference', 'ai-delete-connection', 'ai-clear-history'].includes(control.id)) {
+        pendingResets.add(control); updateJobControls();
+      }
       // Setup actions can be above or below the model picker. Keep their
       // shared feedback beside the button that initiated the action.
       if (control.closest('[data-ai-section]')?.dataset.aiSection === 'setup') control.after(el('setup-progress'));
@@ -161,7 +177,11 @@ window.aiUI = (() => {
       const key = errorKey(error);
       if (key === 'denied') { clear(); label('p', root(), key, 'alert alert-warning'); }
       else status(key, control?.closest('[data-ai-section]')?.dataset.aiSection);
-    } finally { if (control?.isConnected) control.disabled = false; }
+    } finally {
+      pendingResets.delete(control);
+      if (control?.isConnected) control.disabled = false;
+      updateJobControls();
+    }
   }
   function ids(id) {
     const control = el(id);
@@ -195,6 +215,7 @@ window.aiUI = (() => {
     clearTimeout(loginTimer);
     login = null; accountState = null; codex = {available: false, reason: null};
     owner = ''; sessionToken = null; connections = []; userChoices = []; settings = {}; preferences = {};
+    submittingJob = false; pendingResets.clear();
     jobId = proposal = changeId = conversationId = recommendation = null;
     appliedActionIds = [];
     filterBaseline = {};
@@ -749,15 +770,20 @@ window.aiUI = (() => {
     return result;
   }
   async function startJob() {
-    if (jobId) return;
+    if (submittingJob || jobId || pendingResets.size) return;
     if (!settings.enabled || !preferences.enabled) { status('off'); return; }
     const input = payload(); input.idempotency_key = crypto.randomUUID();
-    const resultStamp = beginResult();
+    const resultStamp = beginResult(), stamp = generation;
+    submittingJob = true;
     status('queued');
-    const job = await api('/jobs', 'POST', input, resultStamp);
-    if (resultStamp !== resultGeneration) return;
-    jobId = job.id; status('queued');
-    await poll();
+    try {
+      const job = await api('/jobs', 'POST', input, resultStamp);
+      if (resultStamp !== resultGeneration) return;
+      jobId = job.id; status('queued');
+      await poll();
+    } finally {
+      if (stamp === generation) { submittingJob = false; updateJobControls(); }
+    }
   }
   async function poll() {
     if (!jobId) return;

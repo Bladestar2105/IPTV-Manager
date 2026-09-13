@@ -31,6 +31,7 @@ try {
   // Personal ChatGPT account-link state for the synthetic server.
   let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
   let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true, failNextPolls = 0;
+  let policyGate;
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -38,7 +39,13 @@ try {
     requests.push({path, method, body});
     let data = {}, status = 200;
     if (url.pathname === '/api/users') data = [{id: 2, username: 'Library owner', plain_password: 'not-for-ai'}, {id: 3, username: '<b>Second library</b>'}];
-    else if (path === '/settings') { if (method === 'PUT') settings = body; data = settings; }
+    else if (path === '/settings') {
+      if (method === 'PUT') {
+        if (policyGate) { policyGate.started(); await new Promise(resolve => { policyGate.release = resolve; }); }
+        settings = body;
+      }
+      data = settings;
+    }
     else if (path === '/preferences') { if (method === 'PUT') preferences = {...preferences, ...body}; data = preferences; }
     else if (path === '/connections') {
       if (method === 'POST') {
@@ -284,12 +291,33 @@ try {
   await page.locator('#ai-user').selectOption('2');
   assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
 
+  let policyStarted;
+  const pendingPolicy = new Promise(resolve => { policyStarted = resolve; });
+  policyGate = {started: policyStarted};
+  await page.locator('#ai-save-policy').click();
+  await pendingPolicy;
+  assert.equal(await page.locator('#ai-run').isDisabled(), true, 'a pending reset cannot race a new job');
+  await page.locator('#ai-cancel').click();
+  assert.equal(await page.locator('#ai-save-policy').isDisabled(), true, 'unrelated action cleanup must not unlock a pending reset');
+  assert.equal(await page.locator('#ai-run').isDisabled(), true);
+  const postsBeforePolicy = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
+  await page.locator('#ai-run').evaluate(button => button.click());
+  assert.equal(requests.filter(request => request.path === '/jobs' && request.method === 'POST').length, postsBeforePolicy);
+  policyGate.release(); policyGate = null;
+  await page.waitForFunction(() => document.getElementById('ai-policy-status')?.dataset.i18n === 'ai_saved' && !document.getElementById('ai-save-policy').disabled);
+  assert.equal(await page.locator('#ai-run').isDisabled(), false);
+  await page.locator('#ai-user').selectOption('2');
+  await page.locator('#ai-prompt').fill('Review my list');
+
   page.on('dialog', dialog => dialog.accept());
   await page.locator('#ai-run').click();
   await waitForJobCreation;
   assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_queued', 'submission must show progress before the server responds');
   assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), true);
   assert.equal(await page.locator('#ai-run').isDisabled(), true);
+  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+    assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot abandon an in-flight job submission`);
+  }
   const localFeedback = await page.locator('#ai-work-progress').boundingBox();
   const runButton = await page.locator('#ai-run').boundingBox();
   assert(localFeedback.y >= runButton.y && localFeedback.y - runButton.y < 160, 'progress is beside the job controls, not only at the top of the page');
@@ -414,17 +442,38 @@ try {
     cancelGate = {path: `/jobs/j${jobCount}/cancel`, status: cancelStatus, started: cancelStarted};
     await page.locator('#ai-cancel').click();
     await started;
+    const historySection = page.locator('details').filter({has: page.locator('#ai-clear-history')}).locator('summary');
+    await historySection.click();
+    await page.locator('#ai-refresh-history').click();
+    await page.locator('#ai-history-historyA').waitFor();
+    assert.equal(await page.locator('#ai-history-historyA').isDisabled(), true, 'history cannot replace a running job');
+    assert.equal(await page.locator('#ai-change-ruleChange').isDisabled(), true, 'stored changes cannot replace a running job');
+    await historySection.click();
+    const activeJobPath = `/jobs/j${jobCount}`;
+    const posts = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+      assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} waits for cancellation acknowledgement`);
+    }
+    await page.locator('#ai-run').click();
+    assert.equal(requests.filter(request => request.path === '/jobs' && request.method === 'POST').length, posts, 'pending cancellation must not permit another job');
+    await Promise.all([page.waitForResponse(response => response.url().endsWith(cancelGate.path)), Promise.resolve().then(() => cancelGate.release())]);
+    await page.waitForFunction(() => !document.getElementById('ai-cancel').disabled);
+    cancelGate = null;
+    if (cancelStatus === 502) {
+      assert.equal(await page.locator('#ai-connection').isDisabled(), true, 'failed cancellation retains the active job');
+      await page.waitForResponse(response => response.url().endsWith(activeJobPath) && response.request().method() === 'GET');
+      await page.locator('#ai-cancel').click();
+    }
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+      assert.equal(await page.locator(`#ai-${id}`).isDisabled(), false, `${id} becomes available after cancellation`);
+    }
+    await page.locator('#ai-connection').selectOption('');
+    await page.locator('#ai-connection').selectOption('c1');
     await page.locator('#ai-feature').selectOption('duplicates');
     await page.locator('#ai-run').click();
     await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
-    const newJobPath = `/jobs/j${jobCount}`;
-    await Promise.all([page.waitForResponse(response => response.url().endsWith(cancelGate.path)), Promise.resolve().then(() => cancelGate.release())]);
-    await page.waitForFunction(() => !document.getElementById('ai-cancel').disabled);
-    assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_running', `late cancel ${cancelStatus} cannot replace newer running-job status`);
-    const pollsBefore = requests.filter(request => request.path === newJobPath && request.method === 'GET').length;
-    await page.waitForResponse(response => response.url().endsWith(newJobPath) && response.request().method() === 'GET');
-    assert(requests.filter(request => request.path === newJobPath && request.method === 'GET').length > pollsBefore, `new job keeps polling after late cancel ${cancelStatus}`);
-    cancelGate = null;
+    assert.equal(jobCount, Number(activeJobPath.slice('/jobs/j'.length)) + 1, 'a new context can submit after cancellation');
     await page.locator('#ai-cancel').click();
     await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
   }
