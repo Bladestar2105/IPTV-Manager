@@ -1,5 +1,12 @@
 # AI container profiles
 
+These profiles are required only for personal ChatGPT connections, enabled with
+`docker compose -f docker-compose.yml -f docker-compose.chatgpt.yml up -d`.
+The standard Compose stack uses Docker defaults and needs no profile files.
+The seccomp path is read by Compose, not from inside the application image.
+Portainer Web Editor/upload does not include adjacent repository files; use the
+[installation and repair instructions](../README.md#using-docker-compose-or-portainer).
+
 `ai-seccomp.json` and `ai-apparmor` are derived from the Apache-2.0
 [Moby profiles](https://github.com/moby/profiles/tree/61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31)
 revision `61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31`. The upstream license is

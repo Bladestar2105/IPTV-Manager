@@ -1,0 +1,12 @@
+# Optional personal ChatGPT connection; not needed for AI API connections.
+# Download docker/ai-seccomp.json alongside the base Compose file and load
+# docker/ai-apparmor on the Docker host first (README: Personal ChatGPT in Docker).
+# Run with: docker compose -f docker-compose.yml -f docker-compose.chatgpt.yml up -d
+services:
+  iptv-manager:
+    security_opt:
+      - seccomp=./docker/ai-seccomp.json
+      # On hosts without AppArmor, omit only this line; retain seccomp.
+      - apparmor=iptv-manager-ai
+    environment:
+      - AI_CODEX_ENABLED=true

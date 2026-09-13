@@ -60,14 +60,43 @@ For production environments, it is strongly recommended to set `NODE_ENV=product
 
 ## 🐳 Docker Installation (Recommended)
 
-### Using Docker Compose
-The image includes the pinned ChatGPT runtime. Download the Compose file and
-its restricted sandbox profiles together:
+### Using Docker Compose or Portainer
+The standard stack is self-contained and uses Docker's default security profiles.
+It supports IPTV management and the experimental AI Assistant with API connections;
+it does not require extra files or host setup.
 
 ```bash
-mkdir -p iptv-manager/docker && cd iptv-manager
+mkdir -p iptv-manager && cd iptv-manager
+curl -fsSL https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main/docker-compose.yml -o docker-compose.yml
+docker compose up -d
+```
+
+In Portainer (Docker Standalone), paste `docker-compose.yml` into the stack's
+**Web editor**. Keep your existing port, environment and `/data` volume mapping
+when updating an existing stack. Access `http://localhost:3000`.
+
+**Repair a stack reporting `opening seccomp profile ... no such file or directory`:**
+remove the complete `security_opt` block from that stack's editor, set
+`AI_CODEX_ENABLED=false`, and update the stack. Leave all data mounts unchanged;
+do not delete the stack or its volumes. This restores the standard Docker security
+profiles and the ordinary application/API connection path, not personal ChatGPT
+connections. An image pull alone cannot fix a missing Compose-side file.
+
+### Personal ChatGPT in Docker
+The image already includes the pinned ChatGPT runtime. Its restricted sandbox
+also needs a seccomp file accessible to **the process running Compose** and,
+on AppArmor hosts, a profile loaded **on the Docker host**. Docker applies these
+before starting the container, so putting them inside the image cannot install
+them. This optional setup requires host administrator access; Portainer Web
+Editor alone is not sufficient. API connections do not need this setup.
+
+From the directory containing `docker-compose.yml`, download the optional overlay
+and profiles:
+
+```bash
+mkdir -p docker
 base=https://raw.githubusercontent.com/Bladestar2105/IPTV-Manager/main
-curl -fsSL "$base/docker-compose.yml" -o docker-compose.yml
+curl -fsSL "$base/docker-compose.chatgpt.yml" -o docker-compose.chatgpt.yml
 curl -fsSL "$base/docker/ai-seccomp.json" -o docker/ai-seccomp.json
 curl -fsSL "$base/docker/ai-apparmor" -o docker/ai-apparmor
 ```
@@ -84,19 +113,19 @@ Keep the host's AppArmor boot service enabled so the installed profile is loaded
 again before Docker restarts containers after a reboot.
 
 On a host without AppArmor, remove only `apparmor=iptv-manager-ai` from
-`security_opt` in Compose; keep `seccomp=./docker/ai-seccomp.json`. Do not disable
+`security_opt` in `docker-compose.chatgpt.yml`; keep `seccomp=./docker/ai-seccomp.json`. Do not disable
 another host security module. For a remote daemon or a Docker VM, loading a
 profile on the client computer is not sufficient.
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.chatgpt.yml up -d
 docker compose exec -T --user app iptv-manager npm run check:ai-runtime
 ```
 
 Access `http://localhost:3000`. The check must pass before testing a ChatGPT
-link. It makes no sign-in or model request. Existing Docker installations must
-also adopt the profiles and Compose settings when updating; replacing the image
-alone is not sufficient. See [configuration](docs/CONFIGURATION.md#ai-installation-verification).
+link. It makes no sign-in or model request. Existing installations using personal
+ChatGPT connections must retain their sandbox profiles and enable this overlay
+when updating. See [configuration](docs/CONFIGURATION.md#ai-installation-verification).
 
 ## 🔧 Bare Metal / Manual Installation (Debian/Ubuntu)
 

@@ -65,7 +65,7 @@ sandbox. It never replaces the API connection type described above.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `AI_CODEX_ENABLED` | `true` in the image, installer and example environment; otherwise `false` | Master switch. While false, nothing is started and the connection type is not offered. Existing explicit settings are preserved by the updater. |
+| `AI_CODEX_ENABLED` | `false` in the standard Compose stack; `true` in the ChatGPT overlay, image, installer and example environment; otherwise `false` | Master switch. While false, nothing is started and the connection type is not offered. Existing explicit settings are preserved by the updater. |
 | `AI_CODEX_BIN` | `codex` | Path to the pinned Codex CLI, or a bare name resolved once against `PATH`. A relative path is resolved against the manager's working directory. The resolved absolute path is both version-probed and launched; the executable, the target of a symlinked launcher and the interpreter of a script launcher are bound read-only as individual files, and a resolved package root as a directory, so a global npm install works without carrying a launcher's unrelated neighbours into the sandbox. A launcher placed in or above `DATA_DIR` is refused (`AI_CODEX_BINARY_UNSAFE_LOCATION`), because mounting it would expose the database and the encryption key; keep it in a normal system location. Its reported version must fall inside the tested range (see [AI setup](AI_INTEGRATION.md)). |
 | `AI_MODEL_TEST_BATCH_MS` | `300000` | Budget for one whole compatibility test, however many models and probes it contains (clamped to 1 s – 15 min). Set it to the timeout of the proxy in front of the manager: there is no point in still making billable calls for a request nothing is waiting for. Models the batch could not reach are reported as untested. |
 | `AI_CODEX_RUNTIME_DIR` | `$DATA_DIR/ai-codex` | Root for per-identity runtime directories, created with mode `0700`. A relative path — including one inherited from a relative `DATA_DIR` — is resolved against the working directory, because the sandbox needs absolute paths. Wherever it is placed, the sandbox masks the whole root and restores only the identity that is running, so one identity never reaches another's. |
@@ -108,7 +108,8 @@ a model. A missing/blocked runtime produces a nonzero exit code. Install/update
 run it with `--if-enabled`; a failure warns rather than stopping the ordinary
 server and API connection path.
 
-Docker needs the supplied `docker/ai-seccomp.json` and, on AppArmor hosts, the
+Personal ChatGPT connections in Docker need the optional `docker-compose.chatgpt.yml`
+overlay and the supplied `docker/ai-seccomp.json` and, on AppArmor hosts, the
 loaded `iptv-manager-ai` profile in `docker/ai-apparmor`. Keep Docker's default
 masked/read-only paths, capability set and PID isolation. Do **not** use
 `privileged`, `SYS_ADMIN`, `seccomp=unconfined`, `apparmor=unconfined` or
@@ -116,6 +117,10 @@ masked/read-only paths, capability set and PID isolation. Do **not** use
 only its fixed executable link; it exposes no process tree and does not need
 to mount procfs inside Docker. The profile provenance and permissions are in
 [docker/SECURITY-PROFILES.md](../docker/SECURITY-PROFILES.md).
+The standard Compose/Portainer stack uses Docker defaults with
+`AI_CODEX_ENABLED=false`; AI API connections remain available. Missing sandbox
+files cannot be repaired by replacing the image, since Docker reads them before
+container startup. See the [Portainer repair steps](../README.md#using-docker-compose-or-portainer).
 
 On AppArmor-enabled Debian/Ubuntu hosts the helper installs a private,
 root-owned bubblewrap executable under `/usr/local/lib/iptv-manager/bwrap`
