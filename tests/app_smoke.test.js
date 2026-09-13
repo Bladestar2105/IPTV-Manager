@@ -85,6 +85,6 @@ describe('application wiring smoke checks', () => {
 
     expect(workflow).toMatch(/build-docker:\n\s+needs: validate/);
     expect(workflow).toMatch(/release-package:\n\s+needs:\n\s+- validate\n\s+- build-docker/);
-    expect(workflow).toContain("push: ${{ github.event_name != 'pull_request' }}");
+    expect(workflow).toMatch(/name: Push verified Docker image\n\s+if: github.event_name != 'pull_request'/);
   });
 });

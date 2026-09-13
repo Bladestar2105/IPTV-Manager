@@ -1,8 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 describe('AI container security profiles', () => {
+    it.each([false,true])('tags only the verified image and stops after a failed push (%s)', failPush => {
+        const workflow = fs.readFileSync(new URL('../.github/workflows/package.yml', import.meta.url), 'utf8');
+        const step = workflow.split('- name: Push verified Docker image')[1].split('  release-package:')[0];
+        const script = step.split('run: |\n')[1].split('\n').map(line => line.slice(10)).join('\n');
+        const result = spawnSync('/bin/bash', ['-e', '-c', `docker() {
+          if [ "$1" = image ]; then echo sha256:verified; return; fi
+          echo "$*"
+          if [ "$1" = push ] && [ "$FAIL_PUSH" = 1 ]; then return 23; fi
+          return 0
+        }\n${script}`], { encoding:'utf8', env:{...process.env,IMAGE_TAGS:'registry.invalid/test:latest\n\nregistry.invalid/test:1.0',FAIL_PUSH:failPush?'1':'0'} });
+        expect(result.status, result.stderr).toBe(failPush?23:0);
+        const first=['tag sha256:verified registry.invalid/test:latest','push registry.invalid/test:latest'];
+        expect(result.stdout.trim().split('\n')).toEqual(failPush?first:[...first,'tag sha256:verified registry.invalid/test:1.0','push registry.invalid/test:1.0']);
+    });
+    it('checks the integration PR and publishes the same image that was verified', () => {
+        const workflow = fs.readFileSync(new URL('../.github/workflows/package.yml', import.meta.url), 'utf8');
+        expect(workflow).toMatch(/pull_request:\s+branches:.*"codex\/ki-integration"/);
+        expect(workflow.match(/uses: docker\/build-push-action/g)).toHaveLength(1);
+        const publish = workflow.split('- name: Push verified Docker image')[1].split('  release-package:')[0];
+        expect(publish).toContain("if: github.event_name != 'pull_request'");
+        expect(publish).toContain('docker image inspect');
+        expect(publish).toContain('iptv-manager:runtime-check');
+        expect(publish).toContain('docker tag "$image_id" "$tag"');
+        expect(publish).toContain('docker push "$tag"');
+        expect(workflow).toMatch(/tags: iptv-manager:runtime-check\s+labels: \$\{\{ steps.meta.outputs.labels \}\}/);
+    });
     it('documents persistent Docker profile loading and a non-root runtime check', () => {
         for (const path of ['../README.md','../docker/SECURITY-PROFILES.md']) {
             const doc = fs.readFileSync(new URL(path, import.meta.url), 'utf8');

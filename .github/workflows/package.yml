@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
     tags: [ "v*" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "codex/ki-integration" ]
 
 env:
   REGISTRY: ghcr.io
@@ -84,6 +84,7 @@ jobs:
           context: .
           load: true
           tags: iptv-manager:runtime-check
+          labels: ${{ steps.meta.outputs.labels }}
 
       - name: Verify the real container sandbox and app-server
         shell: bash
@@ -98,12 +99,16 @@ jobs:
 
       - name: Push verified Docker image
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          image_id="$(docker image inspect --format '{{.Id}}' iptv-manager:runtime-check)"
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker tag "$image_id" "$tag"
+            docker push "$tag"
+          done <<< "$IMAGE_TAGS"
 
   release-package:
     needs:
