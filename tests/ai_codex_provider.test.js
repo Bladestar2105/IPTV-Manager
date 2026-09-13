@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 // The personal ChatGPT adapter is exercised against a synthetic app server that
 // speaks the real newline-delimited JSON-RPC protocol, so the manager's own
@@ -1613,6 +1613,43 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(released.retained).toBe(0);
         expect(() => process.kill(pid, 0)).toThrow();
         expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)).toBeUndefined();
+        runtime.stopRuntime(session);
+        await idleRuntimes();
+    }, 30000);
+
+    it('does not hand an identity on because a live runtime\'s lease looks expired', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            // A lease from before a restart: its expiry is long past, but the
+            // process it names is still running on that identity.
+            db.prepare('UPDATE ai_codex_runtimes SET expires_at=?, updated_at=? WHERE connection_id=?')
+                .run(Date.now() - 60000, Date.now() - 60000, connection.id);
+            await expect(runtime.startRuntime('user:1', connection.id)).rejects.toMatchObject({ code: 'AI_BUSY' });
+            // The expired row survives, because sweeping it is what would free a
+            // live identity.
+            expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)).toBeTruthy();
+        } finally { runtime.stopRuntime(session); }
+        await idleRuntimes();
+        // Once the process is gone the same start succeeds.
+        const next = await runtime.startRuntime('user:1', connection.id);
+        runtime.stopRuntime(next);
+        await idleRuntimes();
+    }, 30000);
+
+    it('releases an expired lease whose process is really gone', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const past = Date.now() - 60000;
+        // A pid that no longer exists, recorded before a restart: spawned and
+        // reaped here so the number is certainly dead.
+        const dead = spawnSync('/bin/sh', ['-c', 'exit 0']);
+        const deadPid = dead.pid;
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at,child_pid) VALUES(?,?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'gone', 424244, 'running', past, past, deadPid);
+        const session = await runtime.startRuntime('user:1', connection.id);
+        expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).lease_id).not.toBe('gone');
         runtime.stopRuntime(session);
         await idleRuntimes();
     }, 30000);

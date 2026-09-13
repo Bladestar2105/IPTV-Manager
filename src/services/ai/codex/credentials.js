@@ -8,6 +8,10 @@ import { encrypt, decrypt, ENCRYPTION_KEY } from '../../../utils/crypto.js';
 import { codexConfig } from './config.js';
 
 const AUTH_FILE = 'auth.json';
+// How long a lease whose process could not be ended is held before anything may
+// look at it again. It is never swept on the timestamp alone; this only keeps it
+// from looking expired in the meantime.
+const ORPHAN_HOLD_MS = 300000;
 const MAX_AUTH_BYTES = 256 * 1024;
 
 // Codex owns its credential file. It is only ever materialized inside the
@@ -331,6 +335,10 @@ function processGone(pid) {
 // was — so it is only ever signalled when the process still looks like this very
 // identity's runtime. Every sandbox command carries the identity's own
 // directory, which no unrelated process has in its arguments.
+export function identityProcessAlive(ownerKey, connectionId, pid) {
+    return runsThisIdentity(pid, identityPaths(ownerKey, connectionId).root);
+}
+
 function runsThisIdentity(pid, root) {
     if (processGone(pid)) return false;
     try { return execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 }).includes(root); }
@@ -366,8 +374,8 @@ export async function releaseWorkerRuntimes(workerPid) {
         // would let a replacement hydrate the same credential beside an orphan
         // that is still running on it.
         if (!(await endOrphan(row.child_pid, identityPaths(row.owner_key, row.connection_id).root))) {
-            db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=? AND worker_pid=?")
-                .run(Date.now(), row.owner_key, row.connection_id, workerPid);
+            db.prepare("UPDATE ai_codex_runtimes SET state='revoked', expires_at=?, updated_at=? WHERE owner_key=? AND connection_id=? AND worker_pid=?")
+                .run(Date.now() + ORPHAN_HOLD_MS, Date.now(), row.owner_key, row.connection_id, workerPid);
             retained += 1;
             continue;
         }
@@ -412,8 +420,11 @@ export async function resetInterruptedRuntimes() {
                 .run(row.owner_key, row.connection_id).changes;
             continue;
         }
-        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
-            .run(Date.now(), row.owner_key, row.connection_id);
+        // Pushed forward as well: an expiry from before the restart is already in
+        // the past, and a lease that looks expired is one an acquisition would
+        // otherwise be free to sweep.
+        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', expires_at=?, updated_at=? WHERE owner_key=? AND connection_id=?")
+            .run(Date.now() + ORPHAN_HOLD_MS, Date.now(), row.owner_key, row.connection_id);
         retained += 1;
     }
     const leases = reaped + db.prepare("DELETE FROM ai_codex_runtimes WHERE state<>'revoked'").run().changes;

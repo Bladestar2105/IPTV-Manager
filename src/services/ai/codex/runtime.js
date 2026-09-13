@@ -8,7 +8,7 @@ import { codexConfig, versionSupported, VERSION_TOKEN, DISABLED_CODEX_FEATURES, 
 import { accountRow } from './identity.js';
 import { resolveIsolation, wrapCommand, resolveCodexBinary, unsafeLauncherMounts } from './isolation.js';
 import { createClient, codexError } from './protocol.js';
-import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
+import { hydrate, seal, clearPlaintext, identityPaths, identityProcessAlive } from './credentials.js';
 
 const LEASE_TTL_MS = 60000;
 const HEARTBEAT_MS = 20000;
@@ -83,7 +83,11 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, 
     const leaseId = randomUUID();
     return db.transaction(() => {
         const now = Date.now();
-        db.prepare('DELETE FROM ai_codex_runtimes WHERE expires_at < ?').run(now);
+        // A lease that names a sandbox process is never swept on its timestamp:
+        // the process behind it may still be running, and only a check that it is
+        // really gone may free that identity. Those rows are released by their
+        // owner's exit, by the verified reapers, or by the guarded step below.
+        db.prepare('DELETE FROM ai_codex_runtimes WHERE expires_at < ? AND child_pid IS NULL').run(now);
         const existing = db.prepare('SELECT lease_id,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
         if (existing) return { leaseId: null, blockedBy: existing.state };
         if (!identityStillEligible(ownerKey, connectionId, allowTeardown, tokenVersion)) return { leaseId: null, blockedBy: 'ineligible' };
@@ -103,6 +107,17 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, 
 async function acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion, handoverMs = LEASE_HANDOVER_MS) {
     const deadline = Date.now() + handoverMs;
     for (;;) {
+        // An expired lease that still names a process is only released once that
+        // process is proven gone. Checked here, outside the transaction, because
+        // it asks the operating system rather than the database.
+        const stale = db.prepare('SELECT lease_id,child_pid,expires_at FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
+        if (stale?.child_pid && stale.expires_at < Date.now()) {
+            if (identityProcessAlive(ownerKey, connectionId, stale.child_pid)) {
+                throw codexError('AI_BUSY', 'A Codex runtime for this connection is still running.', 409);
+            }
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
+                .run(ownerKey, connectionId, stale.lease_id);
+        }
         const attempt = tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion);
         if (attempt.leaseId) return attempt.leaseId;
         if (attempt.blockedBy === 'ineligible') {

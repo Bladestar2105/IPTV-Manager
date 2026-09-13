@@ -486,6 +486,10 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   backend has no equivalent, and an orphan sharing an identity with its
   replacement would mean two processes on one credential. A process that cannot
   be ended keeps its identity claimed, marked revoked, until its lease expires.
+  A lease that names a process is never released on its expiry alone: a
+  timestamp from before a restart is already past, and sweeping it would hand a
+  live identity to a replacement. Such a lease is released by its owner's exit,
+  by those reapers, or by an acquisition that first proves the process is gone.
   A recorded process is only ever signalled when it still looks like that
   identity's own runtime — every sandbox command carries the identity's
   directory — because a recorded number is meaningless once it has been recycled,
