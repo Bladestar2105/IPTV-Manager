@@ -45,7 +45,7 @@ export const chatgptAccountProvider = {
             const verifyEligible = () => { try { beforeSend?.(); return true; } catch { return false; } };
             return await withRuntime(ownerKey, connection.id, async session => {
                 if (signal?.aborted) throw aiError('AI_TIMEOUT', 504);
-                await requireChatGptAuth(session, { timeoutMs: remaining() });
+                await requireChatGptAuth(session, { timeoutMs: remaining(), signal });
                 // Re-checked immediately before the billable request, exactly as the
                 // API transport does.
                 beforeSend?.();

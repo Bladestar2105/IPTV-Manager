@@ -8,7 +8,7 @@ import { accountRow } from './identity.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
-import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, forgetCredential, withCleanupLease } from './credentials.js';
+import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, forgetCredential, restoreCredential, withCleanupLease } from './credentials.js';
 
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 // A sign-in belongs to the browser session that started it. That session polls
@@ -228,8 +228,12 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
     const attempt = attempts.get(row.id);
     if (!attempt) return;
     // Read before anything this attempt could store; an attempt never seals on
-    // teardown, so only its own success can add a record.
-    const hadCredential = Boolean(readCredentialRecord(ownerKey, connectionId));
+    // teardown, so only its own success can add a record. The whole row is kept,
+    // not just whether there was one: a replacement that is refused at the last
+    // gate has already overwritten it, and the account that was working must get
+    // its link back.
+    const previous = readCredentialRecord(ownerKey, connectionId);
+    const hadCredential = Boolean(previous);
     // Not our completion: leave the attempt and its runtime alone so the real
     // one can still arrive. Returning inside the try below would run its
     // `finally` and stop the pending runtime.
@@ -322,7 +326,11 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             // it at all.
             db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
                 .run('failed', 'ai_codex_login_rejected', Date.now(), row.id, SEALING_STATUS);
-            await discardAttempt(session, ownerKey, connectionId, false, row.id);
+            // The replacement is signed out and dropped; a link that existed
+            // before it is restored, because refusing a new sign-in is not a
+            // reason to disconnect the account that was working.
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            if (previous) restoreCredential(previous);
         }
     } catch {
         finishLogin(row.id, 'failed', 'ai_codex_login_failed');

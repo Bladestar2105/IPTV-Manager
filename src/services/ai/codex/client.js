@@ -38,9 +38,9 @@ function mapTurnError(error) {
     return 'AI_UNAVAILABLE';
 }
 
-export async function getAuthStatus(session, { timeoutMs = AUTH_STATUS_TIMEOUT_MS } = {}) {
+export async function getAuthStatus(session, { timeoutMs = AUTH_STATUS_TIMEOUT_MS, signal } = {}) {
     // The token itself is never requested; only the active method matters here.
-    const status = await session.client.request('getAuthStatus', { includeToken: false, refreshToken: false }, { timeoutMs });
+    const status = await session.client.request('getAuthStatus', { includeToken: false, refreshToken: false }, { timeoutMs, signal });
     return { authMethod: status?.authMethod ?? null, requiresOpenaiAuth: status?.requiresOpenaiAuth ?? null };
 }
 
@@ -54,8 +54,8 @@ export async function readAccount(session, { refreshToken = false } = {}) {
 // Managed ChatGPT sign-in must be the active mode for every billable request.
 // An inherited API key or any other credential source is a hard failure, never
 // a silent fallback.
-export async function requireChatGptAuth(session, { timeoutMs } = {}) {
-    const status = await getAuthStatus(session, timeoutMs ? { timeoutMs } : {});
+export async function requireChatGptAuth(session, { timeoutMs, signal } = {}) {
+    const status = await getAuthStatus(session, { ...(timeoutMs ? { timeoutMs } : {}), signal });
     if (status.authMethod === null) throw codexError('AI_CODEX_NOT_LINKED', 'No ChatGPT account is connected.', 409);
     if (status.authMethod !== 'chatgpt') throw codexError('AI_CODEX_UNEXPECTED_AUTH', 'An unexpected authentication mode is active.', 409);
     return status;

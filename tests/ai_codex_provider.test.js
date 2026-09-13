@@ -177,6 +177,21 @@ describe('personal ChatGPT adapter availability', () => {
         expect(fs.existsSync(recordPath)).toBe(false);
     });
 
+    it('gives up authenticating once the compatibility batch is over', async () => {
+        const connection = await withModel();
+        await idleRuntimes();
+        // The runtime starts quickly; the authentication read is what hangs, and
+        // the batch budget runs out during it.
+        fake({ authStatusDelayMs: 4000, recordPath, recordApprovalPath: approvalPath });
+        process.env.AI_MODEL_TEST_BATCH_MS = '1000';
+        const started = Date.now();
+        try {
+            const result = await ai.testModels(user, connection.id, { model_ids: ['model-beta'] });
+            expect(result.models[0]).toMatchObject({ error_code: 'AI_TIMEOUT' });
+        } finally { delete process.env.AI_MODEL_TEST_BATCH_MS; await idleRuntimes(); }
+        expect(Date.now() - started).toBeLessThan(4000);
+    }, 30000);
+
     it('gives up starting a runtime once the compatibility batch is over', async () => {
         const connection = await withModel();
         await idleRuntimes();
@@ -2215,6 +2230,33 @@ describe('personal ChatGPT runtime ownership', () => {
         } finally {
             db.exec('DROP TRIGGER test_hold_identity');
             db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id);
+        }
+    }, 30000);
+
+    it('gives a working link back when its replacement is refused at the last gate', async () => {
+        const connection = await linkedConnection();
+        const before = credentials.readCredentialRecord('user:1', connection.id);
+        await idleRuntimes();
+        // A relink that authenticates a different account and is then refused
+        // after sealing, because the session was revoked in that window.
+        fake({ login: 'success', loginDelayMs: 50, email: 'fourth.tester@example.org', recordPath, recordApprovalPath: approvalPath });
+        db.exec(`CREATE TRIGGER test_revoke_after_reseal AFTER UPDATE OF encrypted_blob ON ai_codex_credentials WHEN NEW.connection_id='${connection.id}'
+            BEGIN UPDATE users SET token_version=token_version+1 WHERE id=1; END;`);
+        try {
+            const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+            await until(() => !['starting', 'pending', 'sealing'].includes(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status), 10000);
+            expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('failed');
+            // Refusing the new sign-in must not disconnect the account that was
+            // working before it started.
+            const after = credentials.readCredentialRecord('user:1', connection.id);
+            expect(after).toBeTruthy();
+            expect(after.account_hash).toBe(before.account_hash);
+            expect(after.encrypted_blob).toBe(before.encrypted_blob);
+            expect(after.login_id).toBe(before.login_id);
+        } finally {
+            db.exec('DROP TRIGGER test_revoke_after_reseal');
+            db.prepare('UPDATE users SET token_version=0 WHERE id=1').run();
+            await idleRuntimes();
         }
     }, 30000);
 

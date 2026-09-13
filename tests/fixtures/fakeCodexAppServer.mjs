@@ -142,6 +142,11 @@ function handle(message) {
         case 'getAuthStatus':
             // Models a transient read failure after the sign-in itself worked.
             if (config.authStatus === 'fail') return failure('auth status unavailable');
+            // And a read that simply takes too long to come back.
+            if (config.authStatusDelayMs) {
+                later(config.authStatusDelayMs, () => reply({ authMethod: authStatus(), authToken: null, requiresOpenaiAuth: true }));
+                return undefined;
+            }
             return reply({ authMethod: authStatus(), authToken: null, requiresOpenaiAuth: true });
         case 'account/read':
             // `none` models a stored credential that no longer authenticates an

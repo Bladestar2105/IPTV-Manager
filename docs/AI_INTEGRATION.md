@@ -350,7 +350,7 @@ the existing `chat/completions` transport.
   billable calls — running for many minutes after the browser gave up. What was
   proven is kept, and every model the batch could not reach is reported as
   untested and replaces its stored profile. The budget covers starting a runtime
-  as well, not only the request it then makes, so a retest never leaves an obsolete
+  and authenticating it as well, not only the request it then makes, so a retest never leaves an obsolete
   model marked compatible.
 * A discarded sign-in is signed out even when the connection keeps an older
   link, because the runtime authenticated an account either way and only the
@@ -583,7 +583,9 @@ one-time device code.
 * A rejected replacement keeps the link that already worked. If a second sign-in
   on a linked connection is refused — for instance because the account it
   authenticated is already linked elsewhere — only that attempt's own state is
-  discarded; the existing credential stays. Two connections can both pass that
+  discarded; the existing credential stays — including when the refusal only
+  comes at the last gate, after the replacement has already been stored: the
+  record that was working is put back rather than left overwritten or removed. Two connections can both pass that
   check before either stores anything; the unique account fingerprint then
   decides, and the one that loses is told its account is already linked rather
   than that storage failed.

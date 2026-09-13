@@ -202,6 +202,19 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
     return { sealed: true, ...next };
 }
 
+// Puts a previously stored record back after a replacement sign-in was refused
+// at the last gate. The replacement has already overwritten it by then, and the
+// account that was working must not lose its link to a sign-in that failed.
+export function restoreCredential(record) {
+    db.prepare(`INSERT INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,account_label,plan_type,auth_method,login_id,version,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(owner_key,connection_id) DO UPDATE SET encrypted_blob=excluded.encrypted_blob,account_hash=excluded.account_hash,
+            account_label=excluded.account_label,plan_type=excluded.plan_type,auth_method=excluded.auth_method,
+            login_id=excluded.login_id,version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
+        .run(record.owner_key, record.connection_id, record.encrypted_blob, record.account_hash, record.account_label,
+            record.plan_type, record.auth_method, record.login_id, Number(record.version || 1), Date.now());
+}
+
 // Drops only the record that makes a connection read as linked, leaving the
 // files to a caller that can remove them safely. Used where a credential is
 // known to be dead and the identity is still held by the runtime that found out.
