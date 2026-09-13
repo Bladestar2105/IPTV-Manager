@@ -1953,14 +1953,23 @@ describe('personal ChatGPT runtime ownership', () => {
             .rejects.toMatchObject({ code: 'AI_CODEX_NOT_LINKED' });
     }, 30000);
 
-    it('removes local access without a second runtime when the owner never acknowledges', async () => {
+    it('refuses to finish an unlink the owner never acknowledged', async () => {
         const connection = await withModel();
         await seedLease(connection.id, 'silent-worker');
-        const result = await account.disconnectAccount(user, ownedRecord(user, connection.id));
-        // Starting a logout runtime beside a possibly live one is never the
-        // answer; local access goes and the difference is reported.
-        expect(result).toEqual({ disconnected: true, remote_logout: false });
-        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        try {
+            // The child behind that lease may still be running on this identity.
+            // Freeing it here would let a replacement start beside it and use the
+            // same account, so the unlink is a retryable conflict instead.
+            await expect(account.disconnectAccount(user, ownedRecord(user, connection.id)))
+                .rejects.toMatchObject({ code: 'AI_BUSY' });
+            expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)?.lease_id).toBe('silent-worker');
+            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+            // Nothing is left blocking the retry.
+            expect(JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json).teardown).toBeUndefined();
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
+        // Once the identity is free the same unlink completes.
+        expect(await account.disconnectAccount(user, ownedRecord(user, connection.id)))
+            .toMatchObject({ disconnected: true });
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
     }, 30000);
 
@@ -2039,6 +2048,40 @@ describe('personal ChatGPT runtime ownership', () => {
         // start beside it.
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
         expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it.each([
+        ['the AI policy was withdrawn', row => { ai.updateAiSettings(admin, { enabled: false }); return row; }],
+        ['the session was revoked', row => { db.prepare('UPDATE users SET token_version=token_version+1 WHERE id=1').run(); return row; }],
+        ['the browser stopped watching', row => ({ ...row, last_seen_at: Date.now() - 600000, created_at: Date.now() - 600000 })],
+        ['the connection is tearing down', row => { ai.adjustConnectionTeardown('user:1', row.connection_id, 1); return row; }]
+    ])('does not recover a crashed sign-in once %s', async (_label, revoke) => {
+        const connection = createConnection();
+        await idleRuntimes();
+        // Taken while everything still holds, exactly as a poll that was already
+        // authorized carries it.
+        const handle = ai.ownedAccountConnection(user, connection.id, { requirePolicy: false });
+        const now = Date.now();
+        const seeded = revoke({ connection_id: connection.id, created_at: now, last_seen_at: now });
+        // A worker that stored the credential and died before publishing. The
+        // recovery below is a completion like any other and answers to the same
+        // gates.
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('crashed-sealer','user:1',?,'login-7','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+            .run(connection.id, seeded.created_at, now, now + 600000, seeded.last_seen_at);
+        db.prepare(`INSERT OR REPLACE INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,login_id,version,updated_at)
+            VALUES('user:1',?,'blob','hash-crashed','crashed-sealer',1,?)`).run(connection.id, now);
+        try {
+            const state = account.readLoginStatus(user, handle, 'crashed-sealer', 'fp');
+            expect(state.status).toBe('failed');
+            // A crash window is not a way past a gate, and the credential it left
+            // behind is not kept either.
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally {
+            ai.updateAiSettings(admin, { enabled: true });
+            db.prepare('UPDATE users SET token_version=0 WHERE id=1').run();
+            try { ai.adjustConnectionTeardown('user:1', connection.id, -1); } catch { /* not marked */ }
+        }
     }, 30000);
 
     it('reports an unacknowledged runtime instead of pretending the account stopped', async () => {

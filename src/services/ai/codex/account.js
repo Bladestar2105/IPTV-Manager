@@ -84,7 +84,7 @@ function expireLogins() {
     // leaves the row sealing. A live seal always holds the identity's lease, so
     // the absence of one is the signal that nobody is finishing it — and the
     // stored credential, not the claim, decides whether it succeeded.
-    for (const row of db.prepare(`SELECT id,owner_key,connection_id FROM ai_codex_logins WHERE status=?
+    for (const row of db.prepare(`SELECT id,owner_key,connection_id,actor_version,created_at,last_seen_at FROM ai_codex_logins WHERE status=?
         AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
             AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
         // Only the credential this attempt stored is evidence of its success.
@@ -92,9 +92,16 @@ function expireLogins() {
         // and any advance of the version would adopt an ordinary token refresh,
         // which seals against the same record.
         const record = readCredentialRecord(row.owner_key, row.connection_id);
-        const linked = Boolean(record) && record.login_id === row.id;
+        const stored = Boolean(record) && record.login_id === row.id;
+        // Recovery is a completion like any other, so it answers to the same
+        // gates. A crash window is not a way past a withdrawn policy, a revoked
+        // session or a browser that stopped watching — and a credential that
+        // cannot be adopted is not kept.
+        const linked = stored && completionAllowed(row.owner_key, row);
+        if (stored && !linked) forgetCredential(row.owner_key, row.connection_id);
         db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
-            .run(linked ? 'completed' : 'failed', linked ? null : 'ai_codex_login_interrupted', now, row.id, SEALING_STATUS);
+            .run(linked ? 'completed' : 'failed',
+                linked ? null : (stored ? 'ai_codex_login_rejected' : 'ai_codex_login_interrupted'), now, row.id, SEALING_STATUS);
     }
     db.prepare(`DELETE FROM ai_codex_logins WHERE status NOT IN (${UNFINISHED_STATUSES.map(() => '?').join(',')}) AND updated_at < ?`)
         .run(...UNFINISHED_STATUSES, now - 86400000);
@@ -151,17 +158,30 @@ function watchAttempt(id) {
 // application is client side and does not advance `token_version`, so session
 // ownership is established by the initiating session's own polling rather than
 // by a stored value compared against itself.
-function stillOwnsAttempt(row, ownerKey) {
-    const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at FROM ai_codex_logins WHERE id=?').get(row.id);
-    if (!current || !ACTIVE_STATUSES.includes(current.status)) return false;
-    if (current.session_hash !== row.session_hash) return false;
+// Everything that must still hold for a completed sign-in to be adopted, in one
+// place: an account that may use the feature, the session version the attempt
+// was started under, the current AI policy, a connection that is not tearing
+// down, and a browser still watching its own attempt. Both completion paths use
+// it — the one that adopts a notification and the one that resolves an attempt a
+// dead worker left claimed — because either of them turns a sign-in into a link.
+function completionAllowed(ownerKey, attempt) {
     // Web UI access can be revoked and an account can expire while the code is
     // open; adopting the sign-in then would grant what was just taken away.
     const account = usableAccount(ownerKey);
-    if (!account || account.token_version !== current.actor_version) return false;
+    if (!account || account.token_version !== attempt.actor_version) return false;
     // AI access can be withdrawn centrally or personally while the code is open.
     if (!policyAllows(ownerKey)) return false;
-    return Date.now() - (current.last_seen_at ?? current.created_at) <= LOGIN_SESSION_IDLE_MS;
+    const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(attempt.connection_id, ownerKey);
+    if (!connection) return false;
+    try { if (JSON.parse(connection.data_json).teardown) return false; } catch { /* an unreadable payload is not a teardown */ }
+    return Date.now() - (attempt.last_seen_at ?? attempt.created_at) <= LOGIN_SESSION_IDLE_MS;
+}
+
+function stillOwnsAttempt(row, ownerKey) {
+    const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at,connection_id FROM ai_codex_logins WHERE id=?').get(row.id);
+    if (!current || !ACTIVE_STATUSES.includes(current.status)) return false;
+    if (current.session_hash !== row.session_hash) return false;
+    return completionAllowed(ownerKey, current);
 }
 
 // Claims the attempt in one step, so a cancellation, an unlink or a supersede
@@ -580,9 +600,12 @@ async function runDisconnect(actor, connection, ownerKey) {
         // then remove.
         await waitForLeaseRelease(ownerKey, connection.id);
     }
-    // No acknowledgement means the owner is gone, not that it is safe to run
-    // alongside it: local access is still removed and the difference reported.
-    if (!acknowledged) db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, connection.id);
+    // No acknowledgement is not permission to finish. The child may still be
+    // running on this identity, and freeing it here would let a replacement start
+    // beside it and use the same account. The lease stays where it is, nothing is
+    // removed, and the caller is told to try again — the marker is released by
+    // the caller's own teardown, so a retry is not blocked by this one.
+    if (!acknowledged) throw aiError('AI_BUSY', 409);
     wipe(ownerKey, connection.id);
     return { disconnected: true, remote_logout: remote };
 }

@@ -558,7 +558,10 @@ one-time device code.
   A worker that dies in that window leaves the attempt claimed but unfinished,
   and the credential store — not the claim — decides how it is resolved on the
   next poll, so a failed seal can never leave a permanent report of a link that
-  does not exist. What counts there is which attempt stored the credential, not
+  does not exist. That resolution answers to the same gates as any other
+  completion — policy, session version, account, connection, and a browser still
+  watching — because a crash window is not a way past them; a credential it
+  cannot adopt is dropped rather than kept. What counts there is which attempt stored the credential, not
   that one exists or that its version moved: a record names the sign-in that
   wrote it, an ordinary token refresh keeps that name, and relinking an already
   linked connection is therefore only reported as successful once its own
@@ -617,10 +620,12 @@ cancels queued and running jobs and ends the runtime. A runtime owned by another
 revoked; that worker's guard sees this within a second and releases the lease,
 and only that release counts as an acknowledgement that it has actually stopped.
 The sign-out runs after the acknowledgement, so two runtimes never share one
-identity directory. A request authorized before the marker went up can still win
+identity directory. Without an acknowledgement nothing is removed at all: the
+child may still be running on that identity, so the unlink answers with a
+retryable conflict and leaves the lease in place rather than freeing an identity
+a live process is using. A request authorized before the marker went up can still win
 the lease after that scan; losing that race does not lead to wiping underneath it,
-the winner is revoked and awaited and the sign-out retried. Without an acknowledgement no second runtime is started at
-all: local access is still removed and the unconfirmed sign-out reported. If
+the winner is revoked and awaited and the sign-out retried. If
 the remote sign-out cannot be confirmed, local access is still removed and the
 difference is reported so the account holder can review active sessions
 themselves. A credential that an account refresh finds no longer authenticating
