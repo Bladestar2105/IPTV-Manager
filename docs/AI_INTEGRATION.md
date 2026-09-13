@@ -603,7 +603,10 @@ after its scan and have its runtime removed underneath it; the marker is counted
 overlapping teardown keeps it in place, and it is cleared again once the last one
 finishes, because the connection itself survives an unlink. A marker abandoned by
 a process that died mid-teardown is cleared on the next start, so no connection
-stays blocked. A removal whose local teardown fails — an attempt that cannot be
+stays blocked. A removal authorizes once, immediately before the irreversible
+part, and never again after it: refusing afterwards — a session revoked while
+the sign-out was running — would leave a connection standing whose credential
+and identity directory are already gone. A removal whose local teardown fails — an attempt that cannot be
 ended, a credential that cannot be removed — does not delete the connection
 either: the deletion trigger would drop the lease and the credential record for
 a teardown that never happened. Only a remote sign-out that could not be

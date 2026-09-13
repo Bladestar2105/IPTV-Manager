@@ -695,6 +695,25 @@ describe('personal ChatGPT sign-in', () => {
         await idleRuntimes();
     }, 60000);
 
+    it('finishes a removal whose session is revoked while the sign-out runs', async () => {
+        const authenticated = { id: 1, is_admin: false, token_version: 0 };
+        const connection = await linkedConnection(authenticated);
+        await idleRuntimes();
+        // The reset lands while the credential is being removed. Refusing the
+        // deletion afterwards would leave a connection standing whose link is
+        // already destroyed — data no rollback can restore.
+        db.exec(`CREATE TRIGGER test_revoke_mid_removal AFTER DELETE ON ai_codex_credentials WHEN OLD.connection_id='${connection.id}'
+            BEGIN UPDATE users SET token_version=token_version+1 WHERE id=1; END;`);
+        try {
+            expect(await ai.removeConnection(authenticated, connection.id)).toEqual({ deleted: true });
+            expect(db.prepare('SELECT 1 FROM ai_connections WHERE id=?').get(connection.id)).toBeUndefined();
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally {
+            db.exec('DROP TRIGGER test_revoke_mid_removal');
+            db.prepare('UPDATE users SET token_version=0 WHERE id=1').run();
+        }
+    }, 30000);
+
     it('keeps the connection when its local teardown fails', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();

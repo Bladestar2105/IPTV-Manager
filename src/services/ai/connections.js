@@ -269,6 +269,11 @@ export async function removeConnection(actor,id) {
     connection=loadConnection(id);
     let removed=false;
     try {
+        // The last authorization happens here, in front of the irreversible part.
+        // Checking again afterwards would refuse a session revoked while the
+        // sign-out ran and leave a connection standing whose credential and
+        // identity directory are already gone — data no `finally` can put back.
+        owned(actor,id);
         const {disconnectAccount}=await import('./codex/account.js');
         // Not caught: a remote sign-out that could not be confirmed is already a
         // reported outcome rather than a failure, so anything that still throws
@@ -277,9 +282,10 @@ export async function removeConnection(actor,id) {
         // row then drops the lease and the credential record under a live child,
         // whose own cleanup no longer owns what it would remove.
         await disconnectAccount(actor,connection);
-        const result=deleteConnection(actor,id);
+        // Removed on the ownership already established above, not on a fresh one.
+        db.prepare('DELETE FROM ai_connections WHERE id=? AND owner_key=?').run(id,connection.owner_key);
         removed=true;
-        return result;
+        return {deleted:true};
     } finally {
         // A removal that did not happen must not leave the marker behind: it
         // blocks every kind of work on a connection that still exists, and only
