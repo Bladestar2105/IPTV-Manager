@@ -261,16 +261,26 @@ export function clearAbandonedTeardowns() {
 }
 export async function removeConnection(actor,id) {
     let connection=owned(actor,id);
-    if (adapterFor(connection).supportsAccountLink) {
-        // Marked before anything is torn down: a sign-in started after the
-        // teardown scan would otherwise take the lease of a connection that is
-        // about to disappear, and its credential file would outlive it.
-        adjustConnectionTeardown(connection.owner_key,id,1);
-        connection=loadConnection(id);
+    if (!adapterFor(connection).supportsAccountLink) return deleteConnection(actor,id);
+    // Marked before anything is torn down: a sign-in started after the
+    // teardown scan would otherwise take the lease of a connection that is
+    // about to disappear, and its credential file would outlive it.
+    adjustConnectionTeardown(connection.owner_key,id,1);
+    connection=loadConnection(id);
+    let removed=false;
+    try {
         const {disconnectAccount}=await import('./codex/account.js');
         try { await disconnectAccount(actor,connection); } catch { /* removal proceeds even when the sign-out fails */ }
+        const result=deleteConnection(actor,id);
+        removed=true;
+        return result;
+    } finally {
+        // A removal that did not happen must not leave the marker behind: it
+        // blocks every kind of work on a connection that still exists, and only
+        // a restart would clear it. The deletion itself can still be refused
+        // here, by a session revoked while the sign-out was running.
+        if (!removed) { try { adjustConnectionTeardown(connection.owner_key,id,-1); } catch { /* the row may be gone already */ } }
     }
-    return deleteConnection(actor,id);
 }
 
 export function requireAiFeatureAccess(actor,feature) {

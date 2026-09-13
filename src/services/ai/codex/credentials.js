@@ -149,7 +149,7 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
     // and storing its credential. Its deletion trigger would already have run, so
     // an insert afterwards leaves an orphan whose unique account fingerprint then
     // blocks linking that ChatGPT account anywhere else.
-    const stored = db.transaction(() => {
+    const store = db.transaction(() => {
         const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
         if (!connection) return false;
         // The owner can be deactivated, expire or lose Web UI access while a
@@ -175,7 +175,18 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
                 login_id=excluded.login_id,version=ai_codex_credentials.version+1,updated_at=excluded.updated_at`)
             .run(ownerKey, connectionId, blob, next.account_hash, next.account_label, next.plan_type, next.auth_method, next.login_id, Date.now());
         return true;
-    }).immediate();
+    }).immediate;
+    let stored;
+    // The one-account rule is enforced by a unique index as well, and that index
+    // is what decides a race between two connections signing into the same
+    // ChatGPT identity: both can pass the earlier check, only one can store.
+    // Reporting that as a storage failure would hide the real reason from the
+    // account holder who lost.
+    try { stored = store(); }
+    catch (error) {
+        if (String(error?.code || '').startsWith('SQLITE_CONSTRAINT')) return { sealed: false, reason: 'duplicate' };
+        throw error;
+    }
     if (!stored) return { sealed: false };
     return { sealed: true, ...next };
 }

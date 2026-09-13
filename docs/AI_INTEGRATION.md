@@ -527,7 +527,10 @@ one-time device code.
 * A rejected replacement keeps the link that already worked. If a second sign-in
   on a linked connection is refused — for instance because the account it
   authenticated is already linked elsewhere — only that attempt's own state is
-  discarded; the existing credential stays.
+  discarded; the existing credential stays. Two connections can both pass that
+  check before either stores anything; the unique account fingerprint then
+  decides, and the one that loses is told its account is already linked rather
+  than that storage failed.
 * Claiming an attempt is not yet a success. The claim moves it to an internal,
   non-terminal state that no cancel or supersede can take either, and the
   attempt is published as completed only once the credential is actually stored;
@@ -573,7 +576,9 @@ after its scan and have its runtime removed underneath it; the marker is counted
 overlapping teardown keeps it in place, and it is cleared again once the last one
 finishes, because the connection itself survives an unlink. A marker abandoned by
 a process that died mid-teardown is cleared on the next start, so no connection
-stays blocked. Storing a credential re-checks the marker in the same transaction,
+stays blocked, and a removal that is itself refused — by a session revoked while
+the sign-out was running, say — clears its own marker instead of leaving a
+surviving connection unusable. Storing a credential re-checks the marker in the same transaction,
 so a sign-in that was already authorized — including one whose completion is in
 flight on another worker — cannot put a credential back behind a teardown. A
 teardown also ends every attempt that is still running, a claimed one included:

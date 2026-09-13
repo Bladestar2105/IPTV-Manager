@@ -274,7 +274,8 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             // Only while the attempt is still this one's: a teardown that ended
             // it already recorded the truer reason.
             db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
-                .run('failed', 'ai_codex_credentials_unavailable', Date.now(), row.id, SEALING_STATUS);
+                .run('failed', sealed.reason === 'duplicate' ? 'ai_codex_account_already_linked' : 'ai_codex_credentials_unavailable',
+                    Date.now(), row.id, SEALING_STATUS);
             await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }

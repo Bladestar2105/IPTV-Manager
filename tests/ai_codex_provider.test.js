@@ -595,6 +595,46 @@ describe('personal ChatGPT sign-in', () => {
         await idleRuntimes();
     }, 60000);
 
+    it('clears the teardown marker when the removal itself is refused', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // The session is revoked while the sign-out runs, so the deletion at the
+        // end is refused. A marker left behind would block every kind of work on
+        // a connection that still exists, until a restart.
+        const authenticated = { id: 1, is_admin: false, token_version: 0 };
+        db.exec(`CREATE TRIGGER test_revoke AFTER UPDATE ON ai_connections WHEN NEW.id='${connection.id}' BEGIN
+            UPDATE users SET token_version=9 WHERE id=1;
+        END;`);
+        try {
+            await expect(ai.removeConnection(authenticated, connection.id)).rejects.toMatchObject({ code: 'AI_FORBIDDEN' });
+        } finally { db.exec('DROP TRIGGER test_revoke'); db.prepare('UPDATE users SET token_version=0 WHERE id=1').run(); }
+        expect(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id)).toBeTruthy();
+        expect(JSON.parse(db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id).data_json).teardown).toBeUndefined();
+    }, 30000);
+
+    it('reports the loser of a duplicate-account race as already linked', async () => {
+        const connection = createConnection();
+        await idleRuntimes();
+        // Two connections can both pass the duplicate check before either stores
+        // a credential; the unique index then decides. Modelled by letting the
+        // other one appear exactly when this attempt is claimed.
+        const hash = credentials.accountFingerprint('pilot.tester@example.org');
+        db.exec(`CREATE TRIGGER test_duplicate AFTER UPDATE OF status ON ai_codex_logins WHEN NEW.status='sealing' BEGIN
+            INSERT OR IGNORE INTO ai_codex_credentials(owner_key,connection_id,encrypted_blob,account_hash,version,updated_at)
+            VALUES('user:2','other-connection','blob','${hash}',1,0);
+        END;`);
+        try {
+            const { state } = await link(user, connection);
+            // Not a storage failure: the account holder is told their ChatGPT
+            // account is already linked, which is what actually happened.
+            expect(state).toMatchObject({ status: 'failed', error_code: 'ai_codex_account_already_linked' });
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally {
+            db.exec('DROP TRIGGER test_duplicate');
+            db.prepare("DELETE FROM ai_codex_credentials WHERE owner_key='user:2' AND connection_id='other-connection'").run();
+        }
+    }, 30000);
+
     it('refuses to link one external account twice', async () => {
         await linkedConnection(user);
         const second = createConnection(other);
