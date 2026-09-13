@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'iptv-ai-api-'));
 process.env.DATA_DIR = dataDir;
@@ -123,6 +124,57 @@ describe('AI management boundary', () => {
     // This endpoint cancels pending links, not authentication or completed links.
     expect((await request(app).get('/api/ai/settings').auth(userToken,{type:'bearer'})).status).toBe(200);
     expect(db.prepare('SELECT token_version,is_active FROM users WHERE id=?').get(user.id)).toMatchObject({token_version:0,is_active:1});
+  });
+
+  it.each(['region', 'inactive', 'webui', 'version'])('records session end despite %s access denial without authorizing other operations', async restriction => {
+    const {generateToken}=await import('../src/services/authService.js');
+    const {sessionFingerprint}=await import('../src/services/ai/codex/account.js');
+    const {default:geoip}=await import('geoip-lite');
+    const lookup=vi.spyOn(geoip,'lookup').mockReturnValue({country:'DE'});
+    const trustProxy=app.get('trust proxy');
+    const token=generateToken(user),fingerprint=sessionFingerprint(token);
+    const owner=`user:${user.id}`,foreignOwner=`user:${other.id}`,now=Date.now();
+    const ids=[randomUUID(),randomUUID(),randomUUID()];
+    const insert=db.prepare("INSERT INTO ai_codex_logins(id,owner_key,connection_id,status,session_hash,created_at,updated_at,expires_at) VALUES(?,?,?,'pending',?,?,?,?)");
+    insert.run(ids[0],owner,'logout-test',fingerprint,now,now,now+60000);
+    insert.run(ids[1],owner,'logout-test-other-session','other-session',now,now,now+60000);
+    insert.run(ids[2],foreignOwner,'logout-test-other-owner',fingerprint,now,now,now+60000);
+    try {
+      app.set('trust proxy','loopback');
+      if(restriction==='region') db.prepare("UPDATE users SET allowed_countries='GR' WHERE id=?").run(user.id);
+      if(restriction==='inactive') db.prepare('UPDATE users SET is_active=0 WHERE id=?').run(user.id);
+      if(restriction==='webui') db.prepare('UPDATE users SET webui_access=0 WHERE id=?').run(user.id);
+      if(restriction==='version') db.prepare('UPDATE users SET token_version=1 WHERE id=?').run(user.id);
+      const get=()=>request(app).get('/api/ai/settings').auth(token,{type:'bearer'}).set('X-Forwarded-For','8.8.8.8');
+      expect([401,403]).toContain((await get()).status);
+      const result=await request(app).post('/api/ai/codex/session/end').auth(token,{type:'bearer'})
+        .set('X-Forwarded-For','8.8.8.8').send({owner_key:foreignOwner});
+      expect(result.status).toBe(200);
+      expect(result.body).toEqual({ended:true});
+      expect(db.prepare('SELECT 1 FROM ai_codex_ended_sessions WHERE owner_key=? AND session_hash=?').get(owner,fingerprint)).toBeTruthy();
+      expect(ids.map(id=>db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id).status)).toEqual(['cancelled','pending','pending']);
+      expect([401,403]).toContain((await get()).status);
+    } finally {
+      db.prepare('UPDATE users SET allowed_countries=NULL,is_active=1,webui_access=1,token_version=0 WHERE id=?').run(user.id);
+      for(const id of ids) db.prepare('DELETE FROM ai_codex_logins WHERE id=?').run(id);
+      app.set('trust proxy',trustProxy);
+      lookup.mockRestore();
+    }
+  });
+
+  it('rejects unverified session-end tokens without recording markers', async () => {
+    const {default:jwt}=await import('jsonwebtoken');
+    const {JWT_SECRET}=await import('../src/utils/crypto.js');
+    const count=()=>db.prepare('SELECT count(*) AS n FROM ai_codex_ended_sessions').get().n;
+    const before=count();
+    for(const token of [
+      jwt.sign(user,'wrong-secret',{algorithm:'HS256'}),
+      jwt.sign(user,JWT_SECRET,{algorithm:'HS384'}),
+      jwt.sign(user,JWT_SECRET,{algorithm:'HS256',expiresIn:-1}),
+      jwt.sign(user,JWT_SECRET,{algorithm:'HS256'}),
+      jwt.sign({...user,id:'1'},JWT_SECRET,{algorithm:'HS256',expiresIn:60})
+    ]) expect((await request(app).post('/api/ai/codex/session/end').auth(token,{type:'bearer'}).send({})).status).toBe(403);
+    expect(count()).toBe(before);
   });
 
   it.each([

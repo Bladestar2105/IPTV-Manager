@@ -1,4 +1,6 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '../utils/crypto.js';
 import { authenticateToken } from '../middleware/auth.js';
 import * as controller from '../controllers/aiController.js';
 
@@ -21,6 +23,17 @@ router.use((req,res,next) => {
   }
   next();
 });
+// Ending this exact signed session only removes permission to finish a link.
+// Keep it reachable after region/account access is revoked, without admitting
+// any other management operation or cancelling another browser's session.
+router.post('/codex/session/end', (req,res,next) => {
+  try {
+    const actor = jwt.verify(req.get('Authorization').split(' ')[1], JWT_SECRET, {algorithms:['HS256']});
+    if (!Number.isSafeInteger(actor?.id) || actor.id < 1 || typeof actor.is_admin !== 'boolean' || !Number.isFinite(actor.exp)) throw new Error();
+    req.user = {id:actor.id,is_admin:actor.is_admin};
+  } catch { return res.status(403).json({error:'Invalid or expired token'}); }
+  next();
+}, controller.endAccountSession);
 router.use(authenticateToken);
 
 router.get('/settings',controller.settings);
@@ -34,7 +47,6 @@ router.delete('/connections/:id',controller.deleteConnection);
 router.post('/connections/:id/discover',controller.discover);
 router.post('/connections/:id/test',controller.test);
 router.get('/codex/status',controller.codexStatus);
-router.post('/codex/session/end',controller.endAccountSession);
 router.post('/connections/:id/link',controller.startAccountLink);
 router.get('/connections/:id/link/:loginId',controller.accountLinkStatus);
 router.post('/connections/:id/link/:loginId/cancel',controller.cancelAccountLink);

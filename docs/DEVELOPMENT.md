@@ -193,6 +193,10 @@ bearer. Session-end markers prevent a lease-waiting start or a sealing/crash
 recovery completion from publishing after logout; they do not revoke unrelated
 JWT sessions or delete completed links. Tests cover session/owner isolation,
 completion races, and a delayed logout response arriving after a newer login.
+The cancellation-only endpoint verifies the signed, unexpired bearer behind
+the normal header/origin/JSON guards, before management-access checks. Regional
+or account-access revocation therefore cannot prevent recording cancellation;
+restoring access later cannot revive an attempt abandoned during logout.
 
 `ai_codex_isolation.test.js` exercises the **real** backend for the host and
 proves containment by trying to escape it: a canary outside the sandbox must be

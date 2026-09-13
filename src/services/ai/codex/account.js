@@ -45,8 +45,9 @@ const sessionEnded = (ownerKey, fingerprint) => Boolean(db.prepare('SELECT 1 FRO
 // A row tombstone also stops starts still waiting to record their login. This
 // affects personal account linking only, not bearer authentication or playback.
 export function endAccountSession(actor, fingerprint, expiresAt) {
-    actorRow(actor);
-    if (typeof fingerprint !== 'string' || !fingerprint) throw aiError('AI_FORBIDDEN', 403);
+    // The endpoint verifies the signed session even after management access is
+    // revoked; requiring a usable account here would prevent its cancellation.
+    if (!Number.isSafeInteger(actor?.id) || actor.id < 1 || typeof actor.is_admin !== 'boolean' || typeof fingerprint !== 'string' || !fingerprint) throw aiError('AI_FORBIDDEN', 403);
     const ownerKey = `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
     const now = Date.now();
     const rows = db.transaction(() => {
