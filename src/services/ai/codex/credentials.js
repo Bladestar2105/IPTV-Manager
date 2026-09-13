@@ -2,6 +2,7 @@ import crypto, { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import db from '../../../database/db.js';
+import { accountRow } from './identity.js';
 import { encrypt, decrypt, ENCRYPTION_KEY } from '../../../utils/crypto.js';
 import { codexConfig } from './config.js';
 
@@ -151,6 +152,18 @@ export function seal(ownerKey, connectionId, metadata = {}, { refreshOnly = fals
     const stored = db.transaction(() => {
         const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
         if (!connection) return false;
+        // The owner can be deactivated, expire or lose Web UI access while a
+        // completion is in flight on another worker — an account deletion revokes
+        // access before it tears anything down for exactly this reason.
+        if (!accountRow(ownerKey)) return false;
+        // And the attempt this credential belongs to must still be the one that
+        // claimed the identity. A teardown ends claimed attempts, so a sign-in it
+        // cancelled cannot store a credential behind it.
+        if (metadata.loginId) {
+            const attempt = db.prepare('SELECT status FROM ai_codex_logins WHERE id=? AND owner_key=? AND connection_id=?')
+                .get(metadata.loginId, ownerKey, connectionId);
+            if (attempt?.status !== 'sealing') return false;
+        }
         // A disconnect or a deletion is already removing this link. Storing a
         // credential now would put one back behind the teardown, where nothing
         // is watching for it any more.

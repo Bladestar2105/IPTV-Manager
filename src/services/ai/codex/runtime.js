@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import db from '../../../database/db.js';
 import { codexConfig, versionSupported, VERSION_TOKEN, DISABLED_CODEX_FEATURES, CODEX_CONFIG_OVERRIDES } from './config.js';
+import { accountRow } from './identity.js';
 import { resolveIsolation, wrapCommand, resolveCodexBinary, unsafeLauncherMounts } from './isolation.js';
 import { createClient, codexError } from './protocol.js';
 import { hydrate, seal, clearPlaintext, identityPaths } from './credentials.js';
@@ -62,15 +63,11 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
 // active, and the connection must exist and not be tearing down, both checked in
 // the same transaction that inserts the lease.
 function identityStillEligible(ownerKey, connectionId, allowTeardown, tokenVersion) {
-    const [kind, id] = ownerKey.split(':');
-    const admin = kind === 'admin';
-    const table = admin ? 'admin_users' : 'users';
     // Every access field the rest of the subsystem checks, not just the account
     // being present: Web UI access can be revoked and an account can expire while
     // an authorized request is still waiting for its runtime.
-    const account = db.prepare(`SELECT is_active,token_version${admin ? '' : ',webui_access,expiry_date'} FROM ${table} WHERE id=?`).get(Number(id));
-    if (!account?.is_active) return false;
-    if (!admin && (!account.webui_access || (account.expiry_date && account.expiry_date < Date.now() / 1000))) return false;
+    const account = accountRow(ownerKey);
+    if (!account) return false;
     // A password reset advances the token version, which the authentication
     // middleware treats as a revoked session. A request authorized before it
     // must not be handed a runtime afterwards, so the version the caller was

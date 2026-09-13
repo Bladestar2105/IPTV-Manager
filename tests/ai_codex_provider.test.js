@@ -306,28 +306,56 @@ describe('personal ChatGPT adapter availability', () => {
         expect(account.readLoginStatus(user, ownedRecord(user, connection.id), 'unlinked-sealer', 'fp').status).toBe('cancelled');
     }, 30000);
 
+    // A completion still in flight: its plaintext credential is on disk and its
+    // attempt is claimed. Every case below starts from exactly this state, and
+    // each asserts a control seal first, so a refusal is never a missing file.
+    function inFlightSeal(connectionId) {
+        const paths = credentials.identityPaths('user:1', connectionId);
+        credentials.wipe('user:1', connectionId);
+        fs.mkdirSync(path.dirname(paths.authFile), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'synthetic' } }), { mode: 0o600 });
+        const now = Date.now();
+        db.prepare(`INSERT OR REPLACE INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('late','user:1',?,'login-9','sealing','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+            .run(connectionId, now, now, now + 600000, now);
+        return () => credentials.seal('user:1', connectionId, { loginId: 'late', accountHash: 'hash-late' }).sealed;
+    }
+
     it('refuses to store a credential while the connection is tearing down', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();
-        // A sign-in's plaintext credential, as a completion still in flight would
-        // have left it on disk.
-        const plant = () => {
-            const paths = credentials.identityPaths('user:1', connection.id);
-            credentials.wipe('user:1', connection.id);
-            fs.mkdirSync(path.dirname(paths.authFile), { recursive: true, mode: 0o700 });
-            fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'synthetic' } }), { mode: 0o600 });
-        };
-        // Control: the very same call stores the credential when nothing is
-        // tearing down, so the refusal below is the teardown and not a missing
-        // file.
-        plant();
-        expect(credentials.seal('user:1', connection.id, { loginId: 'late', accountHash: 'hash-late' }).sealed).toBe(true);
-        plant();
+        expect(inFlightSeal(connection.id)()).toBe(true);
+        const seal = inFlightSeal(connection.id);
         ai.adjustConnectionTeardown('user:1', connection.id, 1);
         try {
-            expect(credentials.seal('user:1', connection.id, { loginId: 'late', accountHash: 'hash-late' }).sealed).toBe(false);
+            expect(seal()).toBe(false);
             expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
         } finally { ai.adjustConnectionTeardown('user:1', connection.id, -1); }
+    }, 30000);
+
+    it('refuses to store a credential for an attempt a teardown already ended', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        expect(inFlightSeal(connection.id)()).toBe(true);
+        const seal = inFlightSeal(connection.id);
+        // What a deletion's or a disconnect's attempt scan does on any worker.
+        db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_cancelled' WHERE id='late'").run();
+        expect(seal()).toBe(false);
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+    }, 30000);
+
+    it('refuses to store a credential for an owner whose access was revoked', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        expect(inFlightSeal(connection.id)()).toBe(true);
+        const seal = inFlightSeal(connection.id);
+        // An account deletion revokes access before it tears anything down, and a
+        // completion in flight on another worker must not slip a credential in.
+        db.prepare('UPDATE users SET is_active=0 WHERE id=1').run();
+        try {
+            expect(seal()).toBe(false);
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally { db.prepare('UPDATE users SET is_active=1 WHERE id=1').run(); }
     }, 30000);
 
     it.each([
@@ -524,6 +552,28 @@ describe('personal ChatGPT sign-in', () => {
         await until(() => runtime.runtimeState('user:1', connection.id) === null, 10000);
         expect(fs.existsSync(exitRecordPath)).toBe(true);
         await until(() => !fs.existsSync(credentials.identityPaths('user:1', connection.id).root), 10000);
+    }, 30000);
+
+    it('lets a superseded start lose the identity to the one that replaced it', async () => {
+        fake({ login: 'pending', recordPath, recordApprovalPath: approvalPath });
+        const connection = createConnection();
+        await idleRuntimes();
+        // A second click while the first start is still on its way to the lease:
+        // the first attempt is not in any worker's attempt map yet, so nothing can
+        // stop it, and it must lose the identity on its own.
+        const first = account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        const second = (async () => {
+            await until(() => db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE connection_id=? AND status='starting'").get(connection.id).n > 0, 5000);
+            db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_superseded' WHERE connection_id=? AND status='starting'").run(connection.id);
+        })();
+        const [outcome] = await Promise.all([first.catch(error => error), second]);
+        expect(outcome).toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        // The identity is free for the request that replaced it, not held by the
+        // one that was cancelled.
+        await idleRuntimes();
+        const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
+        expect(started.user_code).toBe('ABCD-1234');
+        await account.cancelAccountLink(user, ownedRecord(user, connection.id), started.id);
     }, 30000);
 
     it('never issues more device codes than the hourly budget, even from parallel starts', async () => {

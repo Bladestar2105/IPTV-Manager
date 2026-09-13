@@ -504,6 +504,18 @@ one-time device code.
   would delete the attempt's own lease and free the directory for a new sign-in
   that recreates it underneath the old process; the removal then reserves the
   identity for itself, exactly as a dropped credential does.
+* Storing a credential requires, in the same transaction as the write, that the
+  connection exists and is not tearing down, that the owner still passes the
+  subsystem's access rule — one definition, shared by the lease, the account
+  service and the credential store — and that the attempt the credential belongs
+  to is still the one that claimed the identity. A deletion revokes access
+  before it tears anything down, so a completion in flight on another worker
+  cannot slip a credential in behind it, whether or not the deletion then
+  succeeds.
+* Winning the lease also requires the attempt to still be open. A second click
+  can supersede the first before it ever reaches the lease — a version probe or
+  a slow start is long enough — and the superseded request must lose the
+  identity rather than hold it against the request that replaced it.
 * A sign-in attempt never stores a credential on teardown. Only a completed,
   claimed attempt does, so cancelling a second sign-in on an already linked
   connection cannot replace the stored token while its recorded account stays the

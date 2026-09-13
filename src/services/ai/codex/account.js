@@ -4,6 +4,7 @@ import db from '../../../database/db.js';
 import { ENCRYPTION_KEY } from '../../../utils/crypto.js';
 import { aiError } from '../transport.js';
 import { requireAiFeatureAccess, adjustConnectionTeardown } from '../connections.js';
+import { accountRow } from './identity.js';
 import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
 import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
 import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
@@ -60,15 +61,7 @@ function loadTeardown(ownerKey, connectionId) {
     try { return Boolean(JSON.parse(row.data_json).teardown); } catch { return false; }
 }
 
-function usableAccount(ownerKey) {
-    const [kind, id] = ownerKey.split(':');
-    const admin = kind === 'admin';
-    const table = admin ? 'admin_users' : 'users';
-    const row = db.prepare(`SELECT id,is_active,token_version${admin ? '' : ',webui_access,expiry_date'} FROM ${table} WHERE id=?`).get(Number(id));
-    if (!row || !row.is_active) return null;
-    if (!admin && (!row.webui_access || (row.expiry_date && row.expiry_date < Date.now() / 1000))) return null;
-    return row;
-}
+const usableAccount = accountRow;
 
 // The version the caller was authenticated with. Compared again in the
 // transaction that grants the lease, because a password reset can land while a
@@ -278,7 +271,10 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             authMethod: status.authMethod
         }); } catch { sealed = { sealed: false }; }
         if (!sealed.sealed) {
-            forceLoginFailure(row.id, 'ai_codex_credentials_unavailable');
+            // Only while the attempt is still this one's: a teardown that ended
+            // it already recorded the truer reason.
+            db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+                .run('failed', 'ai_codex_credentials_unavailable', Date.now(), row.id, SEALING_STATUS);
             await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
@@ -324,6 +320,13 @@ export function codexStatus() {
         codex_version: readiness.version ?? null,
         isolation: readiness.available ? { backend: readiness.backend, grade: readiness.grade } : null
     };
+}
+
+// An attempt that is still its own: not cancelled, superseded or expired by
+// another request while this one was starting.
+function attemptStillOpen(id) {
+    const row = db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id);
+    return Boolean(row) && ACTIVE_STATUSES.includes(row.status);
 }
 
 // Device codes issued for this owner in the last hour. Only a published one
@@ -378,8 +381,12 @@ export async function startAccountLink(actor, connection, fingerprint) {
     let session;
     try {
         session = await startRuntime(ownerKey, connection.id, {
-            // Access can be withdrawn while this request waits for a runtime.
-            verifyEligible: () => policyAllows(ownerKey),
+            // Access can be withdrawn while this request waits for a runtime, and
+            // a second click can supersede this attempt before it ever reaches
+            // the lease — a probe or a slow start is long enough. A superseded
+            // attempt that still won the identity would leave both requests
+            // without a sign-in.
+            verifyEligible: () => policyAllows(ownerKey) && attemptStillOpen(id),
             tokenVersion: actorTokenVersion(actor),
             // Every close path of a sign-in runtime discards its credential file,
             // including a crash before any completion notification.
