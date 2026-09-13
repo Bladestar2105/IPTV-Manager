@@ -3,7 +3,8 @@ window.aiUI = (() => {
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
   let generation = 0, owner = '', sessionToken = null, timer, connections = [], userChoices = [], settings = {}, preferences = {};
   let submittingJob = false, submittingLink = false;
-  const pendingResets = new Set();
+  const contextWriteButtons = ['save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish', 'unlink'];
+  const pendingContextWrites = new Set();
   let jobId, proposal, changeId, conversationId, recommendation, nextOffset = 0, resultGeneration = 0;
   let appliedActionIds = [];
   let filterBaseline = {};
@@ -97,13 +98,13 @@ window.aiUI = (() => {
     // Keep the tracked job reachable until completion or acknowledged cancellation,
     // including the interval before POST /jobs returns its ID.
     const linking = submittingLink || login?.status === 'pending';
-    const busy = submittingJob || Boolean(jobId) || linking;
-    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
-      if (el(id)) el(id).disabled = busy || pendingResets.has(el(id));
+    const busy = submittingJob || Boolean(jobId) || linking || pendingContextWrites.size > 0;
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', ...contextWriteButtons]) {
+      if (el(id)) el(id).disabled = busy;
     }
     el('history')?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
-    if (el('run')) el('run').disabled = submittingJob || linking || pendingResets.size > 0;
-    if (el('link-start')) el('link-start').disabled = busy || pendingResets.size > 0;
+    if (el('run')) el('run').disabled = submittingJob || linking || pendingContextWrites.size > 0;
+    if (el('link-start')) el('link-start').disabled = busy || pendingContextWrites.size > 0;
   }
   function status(key, scope = 'work') {
     updateJobControls();
@@ -166,8 +167,8 @@ window.aiUI = (() => {
     const stamp = generation;
     if (control) {
       control.disabled = true;
-      if (['ai-save-policy', 'ai-save-preference', 'ai-delete-connection', 'ai-clear-history'].includes(control.id)) {
-        pendingResets.add(control); updateJobControls();
+      if (contextWriteButtons.includes(control.id.slice(3))) {
+        pendingContextWrites.add(control); updateJobControls();
       }
       // Setup actions can be above or below the model picker. Keep their
       // shared feedback beside the button that initiated the action.
@@ -180,7 +181,7 @@ window.aiUI = (() => {
       if (key === 'denied') { clear(); label('p', root(), key, 'alert alert-warning'); }
       else status(key, control?.closest('[data-ai-section]')?.dataset.aiSection);
     } finally {
-      pendingResets.delete(control);
+      pendingContextWrites.delete(control);
       if (control?.isConnected) control.disabled = false;
       updateJobControls();
     }
@@ -217,7 +218,7 @@ window.aiUI = (() => {
     clearTimeout(loginTimer);
     login = null; accountState = null; codex = {available: false, reason: null};
     owner = ''; sessionToken = null; connections = []; userChoices = []; settings = {}; preferences = {};
-    submittingJob = submittingLink = false; pendingResets.clear();
+    submittingJob = submittingLink = false; pendingContextWrites.clear();
     jobId = proposal = changeId = conversationId = recommendation = null;
     appliedActionIds = [];
     filterBaseline = {};
@@ -501,7 +502,7 @@ window.aiUI = (() => {
     if (el('connection')) el('connection').value = selection;
   }
   async function startLink() {
-    if (submittingLink || login?.status === 'pending' || submittingJob || jobId || pendingResets.size) return;
+    if (submittingLink || login?.status === 'pending' || submittingJob || jobId || pendingContextWrites.size) return;
     const stamp = generation;
     submittingLink = true; updateJobControls();
     try {
@@ -796,7 +797,7 @@ window.aiUI = (() => {
     return result;
   }
   async function startJob() {
-    if (submittingJob || jobId || submittingLink || login?.status === 'pending' || pendingResets.size) return;
+    if (submittingJob || jobId || submittingLink || login?.status === 'pending' || pendingContextWrites.size) return;
     if (!settings.enabled || !preferences.enabled) { status('off'); return; }
     const input = payload(); input.idempotency_key = crypto.randomUUID();
     const resultStamp = beginResult(), stamp = generation;

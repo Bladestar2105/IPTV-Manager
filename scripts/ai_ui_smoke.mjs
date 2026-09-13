@@ -31,7 +31,7 @@ try {
   // Personal ChatGPT account-link state for the synthetic server.
   let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
   let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true, failNextPolls = 0;
-  let policyGate, linkGate, failLinkCancel = false, missingLink = false;
+  let modelTestGate, policyGate, linkGate, failLinkCancel = false, missingLink = false;
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -95,6 +95,7 @@ try {
       if (discoverFails) { status = discoverError.status; data = {code: discoverError.code}; }
       else data = {models: discoveredModels};
     } else if (path.endsWith('/test')) {
+      if (modelTestGate) { modelTestGate.started(); await new Promise(resolve => { modelTestGate.release = resolve; }); }
       assert.equal(await page.locator('#ai-setup-status').getAttribute('data-i18n'), 'ai_running', 'model tests show local progress before the response');
       assert.equal(await page.locator('#ai-setup-progress .spinner-border').isVisible(), true);
       assert(settings.enabled && preferences.enabled, 'tests require explicit activation');
@@ -225,7 +226,17 @@ try {
   await page.waitForFunction(() => document.getElementById('ai-models').options.length === 1);
   assert.deepEqual(await page.locator('#ai-models').evaluate(select => [...select.selectedOptions].map(option => option.value)), ['chat-one'], 'a sole candidate can be tested without typing its ID');
   await page.locator('#ai-models').selectOption(['chat-one']);
+  let modelTestStarted;
+  const pendingModelTest = new Promise(resolve => { modelTestStarted = resolve; });
+  modelTestGate = {started: modelTestStarted};
   await page.locator('#ai-test').click();
+  await pendingModelTest;
+  for (const id of ['connection', 'run', 'discover', 'test', 'finish']) {
+    assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot race a pending model test`);
+  }
+  await page.locator('#ai-cancel').click();
+  assert.equal(await page.locator('#ai-test').isDisabled(), true, 'unrelated cleanup cannot unlock a pending model test');
+  modelTestGate.release(); modelTestGate = null;
   await page.waitForFunction(() => document.getElementById('ai-model').value === 'chat-one');
   await Promise.all([
     page.waitForResponse(response => response.url().endsWith('/api/ai/preferences') && response.request().postDataJSON()?.model_id === 'chat-one'),
@@ -322,7 +333,7 @@ try {
   assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_queued', 'submission must show progress before the server responds');
   assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), true);
   assert.equal(await page.locator('#ai-run').isDisabled(), true);
-  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
     assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot abandon an in-flight job submission`);
   }
   await page.locator('#nav-ai').click();
@@ -466,7 +477,7 @@ try {
     assert.equal(await page.locator('#ai-cancel').isDisabled(), true, 'navigation retains the pending cancellation');
     const activeJobPath = `/jobs/j${jobCount}`;
     const posts = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
-    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
       assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} waits for cancellation acknowledgement`);
     }
     await page.locator('#ai-run').click();
@@ -480,7 +491,7 @@ try {
       await page.locator('#ai-cancel').click();
     }
     await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
-    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
       assert.equal(await page.locator(`#ai-${id}`).isDisabled(), false, `${id} becomes available after cancellation`);
     }
     await page.locator('#ai-connection').selectOption('');
