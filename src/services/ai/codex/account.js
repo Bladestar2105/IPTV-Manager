@@ -192,10 +192,20 @@ function claimCompletedLogin(row, ownerKey) {
 // Discards everything this attempt produced. A connection that was already
 // linked keeps its credential: a rejected replacement must not disconnect the
 // account that was working before it started.
-async function discardAttempt(session, ownerKey, connectionId, hadCredential) {
+//
+// The runtime's child is still alive here and still owns the identity. Wiping at
+// this point would delete the attempt's own lease and free the identity for a
+// new sign-in that recreates the same directory, which this child — or the
+// cleanup its exit still triggers — would then be working in. So the runtime is
+// ended first, its exit awaited, and only then is the identity reserved for the
+// removal. A hand-off that never completes leaves the directory to the sweep,
+// which removes a runtime directory that has no credential record.
+async function discardAttempt(session, ownerKey, connectionId, hadCredential, attemptId) {
     if (hadCredential) { clearPlaintext(ownerKey, connectionId); return; }
     await logout(session).catch(() => null);
-    wipe(ownerKey, connectionId);
+    releaseAttempt(attemptId);
+    await session.client.exited.catch(() => null);
+    await wipeAfterHandover(ownerKey, connectionId);
 }
 
 async function completeLogin(row, ownerKey, connectionId, notification) {
@@ -216,15 +226,18 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         }
         if (!stillOwnsAttempt(row, ownerKey)) {
             // The attempt no longer belongs to the current session: sign the
-            // runtime out again and keep nothing locally.
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
+            // runtime out again and keep nothing locally. The reason is recorded
+            // before the runtime ends, because ending it reports an interrupted
+            // sign-in for an attempt that has no outcome yet, and the first
+            // terminal state is the one that stands.
             finishLogin(row.id, 'failed', 'ai_codex_login_superseded');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         const status = await getAuthStatus(session);
         if (status.authMethod !== 'chatgpt') {
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_unexpected_auth');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         const account = await readAccount(session);
@@ -232,28 +245,28 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         // Claiming it would report the connection as linked while the runtime
         // says otherwise.
         if (!account.linked) {
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_account_unavailable');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         const fingerprint = accountFingerprint(account.email);
         // The one-account rule rests on a reported identity. Without one it could
         // not be enforced, and a null fingerprint would slip past the constraint.
         if (!fingerprint) {
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_account_unidentified');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         if (linkedElsewhere(ownerKey, connectionId, fingerprint)) {
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             finishLogin(row.id, 'failed', 'ai_codex_account_already_linked');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         // The runtime lease serializes sign-ins for one identity and connection,
         // so a failed claim means this attempt was ended and nothing newer has
         // linked yet: signing out and removing the local credential is safe.
         if (!claimCompletedLogin(row, ownerKey)) {
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         let sealed;
@@ -265,8 +278,8 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
             authMethod: status.authMethod
         }); } catch { sealed = { sealed: false }; }
         if (!sealed.sealed) {
-            await discardAttempt(session, ownerKey, connectionId, hadCredential);
             forceLoginFailure(row.id, 'ai_codex_credentials_unavailable');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
             return;
         }
         // Published only now, with the credential on record behind it.
@@ -585,22 +598,20 @@ export async function readAccountState(actor, connection) {
             quota
         };
     }, { verifyEligible: () => policyAllows(connection.owner_key), tokenVersion: actorTokenVersion(actor) });
-    if (invalidate) await discardInvalidCredential(connection.owner_key, connection.id);
+    if (invalidate) await wipeAfterHandover(connection.owner_key, connection.id);
     return state;
 }
 
-// A credential that no longer authenticates is not a link, but removing it has
-// to reserve the identity rather than only observe that it is free. Waiting for
-// the runtime lease to disappear does not keep it gone: a link request queued
-// behind the stopping runtime takes it in the same instant, and an unconditional
-// wipe would then delete that replacement's lease and its identity tree
-// underneath a live child. The cleanup lease is claimed in the same immediate
-// transaction every acquisition uses, so exactly one of the two wins. Losing
-// either race — the hand-off never acknowledged, or the reservation taken by
-// someone else — simply leaves the record for the next read to retry, which is
-// harmless: the state reported to the caller already says the connection is not
-// linked.
-async function discardInvalidCredential(ownerKey, connectionId) {
+// Removing a link has to reserve the identity rather than only observe that it
+// is free. Waiting for the runtime lease to disappear does not keep it gone: a
+// link request queued behind the stopping runtime takes it in the same instant,
+// and an unconditional wipe would then delete that replacement's lease and its
+// identity tree underneath a live child. The cleanup lease is claimed in the
+// same immediate transaction every acquisition uses, so exactly one of the two
+// wins. Losing either race — the hand-off never acknowledged, or the reservation
+// taken by someone else — leaves the record for the next read or the sweep,
+// which is harmless: nothing reports the connection as linked in the meantime.
+async function wipeAfterHandover(ownerKey, connectionId) {
     if (!(await waitForLeaseRelease(ownerKey, connectionId))) return false;
     return withCleanupLease(ownerKey, connectionId, () => { wipe(ownerKey, connectionId); return true; }) === true;
 }

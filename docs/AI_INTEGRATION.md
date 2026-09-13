@@ -487,6 +487,11 @@ one-time device code.
   attempt instead of opening another one; when that attempt is held by a
   different worker the replacement waits briefly for its runtime to be handed
   over, and refuses without recording an attempt if it is not.
+* A discarded sign-in signs the runtime out, ends it and waits for its child to
+  exit before removing anything. Removing the identity while that child is alive
+  would delete the attempt's own lease and free the directory for a new sign-in
+  that recreates it underneath the old process; the removal then reserves the
+  identity for itself, exactly as a dropped credential does.
 * A sign-in attempt never stores a credential on teardown. Only a completed,
   claimed attempt does, so cancelling a second sign-in on an already linked
   connection cannot replace the stored token while its recorded account stays the

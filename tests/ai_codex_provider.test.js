@@ -492,6 +492,23 @@ describe('personal ChatGPT sign-in', () => {
         expect(started.id).toBeTruthy();
     });
 
+    it('waits for the discarded sign-in\'s child before freeing its identity', async () => {
+        const exitRecordPath = path.join(dataDir, `exit-${Date.now()}.txt`);
+        // A sign-in the runtime cannot back with an account: the attempt is
+        // discarded. Its child takes a moment to shut down and records that it
+        // really exited.
+        fake({ accountRead: 'none', exitRecordPath, slowExitMs: 250, recordPath, recordApprovalPath: approvalPath });
+        const connection = createConnection();
+        const { state } = await link(user, connection);
+        expect(state.error_code).toBe('ai_codex_account_unavailable');
+        // Freeing the identity while that child is alive would let a new sign-in
+        // take it and recreate the same directory underneath the old process, so
+        // the lease must outlive the child.
+        await until(() => runtime.runtimeState('user:1', connection.id) === null, 10000);
+        expect(fs.existsSync(exitRecordPath)).toBe(true);
+        await until(() => !fs.existsSync(credentials.identityPaths('user:1', connection.id).root), 10000);
+    }, 30000);
+
     it('refuses to link one external account twice', async () => {
         await linkedConnection(user);
         const second = createConnection(other);

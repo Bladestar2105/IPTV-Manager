@@ -35,6 +35,20 @@ if (config.exitOnStart) process.exit(config.exitCode ?? 1);
 // protocol client's escalation to SIGKILL.
 if (config.ignoreTerm) process.on('SIGTERM', () => {});
 
+// Models a child that takes a moment to shut down and records that it really
+// exited, so a test can tell whether a caller waited for the hand-off. Both
+// endings are covered: a closed stdin, which is how the manager stops a runtime,
+// and a SIGTERM.
+function shutdown() {
+    const finish = () => {
+        try { if (config.exitRecordPath) fs.writeFileSync(config.exitRecordPath, 'exited'); } catch { /* the directory may be gone */ }
+        process.exit(0);
+    };
+    if (config.slowExitMs) setTimeout(finish, config.slowExitMs);
+    else finish();
+}
+if (config.exitRecordPath && !config.ignoreTerm) process.on('SIGTERM', shutdown);
+
 const codexHome = process.env.CODEX_HOME || '';
 const authFile = path.join(codexHome, 'auth.json');
 const hasAuth = () => fs.existsSync(authFile);
@@ -238,4 +252,4 @@ process.stdin.on('data', chunk => {
         handle(message);
     }
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => (config.exitRecordPath || config.slowExitMs ? shutdown() : process.exit(0)));
