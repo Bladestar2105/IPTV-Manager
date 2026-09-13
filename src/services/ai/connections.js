@@ -175,8 +175,18 @@ export function savePreferences(actor,input) {
 }
 export function listConnections(actor) {
     freshActor(actor); const policy=settings();
-    if (!actor.is_admin && !policy.allowed_user_ids.includes(actor.id)) return [];
-    return db.prepare("SELECT * FROM ai_connections WHERE owner_key=? OR owner_key LIKE 'admin:%' ORDER BY created_at").all(ownerKey(actor)).map(rowConnection).filter(c=>canUse(actor,c,policy)).map(c=>publicConnection(c,actor));
+    const usable=(!actor.is_admin && !policy.allowed_user_ids.includes(actor.id)) ? []
+        : db.prepare("SELECT * FROM ai_connections WHERE owner_key=? OR owner_key LIKE 'admin:%' ORDER BY created_at").all(ownerKey(actor)).map(rowConnection).filter(c=>canUse(actor,c,policy)).map(c=>publicConnection(c,actor));
+    // Withdrawing AI access must not strand a personal sign-in. The owner keeps
+    // seeing their own linked connections, marked as offering nothing but the
+    // disconnect that the unlink endpoint already allows without the policy —
+    // otherwise the stored credential and the ChatGPT session behind it could
+    // only be removed by an administrator restoring access first.
+    const shown=new Set(usable.map(c=>c.id));
+    const stranded=db.prepare('SELECT * FROM ai_connections WHERE owner_key=? ORDER BY created_at').all(ownerKey(actor)).map(rowConnection)
+        .filter(c=>!shown.has(c.id) && adapterFor(c).supportsAccountLink && readCredentialRecord(c.owner_key,c.id))
+        .map(c=>({...publicConnection(c,actor),enabled:false,functions:[],teardown_only:true}));
+    return [...usable,...stranded];
 }
 export function saveConnection(actor,input,id=null) {
     freshActor(actor); inputObject(input); const policy=settings(); eligible(actor,policy);
@@ -514,6 +524,14 @@ async function runModelTests(actor,id,c,input,batch) {
         }
         models.push(profile);
         if (batch.signal.aborted) break;
+    }
+    // Every model the batch could not reach is reported as untested too, so a
+    // stored profile from an earlier run cannot survive a retest and keep an
+    // obsolete model selectable.
+    for (const model of input.model_ids) {
+        if (models.some(profile=>profile.id===model)) continue;
+        models.push({id:model,chat:false,structured:false,status:'unverified',error_code:'AI_TIMEOUT',
+            tested_at:Date.now(),token_parameter:usesTokenParameter ? c.token_parameter : null});
     }
     // Remove replacements first so only new IDs evict unrelated profiles.
     for (const profile of models) delete c.capabilities[profile.id];

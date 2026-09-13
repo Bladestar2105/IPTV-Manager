@@ -348,7 +348,9 @@ the existing `chat/completions` transport.
 * A compatibility test spends one budget across the whole batch, not one per
   probe: a slow but working provider would otherwise keep a request — and its
   billable calls — running for many minutes after the browser gave up. What was
-  proven is kept and the rest is reported as untested.
+  proven is kept, and every model the batch could not reach is reported as
+  untested and replaces its stored profile, so a retest never leaves an obsolete
+  model marked compatible.
 * A discarded sign-in is signed out even when the connection keeps an older
   link, because the runtime authenticated an account either way and only the
   sign-out ends that session upstream.
@@ -457,6 +459,11 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
 * Administrators enable the feature centrally but use only their own sign-in for
   work they trigger themselves. There is no delegate mode that quietly uses a
   target user's account.
+* Withdrawing a user's AI access never strands their sign-in: their own linked
+  connections stay listed in a form that offers nothing but the disconnect, which
+  the unlink endpoint allows without the policy. Otherwise the stored credential
+  and the ChatGPT session behind it could only be removed by an administrator
+  restoring access first.
 * `user:<id>` and `admin:<id>` stay separate namespaces, each with its own
   credential, runtime directory and session.
 * Granting a lease is the last point at which a request can be stopped, because

@@ -327,7 +327,12 @@ window.aiUI = (() => {
     const provider = pendingProvider();
     box.replaceChildren(); recommendation = null;
     clearTimeout(loginTimer); login = null; accountState = null;
-    if (value('connection') && canEdit) {
+    if (value('connection') && connection?.teardown_only) {
+      // AI access was withdrawn while this account was linked. Nothing here can
+      // start work any more; the sign-in stays removable by its owner.
+      label('p', box, 'teardownOnly', 'small text-muted');
+      renderAccountPanel(box, connection);
+    } else if (value('connection') && canEdit) {
       field(box, 'name', 'name', 'text', connection?.name || '');
       if (provider === 'chatgpt_account') renderAccountPanel(box, connection);
       else {
@@ -346,7 +351,7 @@ window.aiUI = (() => {
       }
       el('url')?.addEventListener('input', destination);
     } else if (connection) label('p', box, 'provided');
-    el('model-controls').hidden = !canEdit || !value('connection');
+    el('model-controls').hidden = !canEdit || !value('connection') || Boolean(connection?.teardown_only);
     el('delete-connection').hidden = !connection || !canEdit;
     el('model').value = (canEdit && preferences.connection_id === connection?.id && preferences.model_id) || connection?.model_id || '';
     el('model').readOnly = !canEdit;
@@ -391,9 +396,11 @@ window.aiUI = (() => {
       captioned(box, 'plan', (accountState?.plan_type ?? connection?.account?.plan_type) || tr('unknown'));
       renderQuota(box);
     }
-    if (el('link-start')) el('link-start').hidden = linked;
+    // A connection that only exists to be disconnected offers exactly that.
+    const teardownOnly = Boolean(connection?.teardown_only);
+    if (el('link-start')) el('link-start').hidden = linked || teardownOnly;
     if (el('unlink')) el('unlink').hidden = !linked;
-    if (el('account-refresh')) el('account-refresh').hidden = !linked;
+    if (el('account-refresh')) el('account-refresh').hidden = !linked || teardownOnly;
     if (el('link-cancel')) el('link-cancel').hidden = !login || login.status !== 'pending';
   }
   // Quota is shown only where the documented interface reported it; anything

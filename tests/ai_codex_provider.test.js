@@ -1783,6 +1783,25 @@ describe('personal ChatGPT runtime ownership', () => {
             .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
     }, 30000);
 
+    it.each([
+        ['the owner loses their allowance', () => ai.updateAiSettings(admin, { allowed_user_ids: [2] })],
+        ['own connections are switched off', () => ai.updateAiSettings(admin, { allow_own_connections: false })]
+    ])('keeps a linked connection reachable for disconnecting after %s', async (_label, revoke) => {
+        const connection = await linkedConnection();
+        revoke();
+        // Hiding it would strand the stored credential and the ChatGPT session
+        // behind it until an administrator restores access.
+        const listed = ai.listConnections(user).find(item => item.id === connection.id);
+        expect(listed).toMatchObject({ teardown_only: true, enabled: false, functions: [] });
+        expect(listed.account.linked).toBe(true);
+        // And the disconnect really works from there.
+        expect(await account.disconnectAccount(user, ai.ownedAccountConnection(user, connection.id, { requirePolicy: false, allowTeardown: true })))
+            .toMatchObject({ disconnected: true });
+        expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        // Once nothing is linked any more it stays hidden.
+        expect(ai.listConnections(user).some(item => item.id === connection.id)).toBe(false);
+    }, 30000);
+
     it('refuses an account runtime after the caller\'s session was revoked', async () => {
         // The version the browser was authenticated with. A password reset
         // advances the stored one, which authentication treats as a revoked

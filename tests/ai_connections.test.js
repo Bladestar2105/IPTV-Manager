@@ -65,17 +65,23 @@ describe('AI compatibility batch', () => {
                 ? { data: [{ id: 'synthetic-model' }] }
                 : { choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }], usage: { prompt_tokens: 4, completion_tokens: 3 } })), 400);
         };
-        // Two models, two probes each: four answers at 400 ms cannot fit into the
+        // Three models, two probes each: six answers at 400 ms cannot fit into the
         // batch budget, while every single probe stays well inside its own.
         process.env.AI_MODEL_TEST_BATCH_MS = '1000';
         try {
             const before = requests.filter(entry => entry.body).length;
-            const result = await ai.testModels(admin, c.id, { model_ids: ['synthetic-model', 'second-model'] });
+            const result = await ai.testModels(admin, c.id, { model_ids: ['synthetic-model', 'second-model', 'third-model'] });
             // Whatever was proven is kept; the rest is reported as untested
             // instead of failing the request or running on.
             expect(result.models.some(model => model.error_code === 'AI_TIMEOUT')).toBe(true);
             expect(result.models.some(model => model.status === 'compatible')).toBe(true);
-            expect(requests.filter(entry => entry.body).length - before).toBeLessThan(4);
+            expect(requests.filter(entry => entry.body).length - before).toBeLessThan(6);
+            // Every requested model is accounted for, so a stored profile from an
+            // earlier run cannot survive a retest and stay selectable.
+            expect(result.models.map(model => model.id).sort()).toEqual(['second-model', 'synthetic-model', 'third-model']);
+            const stored = ai.listConnections(admin).find(item => item.id === c.id).capabilities;
+            expect(Object.keys(stored).sort()).toEqual(['second-model', 'synthetic-model', 'third-model']);
+            expect(stored['third-model']).toMatchObject({ status: 'unverified', error_code: 'AI_TIMEOUT' });
         } finally { delete process.env.AI_MODEL_TEST_BATCH_MS; }
     }, 30000);
 });
