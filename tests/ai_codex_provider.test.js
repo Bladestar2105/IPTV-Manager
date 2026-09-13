@@ -43,7 +43,7 @@ vi.mock('../src/services/ai/codex/isolation.js', async () => {
     };
 });
 
-let db, ai, jobs, account, credentials, readiness, runtime, migrateAiSchema;
+let db, ai, jobs, account, credentials, readiness, runtime, client, migrateAiSchema;
 // Captured right after the modules load and before any runtime exists.
 let signalListenersAfterImport = null;
 const admin = { id: 1, is_admin: true };
@@ -97,6 +97,7 @@ beforeAll(async () => {
     credentials = await import('../src/services/ai/codex/credentials.js');
     readiness = await import('../src/services/ai/codex/readiness.js');
     runtime = await import('../src/services/ai/codex/runtime.js');
+    client = await import('../src/services/ai/codex/client.js');
     signalListenersAfterImport = process.listenerCount('SIGTERM');
     await readiness.refreshCodexReadiness({ force: true });
 });
@@ -169,6 +170,22 @@ describe('personal ChatGPT adapter availability', () => {
         expect(thrown(() => ai.saveConnection(user, { name: 'x', provider: 'chatgpt_account' })).code).toBe('AI_CODEX_DISABLED');
         expect(fs.existsSync(recordPath)).toBe(false);
     });
+
+    it('bounds the whole model catalog by one deadline, not one per page', async () => {
+        // Ten pages with their own timeout could hold a runtime for minutes while
+        // the reservation that bounds the operation had long expired.
+        fake({
+            models: Array.from({ length: 20 }, (unused, index) => ({ id: `model-${index}`, displayName: `M${index}`, isDefault: index === 0, inputModalities: ['text'] })),
+            modelDelayMs: 200, recordPath, recordApprovalPath: approvalPath
+        });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        try {
+            // One page fits inside the budget; the catalog does not.
+            await expect(client.listModels(session, { limit: 2, timeoutMs: 500 }))
+                .rejects.toMatchObject({ code: 'AI_TIMEOUT' });
+        } finally { runtime.stopRuntime(session); }
+    }, 30000);
 
     it('refuses an unpinned Codex release', async () => {
         fake({ version: '0.99.0' });

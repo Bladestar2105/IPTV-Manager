@@ -56,7 +56,12 @@ export function authenticateToken(req, res, next) {
         is_active: dbUser.is_active,
         is_admin: !!user.is_admin,
         provider_access: dbUser.provider_access ? 1 : 0,
-        otp_enabled: !!dbUser.otp_enabled
+        otp_enabled: !!dbUser.otp_enabled,
+        // The version this request was authenticated with. Carried on so a
+        // long-running operation can compare it again later: the check above is
+        // only true at this instant, and a password reset during the request
+        // revokes the session it was admitted with.
+        token_version: user.token_version
       };
 
       next();

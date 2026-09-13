@@ -1,6 +1,10 @@
 import { codexError } from './protocol.js';
 import { verificationUrlAllowed } from './config.js';
 
+const MODEL_PAGE_TIMEOUT_MS = 30000;
+// Matches the provider's advertised setup deadline, so the reservation that
+// bounds a discovery cannot expire while the discovery is still running.
+const MODEL_LIST_TIMEOUT_MS = 60000;
 const MAX_MODEL_PAGES = 10;
 const MAX_MODELS = 500;
 const TURN_POLL_MS = 25;
@@ -102,12 +106,19 @@ export async function readRateLimits(session) {
     };
 }
 
-export async function listModels(session, { limit = 100 } = {}) {
+// One deadline for the whole catalog, not one per page: ten pages with their own
+// timeout could hold a runtime for minutes while the reservation that bounds the
+// operation had long expired.
+export async function listModels(session, { limit = 100, timeoutMs = MODEL_LIST_TIMEOUT_MS } = {}) {
     const models = [];
+    const deadline = Date.now() + timeoutMs;
     let cursor = null;
     for (let page = 0; page < MAX_MODEL_PAGES; page += 1) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw codexError('AI_TIMEOUT', 'Codex request timed out.', 504);
         const result = await session.client.request('model/list',
-            cursor ? { limit, cursor, includeHidden: false } : { limit, includeHidden: false }, { timeoutMs: 30000 });
+            cursor ? { limit, cursor, includeHidden: false } : { limit, includeHidden: false },
+            { timeoutMs: Math.min(MODEL_PAGE_TIMEOUT_MS, remaining) });
         const data = Array.isArray(result?.data) ? result.data : [];
         for (const model of data) {
             if (!model || typeof model.id !== 'string' || models.length >= MAX_MODELS) continue;

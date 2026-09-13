@@ -43,7 +43,7 @@ export const chatgptAccountProvider = {
                 // API transport does.
                 beforeSend?.();
                 if (operation === 'models') {
-                    const models = await listModels(session);
+                    const models = await listModels(session, { timeoutMs: CODEX_SETUP_TIMEOUT_MS });
                     const usable = models.filter(model => MODEL_ID.test(model.id));
                     if (!usable.length) throw aiError('AI_INVALID_RESPONSE', 502);
                     return { result: { models: usable }, usage: { prompt_tokens: null, completion_tokens: null } };

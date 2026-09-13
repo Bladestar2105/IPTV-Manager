@@ -196,6 +196,9 @@ function handle(message) {
             });
         case 'model/list':
             if (authStatus() !== 'chatgpt' && config.modelsRequireAuth) return failure('authentication required');
+            // A slow catalog: every page answers late, so a caller with one
+            // overall budget runs out while a per-page timeout would not.
+            if (config.modelDelayMs) { later(config.modelDelayMs, () => reply(modelPage(params))); return undefined; }
             return reply(modelPage(params));
         case 'thread/start':
             return reply({

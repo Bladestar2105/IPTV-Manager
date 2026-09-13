@@ -345,6 +345,10 @@ the existing `chat/completions` transport.
   suffix included — in `AI_CODEX_VERSION_OVERRIDE` after validating it
   separately. The version probe and the runtime handshake read the same token,
   so an allowed build passes both gates rather than one.
+* Model discovery pages through `model/list` under one deadline for the whole
+  catalog, matching the provider's advertised setup timeout, so a slow or
+  endlessly paging server cannot hold a runtime past the reservation that bounds
+  the operation.
 * Used methods: `initialize`, `account/login/start` (`chatgptDeviceCode`),
   `account/login/cancel`, `account/logout`, `account/read`,
   `account/rateLimits/read`, `getAuthStatus`, `model/list`, `thread/start`,
@@ -436,8 +440,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   by then it has long passed its own authorization. The owner must still exist
   still satisfy every access field the rest of the subsystem checks — active,
   Web UI access, not expired, and the session token version the caller
-  authenticated with, which a password reset advances and authentication treats
-  as a revocation — the connection must exist and not be tearing
+  authenticated with, which the authentication middleware keeps on the request
+  for exactly this comparison because a password reset advances it and thereby
+  revokes the session — the connection must exist and not be tearing
   down, and the same policy gates the request itself passed — the server switch,
   the owner's allowance and their personal preference — must still hold, all
   checked in the same transaction that inserts the lease; only the teardown that owns the
