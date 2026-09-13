@@ -206,6 +206,21 @@ describe('Auth Middleware - authenticateToken', () => {
         expect(next).not.toHaveBeenCalled();
     });
 
+    it('keeps the version the request was authenticated with on req.user', () => {
+        req.headers['authorization'] = 'Bearer valid-token';
+        jwt.verify.mockImplementation((token, secret, opts, cb) => {
+            cb(null, { id: 1, is_admin: false, token_version: 4 });
+        });
+        db.prepare.mockReturnValue({ get: vi.fn().mockReturnValue({ id: 1, is_active: 1, webui_access: 1, token_version: 4 }) });
+
+        authenticateToken(req, res, next);
+
+        expect(next).toHaveBeenCalled();
+        // A long-running operation compares this again later, because a password
+        // reset during the request revokes the session it was admitted with.
+        expect(req.user.token_version).toBe(4);
+    });
+
     it('should return 500 if database query fails', () => {
         req.headers['authorization'] = 'Bearer valid-token';
 

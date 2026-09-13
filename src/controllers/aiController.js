@@ -1,5 +1,6 @@
 import * as connections from '../services/ai/connections.js';
 import * as jobs from '../services/ai/jobs.js';
+import jwt from 'jsonwebtoken';
 
 // Avoid exposing upstream errors, database details, prompts or keys through the
 // management API. Domain errors supply stable translated codes.
@@ -22,7 +23,7 @@ export const savePreferences = handle(req => connections.savePreferences(req.use
 export const listConnections = handle(req => connections.listConnections(req.user));
 export const createConnection = handle(req => connections.saveConnection(req.user,req.body));
 export const updateConnection = handle(req => connections.saveConnection(req.user,req.body,req.params.id));
-export const deleteConnection = handle(req => connections.deleteConnection(req.user,req.params.id));
+export const deleteConnection = handle(req => connections.removeConnection(req.user,req.params.id));
 export const discover = handle(req => connections.discoverModels(req.user,req.params.id));
 export const test = handle(req => connections.testModels(req.user,req.params.id,req.body));
 export const createJob = handle(req => jobs.createJob(req.user,req.body,req.get('Idempotency-Key') || req.body.idempotency_key));
@@ -39,6 +40,46 @@ export const programs = handle(async req => {
   const result = searchLocally(req.user,context,{type:'program'},timezoneName(req.query.timezone || access.preferences.timezone));
   return {items:result.items.map(({provider_channel_id,title,description,start,stop,local_start,timezone,program}) =>
     ({provider_channel_id,title,description,start,stop,local_start,timezone,program})),truncated:result.truncated};
+});
+
+// Personal ChatGPT account link. Every endpoint is owner-only, never returns a
+// token and binds the attempt to the caller's current session.
+const bearer = req => (req.get('Authorization') || '').split(' ')[1] || null;
+// Authentication already verified this token; only its expiry is read here.
+const sessionExpiry = req => jwt.decode(bearer(req))?.exp * 1000;
+const accountConnection = async (req, {requirePolicy = true, allowTeardown = false} = {}) => {
+  const {ownedAccountConnection} = await import('../services/ai/connections.js');
+  return ownedAccountConnection(req.user, req.params.id, {requirePolicy, allowTeardown});
+};
+export const codexStatus = handle(async () => {
+  const {codexStatus: status} = await import('../services/ai/codex/account.js');
+  return status();
+});
+export const startAccountLink = handle(async req => {
+  const {startAccountLink: start, sessionFingerprint} = await import('../services/ai/codex/account.js');
+  return start(req.user, await accountConnection(req), sessionFingerprint(bearer(req)), sessionExpiry(req));
+});
+export const endAccountSession = handle(async req => {
+  const {endAccountSession: end, sessionFingerprint} = await import('../services/ai/codex/account.js');
+  return end(req.user, sessionFingerprint(bearer(req)), sessionExpiry(req));
+});
+export const accountLinkStatus = handle(async req => {
+  const {readLoginStatus, sessionFingerprint} = await import('../services/ai/codex/account.js');
+  return readLoginStatus(req.user, await accountConnection(req, {requirePolicy: false}), req.params.loginId, sessionFingerprint(bearer(req)));
+});
+// Cancelling an attempt and disconnecting stay reachable after AI access is
+// revoked, so a stored sign-in can always be removed by its owner.
+export const cancelAccountLink = handle(async req => {
+  const {cancelAccountLink: cancel} = await import('../services/ai/codex/account.js');
+  return cancel(req.user, await accountConnection(req, {requirePolicy: false}), req.params.loginId);
+});
+export const unlinkAccount = handle(async req => {
+  const {disconnectAccount} = await import('../services/ai/codex/account.js');
+  return disconnectAccount(req.user, await accountConnection(req, {requirePolicy: false, allowTeardown: true}));
+});
+export const accountState = handle(async req => {
+  const {readAccountState} = await import('../services/ai/codex/account.js');
+  return readAccountState(req.user, await accountConnection(req));
 });
 
 export const getProposal = handle(async req => {

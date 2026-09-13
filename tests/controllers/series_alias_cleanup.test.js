@@ -113,10 +113,10 @@ describe('series episode alias cascading cleanup', () => {
     expect(aliasCount()).toBe(0);
   });
 
-  it('removes all aliases for a deleted user', () => {
+  it('removes all aliases for a deleted user', async () => {
     const fixture = createFixture();
 
-    deleteUser({ user: { is_admin: true }, params: { id: String(fixture.userId) } }, response());
+    await deleteUser({ user: { is_admin: true }, params: { id: String(fixture.userId) } }, response());
 
     expect(aliasCount()).toBe(0);
   });

@@ -11,14 +11,14 @@ const string=(max=200)=>({type:'string',maxLength:max});
 const number={type:'integer',minimum:1};
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
 const ACTION_SCHEMAS = [
-  object({type:{const:'create_category'},key:string(80),name:string(160),category_type:{enum:['live','movie','series']}}),
-  object({type:{const:'rename_category'},category_id:number,value:string(160)}),
-  object({type:{const:'rename_channel'},user_channel_id:number,value:string(200)}),
-  object({type:{const:'hide_channel'},user_channel_id:number,value:{const:true}}),
-  object({type:{const:'reorder_channel'},user_channel_id:number,value:{type:'integer',minimum:0,maximum:1000000}}),
-  object({type:{const:'assign_channel'},provider_channel_id:number,category_id:number}),
-  object({type:{const:'assign_channel'},provider_channel_id:number,category_key:string(80)}),
-  object({type:{const:'epg_mapping'},provider_channel_id:number,epg_channel_id:string(200),source_type:{enum:['provider','custom']},source_id:number})
+  object({type:{type:'string',const:'create_category'},key:string(80),name:string(160),category_type:{type:'string',enum:['live','movie','series']}}),
+  object({type:{type:'string',const:'rename_category'},category_id:number,value:string(160)}),
+  object({type:{type:'string',const:'rename_channel'},user_channel_id:number,value:string(200)}),
+  object({type:{type:'string',const:'hide_channel'},user_channel_id:number,value:{type:'boolean',const:true}}),
+  object({type:{type:'string',const:'reorder_channel'},user_channel_id:number,value:{type:'integer',minimum:0,maximum:1000000}}),
+  object({type:{type:'string',const:'assign_channel'},provider_channel_id:number,category_id:number}),
+  object({type:{type:'string',const:'assign_channel'},provider_channel_id:number,category_key:string(80)}),
+  object({type:{type:'string',const:'epg_mapping'},provider_channel_id:number,epg_channel_id:string(200),source_type:{type:'string',enum:['provider','custom']},source_id:number})
 ];
 function actionTypes(feature) {
   if(!Object.hasOwn(FEATURE_ACTIONS,feature)) fail('AI_INVALID_ACTION');

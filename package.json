@@ -11,7 +11,8 @@
     "test": "vitest run --no-file-parallelism",
     "test:watch": "vitest --no-file-parallelism",
     "test:playwright:smoke": "node scripts/playwright_smoke.mjs",
-    "test:playwright:ai": "node scripts/ai_ui_smoke.mjs"
+    "test:playwright:ai": "node scripts/ai_ui_smoke.mjs",
+    "check:ai-runtime": "node scripts/check-ai-runtime.mjs"
   },
   "dependencies": {
     "@iptv/xtream-api": "^1.2.1",

@@ -98,7 +98,7 @@ export function scheduleSyncFollowups(records) {
         try {
           const preferences = JSON.parse(db.prepare('SELECT data_json FROM ai_preferences WHERE owner_key = ?').get(`user:${record.user_id}`)?.data_json || '{}');
           if (preferences.enabled && preferences.auto_sync_summary === true) {
-            createJob({id:record.user_id,is_admin:false},{feature:'sync',snapshot_id:record.id},`sync_${record.id}`);
+            createJob({id:record.user_id,is_admin:false},{feature:'sync',snapshot_id:record.id},`sync_${record.id}`,{automatic:true});
           }
         } catch { /* Optional work cannot affect completed syncs. */ }
       }

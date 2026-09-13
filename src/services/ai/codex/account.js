@@ -1,0 +1,807 @@
+import crypto from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import db from '../../../database/db.js';
+import { ENCRYPTION_KEY } from '../../../utils/crypto.js';
+import { aiError } from '../transport.js';
+import { requireAiFeatureAccess, adjustConnectionTeardown } from '../connections.js';
+import { accountRow } from './identity.js';
+import { codexReadinessSnapshot, refreshCodexReadiness } from './readiness.js';
+import { startRuntime, stopRuntime, liveRuntime, withRuntime, runtimeState } from './runtime.js';
+import { startDeviceLogin, cancelLogin, logout, readAccount, getAuthStatus, readRateLimits } from './client.js';
+import { seal, wipe, clearPlaintext, purgeIdentity, accountFingerprint, maskAccount, linkedElsewhere, readCredentialRecord, forgetCredential, readStagedCredential, promoteStagedCredential, discardStagedCredential, withCleanupLease } from './credentials.js';
+
+const LOGIN_TTL_MS = 15 * 60 * 1000;
+// A sign-in belongs to the browser session that started it. That session polls
+// its own attempt every few seconds while the panel is open; once it stops for
+// longer than this, the attempt is no longer watched and a completion arriving
+// afterwards is not adopted.
+const LOGIN_SESSION_IDLE_MS = 120000;
+// How long a replacement sign-in waits for the previous one's runtime lease to
+// be released. A supersede handled by another worker is applied by that worker's
+// watchdog, which polls the shared row once a second.
+const LEASE_HANDOVER_TIMEOUT_MS = 6000;
+const ATTEMPT_WATCH_MS = 1000;
+const MAX_LOGINS_PER_HOUR = 5;
+const ACTIVE_STATUSES = ['starting', 'pending'];
+// A claimed attempt that is storing its credential. Not terminal and not
+// claimable: a poller must keep waiting, and only a stored credential turns it
+// into a completed sign-in.
+const SEALING_STATUS = 'sealing';
+const UNFINISHED_STATUSES = [...ACTIVE_STATUSES, SEALING_STATUS];
+
+// Login runtimes owned by this worker. A pending device-code login only exists
+// inside the process that started it; a worker loss ends that attempt instead of
+// letting another worker adopt a foreign sign-in session.
+const attempts = new Map();
+
+export const sessionFingerprint = token =>
+    (typeof token === 'string' && token
+        ? crypto.createHmac('sha256', Buffer.from(ENCRYPTION_KEY, 'hex')).update(token).digest('hex')
+        : null);
+
+const sessionEnded = (ownerKey, fingerprint) => Boolean(db.prepare('SELECT 1 FROM ai_codex_ended_sessions WHERE owner_key=? AND session_hash=? AND expires_at>?')
+    .get(ownerKey, fingerprint, Date.now()));
+
+// A row tombstone also stops starts still waiting to record their login. This
+// affects personal account linking only, not bearer authentication or playback.
+export function endAccountSession(actor, fingerprint, expiresAt) {
+    // The endpoint verifies the signed session even after management access is
+    // revoked; requiring a usable account here would prevent its cancellation.
+    if (!Number.isSafeInteger(actor?.id) || actor.id < 1 || typeof actor.is_admin !== 'boolean' || typeof fingerprint !== 'string' || !fingerprint) throw aiError('AI_FORBIDDEN', 403);
+    const ownerKey = `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
+    const now = Date.now();
+    const rows = db.transaction(() => {
+        db.prepare('DELETE FROM ai_codex_ended_sessions WHERE rowid IN (SELECT rowid FROM ai_codex_ended_sessions WHERE expires_at<? ORDER BY expires_at LIMIT 100)').run(now);
+        db.prepare(`INSERT INTO ai_codex_ended_sessions(owner_key,session_hash,expires_at) VALUES(?,?,?)
+            ON CONFLICT(owner_key,session_hash) DO UPDATE SET expires_at=MAX(expires_at,excluded.expires_at)`)
+            .run(ownerKey, fingerprint, Math.max(now + LOGIN_TTL_MS, Number.isFinite(expiresAt) ? expiresAt : 0));
+        const rows = db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND session_hash=? AND status IN ('starting','pending','sealing')").all(ownerKey, fingerprint);
+        for (const row of rows) {
+            db.prepare('DELETE FROM ai_codex_credential_stage WHERE owner_key=? AND login_id=?').run(ownerKey, row.id);
+            forceLoginFailure(row.id, 'ai_codex_login_cancelled', 'cancelled');
+        }
+        return rows;
+    }).immediate();
+    for (const row of rows) releaseAttempt(row.id);
+    return { ended: true };
+}
+
+// One predicate for every access field an owner must still satisfy, matching the
+// checks the rest of the AI subsystem applies: active account, Web UI access and
+// an unexpired account.
+// The same server-enablement and allowed-user gate the setup endpoints apply.
+// Polling deliberately bypasses it so a revoked owner can still cancel, which
+// means the asynchronous completion has to check it itself.
+function policyAllows(ownerKey) {
+    const [kind, id] = ownerKey.split(':');
+    try {
+        requireAiFeatureAccess({ id: Number(id), is_admin: kind === 'admin' }, 'setup');
+        return true;
+    } catch { return false; }
+}
+
+// Read straight from storage: the caller's snapshot predates any teardown that
+// started while its request was being authorized.
+function loadTeardown(ownerKey, connectionId) {
+    const row = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
+    if (!row) return true;
+    try { return Boolean(JSON.parse(row.data_json).teardown); } catch { return false; }
+}
+
+const usableAccount = accountRow;
+
+// The version the caller was authenticated with. Compared again in the
+// transaction that grants the lease, because a password reset can land while a
+// request waits for a runtime.
+function actorTokenVersion(actor) {
+    return Number.isInteger(actor?.token_version) ? actor.token_version : undefined;
+}
+
+function actorRow(actor) {
+    const row = usableAccount(`${actor.is_admin ? 'admin' : 'user'}:${actor.id}`);
+    if (!row) throw aiError('AI_FORBIDDEN', 403);
+    return row;
+}
+
+function expireLogins() {
+    const now = Date.now();
+    db.prepare(`UPDATE ai_codex_logins SET status='expired', error_code=COALESCE(error_code,'ai_codex_login_expired'), updated_at=?
+        WHERE status IN ('starting','pending') AND expires_at < ?`).run(now, now);
+    // A worker that dies between claiming an attempt and storing its credential
+    // leaves the row sealing. A live seal always holds the identity's lease, so
+    // the absence of one is the signal that nobody is finishing it — and the
+    // stored credential, not the claim, decides whether it succeeded.
+    for (const row of db.prepare(`SELECT id,owner_key,connection_id,actor_version,session_hash,created_at,last_seen_at,expires_at FROM ai_codex_logins WHERE status=?
+        AND NOT EXISTS (SELECT 1 FROM ai_codex_runtimes r WHERE r.owner_key=ai_codex_logins.owner_key
+            AND r.connection_id=ai_codex_logins.connection_id AND r.expires_at > ?)`).all(SEALING_STATUS, now)) {
+        db.transaction(() => {
+            if (db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(row.id)?.status !== SEALING_STATUS) return;
+            // Either the worker died after publishing — the link already names this
+            // attempt — or its credential is still staged and nothing has adopted it.
+            const record = readCredentialRecord(row.owner_key, row.connection_id);
+            const published = Boolean(record) && record.login_id === row.id;
+            const staged = readStagedCredential(row.owner_key, row.connection_id);
+            const pending = Boolean(staged) && staged.login_id === row.id;
+            // Recovery is a completion like any other, so it answers to the same
+            // gates. A crash window is not a way past a withdrawn policy, a revoked
+            // session or a browser that stopped watching.
+            const allowed = completionAllowed(row.owner_key, row);
+            let linked = published && allowed;
+            if (published && !allowed) forgetCredential(row.owner_key, row.connection_id);
+            if (!published && pending) {
+                // A staged credential is promoted or dropped, never left behind: the
+                // link that was working — if there was one — is untouched either way.
+                if (allowed) linked = promoteStagedCredential(row.owner_key, row.connection_id, row.id).promoted;
+                if (!linked) discardStagedCredential(row.owner_key, row.connection_id);
+            }
+            db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+                .run(linked ? 'completed' : 'failed',
+                    linked ? null : ((published || pending) ? 'ai_codex_login_rejected' : 'ai_codex_login_interrupted'), now, row.id, SEALING_STATUS);
+        }).immediate();
+    }
+    db.prepare(`DELETE FROM ai_codex_logins WHERE status NOT IN (${UNFINISHED_STATUSES.map(() => '?').join(',')}) AND updated_at < ?`)
+        .run(...UNFINISHED_STATUSES, now - 86400000);
+}
+
+function loginRow(ownerKey, connectionId, id) {
+    const row = db.prepare('SELECT * FROM ai_codex_logins WHERE id=? AND owner_key=? AND connection_id=?').get(id, ownerKey, connectionId);
+    if (!row) throw aiError('AI_NOT_FOUND', 404);
+    return row;
+}
+
+function finishLogin(id, status, errorCode = null) {
+    db.prepare("UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status IN ('starting','pending')")
+        .run(status, errorCode, Date.now(), id);
+}
+
+// Used only after an attempt was already claimed, where the conditional finish
+// above can no longer match.
+function forceLoginFailure(id, errorCode, status = 'failed') {
+    db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=?')
+        .run(status, errorCode, Date.now(), id);
+}
+
+function releaseAttempt(id) {
+    const attempt = attempts.get(id);
+    if (!attempt) return;
+    clearTimeout(attempt.timer);
+    clearInterval(attempt.watchdog);
+    attempts.delete(id);
+    // A sign-in attempt never seals on teardown. A successful one already sealed
+    // explicitly; for a cancelled or superseded one the file Codex just wrote
+    // belongs to an account that was never adopted, and a refresh-only seal would
+    // let it replace an existing credential while keeping the old fingerprint.
+    stopRuntime(attempt.session, 'AI_CODEX_RUNTIME_CLOSED', { keepCredentials: false });
+}
+
+// A cancel or a supersede can be handled by any worker, so the worker that owns
+// the runtime watches the shared row and releases it when the attempt is no
+// longer active.
+function watchAttempt(id) {
+    const watchdog = setInterval(() => {
+        const row = db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id);
+        // Sealing counts as running: releasing here would stop the runtime and
+        // clear the plaintext credential the seal is reading.
+        if (!row || !UNFINISHED_STATUSES.includes(row.status)) releaseAttempt(id);
+    }, ATTEMPT_WATCH_MS);
+    watchdog.unref?.();
+    return watchdog;
+}
+
+// A late success must never be adopted after the attempt was cancelled or
+// superseded, after the account was disabled or its tokens were invalidated, or
+// after the session that started it stopped watching. Sign-out in this
+// application is client side and does not advance `token_version`, so session
+// ownership is established by the initiating session's own polling rather than
+// by a stored value compared against itself.
+// Everything that must still hold for a completed sign-in to be adopted, in one
+// place: an account that may use the feature, the session version the attempt
+// was started under, the current AI policy, a connection that is not tearing
+// down, and a browser still watching its own attempt. Both completion paths use
+// it — the one that adopts a notification and the one that resolves an attempt a
+// dead worker left claimed — because either of them turns a sign-in into a link.
+function completionAllowed(ownerKey, attempt) {
+    if (attempt.expires_at <= Date.now() || sessionEnded(ownerKey, attempt.session_hash)) return false;
+    // Web UI access can be revoked and an account can expire while the code is
+    // open; adopting the sign-in then would grant what was just taken away.
+    const account = usableAccount(ownerKey);
+    if (!account || account.token_version !== attempt.actor_version) return false;
+    // AI access can be withdrawn centrally or personally while the code is open.
+    if (!policyAllows(ownerKey)) return false;
+    const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(attempt.connection_id, ownerKey);
+    if (!connection) return false;
+    try { if (JSON.parse(connection.data_json).teardown) return false; } catch { /* an unreadable payload is not a teardown */ }
+    return Date.now() - (attempt.last_seen_at ?? attempt.created_at) <= LOGIN_SESSION_IDLE_MS;
+}
+
+function stillOwnsAttempt(row, ownerKey) {
+    const current = db.prepare('SELECT status,actor_version,session_hash,created_at,last_seen_at,connection_id,expires_at FROM ai_codex_logins WHERE id=?').get(row.id);
+    if (!current || !ACTIVE_STATUSES.includes(current.status)) return false;
+    if (current.session_hash !== row.session_hash) return false;
+    return completionAllowed(ownerKey, current);
+}
+
+// Claims the attempt in one step, so a cancellation, an unlink or a supersede
+// that lands while the account is being read cannot be overtaken by the seal
+// that follows. Ownership is re-evaluated inside the transaction; only a claim
+// that actually changed the row authorizes storing a credential.
+// The claim is not the success. Publishing `completed` here would let a poll on
+// another worker report a linked account in the window before the credential is
+// stored, and a failed seal or a dying worker would leave that report standing
+// for good. The attempt moves to a non-terminal `sealing` state instead, which no
+// cancel or supersede can claim either, and only a stored credential publishes
+// the completion.
+function claimCompletedLogin(row, ownerKey) {
+    return db.transaction(() => {
+        if (!stillOwnsAttempt(row, ownerKey)) return false;
+        return db.prepare("UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status IN ('starting','pending')")
+            .run(SEALING_STATUS, Date.now(), row.id).changes > 0;
+    }).immediate();
+}
+
+// Discards everything this attempt produced. A connection that was already
+// linked keeps its credential: a rejected replacement must not disconnect the
+// account that was working before it started.
+//
+// The runtime's child is still alive here and still owns the identity. Wiping at
+// this point would delete the attempt's own lease and free the identity for a
+// new sign-in that recreates the same directory, which this child — or the
+// cleanup its exit still triggers — would then be working in. So the runtime is
+// ended first, its exit awaited, and only then is the identity reserved for the
+// removal. A hand-off that never completes leaves the directory to the sweep,
+// which removes a runtime directory that has no credential record.
+async function discardAttempt(session, ownerKey, connectionId, hadCredential, attemptId) {
+    // The runtime authenticated an account even when the attempt is refused, so
+    // the sign-out is sent either way. Only removing the local copy would leave
+    // that freshly opened ChatGPT session alive upstream until it expires.
+    await logout(session).catch(() => null);
+    if (hadCredential) { clearPlaintext(ownerKey, connectionId); return; }
+    releaseAttempt(attemptId);
+    await session.client.exited.catch(() => null);
+    await wipeAfterHandover(ownerKey, connectionId);
+}
+
+async function completeLogin(row, ownerKey, connectionId, notification) {
+    const attempt = attempts.get(row.id);
+    if (!attempt) return;
+    // Read before anything this attempt could store; an attempt never seals on
+    // teardown, so only its own success can add a record. A sign-in stages its
+    // credential rather than writing over this one, so a link that exists here
+    // survives every way the new sign-in can still fail.
+    const hadCredential = Boolean(readCredentialRecord(ownerKey, connectionId));
+    // Not our completion: leave the attempt and its runtime alone so the real
+    // one can still arrive. Returning inside the try below would run its
+    // `finally` and stop the pending runtime.
+    if (notification?.loginId && row.login_id && notification.loginId !== row.login_id) return;
+    const session = attempt.session;
+    try {
+        if (!notification?.success) {
+            finishLogin(row.id, 'failed', 'ai_codex_login_rejected');
+            return;
+        }
+        if (!stillOwnsAttempt(row, ownerKey)) {
+            // The attempt no longer belongs to the current session: sign the
+            // runtime out again and keep nothing locally. The reason is recorded
+            // before the runtime ends, because ending it reports an interrupted
+            // sign-in for an attempt that has no outcome yet, and the first
+            // terminal state is the one that stands.
+            finishLogin(row.id, 'failed', 'ai_codex_login_superseded');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        const status = await getAuthStatus(session);
+        if (status.authMethod !== 'chatgpt') {
+            finishLogin(row.id, 'failed', 'ai_codex_unexpected_auth');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        const account = await readAccount(session);
+        // A completion the runtime cannot back with an account is not a sign-in.
+        // Claiming it would report the connection as linked while the runtime
+        // says otherwise.
+        if (!account.linked) {
+            finishLogin(row.id, 'failed', 'ai_codex_account_unavailable');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        const fingerprint = accountFingerprint(account.email);
+        // The one-account rule rests on a reported identity. Without one it could
+        // not be enforced, and a null fingerprint would slip past the constraint.
+        if (!fingerprint) {
+            finishLogin(row.id, 'failed', 'ai_codex_account_unidentified');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        if (linkedElsewhere(ownerKey, connectionId, fingerprint)) {
+            finishLogin(row.id, 'failed', 'ai_codex_account_already_linked');
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        // The runtime lease serializes sign-ins for one identity and connection,
+        // so a failed claim means this attempt was ended and nothing newer has
+        // linked yet: signing out and removing the local credential is safe.
+        if (!claimCompletedLogin(row, ownerKey)) {
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        let sealed;
+        try { sealed = seal(ownerKey, connectionId, {
+            loginId: row.id,
+            accountHash: fingerprint,
+            accountLabel: maskAccount(account.email),
+            planType: typeof account.planType === 'string' ? account.planType.slice(0, 40) : null,
+            authMethod: status.authMethod
+        }, { stage: true }); } catch { sealed = { sealed: false }; }
+        if (!sealed.sealed) {
+            // Only while the attempt is still this one's: a teardown that ended
+            // it already recorded the truer reason.
+            db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+                .run('failed', sealed.reason === 'duplicate' ? 'ai_codex_account_already_linked' : 'ai_codex_credentials_unavailable',
+                    Date.now(), row.id, SEALING_STATUS);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+            return;
+        }
+        // Published only now, with the credential on record behind it — and only
+        // while access still exists. The polling endpoint deliberately reports an
+        // attempt without re-applying the policy, so a sign-in finalized after
+        // access was withdrawn would be reported as a working link.
+        const published = db.transaction(() => {
+            // The whole gate, on the row as it stands now: sealing takes time, and
+            // a password reset, a withdrawn policy, a started unlink or a browser
+            // that stopped watching in that window each mean this sign-in must not
+            // become a link.
+            const current = db.prepare('SELECT actor_version,connection_id,session_hash,created_at,last_seen_at,expires_at FROM ai_codex_logins WHERE id=?').get(row.id);
+            if (!current || !completionAllowed(ownerKey, current)) return { ok: false };
+            // Promoting the staged credential and publishing the attempt are one
+            // step: a link exists exactly when the sign-in that produced it does.
+            const promotion = promoteStagedCredential(ownerKey, connectionId, row.id);
+            if (!promotion.promoted) return { ok: false, reason: promotion.reason };
+            return { ok: db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
+                .run('completed', Date.now(), row.id, SEALING_STATUS).changes > 0 };
+        }).immediate();
+        if (!published.ok) {
+            // Nothing is kept: the credential this attempt just stored is removed
+            // with the rest of its own state, because the owner may no longer use
+            // it at all.
+            db.prepare('UPDATE ai_codex_logins SET status=?, error_code=?, updated_at=? WHERE id=? AND status=?')
+                .run('failed', published.reason === 'duplicate' ? 'ai_codex_account_already_linked' : 'ai_codex_login_rejected',
+                    Date.now(), row.id, SEALING_STATUS);
+            // The replacement is signed out and its staged credential dropped. A
+            // link that existed before it was never touched, because refusing a
+            // new sign-in is not a reason to disconnect the account that worked.
+            discardStagedCredential(ownerKey, connectionId);
+            await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id);
+        }
+    } catch {
+        // Unconditional, because the attempt may already have been claimed: a
+        // conditional finish cannot end a sealing one, and leaving it sealing
+        // would let a later poll promote the credential of a sign-in this path
+        // has just signed out.
+        forceLoginFailure(row.id, 'ai_codex_login_failed');
+        discardStagedCredential(ownerKey, connectionId);
+        // The sign-in itself succeeded — the runtime is authenticated — and only
+        // reading it back failed. Ending the attempt without signing out would
+        // leave that ChatGPT session alive upstream with nothing pointing at it.
+        try { await discardAttempt(session, ownerKey, connectionId, hadCredential, row.id); }
+        catch { /* the runtime may already be gone; nothing is kept either way */ }
+    } finally {
+        releaseAttempt(row.id);
+    }
+}
+
+// A supersede or cancel handled by another worker is applied by that worker's
+// watchdog, so the replacement waits briefly for the shared lease to disappear
+// instead of colliding with it.
+// Marks whatever holds this identity as revoked and waits for its owner to
+// acknowledge by releasing the lease. Reports whether that happened.
+async function revokeAndWait(ownerKey, connectionId) {
+    const state = runtimeState(ownerKey, connectionId);
+    if (!state) return true;
+    const live = liveRuntime(ownerKey, connectionId);
+    if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
+    // A cleanup reservation is not a runtime that can be revoked: nothing is
+    // running behind it, its holder is removing files and releases the row when
+    // that is done. Marking it revoked would only make the wait below succeed
+    // while those files are still going.
+    if (state.state !== 'cleanup') {
+        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+            .run(Date.now(), ownerKey, connectionId);
+    }
+    return waitForLeaseRelease(ownerKey, connectionId);
+}
+
+async function waitForLeaseRelease(ownerKey, connectionId) {
+    const deadline = Date.now() + LEASE_HANDOVER_TIMEOUT_MS;
+    for (;;) {
+        if (!liveRuntime(ownerKey, connectionId) && !runtimeState(ownerKey, connectionId)) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise(resolve => { const timer = setTimeout(resolve, 200); timer.unref?.(); });
+    }
+}
+
+export function codexStatus() {
+    const readiness = codexReadinessSnapshot();
+    if (!readiness.available) refreshCodexReadiness().catch(() => null);
+    return {
+        available: readiness.available === true,
+        reason: readiness.available ? null : readiness.reason,
+        codex_version: readiness.version ?? null,
+        isolation: readiness.available ? { backend: readiness.backend, grade: readiness.grade } : null
+    };
+}
+
+// An attempt that is still its own: not cancelled, superseded or expired by
+// another request while this one was starting.
+function attemptStillOpen(id) {
+    const row = db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(id);
+    return Boolean(row) && ACTIVE_STATUSES.includes(row.status);
+}
+
+// Device codes issued for this owner in the last hour. Only a published one
+// counts, because only that is something the account holder could use.
+function attemptsThisHour(ownerKey) {
+    return db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE owner_key=? AND created_at>? AND login_id IS NOT NULL")
+        .get(ownerKey, Date.now() - 3600000).n;
+}
+
+export async function startAccountLink(actor, connection, fingerprint, sessionExpiresAt) {
+    const ownerKey = connection.owner_key;
+    const readiness = codexReadinessSnapshot();
+    if (!readiness.available) throw aiError(readiness.reason, 503);
+    if (!fingerprint) throw aiError('AI_FORBIDDEN', 403);
+    if (sessionEnded(ownerKey, fingerprint)) throw aiError('AI_FORBIDDEN', 403);
+    const account = actorRow(actor);
+    expireLogins();
+    // Only an attempt that actually produced a device code counts against the
+    // budget. A start that never got that far consumed nothing the account
+    // holder could use. This is the early refusal, before a runtime is started;
+    // the binding one is taken in the transaction that publishes the code.
+    if (attemptsThisHour(ownerKey) >= MAX_LOGINS_PER_HOUR) throw aiError('AI_RATE_LIMIT', 429);
+    // Repeated clicks supersede the previous attempt rather than opening a new
+    // parallel sign-in for the same identity. When the previous attempt lives in
+    // another worker this only marks the shared row; that worker's watchdog then
+    // stops its runtime and releases the lease.
+    for (const row of db.prepare("SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN ('starting','pending')").all(ownerKey)) {
+        finishLogin(row.id, 'cancelled', 'ai_codex_login_superseded');
+        releaseAttempt(row.id);
+    }
+    // Wait for the handover before claiming the lease, and refuse without
+    // recording an attempt if the previous runtime does not let go, so a
+    // collision never consumes part of the budget.
+    if (!(await waitForLeaseRelease(ownerKey, connection.id))) throw aiError('AI_BUSY', 409);
+
+    const id = randomUUID();
+    const now = Date.now();
+    const expiresAt = Math.min(now + LOGIN_TTL_MS, Number.isFinite(sessionExpiresAt) ? sessionExpiresAt : Infinity);
+    // The route checked the teardown marker before this call waited for the lease
+    // hand-off, and an unlink can have started in between. Recording the attempt
+    // and rechecking the marker happen in one transaction, so either this attempt
+    // exists before the unlink's cancel scan or it is refused outright.
+    const opened = db.transaction(() => {
+        if (expiresAt <= Date.now() || sessionEnded(ownerKey, fingerprint)) throw aiError('AI_FORBIDDEN', 403);
+        const row = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connection.id, ownerKey);
+        if (!row || JSON.parse(row.data_json).teardown) return false;
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES(?,?,?,NULL,'starting',NULL,NULL,?,?,?,?,?,?)`)
+            .run(id, ownerKey, connection.id, account.token_version, fingerprint, now, now, expiresAt, now);
+        return true;
+    }).immediate();
+    if (!opened) throw aiError('AI_CONNECTION_CHANGED', 409);
+    const row = db.prepare('SELECT * FROM ai_codex_logins WHERE id=?').get(id);
+
+    let session;
+    try {
+        session = await startRuntime(ownerKey, connection.id, {
+            // Access can be withdrawn while this request waits for a runtime, and
+            // a second click can supersede this attempt before it ever reaches
+            // the lease — a probe or a slow start is long enough. A superseded
+            // attempt that still won the identity would leave both requests
+            // without a sign-in.
+            verifyEligible: () => policyAllows(ownerKey) && attemptStillOpen(id),
+            tokenVersion: actorTokenVersion(actor),
+            // Every close path of a sign-in runtime discards its credential file,
+            // including a crash before any completion notification.
+            sealOnStop: false,
+            onNotification: (method, params) => {
+                if (method === 'account/login/completed') completeLogin(row, ownerKey, connection.id, params).catch(() => null);
+            },
+            // The runtime can die after issuing the device code and before any
+            // completion. Nothing can finish the sign-in then, so it is reported
+            // at once instead of waiting out the fifteen-minute expiry.
+            onClosed: () => { finishLogin(id, 'failed', 'ai_codex_login_interrupted'); releaseAttempt(id); }
+        });
+        const timer = setTimeout(() => { finishLogin(id, 'expired', 'ai_codex_login_expired'); releaseAttempt(id); }, Math.max(1, expiresAt - Date.now()));
+        timer.unref?.();
+        attempts.set(id, { session, timer, watchdog: watchAttempt(id) });
+        const device = await startDeviceLogin(session);
+        // Counting and recording in one transaction. Leases are per connection,
+        // so starts on several connections run side by side and would otherwise
+        // all read the same count before any of them recorded a code.
+        const opened = db.transaction(() => {
+            if (attemptsThisHour(ownerKey) >= MAX_LOGINS_PER_HOUR) return 'budget';
+            return db.prepare("UPDATE ai_codex_logins SET login_id=?,status='pending',verification_url=?,user_code=?,updated_at=? WHERE id=? AND status='starting'")
+                .run(device.loginId, device.verificationUrl, device.userCode, Date.now(), id).changes ? 'opened' : 'gone';
+        }).immediate();
+        if (opened === 'budget') throw aiError('AI_RATE_LIMIT', 429);
+        // The attempt may already have been ended while the device code was being
+        // fetched; reporting it as pending would be untrue.
+        if (opened === 'gone') throw aiError('AI_CODEX_RUNTIME_CLOSED', 503);
+        row.login_id = device.loginId;
+        return { id, status: 'pending', verification_url: device.verificationUrl, user_code: device.userCode, expires_at: expiresAt };
+    } catch (error) {
+        finishLogin(id, 'failed', /^AI_CODEX_[A-Z_]+$/.test(error?.code || '') ? error.code.toLowerCase() : 'ai_codex_login_failed');
+        releaseAttempt(id);
+        if (session && !attempts.has(id)) stopRuntime(session, 'AI_CODEX_RUNTIME_CLOSED');
+        throw error;
+    }
+}
+
+// Polling is not routed to any particular worker, so the process-local attempt
+// map cannot decide whether a sign-in is still running. The runtime lease in the
+// database is the shared truth; only when no worker holds it is the attempt
+// really gone. Each poll from the initiating session also refreshes the
+// attempt's liveness.
+export function readLoginStatus(actor, connection, id, fingerprint = null) {
+    actorRow(actor);
+    expireLogins();
+    const row = loginRow(connection.owner_key, connection.id, id);
+    if (fingerprint && row.session_hash !== fingerprint) throw aiError('AI_NOT_FOUND', 404);
+    if (ACTIVE_STATUSES.includes(row.status)) {
+        // A local attempt whose runtime already closed can never complete, even
+        // while its lease is still being refreshed elsewhere.
+        const localAttempt = attempts.get(row.id);
+        if (localAttempt?.session?.client?.closed) {
+            finishLogin(row.id, 'failed', 'ai_codex_login_interrupted');
+            releaseAttempt(row.id);
+            return { ...publicLogin(row), status: 'failed', error_code: 'ai_codex_login_interrupted' };
+        }
+        if (!localAttempt && !runtimeState(connection.owner_key, connection.id)) {
+            finishLogin(row.id, 'failed', 'ai_codex_login_interrupted');
+            return { ...publicLogin(row), status: 'failed', error_code: 'ai_codex_login_interrupted' };
+        }
+        if (fingerprint) db.prepare('UPDATE ai_codex_logins SET last_seen_at=? WHERE id=? AND session_hash=?').run(Date.now(), row.id, fingerprint);
+    }
+    return publicLogin(row);
+}
+
+// Sealing is an internal step of a sign-in that is still running. Every answer
+// that carries a status to a client goes through here, so none of them reports
+// an internal state the client has no handling for — and a client that sees
+// `pending` keeps polling until the credential is stored or the attempt fails.
+function publicStatus(status) {
+    return status === SEALING_STATUS ? 'pending' : status;
+}
+
+function publicLogin(row) {
+    return {
+        id: row.id,
+        status: publicStatus(row.status),
+        // Never a token: only the documented verification address and the code
+        // the account holder types on it.
+        verification_url: row.verification_url,
+        user_code: row.user_code,
+        error_code: row.error_code,
+        expires_at: row.expires_at
+    };
+}
+
+export async function cancelAccountLink(actor, connection, id) {
+    actorRow(actor);
+    const row = loginRow(connection.owner_key, connection.id, id);
+    // The row is ended first: a completion racing in while the cancel call is in
+    // flight then fails to claim the attempt instead of linking the account.
+    const claimed = db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_cancelled', updated_at=? WHERE id=? AND status IN ('starting','pending')")
+        .run(Date.now(), row.id).changes > 0;
+    if (claimed) {
+        const attempt = attempts.get(row.id);
+        if (attempt && row.login_id) await cancelLogin(attempt.session, row.login_id).catch(() => null);
+        releaseAttempt(row.id);
+    }
+    // A completion that claimed the attempt first has already won. Reporting
+    // "cancelled" then would tell the account holder the opposite of what
+    // happened.
+    // A completion that claimed the attempt first is still storing its
+    // credential; reporting its internal state would show the account holder a
+    // failed sign-in for one that can still succeed.
+    const current = db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(row.id);
+    return { id: row.id, status: publicStatus(current?.status ?? 'cancelled'), error_code: current?.error_code ?? null };
+}
+
+// Ends every attempt a teardown must not leave running. A claimed one is ended
+// too: its seal is refused while the connection is tearing down, and leaving it
+// `sealing` would let the completion publish a successful sign-in after the
+// credential behind it was already removed. The publish is conditional on the
+// attempt still being claimed, so ending it here is what stops that.
+function endAttempts(ownerKey, connectionId = null) {
+    const rows = connectionId
+        ? db.prepare(`SELECT id FROM ai_codex_logins WHERE owner_key=? AND connection_id=? AND status IN (${UNFINISHED_STATUSES.map(() => '?').join(',')})`)
+            .all(ownerKey, connectionId, ...UNFINISHED_STATUSES)
+        : db.prepare(`SELECT id FROM ai_codex_logins WHERE owner_key=? AND status IN (${UNFINISHED_STATUSES.map(() => '?').join(',')})`)
+            .all(ownerKey, ...UNFINISHED_STATUSES);
+    for (const row of rows) {
+        forceLoginFailure(row.id, 'ai_codex_login_cancelled', 'cancelled');
+        releaseAttempt(row.id);
+    }
+}
+
+// Disconnecting blocks new work, ends queued and running work, signs the runtime
+// out and removes the local credential. A failed remote sign-out never keeps
+// local access alive; the difference is reported instead.
+export async function disconnectAccount(actor, connection, { remove = false } = {}) {
+    actorRow(actor);
+    const ownerKey = connection.owner_key;
+    // Marked for the whole operation, so work started after the scan below cannot
+    // take the lease and keep using a credential this is about to remove. The
+    // count keeps the marker in place while an overlapping teardown, such as a
+    // deletion, is still running.
+    adjustConnectionTeardown(ownerKey, connection.id, 1);
+    try {
+        return await runDisconnect(actor, connection, ownerKey, remove);
+    } finally {
+        try { adjustConnectionTeardown(ownerKey, connection.id, -1); } catch { /* the row may be gone already */ }
+    }
+}
+
+async function runDisconnect(actor, connection, ownerKey, remove) {
+    endAttempts(ownerKey, connection.id);
+    const { cancelJob } = await import('../jobs.js');
+    for (const job of db.prepare("SELECT id FROM ai_jobs WHERE owner_key=? AND connection_id=? AND status IN ('queued','running')").all(ownerKey, connection.id)) {
+        try { cancelJob(actor, job.id); } catch { /* already finished */ }
+    }
+    const live = liveRuntime(ownerKey, connection.id);
+    if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
+    // A runtime owned by another worker cannot be stopped from here. Marking its
+    // lease revoked is the shared signal; that worker's guard sees it within a
+    // second and releases the row, and only that release is an acknowledgement
+    // that its runtime has actually stopped. Deleting the row here instead would
+    // make the wait trivially true and allow a second runtime on the same
+    // identity directory while the first is still running.
+    let acknowledged = await revokeAndWait(ownerKey, connection.id);
+    if (!acknowledged) throw aiError('AI_BUSY', 409);
+    // Commit the removal intent before signing out or destroying credentials.
+    // A later database failure must not reopen an already destroyed link.
+    if (remove) db.prepare("UPDATE ai_connections SET data_json=json_set(data_json,'$.removal_pending',1),version=version+1,updated_at=? WHERE id=? AND owner_key=?")
+        .run(Date.now(), connection.id, ownerKey);
+    let remote = false;
+    if (acknowledged && readCredentialRecord(ownerKey, connection.id)) {
+        // A request authorized before the marker went up can still win the lease
+        // between the scan above and this call. Losing that race is not a reason
+        // to give up and wipe underneath it: the winner is revoked and awaited,
+        // then the sign-out is tried once more.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            // The teardown marker is this operation's own; the sign-out has to
+            // run despite it.
+            try { remote = await withRuntime(ownerKey, connection.id, session => logout(session), { allowTeardown: true }); break; }
+            catch { remote = false; }
+            acknowledged = await revokeAndWait(ownerKey, connection.id);
+            if (!acknowledged) break;
+        }
+        // The sign-out runtime has only been signalled; wiping now would free the
+        // identity for a relink whose files that child's pending cleanup could
+        // then remove. Its hand-off is an acknowledgement like any other: without
+        // it the unlink does not finish either.
+        if (!(await waitForLeaseRelease(ownerKey, connection.id))) acknowledged = false;
+    }
+    // No acknowledgement is not permission to finish. The child may still be
+    // running on this identity, and freeing it here would let a replacement start
+    // beside it and use the same account. The lease stays where it is, nothing is
+    // removed, and the caller is told to try again — the marker is released by
+    // the caller's own teardown, so a retry is not blocked by this one.
+    if (!acknowledged) throw aiError('AI_BUSY', 409);
+    wipe(ownerKey, connection.id);
+    return { disconnected: true, remote_logout: remote };
+}
+
+// Account and quota facts come only from the documented interface. Anything it
+// does not report stays unknown rather than being estimated locally.
+export async function readAccountState(actor, connection) {
+    actorRow(actor);
+    const record = readCredentialRecord(connection.owner_key, connection.id);
+    if (!record) return { linked: false, label: null, plan_type: null, auth_method: null, quota: { known: false } };
+    const readiness = codexReadinessSnapshot();
+    if (!readiness.available) {
+        return { linked: true, label: record.account_label, plan_type: record.plan_type, auth_method: record.auth_method,
+            quota: { known: false }, unavailable_reason: readiness.reason };
+    }
+    if (liveRuntime(connection.owner_key, connection.id)) throw aiError('AI_BUSY', 409);
+    // Re-read immediately before starting: a teardown can have begun after this
+    // request was authorized, and starting a runtime then would race its wipe.
+    if (readCredentialRecord(connection.owner_key, connection.id) === null) throw aiError('AI_CODEX_NOT_LINKED', 409);
+    if (loadTeardown(connection.owner_key, connection.id)) throw aiError('AI_CONNECTION_CHANGED', 409);
+    // A stored credential that no longer authenticates an account is not a link.
+    // Keeping the record would make the connection read as linked again on the
+    // next load and send later jobs at an invalid credential.
+    let invalidate = false;
+    const state = await withRuntime(connection.owner_key, connection.id, async session => {
+        // The record itself is dropped here, while this runtime still holds the
+        // identity: everything that reads "is this connection linked" reads that
+        // row, and leaving a known-dead credential in place until some later
+        // refresh would keep the connection looking usable. Only the files are
+        // left to the reservation below, which a relink may legitimately win.
+        const status = await getAuthStatus(session);
+        if (status.authMethod !== 'chatgpt') {
+            invalidate = true;
+            forgetCredential(connection.owner_key, connection.id);
+            return { linked: false, label: null, plan_type: null, auth_method: status.authMethod, quota: { known: false } };
+        }
+        const account = await readAccount(session, { refreshToken: true });
+        if (!account.linked) {
+            invalidate = true;
+            forgetCredential(connection.owner_key, connection.id);
+            return { linked: false, label: null, plan_type: null, auth_method: null, quota: { known: false } };
+        }
+        const quota = await readRateLimits(session);
+        // A refresh performed during this read is captured immediately.
+        seal(connection.owner_key, connection.id, {
+            accountLabel: maskAccount(account.email) ?? record.account_label,
+            planType: account.planType ?? record.plan_type,
+            authMethod: status.authMethod
+        }, { refreshOnly: true });
+        return {
+            linked: account.linked,
+            label: maskAccount(account.email) ?? record.account_label,
+            plan_type: account.planType ?? record.plan_type,
+            auth_method: status.authMethod,
+            quota
+        };
+    }, { verifyEligible: () => policyAllows(connection.owner_key), tokenVersion: actorTokenVersion(actor) });
+    if (invalidate) await wipeAfterHandover(connection.owner_key, connection.id);
+    return state;
+}
+
+// Removing a link has to reserve the identity rather than only observe that it
+// is free. Waiting for the runtime lease to disappear does not keep it gone: a
+// link request queued behind the stopping runtime takes it in the same instant,
+// and an unconditional wipe would then delete that replacement's lease and its
+// identity tree underneath a live child. The cleanup lease is claimed in the
+// same immediate transaction every acquisition uses, so exactly one of the two
+// wins. Losing either race — the hand-off never acknowledged, or the reservation
+// taken by someone else — leaves the record for the next read or the sweep,
+// which is harmless: nothing reports the connection as linked in the meantime.
+async function wipeAfterHandover(ownerKey, connectionId) {
+    if (!(await waitForLeaseRelease(ownerKey, connectionId))) return false;
+    return withCleanupLease(ownerKey, connectionId, leaseId => { wipe(ownerKey, connectionId, { keepLeaseId: leaseId }); return true; }) === true;
+}
+
+// Ends every runtime of an account without removing anything, so a deletion never
+// returns while a child is still using that account's credential. Removing the
+// credential itself is deliberately separate: it is irreversible, and a deletion
+// that fails afterwards must not have destroyed the account's link.
+//
+// Reports whether every runtime actually acknowledged. A worker that never let
+// go is not proof that its child stopped, and a caller that is about to remove
+// the account's records has to treat that as a failure rather than delete them
+// underneath a live process.
+export async function stopAccountRuntimes(ownerKey) {
+    let acknowledged = true;
+    endAttempts(ownerKey);
+    for (const row of db.prepare('SELECT connection_id,state FROM ai_codex_runtimes WHERE owner_key=?').all(ownerKey)) {
+        const live = liveRuntime(ownerKey, row.connection_id);
+        if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
+        // A cleanup reservation is left exactly as it is, for the same reason a
+        // disconnect leaves it: nothing runs behind it, and marking it revoked
+        // would only make the wait below succeed while its files are still going.
+        if (row.state !== 'cleanup') {
+            db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+                .run(Date.now(), ownerKey, row.connection_id);
+        }
+        // The lease stays exactly where it is. Its child may still be running on
+        // that identity, and clearing the row would let the next authenticated
+        // request take it — including one made after a refused deletion put the
+        // account back. A worker that really is gone stops its heartbeat, so the
+        // lease expires on its own and the identity frees itself.
+        if (!(await waitForLeaseRelease(ownerKey, row.connection_id))) acknowledged = false;
+    }
+    return { acknowledged };
+}
+
+// Stops everything and then removes it. Only for callers that have already
+// committed to losing the account's link.
+export async function purgeAccountRuntimes(ownerKey) {
+    await stopAccountRuntimes(ownerKey);
+    purgeIdentity(ownerKey);
+}
+
+export function releaseAllAttempts() {
+    for (const id of [...attempts.keys()]) { finishLogin(id, 'failed', 'ai_codex_login_interrupted'); releaseAttempt(id); }
+}

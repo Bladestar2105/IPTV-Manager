@@ -8,7 +8,7 @@ describe('User Deletion Regression', () => {
         initDb(true);
     });
 
-    it('should successfully delete a user with temporary tokens', () => {
+    it('should successfully delete a user with temporary tokens', async () => {
         // Create user
         const info = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run('testuser_fixed', 'password');
         const userId = info.lastInsertRowid;
@@ -33,7 +33,7 @@ describe('User Deletion Regression', () => {
         };
 
         // Call controller
-        userController.deleteUser(req, res);
+        await userController.deleteUser(req, res);
 
         // Assert success
         // If it failed, res.status(500).json(...) would have been called.

@@ -135,11 +135,29 @@ describe('delete cleanup regressions', () => {
     expect(sqlIndex('DELETE FROM provider_series_state WHERE source_key = ?')).toBeGreaterThanOrEqual(0);
   });
 
+  it('refuses to delete a user whose personal ChatGPT runtime did not stop', async () => {
+    vi.resetModules();
+    vi.doMock('../../src/services/ai/codex/account.js', () => ({
+      stopAccountRuntimes: vi.fn(async () => ({ acknowledged: false })),
+      purgeAccountRuntimes: vi.fn(async () => {})
+    }));
+    try {
+      const { deleteUser } = await import('../../src/controllers/userController.js');
+      const res = makeRes();
+      await deleteUser({ user: { is_admin: true }, params: { id: '7' } }, res);
+      // The deletion's own triggers would remove the credential and the lease a
+      // live child is still using.
+      expect(sqlIndex('DELETE FROM users WHERE id = ?')).toBe(-1);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).not.toHaveBeenCalledWith({ success: true });
+    } finally { vi.doUnmock('../../src/services/ai/codex/account.js'); vi.resetModules(); }
+  });
+
   it('removes user-owned FK rows before deleting a user', async () => {
     const { deleteUser } = await import('../../src/controllers/userController.js');
     const res = makeRes();
 
-    deleteUser({ user: { is_admin: true }, params: { id: '7' } }, res);
+    await deleteUser({ user: { is_admin: true }, params: { id: '7' } }, res);
 
     const iconCacheIndex = sqlIndex('DELETE FROM provider_icon_cache WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?)');
     const providersIndex = sqlIndex('DELETE FROM providers WHERE user_id = ?');

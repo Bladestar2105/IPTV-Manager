@@ -26,6 +26,13 @@ builds run only after validation and verify the image without logging in to the
 registry or publishing it. Tagged release archives depend on both validation
 and the Docker job, so failed lint, tests, builds, or audits block publishing.
 
+Validation also provisions the pinned native ChatGPT runtime and requires
+`npm run check:ai-runtime` to pass as the non-root runner. The Docker job runs
+the same preflight in the built image with the supplied restricted profiles
+before publishing. Neither check signs in or submits a model request. This
+prevents a missing/blocked real sandbox from being mistaken for passing mock
+tests. A real Proxmox host remains a separate manual acceptance requirement.
+
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
 `npm install` after changing Node versions to keep native bindings aligned with
@@ -119,7 +126,7 @@ after completion.
 Focused checks:
 
 ```bash
-DATA_DIR="$(mktemp -d)" npm exec vitest run tests/ai_connections.test.js tests/ai_features.test.js tests/ai_proposals.test.js tests/ai_jobs.test.js tests/ai_api.test.js tests/ai_sync_history.test.js tests/ai_epg_search.test.js tests/ai_diagnostics.test.js
+DATA_DIR="$(mktemp -d)" npm exec vitest run tests/ai_connections.test.js tests/ai_features.test.js tests/ai_proposals.test.js tests/ai_jobs.test.js tests/ai_api.test.js tests/ai_sync_history.test.js tests/ai_epg_search.test.js tests/ai_diagnostics.test.js tests/ai_codex_provider.test.js tests/ai_codex_isolation.test.js
 DATA_DIR="$(mktemp -d)" npm run test:playwright:ai
 ```
 
@@ -154,6 +161,62 @@ and explicit adoption of tested token profiles.
 It starts its own ephemeral server without touching the application's runtime
 database. `AI_UI_SCREENSHOT=/absolute/path.png` optionally saves its screenshot.
 The existing `test:playwright:smoke` continues to start an isolated real app.
+
+### Personal ChatGPT connection checks
+
+`ai_codex_provider.test.js` runs the whole adapter against
+`tests/fixtures/fakeCodexAppServer.mjs`, a synthetic app server that speaks the
+same newline-delimited JSON-RPC protocol as the pinned Codex release. The
+manager's own JSON-RPC client, runtime lease, credential store and provider
+adapter run unmodified; only the operating-system sandbox is replaced by a
+passthrough, so the suite runs in CI without bubblewrap. It covers the
+default-disabled adapter starting no process, version pinning, credential-
+directory verification, the hardened launch arguments and a sanitized
+environment, device-code success/decline/cancel/expiry, superseded and
+mismatched completions, per-owner attempt limits, duplicate external identity,
+sharing refusal on write and read, provider immutability, unattended-work
+blocking, model pagination and recommendation, bounded turns, tool-action and
+approval-request rejection, policy-echo verification, malformed answers, plan
+limits, runtime ownership and disconnect behaviour. No credential and no live
+model are involved.
+
+Connection-removal regressions inject a failed final SQLite write after sign-out.
+The removal intent is committed before destructive work, keeps new work blocked,
+and permits retrying deletion. Startup finishes pending removals only after their
+credential, staged credential and runtime records are gone; otherwise the owner
+can retry deletion. Ordinary teardown failures before that intent still release
+their temporary block. Direct discovery and compatibility tests also monitor
+authorization during the request and abort when it is revoked.
+
+Web UI logout acknowledges `/api/ai/codex/session/end` before dropping the
+bearer. Session-end markers prevent a lease-waiting start or a sealing/crash
+recovery completion from publishing after logout; they do not revoke unrelated
+JWT sessions or delete completed links. Tests cover session/owner isolation,
+completion races, and a delayed logout response arriving after a newer login.
+The cancellation-only endpoint verifies the signed, unexpired bearer behind
+the normal header/origin/JSON guards, before management-access checks. Regional
+or account-access revocation therefore cannot prevent recording cancellation;
+restoring access later cannot revive an attempt abandoned during logout.
+
+`ai_codex_isolation.test.js` exercises the **real** backend for the host and
+proves containment by trying to escape it: a canary outside the sandbox must be
+unreadable, `DATA_DIR` unwritable, a neighbouring identity's credential
+directory unreachable, and no inherited credential may appear in the runtime
+environment. Where the host has no usable backend the containment cases are
+reported as an unmet precondition with the specific reason and the suite asserts
+the adapter stays unavailable — a green run on such a host is **not** evidence of
+containment. Record which grade the validation host provided.
+
+A synthetic app server is not evidence of a real ChatGPT sign-in, a real model
+answer or real player playback. Live sign-in and model checks require an
+explicitly provided test account and approved consumption; without one, record
+that acceptance as still open.
+
+Container shutdown is part of this feature's contract: the cluster primary
+forwards the stop signal, suppresses worker restarts and drains the workers so
+their Codex children are reaped and the credential files they hydrated are
+removed. Check that a `docker stop` returns within the grace period and leaves no
+`auth.json` under the runtime directory.
 
 Run the normal lint, full test suite, build, production audit and Docker checks
 as well. A synthetic model response is not evidence of live provider accuracy,

@@ -17,6 +17,7 @@ try {
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
+  let nextJobResult = null;
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
   let cancelGate, releaseJobCreation, jobCreationRequested;
   let delayJobCreation = true;
@@ -27,6 +28,9 @@ try {
   let delayPrograms = false, releasePrograms, programsRequested;
   const waitForPrograms = new Promise(resolve => { programsRequested = resolve; });
   const programReference = {channel_id: 'real-epg-channel', source_type: 'xmltv', source_id: 7, start: 1800000000};
+  // Personal ChatGPT account-link state for the synthetic server.
+  let codexAvailable = false, loginState = null, verificationUrl = 'https://auth.openai.com/codex/device';
+  let chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null}, accountReadsLinked = true, failNextPolls = 0;
   const requests = [];
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname.replace('/api/ai', '');
@@ -37,9 +41,42 @@ try {
     else if (path === '/settings') { if (method === 'PUT') settings = body; data = settings; }
     else if (path === '/preferences') { if (method === 'PUT') preferences = {...preferences, ...body}; data = preferences; }
     else if (path === '/connections') {
-      if (method === 'POST') { const {api_key, ...safe} = body; connections.push({...safe, id: 'c1', editable: true, has_key: Boolean(api_key), models: [], capabilities: {}}); data = connections[0]; }
+      if (method === 'POST') {
+        const {api_key, ...safe} = body;
+        const chatgpt = safe.provider === 'chatgpt_account';
+        connections.push({...safe, id: chatgpt ? 'c2' : 'c1', editable: true, has_key: chatgpt ? false : Boolean(api_key),
+          models: [], capabilities: {}, ...(chatgpt ? {base_url: null, account: chatgptAccount} : {})});
+        data = connections.at(-1);
+      }
       else data = connections;
-    } else if (path === '/connections/c1') {
+    }
+    else if (path === '/codex/status') data = codexAvailable
+      ? {available: true, reason: null, codex_version: '0.154.0', isolation: {backend: 'bwrap', grade: 'isolated'}}
+      : {available: false, reason: 'AI_CODEX_DISABLED', codex_version: null, isolation: null};
+    else if (path.startsWith('/connections/c2')) {
+      const stored = () => connections.find(item => item.id === 'c2');
+      const rest = path.slice('/connections/c2'.length);
+      if (rest === '' && method === 'PUT') { const {api_key: _chatgptKey, ...safe} = body; Object.assign(stored(), safe); data = stored(); }
+      else if (rest === '/link' && method === 'POST') {
+        loginState = {id: 'L1', status: 'pending', verification_url: verificationUrl, user_code: 'ABCD-1234', error_code: null, expires_at: Date.now() + 900000};
+        data = loginState;
+      }
+      else if (rest === '/link/L1') {
+        if (failNextPolls > 0) { failNextPolls -= 1; status = 502; data = {code: 'AI_UNAVAILABLE'}; }
+        else data = loginState;
+      }
+      else if (rest === '/link/L1/cancel') { loginState = {...loginState, status: 'cancelled', error_code: 'ai_codex_login_cancelled'}; data = loginState; }
+      else if (rest === '/unlink') {
+        chatgptAccount = {linked: false, label: null, plan_type: null, auth_method: null};
+        Object.assign(stored(), {account: chatgptAccount});
+        data = {disconnected: true, remote_logout: true};
+      }
+      else if (rest === '/account') data = accountReadsLinked
+        ? {...chatgptAccount, quota: {known: true, ordinary_usage_allowed: true, primary: {used_percent: 42, window_minutes: 300, resets_at: 1800000000}, secondary: null}}
+        : {linked: false, label: null, plan_type: null, auth_method: null, quota: {known: false}};
+      else { status = 404; data = {code: 'AI_NOT_FOUND'}; }
+    }
+    else if (path === '/connections/c1') {
       if (method === 'PUT') { const {api_key: _key, ...safe} = body; connections[0] = {...connections[0], ...safe}; data = connections[0]; }
       else if (method === 'DELETE') connections = [];
     } else if (path.endsWith('/discover')) {
@@ -65,7 +102,7 @@ try {
       if (pollErrorOnce) { pollErrorOnce = false; await route.fulfill({status: 503, json: {code: 'AI_UNAVAILABLE'}}); return; }
       pollCount++;
       if (nextJobError && pollCount > 1) data = {id: `j${jobCount}`, status: 'failed', error_code: nextJobError};
-      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
+      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: nextJobResult || {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
     } else if (path.endsWith('/cancel')) {
       if (cancelGate?.path === path) {
         const gate = cancelGate;
@@ -144,7 +181,9 @@ try {
   const beforeRejectedTest = JSON.stringify({settings, preferences, connections});
   const writesBeforeRejectedTest = requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length;
   await page.locator('#ai-test').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_modelTestSelection');
+  assert.equal(await page.locator('#ai-status').isVisible(), false, 'section errors must not be mirrored at the page top');
+  assert.equal(await page.locator('#ai-setup-progress').getAttribute('role'), 'status', 'local feedback remains accessible to screen readers');
   assert.equal(JSON.stringify({settings, preferences, connections}), beforeRejectedTest, 'invalid model choices must not enable preferences, save a connection or sharing grants');
   assert.equal(requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length, writesBeforeRejectedTest, 'reject invalid model choices before any persistent request');
   assert.equal(await page.locator('#ai-key').inputValue(), 'synthetic-secret', 'rejected selection must leave the unsubmitted key in its field');
@@ -163,7 +202,7 @@ try {
   const beforeTooManyModels = JSON.stringify({settings, preferences, connections});
   const writesBeforeTooManyModels = requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length;
   await page.locator('#ai-test').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_modelTestSelection');
   assert.equal(JSON.stringify({settings, preferences, connections}), beforeTooManyModels);
   assert.equal(requests.filter(request => ['POST', 'PUT', 'DELETE'].includes(request.method)).length, writesBeforeTooManyModels, 'too many candidates must not update an existing connection');
   assert.equal(await page.locator('#ai-key').inputValue(), 'unsubmitted-replacement');
@@ -213,19 +252,19 @@ try {
   assert.equal(await page.evaluate(() => Object.values(localStorage).some(item => item.includes('synthetic-secret'))), false);
   discoverFails = true;
   await page.locator('#ai-discover').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_network');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_network');
   for (const [status, code, message] of [[409, 'AI_BUSY', 'busy'], [429, 'AI_PAUSED', 'paused'], [504, 'AI_TIMEOUT', 'timeout']]) {
     discoverError = {status, code};
     await page.locator('#ai-discover').click();
-    await page.waitForFunction(key => document.getElementById('ai-status').dataset.i18n === `ai_${key}`, message);
-    assert.notEqual(await page.locator('#ai-status').innerText(), `ai_${message}`, 'connection-state explanations must be translated');
+    await page.waitForFunction(key => document.getElementById('ai-setup-status').dataset.i18n === `ai_${key}`, message);
+    assert.notEqual(await page.locator('#ai-setup-status').innerText(), `ai_${message}`, 'connection-state explanations must be translated');
   }
   await page.locator('summary[data-i18n="ai_advanced"]').click();
   await page.locator('#ai-model').fill('');
   await page.locator('#ai-models').selectOption([]);
   const testsBeforeEmptySelection = requests.filter(request => request.path.endsWith('/test')).length;
   await page.locator('#ai-test').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_modelTestSelection');
+  await page.waitForFunction(() => document.getElementById('ai-setup-status').dataset.i18n === 'ai_modelTestSelection');
   assert.equal(requests.filter(request => request.path.endsWith('/test')).length, testsBeforeEmptySelection, 'empty model selection must not start a provider test');
   await page.locator('#ai-model').fill('manual-alias');
   await page.locator('#ai-models').selectOption([]);
@@ -235,15 +274,15 @@ try {
   await page.locator('#ai-prompt').fill('Review my list');
   const jobsBeforeMissingUser = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
   await page.locator('#ai-run').click();
-  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_targetUserRequired', 'missing administrator target must not be reported as a model-test problem');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_targetUserRequired', 'missing administrator target must not be reported as a model-test problem');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'ai-user', 'focus the missing target field');
   assert.equal(requests.filter(request => request.path === '/jobs' && request.method === 'POST').length, jobsBeforeMissingUser, 'missing target cannot submit inference');
   await page.locator('#ai-feature').selectOption('cleanup');
-  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'changing features must clear stale validation feedback');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_inputChanged', 'changing features must clear stale validation feedback');
   await page.locator('#ai-feature').selectOption('list');
   await page.locator('#ai-run').click();
   await page.locator('#ai-user').selectOption('2');
-  assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_inputChanged', 'editing a rejected field must replace stale validation feedback without claiming it was saved');
 
   page.on('dialog', dialog => dialog.accept());
   await page.locator('#ai-run').click();
@@ -265,9 +304,16 @@ try {
   assert.match(await page.locator('#ai-result').innerText(), /Analyzed items: 2000 \/ 2000/);
   assert.match(await page.locator('#ai-result').innerText(), /Displayed item examples: 20 \/ 2000/);
   assert.equal(await page.locator('#ai-action-a1').isChecked(), false, 'changes never preselected');
+  const beforeSelection = requests.length;
+  await page.locator('#ai-select-all').click();
+  assert.equal(await page.locator('#ai-proposal [data-ai-action]:checked').count(), 3);
+  await page.locator('#ai-deselect-all').click();
+  assert.equal(await page.locator('#ai-proposal [data-ai-action]:checked').count(), 0);
+  assert.equal(requests.length, beforeSelection, 'bulk selection is local and never applies changes');
   await page.locator('#ai-action-a1').check();
   await page.locator('#ai-apply').click();
   await page.locator('#ai-undo').waitFor();
+  assert.equal(await page.locator('#ai-select-all').count(), 0, 'applied actions cannot be selected again');
   assert.deepEqual(await page.locator('#ai-rule-action option').evaluateAll(options => options.map(option => option.value)), ['a1'], 'only actually applied renames can source a rule');
   await page.locator('summary[data-i18n="ai_rules"]').click();
   await page.locator('#ai-rule-name').fill('My cleanup');
@@ -281,14 +327,15 @@ try {
   assert.equal(requests.find(r => r.path === '/rules' && r.method === 'POST').body.action_id, 'a1', 'rule uses confirmed rename, not its checked category dependency');
   await page.locator('#ai-rule-enabled').check();
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/ai/rules/r1') && response.request().method() === 'PUT'), page.locator('#ai-save-rule').click()]);
+  await page.waitForFunction(() => document.getElementById('ai-rules-status')?.dataset.i18n === 'ai_saved');
+  assert.equal(await page.locator('#ai-rules-progress').isVisible(), true, 'rule feedback appears inside the open rules section');
   assert.equal(requests.find(r => r.path === '/rules/r1' && r.method === 'PUT').body.enabled, true);
   assert.deepEqual(requests.find(r => r.path === '/rules' && r.method === 'POST').body.exceptions, ['Regional', 'HD']);
   await page.locator('#ai-undo').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_undone');
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_undone');
   await page.locator('#ai-run').click();
   await page.locator('#ai-action-a1').waitFor();
-  await page.locator('#ai-action-a1').check();
-  await page.locator('#ai-action-a2').check();
+  await page.locator('#ai-select-all').click();
   await page.locator('#ai-apply').click();
   await page.locator('#ai-undo').waitFor();
   assert.deepEqual(await page.locator('#ai-rule-action option').evaluateAll(options => options.map(option => option.value)), ['', 'a1', 'a2']);
@@ -307,8 +354,13 @@ try {
   await page.locator('#ai-keep-first').fill('1');
   for (const feature of ['cleanup', 'duplicates', 'epg', 'sync', 'diagnose', 'text']) {
     await page.locator('#ai-feature').selectOption(feature);
+    if (feature === 'text') nextJobResult = {feature:'text',summary:'',text:'Translated description',tags:['Sport']};
     await page.locator('#ai-run').click();
-    await page.locator('#ai-action-a1').waitFor();
+    if (feature === 'text') {
+      await page.getByText('Translated description', {exact:true}).waitFor();
+      assert.doesNotMatch(await page.locator('#ai-result').innerText(), /No results/);
+      nextJobResult = null;
+    } else await page.locator('#ai-action-a1').waitFor();
     const input = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
     assert.equal(input.feature, feature);
     assert.deepEqual(input.pinned_ids, [6]);
@@ -335,11 +387,11 @@ try {
   const resetSearch = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
   assert.equal(resetSearch.conversation_id, undefined);
   assert.deepEqual(resetSearch.filters, {});
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_cancelled');
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
   for (const terminalStatus of ['completed', 'failed']) {
     cancelNext = true;
     await page.locator('#ai-run').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
     cancelNext = false; cancelResult = terminalStatus;
     nextJobError = terminalStatus === 'failed' ? 'AI_TIMEOUT' : null;
     const posts = requests.filter(r => r.path === '/jobs' && r.method === 'POST').length;
@@ -352,7 +404,7 @@ try {
   for (const cancelStatus of [200, 502]) {
     await page.locator('#ai-feature').selectOption('list');
     await page.locator('#ai-run').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
     let cancelStarted;
     const started = new Promise(resolve => { cancelStarted = resolve; });
     cancelGate = {path: `/jobs/j${jobCount}/cancel`, status: cancelStatus, started: cancelStarted};
@@ -360,17 +412,17 @@ try {
     await started;
     await page.locator('#ai-feature').selectOption('duplicates');
     await page.locator('#ai-run').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_running');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
     const newJobPath = `/jobs/j${jobCount}`;
     await Promise.all([page.waitForResponse(response => response.url().endsWith(cancelGate.path)), Promise.resolve().then(() => cancelGate.release())]);
     await page.waitForFunction(() => !document.getElementById('ai-cancel').disabled);
-    assert.equal(await page.locator('#ai-status').getAttribute('data-i18n'), 'ai_running', `late cancel ${cancelStatus} cannot replace newer running-job status`);
+    assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_running', `late cancel ${cancelStatus} cannot replace newer running-job status`);
     const pollsBefore = requests.filter(request => request.path === newJobPath && request.method === 'GET').length;
     await page.waitForResponse(response => response.url().endsWith(newJobPath) && response.request().method() === 'GET');
     assert(requests.filter(request => request.path === newJobPath && request.method === 'GET').length > pollsBefore, `new job keeps polling after late cancel ${cancelStatus}`);
     cancelGate = null;
     await page.locator('#ai-cancel').click();
-    await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_cancelled');
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
   }
   cancelNext = false; pollErrorOnce = true;
   await page.locator('#ai-run').click();
@@ -384,7 +436,7 @@ try {
   assert(requests.filter(r => r.path === retryJob && r.method === 'GET').length >= 3, 'polling resumes for the same job through completion');
   await page.locator('details').filter({has: page.locator('#ai-clear-history')}).locator('summary').click();
   await page.locator('#ai-clear-history').click();
-  await page.waitForFunction(() => document.getElementById('ai-status').dataset.i18n === 'ai_saved');
+  await page.waitForFunction(() => document.getElementById('ai-history-status').dataset.i18n === 'ai_saved');
   assert(requests.some(r => r.path === '/history' && r.method === 'DELETE'));
   await page.locator('#ai-refresh-history').click();
   await page.locator('#ai-history-historyA').waitFor();
@@ -484,10 +536,126 @@ try {
     fetchJSON = url => url === '/api/users' ? new Promise(resolve => { window.releaseUserChoices = () => resolve([{id: 8, username: 'Late admin-only name'}]); }) : original(url).then(result => { window.finishedAiReads++; return result; });
     window.pendingUserChoices = aiUI.open();
   });
-  await page.waitForFunction(() => typeof window.releaseUserChoices === 'function' && window.finishedAiReads === 3);
+  await page.waitForFunction(() => typeof window.releaseUserChoices === 'function' && window.finishedAiReads === 4);
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; window.releaseUserChoices(); await window.pendingUserChoices; });
   assert.equal(await page.locator('#view-ai').innerText(), '', 'late administrator user list cannot repopulate a cleared or different session');
-  console.log(`PASS AI UI (${Math.round(performance.now() - startedAt)} ms): setup and all eight functions; confirmed rename rules; follow-up filter patches; delayed history/Undo isolation; read-only cleanup; automatic rule-change history/Undo; local EPG picker and stale-target isolation; analyzed/displayed counts; four languages; session isolation. Synthetic API only.`);
+  // Personal ChatGPT account link. Offered only when the server reports a
+  // contained runtime, private by construction, and never showing a token.
+  // The session-isolation checks above leave `fetchJSON` patched to stall the
+  // administrator user list, so restore the real reader first.
+  await page.evaluate(() => { aiUI.clear(); if (window.originalAiFetch) fetchJSON = window.originalAiFetch; });
+  settings = {enabled: true, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
+  preferences = {enabled: true, connection_id: null, model_id: null};
+  connections = [];
+  await page.evaluate(async () => { currentUser = {id: 1, is_admin: true}; await aiUI.open(); });
+  await page.locator('#ai-connection').waitFor();
+  assert.deepEqual(await page.locator('#ai-connection option').evaluateAll(items => items.map(item => item.value)), ['', 'new'],
+    'the ChatGPT option is hidden while the server reports no contained runtime');
+
+  codexAvailable = true;
+  await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 1, is_admin: true}; await aiUI.open(); });
+  await page.locator('#ai-connection').waitFor();
+  assert.deepEqual(await page.locator('#ai-connection option').evaluateAll(items => items.map(item => item.value)), ['', 'new', 'new-chatgpt'],
+    'the ChatGPT option appears once the server reports a contained runtime');
+  await page.locator('#ai-connection').selectOption('new-chatgpt');
+  for (const field of ['url', 'key', 'shared', 'connection-users']) {
+    assert.equal(await page.locator(`#ai-${field}`).count(), 0, `a managed ChatGPT sign-in must not ask for ${field}`);
+  }
+  assert.equal(await page.locator('#ai-advanced').isVisible(), false, 'no token-limit parameter is offered for a managed sign-in');
+  assert.equal(await page.locator('#ai-token-parameter').isDisabled(), true);
+  assert.match(await page.locator('#ai-destination').innerText(), /Codex/, 'the managed destination is named before any request');
+  assert.match(await page.locator('#ai-account-panel').innerText(), /no OpenAI platform API key|kein OpenAI-Platform-API-Key/i,
+    'the disclosure states that no platform API key is needed');
+  assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'nothing can be disconnected before a sign-in');
+
+  assert.equal(await page.locator('#ai-name').inputValue(), '', 'a new account link starts without a custom name');
+  await page.locator('#ai-enabled').check();
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/link') && response.request().method() === 'POST'),
+    page.locator('#ai-link-start').click()
+  ]);
+  await page.locator('#ai-link-state a').waitFor();
+  assert.equal(connections.find(item => item.id === 'c2').name, 'ChatGPT',
+    'connecting without a custom name uses ChatGPT rather than silently blocking sign-in');
+  assert.equal(await page.locator('#ai-link-state a').getAttribute('href'), 'https://auth.openai.com/codex/device',
+    'only the approved verification address becomes a link');
+  assert.equal(await page.locator('#ai-link-state a').getAttribute('rel'), 'noopener noreferrer');
+  assert.match(await page.locator('#ai-link-state').innerText(), /ABCD-1234/, 'the device code is shown');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.locator('#ai-link-code').click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'ABCD-1234',
+    'clicking the device code copies only the code, not its caption or verification URL');
+  await page.waitForFunction(() => document.getElementById('ai-link-code').getAttribute('aria-label') === t('copied'));
+  assert.equal(await page.locator('#ai-link-cancel').isVisible(), true, 'a pending sign-in can be cancelled');
+  assert.equal(await page.locator('#ai-account-progress').isVisible(), true, 'account feedback stays beside the account controls');
+  assert.equal(await page.locator('#ai-status').isVisible(), false, 'account sign-in does not require scrolling to the page header');
+  const linkRequests = requests.filter(request => request.path.includes('/link'));
+  assert.equal(JSON.stringify(linkRequests).includes('token'), false, 'no token is ever sent or echoed by the browser');
+
+  // A transient status failure must not abandon a sign-in that is still open:
+  // the server drops an attempt that stops being polled.
+  failNextPolls = 2;
+  await page.waitForFunction(() => document.getElementById('ai-account-status')?.dataset.i18n === 'ai_linkRetrying', null, {timeout: 20000});
+  assert.equal(await page.locator('#ai-link-state a').count(), 1, 'the device code stays on screen while retrying');
+
+  // The account holder completes the sign-in; the poll adopts only its own attempt.
+  chatgptAccount = {linked: true, label: 'p***@example.org', plan_type: 'plus', auth_method: 'chatgpt'};
+  loginState = {id: 'L1', status: 'completed', verification_url: null, user_code: null, error_code: null, expires_at: Date.now() + 900000};
+  Object.assign(connections.find(item => item.id === 'c2'), {account: chatgptAccount});
+  await page.locator('#ai-unlink').waitFor({state: 'visible', timeout: 20000});
+  assert.match(await page.locator('#ai-account-state').innerText(), /p\*\*\*@example\.org/, 'only the masked account label is shown');
+  assert.match(await page.locator('#ai-account-state').innerText(), /42%/, 'reported quota is displayed');
+  assert.equal(await page.locator('#ai-link-start').isVisible(), false, 'a linked account offers no second sign-in');
+
+  for (const [lang, linkedText, planCaption] of [
+    ['de', 'ChatGPT-Konto verbunden', 'Tarif'], ['fr', 'Compte ChatGPT connecté', 'Forfait'],
+    ['el', 'Ο λογαριασμός ChatGPT συνδέθηκε', 'Πρόγραμμα'], ['en', 'ChatGPT account connected', 'Plan']]) {
+    await page.locator('#language-selector').selectOption(lang);
+    const panel = await page.locator('#ai-account-panel').innerText();
+    assert.ok(panel.includes(linkedText), `the linked state is translated for ${lang}`);
+    assert.ok(panel.includes(`${planCaption}: plus`), `account captions re-translate on a language change for ${lang}`);
+    assert.equal(await page.locator('#ai-url').count(), 0, `no technical address field appears for ${lang}`);
+  }
+  await page.locator('#language-selector').selectOption('en');
+
+  // A refreshed account read that no longer authenticates must win over the
+  // stored connection record, or the panel keeps claiming the account is linked.
+  accountReadsLinked = false;
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/account')),
+    page.locator('#ai-account-refresh').click()
+  ]);
+  await page.locator('#ai-link-start').waitFor({state: 'visible'});
+  assert.match(await page.locator('#ai-account-state').innerText(), /No ChatGPT account connected/i,
+    'a refreshed account read that reports no link is shown instead of the stored record');
+  assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'a refreshed unlinked account offers no disconnect');
+  // Re-selecting the connection reloads the panel from the stored record, which
+  // still holds the link, so the disconnect path below can run.
+  accountReadsLinked = true;
+  await page.evaluate(() => document.getElementById('ai-connection').dispatchEvent(new Event('change')));
+  await page.locator('#ai-unlink').waitFor({state: 'visible'});
+
+  // A page-wide dialog handler is already installed above; the disconnect
+  // confirmation is accepted by it.
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/unlink')),
+    page.locator('#ai-unlink').click()
+  ]);
+  await page.locator('#ai-link-start').waitFor({state: 'visible'});
+  assert.equal(await page.locator('#ai-unlink').isVisible(), false, 'disconnecting returns the panel to the unlinked state');
+
+  // An address outside the documented targets is reported, never opened.
+  verificationUrl = 'https://phish.example/codex/device';
+  await Promise.all([
+    page.waitForResponse(response => response.url().includes('/connections/c2/link') && response.request().method() === 'POST'),
+    page.locator('#ai-link-start').click()
+  ]);
+  await page.locator('#ai-link-state').waitFor();
+  assert.equal(await page.locator('#ai-link-state a').count(), 0, 'an unapproved verification address is never turned into a link');
+  assert.match(await page.locator('#ai-link-state').innerText(), /not an approved target/i);
+  await page.evaluate(() => aiUI.clear());
+
+  console.log(`PASS AI UI (${Math.round(performance.now() - startedAt)} ms): setup and all eight functions; confirmed rename rules; follow-up filter patches; delayed history/Undo isolation; read-only cleanup; automatic rule-change history/Undo; local EPG picker and stale-target isolation; analyzed/displayed counts; four languages; personal ChatGPT link, quota, disconnect and blocked verification target; session isolation. Synthetic API only.`);
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));

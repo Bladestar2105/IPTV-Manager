@@ -53,6 +53,42 @@ async function selected(actor = admin) {
     return c;
 }
 
+describe('AI compatibility batch', () => {
+    it('bounds the whole batch instead of each probe', async () => {
+        const c = configure();
+        await ai.discoverModels(admin, c.id);
+        // A provider that answers, but slowly. Every probe succeeds on its own,
+        // so only a budget for the batch can stop the request from making
+        // billable calls long after the browser gave up.
+        reply = (req, res) => {
+            setTimeout(() => res.end(JSON.stringify(req.method === 'GET'
+                ? { data: [{ id: 'synthetic-model' }] }
+                : { choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }], usage: { prompt_tokens: 4, completion_tokens: 3 } })), 400);
+        };
+        // Three models, two probes each: six answers at 400 ms cannot fit into the
+        // batch budget, while every single probe stays well inside its own.
+        process.env.AI_MODEL_TEST_BATCH_MS = '1000';
+        try {
+            const before = requests.filter(entry => entry.body).length;
+            const result = await ai.testModels(admin, c.id, { model_ids: ['synthetic-model', 'second-model', 'third-model'] });
+            // Whatever was proven is kept; the rest is reported as untested
+            // instead of failing the request or running on.
+            expect(result.models.some(model => model.error_code === 'AI_TIMEOUT')).toBe(true);
+            expect(result.models.some(model => model.status === 'compatible')).toBe(true);
+            expect(requests.filter(entry => entry.body).length - before).toBeLessThan(6);
+            // Every requested model is accounted for, so a stored profile from an
+            // earlier run cannot survive a retest and stay selectable.
+            expect(result.models.map(model => model.id).sort()).toEqual(['second-model', 'synthetic-model', 'third-model']);
+            const stored = ai.listConnections(admin).find(item => item.id === c.id).capabilities;
+            expect(Object.keys(stored).sort()).toEqual(['second-model', 'synthetic-model', 'third-model']);
+            expect(stored['third-model']).toMatchObject({ status: 'unverified', error_code: 'AI_TIMEOUT' });
+            // The batch is over before the last model, so its probe never starts
+            // — not even the runtime behind it.
+            expect(requests.filter(entry => entry.body && entry.body.model === 'third-model')).toHaveLength(0);
+        } finally { delete process.env.AI_MODEL_TEST_BATCH_MS; }
+    }, 30000);
+});
+
 describe('AI connection security', () => {
     it('normalizes known suffixes while retaining proxy prefixes', () => {
         expect(transport.normalizeBaseUrl('https://example.com/proxy/v1/chat/completions/')).toBe('https://example.com/proxy/v1');
@@ -77,7 +113,8 @@ describe('AI connection security', () => {
     });
     it('migrates idempotently without disturbing records', () => {
         const c = configure(); migrateAiSchema(db); expect(ai.listConnections(admin)[0].id).toBe(c.id);
-        expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'").get().n).toBe(10);
+        // 13 stores plus staged credentials and ended account-link sessions.
+        expect(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'").get().n).toBe(15);
     });
     it('keeps admin and normal-user IDs separate and never serializes keys', () => {
         const c = configure(); expect(ai.listConnections(user)).toEqual([]);
