@@ -70,6 +70,13 @@ function usableAccount(ownerKey) {
     return row;
 }
 
+// The version the caller was authenticated with. Compared again in the
+// transaction that grants the lease, because a password reset can land while a
+// request waits for a runtime.
+function actorTokenVersion(actor) {
+    return Number.isInteger(actor?.token_version) ? actor.token_version : undefined;
+}
+
 function actorRow(actor) {
     const row = usableAccount(`${actor.is_admin ? 'admin' : 'user'}:${actor.id}`);
     if (!row) throw aiError('AI_FORBIDDEN', 403);
@@ -354,6 +361,7 @@ export async function startAccountLink(actor, connection, fingerprint) {
         session = await startRuntime(ownerKey, connection.id, {
             // Access can be withdrawn while this request waits for a runtime.
             verifyEligible: () => policyAllows(ownerKey),
+            tokenVersion: actorTokenVersion(actor),
             // Every close path of a sign-in runtime discards its credential file,
             // including a crash before any completion notification.
             sealOnStop: false,
@@ -576,7 +584,7 @@ export async function readAccountState(actor, connection) {
             auth_method: status.authMethod,
             quota
         };
-    }, { verifyEligible: () => policyAllows(connection.owner_key) });
+    }, { verifyEligible: () => policyAllows(connection.owner_key), tokenVersion: actorTokenVersion(actor) });
     if (invalidate) await discardInvalidCredential(connection.owner_key, connection.id);
     return state;
 }

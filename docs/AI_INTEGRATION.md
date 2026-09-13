@@ -435,7 +435,9 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
 * Granting a lease is the last point at which a request can be stopped, because
   by then it has long passed its own authorization. The owner must still exist
   still satisfy every access field the rest of the subsystem checks — active,
-  Web UI access, not expired — the connection must exist and not be tearing
+  Web UI access, not expired, and the session token version the caller
+  authenticated with, which a password reset advances and authentication treats
+  as a revocation — the connection must exist and not be tearing
   down, and the same policy gates the request itself passed — the server switch,
   the owner's allowance and their personal preference — must still hold, all
   checked in the same transaction that inserts the lease; only the teardown that owns the

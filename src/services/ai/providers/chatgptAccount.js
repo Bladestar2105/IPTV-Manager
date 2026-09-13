@@ -30,7 +30,7 @@ export const chatgptAccountProvider = {
     // summaries and unattended catalog analysis stay blocked for this provider.
     allowsUnattended: false,
     requestTimeout(operation) { return operation === 'models' ? CODEX_SETUP_TIMEOUT_MS : CODEX_TURN_TIMEOUT_MS; },
-    async execute({ connection, ownerKey, operation, payload, signal, beforeSend }) {
+    async execute({ connection, ownerKey, operation, payload, signal, beforeSend, tokenVersion }) {
         if (liveRuntime(ownerKey, connection.id)) throw aiError('AI_BUSY', 409);
         try {
             // The orchestrator's own recheck, evaluated inside the lease
@@ -60,7 +60,7 @@ export const chatgptAccountProvider = {
                 // A token refreshed during the turn is captured before teardown.
                 seal(ownerKey, connection.id, {}, { refreshOnly: true });
                 return { result: { content: turn.content }, usage: turn.usage };
-            }, { verifyEligible });
+            }, { verifyEligible, tokenVersion });
         } catch (error) { throw translate(error); }
     }
 };

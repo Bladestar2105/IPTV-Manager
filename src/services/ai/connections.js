@@ -17,6 +17,10 @@ function freshActor(actor) {
     if (!actor || !Number.isSafeInteger(actor.id) || actor.id < 1 || typeof actor.is_admin !== 'boolean') throw aiError('AI_FORBIDDEN',403);
     const row = db.prepare(`SELECT * FROM ${actor.is_admin ? 'admin_users' : 'users'} WHERE id=?`).get(actor.id);
     if (!row?.is_active || (!actor.is_admin && (row.webui_access === 0 || (row.expiry_date && row.expiry_date < Date.now()/1000)))) throw aiError('AI_FORBIDDEN',403);
+    // A password reset advances the token version, which authentication treats as
+    // a revoked session. A long-running request rechecks it here for the same
+    // reason, so work authorized before the reset cannot continue past it.
+    if (Number.isInteger(actor.token_version) && row.token_version !== actor.token_version) throw aiError('AI_FORBIDDEN',403);
     return actor;
 }
 function settings() {
@@ -371,6 +375,9 @@ async function call(actor,feature,connectionId,operation,payload,signal,validate
     try {
         const response=await adapterFor(connection).execute({
             connection,settings:access.settings,ownerKey:access.owner_key,operation,payload,signal,
+            // The version this caller was authenticated with, compared again in
+            // the transaction that grants a provider its runtime.
+            tokenVersion:Number.isInteger(actor?.token_version)?actor.token_version:undefined,
             beforeSend:()=>{
                 const current=requireAiAccess(actor,feature,connection.id);
                 if (current.connection.version !== access.connection.version || JSON.stringify(current.settings)!==JSON.stringify(access.settings)) throw aiError('AI_CONNECTION_CHANGED',409);

@@ -61,30 +61,35 @@ export async function probeCodexVersion(backend, binary, runtimeDir) {
 // it has long passed its own authorization. The owner must still exist and be
 // active, and the connection must exist and not be tearing down, both checked in
 // the same transaction that inserts the lease.
-function identityStillEligible(ownerKey, connectionId, allowTeardown) {
+function identityStillEligible(ownerKey, connectionId, allowTeardown, tokenVersion) {
     const [kind, id] = ownerKey.split(':');
     const admin = kind === 'admin';
     const table = admin ? 'admin_users' : 'users';
     // Every access field the rest of the subsystem checks, not just the account
     // being present: Web UI access can be revoked and an account can expire while
     // an authorized request is still waiting for its runtime.
-    const account = db.prepare(`SELECT is_active${admin ? '' : ',webui_access,expiry_date'} FROM ${table} WHERE id=?`).get(Number(id));
+    const account = db.prepare(`SELECT is_active,token_version${admin ? '' : ',webui_access,expiry_date'} FROM ${table} WHERE id=?`).get(Number(id));
     if (!account?.is_active) return false;
     if (!admin && (!account.webui_access || (account.expiry_date && account.expiry_date < Date.now() / 1000))) return false;
+    // A password reset advances the token version, which the authentication
+    // middleware treats as a revoked session. A request authorized before it
+    // must not be handed a runtime afterwards, so the version the caller was
+    // authenticated with is compared here, in the same transaction as the rest.
+    if (Number.isInteger(tokenVersion) && account.token_version !== tokenVersion) return false;
     const connection = db.prepare('SELECT data_json FROM ai_connections WHERE id=? AND owner_key=?').get(connectionId, ownerKey);
     if (!connection) return false;
     if (allowTeardown) return true;
     try { return !JSON.parse(connection.data_json).teardown; } catch { return true; }
 }
 
-function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible) {
+function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion) {
     const leaseId = randomUUID();
     return db.transaction(() => {
         const now = Date.now();
         db.prepare('DELETE FROM ai_codex_runtimes WHERE expires_at < ?').run(now);
         const existing = db.prepare('SELECT lease_id,state FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get(ownerKey, connectionId);
         if (existing) return { leaseId: null, blockedBy: existing.state };
-        if (!identityStillEligible(ownerKey, connectionId, allowTeardown)) return { leaseId: null, blockedBy: 'ineligible' };
+        if (!identityStillEligible(ownerKey, connectionId, allowTeardown, tokenVersion)) return { leaseId: null, blockedBy: 'ineligible' };
         // Supplied by the caller so the current AI policy and personal preference
         // are evaluated where they are defined, inside this transaction. An
         // administrator can withdraw access while a request waits for a runtime.
@@ -98,10 +103,10 @@ function tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible) 
 // A runtime that is terminating still holds its lease until its child has
 // actually exited, so a replacement waits for that hand-off. Anything else
 // holding the lease is a concurrent operation and is refused immediately.
-async function acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible) {
+async function acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion) {
     const deadline = Date.now() + LEASE_HANDOVER_MS;
     for (;;) {
-        const attempt = tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible);
+        const attempt = tryAcquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion);
         if (attempt.leaseId) return attempt.leaseId;
         if (attempt.blockedBy === 'ineligible') {
             throw codexError('AI_CONNECTION_CHANGED', 'This connection can no longer start a runtime.', 409);
@@ -239,11 +244,11 @@ function violationSink() {
     };
 }
 
-export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false, verifyEligible } = {}) {
+export async function startRuntime(ownerKey, connectionId, { onNotification, onClosed, sealOnStop = true, allowTeardown = false, verifyEligible, tokenVersion } = {}) {
     const availability = await codexAvailability();
     if (!availability.available) throw codexError(availability.reason, 'The personal ChatGPT runtime is unavailable on this host.', 503);
     const isolation = await resolveIsolation();
-    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible);
+    const leaseId = await acquireLease(ownerKey, connectionId, allowTeardown, verifyEligible, tokenVersion);
     let session = null;
     try {
         const paths = hydrate(ownerKey, connectionId);
@@ -336,8 +341,8 @@ export function liveRuntime(ownerKey, connectionId) {
 
 // Runs one bounded operation on a fresh runtime and always tears it down. There
 // is no shared process that could be switched between personal logins.
-export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false, verifyEligible } = {}) {
-    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown, verifyEligible });
+export async function withRuntime(ownerKey, connectionId, handler, { onNotification, allowTeardown = false, verifyEligible, tokenVersion } = {}) {
+    const session = await startRuntime(ownerKey, connectionId, { onNotification, allowTeardown, verifyEligible, tokenVersion });
     try { return await handler(session); }
     finally { stopRuntime(session); }
 }

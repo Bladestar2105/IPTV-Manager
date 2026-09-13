@@ -1494,6 +1494,25 @@ describe('personal ChatGPT runtime ownership', () => {
             .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
     }, 30000);
 
+    it('refuses an account runtime after the caller\'s session was revoked', async () => {
+        // The version the browser was authenticated with. A password reset
+        // advances the stored one, which authentication treats as a revoked
+        // session.
+        const authenticated = { id: 1, is_admin: false, token_version: 0 };
+        const connection = await linkedConnection(authenticated);
+        const handle = ai.ownedAccountConnection(authenticated, connection.id, { requirePolicy: false });
+        db.prepare('UPDATE users SET token_version=token_version+1 WHERE id=1').run();
+        // The lease is the last gate before a personal credential is used, so a
+        // request authorized before the reset must not be handed a runtime.
+        await expect(account.readAccountState(authenticated, handle))
+            .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        await expect(account.startAccountLink(authenticated, handle, 'fp'))
+            .rejects.toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
+        // And the shared access check refuses the revoked session outright.
+        await expect(ai.runInference(authenticated, 'search', { messages: [{ role: 'user', content: 'x' }], schema }))
+            .rejects.toMatchObject({ code: 'AI_FORBIDDEN' });
+    }, 30000);
+
     it('still grants a lease to the teardown that owns the marker', async () => {
         const connection = await linkedConnection();
         ai.adjustConnectionTeardown('user:1', connection.id, 1);
