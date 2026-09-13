@@ -17,7 +17,7 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
 ## Pull Request Validation
 
-Pull requests to `main` must pass the Node.js 24 validation job before merge.
+Pull requests to `main` and `codex/ki-integration` must pass the Node.js 24 validation job before merge.
 It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
 full test suite with an isolated temporary `DATA_DIR`, runs the build command,
 and fails on high or critical production dependency vulnerabilities. The
@@ -115,7 +115,7 @@ intentionally required.
 
 ## AI Integration Checks
 
-The optional AI service uses the existing SQLite migration chain and crypto
+The experimental, opt-in AI service uses the existing SQLite migration chain and crypto
 helpers. Additive `ai_*` tables use `admin:<id>` / `user:<id>` owner keys because
 those account ID namespaces overlap. Account-deletion triggers remove private
 and target-user records. Normal exports/clones do not copy AI keys or history.
@@ -157,7 +157,8 @@ capability rejection from outages and cover both token parameters with explicit
 setup, four languages, all eight function controls, safe rendering, explicit
 apply/undo, rule previews, follow-ups, cancellation, history and session cleanup.
 It also checks discovery ordering, sole/unknown candidates, preserved selections
-and explicit adoption of tested token profiles.
+and explicit adoption of tested token profiles, select-all/clear-selection
+without writes, and text results without a misleading empty-result message.
 It starts its own ephemeral server without touching the application's runtime
 database. `AI_UI_SCREENSHOT=/absolute/path.png` optionally saves its screenshot.
 The existing `test:playwright:smoke` continues to start an isolated real app.
@@ -309,6 +310,12 @@ authoritative while its `last_modified` state is current; a later eligible and
 successful refresh for the same panel and series becomes the new authoritative
 record. Failed or unchanged sibling-account syncs do not overwrite cached
 metadata.
+
+`tests/series_multi_dns.test.js` exercises two distinct upstream panel URLs with
+colliding series/episode IDs through real Express routes and SQLite. It checks
+distinct managed episode aliases, suppressed upstream direct-play URLs, and
+playback through each panel's own credentials and container extension. Only
+upstream responses are synthetic; real-player playback is a separate check.
 
 ## Web Player Performance
 

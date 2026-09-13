@@ -24,6 +24,8 @@ user has the same numeric ID.
 
 ## Optional AI assistance
 
+The AI integration is **experimental**, for API and personal ChatGPT connections.
+
 All `/api/ai/*` routes require the current Web UI JWT in an
 `Authorization: Bearer ...` header. Query, player, Stalker and share tokens
 cannot authorize AI management. Mutations require same-origin browser requests
@@ -514,6 +516,10 @@ credentials, and token-authenticated share routes use the same IDs. Cached
 provider- or assignment-based legacy IDs are accepted only when they resolve to
 exactly one currently authorized series and episode, otherwise playback fails
 closed.
+
+`get_series_info` returns an empty episode `direct_source`, as live/movie
+catalogs do. Clients therefore use the managed episode route and the selected
+provider's credentials, including when providers use different DNS names.
 
 Channel visibility requires `is_hidden = 0`, `authorization_revoked = 0`, and
 either matching provider/category ownership or `granted_by_admin = 1`.

@@ -9,6 +9,14 @@ function readRepoFile(relativePath) {
 }
 
 describe('documentation smoke checks', () => {
+  it('labels both AI connection options as experimental in the user documentation', () => {
+    for (const file of ['README.md', 'docs/AI_INTEGRATION.md', 'docs/CONFIGURATION.md', 'docs/API_REFERENCE.md']) {
+      const text = readRepoFile(file);
+      expect(text, file).toMatch(/experimental[^\n]*AI|AI[^\n]*experimental/i);
+      expect(text, file).toContain('ChatGPT');
+    }
+  });
+
   it('links the maintainer docs from the README', () => {
     const readme = readRepoFile('README.md');
 

@@ -22,7 +22,7 @@
 - **EPG Integration**: Comprehensive Electronic Program Guide (EPG) support with automatic updates.
 
 ### Advanced Features
-- **Optional AI Assistant**: Connect an OpenAI-compatible text API for list editing, name cleanup, duplicate review, EPG suggestions, sync reports, conversational search, diagnostics and description translation/summaries/tags. Changes require a preview and confirmation, with conflict-aware undo. Users and administrators can alternatively link their own ChatGPT account through the official Codex sign-in, with no OpenAI platform API key; that connection stays private to its owner and is offered only where the server can prove the runtime is contained by an operating-system sandbox. AI is disabled by default, and the personal ChatGPT connection has its own separate switch; see [AI setup and operation](docs/AI_INTEGRATION.md).
+- **Experimental AI Assistant (opt-in)**: Use an OpenAI-compatible API or your own private ChatGPT connection for list editing, name cleanup, duplicate review, EPG suggestions, sync reports, search, diagnostics and description translation/summaries/tags. Both connection options are experimental. List changes require a preview and confirmation, with conflict-aware undo. AI is disabled by default; see [AI setup and operation](docs/AI_INTEGRATION.md).
 - **Automatic Synchronization**: Configurable intervals (hourly, daily, weekly) with intelligent category mapping.
 - **Provider Connection Pooling**: Add the same provider multiple times to create a pool; streams automatically round-robin and fall back to available accounts when connection limits are reached.
 - **HDHomeRun Emulation**: Emulate HDHomeRun devices for seamless integration with Plex, Emby, and Jellyfin.
@@ -120,7 +120,7 @@ sudo ./scripts/update.sh
 ```
 
 ### Manual Installation (Development)
-1.  Clone repo: `git clone https://github.com/Bladestar2105/IPTV-Manager.git`
+1.  Clone repo and enter it: `git clone https://github.com/Bladestar2105/IPTV-Manager.git && cd IPTV-Manager`
 2.  Install application dependencies: `npm ci`
 3.  On Debian/Ubuntu, provision the ChatGPT runtime: `sudo bash scripts/install-ai-runtime.sh`
 4.  Configure: `cp .env.example .env` (edit as needed)
@@ -153,12 +153,19 @@ test host; Docker and Ubuntu checks do not substitute for that acceptance test.
 
 ### AI setup after installation
 
+The AI integration is **experimental**, including API and ChatGPT connections.
 All paths use the same [AI setup](docs/AI_INTEGRATION.md): enable AI in the
 administrator policy, allow the required users/functions, then enable personal
 AI preferences. For API connections, configure the endpoint/key and test a
 model. For ChatGPT, run the installation preflight first, then link your own
 account in the Web UI and test a model. Runtime checks do not prove account
 eligibility or a live model response.
+
+For example, select a user and ask **“Erstelle eine Liste mit allen Fußball-Sendern”**.
+The assistant can propose matching entries such as Sky Sport Bundesliga and
+DAZN from that user's available catalog. Review the proposal, use **Select all
+actions** or choose individual actions, then confirm. **Clear selection** clears
+the checkboxes without applying changes.
 
 ### Development
 - **Linting**: `npm run lint`

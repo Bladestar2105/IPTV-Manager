@@ -166,7 +166,7 @@ function escapeHtml(unsafe) {
   function loadRemoteMedia(stream) {
     if (!castSession) return;
     destroyAllPlayers();
-    setPlayerStatus('Casting', 'info');
+    setPlayerStatus(t('casting'), 'info');
     document.getElementById('player-container').classList.add('show-info'); // Show info bar
 
     var url = stream.url;
@@ -568,7 +568,7 @@ function escapeHtml(unsafe) {
     try {
       // 1. Fetch Channels
       var res = await fetch('/api/player/channels.json?' + getAuthParams());
-      if (!res.ok) throw new Error('Channels Fetch Error: ' + res.status);
+      if (!res.ok) throw new Error(t('channelsFetchError') + ': ' + res.status);
       allChannels = await res.json();
       var maxCatchupDays = 0;
       allChannels.forEach(function(ch) {
@@ -715,7 +715,7 @@ function escapeHtml(unsafe) {
          var cast = document.createElement('div');
          cast.className = 'small text-light opacity-50 text-truncate';
          cast.style.fontSize = '0.7rem';
-         cast.textContent = 'Cast: ' + s.cast;
+         cast.textContent = t('castLabel') + ': ' + s.cast;
          info.appendChild(cast);
       }
 
@@ -746,7 +746,7 @@ function escapeHtml(unsafe) {
     try {
       var url = '/player_api.php?action=get_series_info&series_id=' + series.url.split('/').slice(-1)[0].split('.')[0] + '&' + getAuthParams();
       var res = await fetch(url);
-      if (!res.ok) throw new Error('Series Info Fetch Error: ' + res.status);
+      if (!res.ok) throw new Error(t('seriesInfoFetchError') + ': ' + res.status);
       var data = await res.json();
 
       listView.innerHTML = '';
@@ -792,7 +792,7 @@ function escapeHtml(unsafe) {
         var cast = document.createElement('div');
         cast.className = 'small text-light opacity-50';
         cast.style.fontSize = '0.75rem';
-        cast.textContent = 'Cast: ' + data.info.cast;
+        cast.textContent = t('castLabel') + ': ' + data.info.cast;
         infoDiv.appendChild(cast);
       }
       header.appendChild(infoDiv);
@@ -1659,7 +1659,7 @@ function escapeHtml(unsafe) {
   // ─── Native Player ───
   function initNativePlayer(url, type) {
     destroyAllPlayers();
-    setPlayerStatus(hasNativeHLS ? 'Native HLS' : 'Native', 'success');
+    setPlayerStatus(hasNativeHLS ? t('nativeHlsPlayback') : t('nativePlayback'), 'success');
     console.log('Native: ' + url);
 
     video.src = url;
@@ -1709,7 +1709,7 @@ function escapeHtml(unsafe) {
   function handlePlaybackFailure(type) {
     console.error('All playback methods failed');
     showToast(t('playbackErrorCodec') || 'Playback Error: Codec might not be supported', 'danger', 6000);
-    setPlayerStatus('Error', 'danger');
+    setPlayerStatus(t('error'), 'danger');
   }
 
   // ─── EPG Navigation ───

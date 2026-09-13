@@ -2,7 +2,7 @@
 (() => {
   const rows = {
     title: ['AI assistant', 'KI-Assistent', 'Assistant IA', 'Βοηθός AI'],
-    intro: ['Optional help for your IPTV library. Changes require your confirmation.', 'Optionale Hilfe für deinen IPTV-Bestand. Änderungen benötigen deine Bestätigung.', 'Aide facultative pour votre bibliothèque IPTV. Les modifications exigent votre confirmation.', 'Προαιρετική βοήθεια για τη βιβλιοθήκη IPTV. Οι αλλαγές απαιτούν επιβεβαίωση.'],
+    intro: ['Experimental, optional help for your IPTV library. Changes require your confirmation.', 'Experimentelle, optionale Hilfe für deinen IPTV-Bestand. Änderungen benötigen deine Bestätigung.', 'Aide expérimentale et facultative pour votre bibliothèque IPTV. Les modifications exigent votre confirmation.', 'Πειραματική, προαιρετική βοήθεια για τη βιβλιοθήκη IPTV. Οι αλλαγές απαιτούν επιβεβαίωση.'],
     setup: ['Connection setup', 'Verbindung einrichten', 'Configurer la connexion', 'Ρύθμιση σύνδεσης'],
     policy: ['Administrator permissions', 'Administrator-Freigaben', 'Autorisations administrateur', 'Δικαιώματα διαχειριστή'],
     enabled: ['Enable AI', 'KI aktivieren', 'Activer l’IA', 'Ενεργοποίηση AI'],

@@ -347,6 +347,10 @@ try {
     await page.locator('#language-selector').selectOption(lang);
     assert.equal(await page.locator('#view-ai h2').innerText(), title);
     assert.equal(await page.locator('#ai-feature option').count(), 8);
+    assert.deepEqual(await page.locator('#view-ai [data-i18n]').evaluateAll(items => items
+      .filter(item => !translations[currentLang][item.dataset.i18n] || item.textContent !== t(item.dataset.i18n))
+      .map(item => item.dataset.i18n)), [], `AI labels use the selected ${lang} translations`);
+    assert.match(await page.locator('#view-ai [data-i18n="ai_intro"]').innerText(), /experimental|experimentell|expérimental|πειραματικ/i);
   }
   await page.locator('summary[data-i18n="ai_scope"]').click();
   await page.locator('#ai-channel-ids').fill('5,6');

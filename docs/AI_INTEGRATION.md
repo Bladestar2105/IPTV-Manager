@@ -1,22 +1,26 @@
-# Optional AI assistance
+# Experimental AI assistance
 
-AI is disabled on new and upgraded installations. Existing playback, playlists,
+The AI integration is **experimental**, for both OpenAI-compatible API
+connections and personal ChatGPT connections. AI is disabled by default;
+upgrades preserve saved settings. Existing playback, playlists,
 EPG and provider sync work without an AI connection. Enable a small group of
 test users and individual functions before a broader rollout.
 
 ## Setup
 
-1. Open **AI** in the Web UI as an administrator. Enable the server policy,
+1. Open **AI Assistant** in the Web UI as an administrator. Enable the server policy,
    select allowed users by name and allowed functions, and decide whether users may configure
    their own connections.
 2. Either create an administrator connection and share it with selected users,
    or let an allowed user create a private connection. Users explicitly enable
    AI in their own preferences. A shared connection needs no user-supplied URL,
    key or model ID.
-3. Enter the API base address and, where required, its key. Check the displayed
+3. For an API connection, enter the base address and, where required, its key. Check the displayed
    destination before requesting discovery or a test. Entering or saving an
    address makes no network request. Custom proxy prefixes are preserved;
    known `/models` and `/chat/completions` suffixes are normalized.
+   Alternatively, choose **Connect my ChatGPT account** and complete the
+   [personal sign-in](#signing-in-and-disconnecting); no API address or key is required.
 4. Discover models, then select and test up to three candidates. Tests send only synthetic
    text and can incur provider charges. Select the tested recommendation or
    another tested model and finish setup. If model discovery is unavailable,
@@ -24,7 +28,15 @@ test users and individual functions before a broader rollout.
 5. As an administrator, select the library user by name (leave it empty only
    for global diagnosis). Choose a function, describe the task, and inspect the result. List changes
    require selection and confirmation of the stored before/after proposal.
+   **Select all actions** selects the entire proposal; **Clear selection**
+   deselects it. Neither button applies changes. Select dependent actions
+   together, such as creating a category and assigning channels to it.
    Applying or undoing a proposal does not call a model.
+
+For example, ask **“Create a list of all football channels”**. The list assistant
+can use familiar names such as Sky Sport Bundesliga and DAZN to propose matches
+from the authorized catalog, including numbered and quality variants. Review
+the suggested entries before confirming the list.
 
 User access lists support multiple selections with Ctrl/Cmd-click. Empty access
 lists grant no users access. Previously saved selections that no longer appear
@@ -563,6 +575,8 @@ reports a contained runtime. Choosing it asks for a connection name and nothing
 else: no address, no key, no model ID and no token parameter. Starting the
 sign-in shows the verification address supplied by the official flow and the
 one-time device code.
+Click the device code to copy it, open the verification address, and enter the
+code there. Connection feedback appears in the setup area, beside its controls.
 
 * The address is checked against the documented targets (`auth.openai.com`,
   `chatgpt.com`, `auth.chatgpt.com`) on the server and again in the browser. Any
@@ -771,11 +785,11 @@ terminating, whose child is still alive — and waits, with a bounded timeout, f
 the children to exit and their credential files to be removed before it
 terminates. In a container the primary process receives the stop signal while the
 runtimes live in the workers, so it forwards the signal, stops replacing workers,
-drains them within a bounded budget and sweeps what is left before exiting. A departing child removes its credential file while it still holds the lease and
-in the same transaction that releases it, so cleanup and acquisition exclude each
-other and it can never touch the files of a runtime that has since taken the same
-identity. Terminating immediately would leave a hydrated credential on disk
-while the service is offline.
+drains them within a bounded budget and sweeps what is left before exiting.
+Cleanup waits for confirmed child exit and holds the identity's lease until its
+credential files have been removed. If a worker exits before its child is
+reaped, the primary or restart recovery retains that lease and completes the
+cleanup before the identity can be reused.
 
 ### Restart, failure and disabling
 
