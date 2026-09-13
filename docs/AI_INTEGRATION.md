@@ -550,9 +550,10 @@ one-time device code.
   non-terminal state that no cancel or supersede can take either, and the
   attempt is published as completed only once the credential is actually stored;
   a poll on any worker keeps reporting the sign-in as still running until then.
-  Publishing also re-applies the AI policy — the server switch, the owner's
-  allowance and their personal preference — in the same transaction, because
-  polling an attempt deliberately does not: a sign-in finalized after access was
+  Publishing re-applies the whole completion gate in the same transaction —
+  policy, account, the session version the attempt was started under, the
+  connection, and a browser still watching — because sealing takes time and
+  polling an attempt deliberately re-applies none of it: a sign-in finalized after access was
   withdrawn would otherwise be reported as a working link. What that attempt
   stored is removed with the rest of its state.
   A worker that dies in that window leaves the attempt claimed but unfinished,
@@ -620,10 +621,12 @@ cancels queued and running jobs and ends the runtime. A runtime owned by another
 revoked; that worker's guard sees this within a second and releases the lease,
 and only that release counts as an acknowledgement that it has actually stopped.
 The sign-out runs after the acknowledgement, so two runtimes never share one
-identity directory. Without an acknowledgement nothing is removed at all: the
-child may still be running on that identity, so the unlink answers with a
-retryable conflict and leaves the lease in place rather than freeing an identity
-a live process is using. A request authorized before the marker went up can still win
+identity directory. Without an acknowledgement nothing is removed at all — and
+that includes the sign-out runtime's own hand-off: the child may still be running
+on that identity, so the unlink answers with a retryable conflict and leaves the
+lease in place rather than freeing an identity a live process is using. A lease
+whose worker really is gone stops its heartbeat and expires by itself, so an
+identity is never blocked for good. A request authorized before the marker went up can still win
 the lease after that scan; losing that race does not lead to wiping underneath it,
 the winner is revoked and awaited and the sign-out retried. If
 the remote sign-out cannot be confirmed, local access is still removed and the
@@ -638,8 +641,9 @@ left for the next read to drop. Deleting an account revokes its access before an
 request that starts during the teardown can still reach the credential. The
 deletion is refused if any of its runtimes did not acknowledge: the deletion's
 own triggers remove the credential and the lease, and a worker that never let go
-is not proof that its child stopped. The account is left as it was and the
-caller can retry. Its
+is not proof that its child stopped. That lease stays claimed as well, so a
+request made after the refusal — the account is put back as it was — cannot take
+an identity the old child may still be using. The caller can retry. Its
 runtimes are only stopped at that point; the credential and the runtime tree are
 removed after the deletion has committed, because that removal is irreversible
 and a deletion that fails must not cost the account its link. Deleting

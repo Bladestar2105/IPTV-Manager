@@ -304,7 +304,12 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
         // attempt without re-applying the policy, so a sign-in finalized after
         // access was withdrawn would be reported as a working link.
         const published = db.transaction(() => {
-            if (!policyAllows(ownerKey)) return false;
+            // The whole gate, on the row as it stands now: sealing takes time, and
+            // a password reset, a withdrawn policy, a started unlink or a browser
+            // that stopped watching in that window each mean this sign-in must not
+            // become a link.
+            const current = db.prepare('SELECT actor_version,connection_id,created_at,last_seen_at FROM ai_codex_logins WHERE id=?').get(row.id);
+            if (!current || !completionAllowed(ownerKey, current)) return false;
             return db.prepare('UPDATE ai_codex_logins SET status=?, error_code=NULL, updated_at=? WHERE id=? AND status=?')
                 .run('completed', Date.now(), row.id, SEALING_STATUS).changes > 0;
         }).immediate();
@@ -597,8 +602,9 @@ async function runDisconnect(actor, connection, ownerKey) {
         }
         // The sign-out runtime has only been signalled; wiping now would free the
         // identity for a relink whose files that child's pending cleanup could
-        // then remove.
-        await waitForLeaseRelease(ownerKey, connection.id);
+        // then remove. Its hand-off is an acknowledgement like any other: without
+        // it the unlink does not finish either.
+        if (!(await waitForLeaseRelease(ownerKey, connection.id))) acknowledged = false;
     }
     // No acknowledgement is not permission to finish. The child may still be
     // running on this identity, and freeing it here would let a replacement start
@@ -698,12 +704,12 @@ export async function stopAccountRuntimes(ownerKey) {
         if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
         db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
             .run(Date.now(), ownerKey, row.connection_id);
-        if (!(await waitForLeaseRelease(ownerKey, row.connection_id))) {
-            // The row is still cleared, so a dead worker cannot wedge the identity
-            // for good, but the caller is told that nothing acknowledged.
-            acknowledged = false;
-            db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').run(ownerKey, row.connection_id);
-        }
+        // The lease stays exactly where it is. Its child may still be running on
+        // that identity, and clearing the row would let the next authenticated
+        // request take it — including one made after a refused deletion put the
+        // account back. A worker that really is gone stops its heartbeat, so the
+        // lease expires on its own and the identity frees itself.
+        if (!(await waitForLeaseRelease(ownerKey, row.connection_id))) acknowledged = false;
     }
     return { acknowledged };
 }

@@ -658,12 +658,15 @@ describe('personal ChatGPT sign-in', () => {
         // A second click while the first start is still on its way to the lease:
         // the first attempt is not in any worker's attempt map yet, so nothing can
         // stop it, and it must lose the identity on its own.
-        const first = account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
-        const second = (async () => {
-            await until(() => db.prepare("SELECT count(*) AS n FROM ai_codex_logins WHERE connection_id=? AND status='starting'").get(connection.id).n > 0, 5000);
-            db.prepare("UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_superseded' WHERE connection_id=? AND status='starting'").run(connection.id);
-        })();
-        const [outcome] = await Promise.all([first.catch(error => error), second]);
+        // Superseded the instant the attempt is recorded, so the race is decided
+        // the same way on every run instead of depending on how fast the runtime
+        // starts.
+        db.exec(`CREATE TRIGGER test_supersede AFTER INSERT ON ai_codex_logins WHEN NEW.connection_id='${connection.id}' AND NEW.status='starting'
+            BEGIN UPDATE ai_codex_logins SET status='cancelled', error_code='ai_codex_login_superseded' WHERE id=NEW.id; END;`);
+        let outcome;
+        try {
+            outcome = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp').catch(error => error);
+        } finally { db.exec('DROP TRIGGER test_supersede'); }
         expect(outcome).toMatchObject({ code: 'AI_CONNECTION_CHANGED' });
         // The identity is free for the request that replaced it, not held by the
         // one that was cancelled.
@@ -1953,6 +1956,44 @@ describe('personal ChatGPT runtime ownership', () => {
             .rejects.toMatchObject({ code: 'AI_CODEX_NOT_LINKED' });
     }, 30000);
 
+    it('refuses to finish an unlink whose own sign-out runtime never let go', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // The identity is taken again the instant the sign-out runtime releases
+        // it, so its hand-off never completes. Wiping then would remove the
+        // identity under whatever holds it now.
+        db.exec(`CREATE TRIGGER test_hold_identity AFTER DELETE ON ai_codex_runtimes WHEN OLD.connection_id='${connection.id}' BEGIN
+            INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at)
+            VALUES(OLD.owner_key, OLD.connection_id, 'still-there', 999999, 'running', ${Date.now() + 600000}, ${Date.now()});
+        END;`);
+        try {
+            await expect(account.disconnectAccount(user, ownedRecord(user, connection.id)))
+                .rejects.toMatchObject({ code: 'AI_BUSY' });
+            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+        } finally {
+            db.exec('DROP TRIGGER test_hold_identity');
+            db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id);
+        }
+    }, 30000);
+
+    it('does not publish a sign-in whose session was revoked after the credential was stored', async () => {
+        const connection = createConnection();
+        await idleRuntimes();
+        // The reset lands after sealing, which the seal-time check cannot see.
+        db.exec(`CREATE TRIGGER test_revoke_after_seal AFTER INSERT ON ai_codex_credentials WHEN NEW.connection_id='${connection.id}'
+            BEGIN UPDATE users SET token_version=token_version+1 WHERE id=1; END;`);
+        try {
+            const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'session-fingerprint');
+            await until(() => !['starting', 'pending', 'sealing'].includes(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status), 10000);
+            expect(db.prepare('SELECT status FROM ai_codex_logins WHERE id=?').get(started.id).status).toBe('failed');
+            expect(credentials.readCredentialRecord('user:1', connection.id)).toBeNull();
+        } finally {
+            db.exec('DROP TRIGGER test_revoke_after_seal');
+            db.prepare('UPDATE users SET token_version=0 WHERE id=1').run();
+            await idleRuntimes();
+        }
+    }, 30000);
+
     it('refuses to finish an unlink the owner never acknowledged', async () => {
         const connection = await withModel();
         await seedLease(connection.id, 'silent-worker');
@@ -2092,6 +2133,11 @@ describe('personal ChatGPT runtime ownership', () => {
         await seedLease(connection.id, 'foreign-worker-lease', { pid: 987654 });
         try {
             expect(await account.stopAccountRuntimes('user:1')).toEqual({ acknowledged: false });
+            // And the identity stays claimed: clearing it would let the next
+            // authenticated request take it while that child may still run, which
+            // is exactly what a refused deletion leaves possible.
+            expect(db.prepare('SELECT lease_id FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)?.lease_id)
+                .toBe('foreign-worker-lease');
         } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
         // And an acknowledged one reports exactly that.
         await idleRuntimes();
