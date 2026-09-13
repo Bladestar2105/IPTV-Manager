@@ -296,6 +296,8 @@ try {
   policyGate = {started: policyStarted};
   await page.locator('#ai-save-policy').click();
   await pendingPolicy;
+  await page.locator('#nav-dashboard').click();
+  await page.locator('#nav-ai').click();
   assert.equal(await page.locator('#ai-run').isDisabled(), true, 'a pending reset cannot race a new job');
   await page.locator('#ai-cancel').click();
   assert.equal(await page.locator('#ai-save-policy').isDisabled(), true, 'unrelated action cleanup must not unlock a pending reset');
@@ -318,6 +320,11 @@ try {
   for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
     assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot abandon an in-flight job submission`);
   }
+  await page.locator('#nav-ai').click();
+  await page.locator('#nav-dashboard').click();
+  await page.locator('#nav-ai').click();
+  assert.equal(await page.locator('#ai-run').isDisabled(), true, 'navigation retains the pending submission');
+  assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_queued');
   const localFeedback = await page.locator('#ai-work-progress').boundingBox();
   const runButton = await page.locator('#ai-run').boundingBox();
   assert(localFeedback.y >= runButton.y && localFeedback.y - runButton.y < 160, 'progress is beside the job controls, not only at the top of the page');
@@ -449,6 +456,9 @@ try {
     assert.equal(await page.locator('#ai-history-historyA').isDisabled(), true, 'history cannot replace a running job');
     assert.equal(await page.locator('#ai-change-ruleChange').isDisabled(), true, 'stored changes cannot replace a running job');
     await historySection.click();
+    await page.locator('#nav-dashboard').click();
+    await page.locator('#nav-ai').click();
+    assert.equal(await page.locator('#ai-cancel').isDisabled(), true, 'navigation retains the pending cancellation');
     const activeJobPath = `/jobs/j${jobCount}`;
     const posts = requests.filter(request => request.path === '/jobs' && request.method === 'POST').length;
     for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history']) {
@@ -574,7 +584,21 @@ try {
   assert.equal(await page.locator('#ai-model').inputValue(), 'current-admin-model', 'shared setup uses the current administrative selection, not stale personal preferences');
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/ai/preferences') && response.request().postDataJSON()?.model_id === 'current-admin-model'), page.locator('#ai-finish').click()]);
   assert.equal(await page.locator('#ai-model-controls').isVisible(), false, 'borrowed connection cannot be tested or changed');
-  await page.evaluate(() => aiUI.clear());
+  cancelNext = true; nextJobError = null;
+  for (const change of ['actor', 'token']) {
+    await page.locator('#ai-prompt').fill('Private running request');
+    await page.locator('#ai-run').click();
+    await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
+    await page.evaluate(async change => {
+      if (change === 'actor') currentUser = {id: 3, is_admin: false};
+      else localStorage.setItem('jwt_token', 'synthetic-replacement-token');
+      await aiUI.open();
+    }, change);
+    assert.equal(await page.locator('#ai-prompt').inputValue(), '', `reopening after a ${change} change must not retain the old job view`);
+    assert.equal(await page.locator('#ai-connection').isDisabled(), false);
+  }
+  cancelNext = false;
+  await page.evaluate(() => { localStorage.removeItem('jwt_token'); aiUI.clear(); });
   assert.equal(await page.locator('#view-ai').innerText(), '', 'logout cleanup removes all AI state');
   await page.evaluate(() => {
     const original = fetchJSON; window.originalAiFetch = original;

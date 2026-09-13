@@ -224,7 +224,10 @@ window.aiUI = (() => {
     root()?.querySelectorAll('input[type=password]').forEach(input => { input.value = ''; });
     root()?.replaceChildren();
   }
-  async function open() {
+  async function open(refresh = false) {
+    // Navigation within the same login must not discard work still in flight.
+    if (!refresh && owner && owner === actor() && sessionToken === getToken()
+      && (submittingJob || jobId || pendingResets.size)) return;
     clear();
     owner = actor();
     sessionToken = getToken();
@@ -257,7 +260,7 @@ window.aiUI = (() => {
     featureChecks(box, 'policy-function', settings.functions || []);
     button(box, 'save-policy', 'save', async () => {
       settings = await api('/settings', 'PUT', {enabled: checked('policy-enabled'), allow_own_connections: checked('own-allowed'), allowed_user_ids: ids('allowed-users'), functions: selectedFeatures('policy-function'), internal_targets: value('targets').split('\n').map(s => s.trim()).filter(Boolean)});
-      await open();
+      await open(true);
       el('policy-progress').closest('details').open = true;
       status(settings.enabled ? 'saved' : 'off', 'policy');
     });
@@ -329,7 +332,7 @@ window.aiUI = (() => {
     });
     button(box, 'delete-connection', 'deleteConnection', async () => {
       if (!chosen() || !confirm(tr('confirmDelete'))) return;
-      await api(`/connections/${encodeURIComponent(chosen().id)}`, 'DELETE'); await open();
+      await api(`/connections/${encodeURIComponent(chosen().id)}`, 'DELETE'); await open(true);
     }, 'outline-danger');
     select.addEventListener('change', () => {
       clearTimeout(timer); jobId = null;
