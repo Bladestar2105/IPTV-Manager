@@ -2540,6 +2540,39 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?').get('user:1', connection.id)).toBeUndefined();
     }, 30000);
 
+    it('does not let a teardown mistake a slow cleanup for a hand-off', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const now = Date.now();
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at) VALUES(?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'cleanup-expired', process.pid, 'cleanup', now - 60000, now - 60000);
+        try {
+            // A teardown reads this to decide whether the identity came back.
+            expect(runtime.runtimeState('user:1', connection.id)).toMatchObject({ state: 'cleanup' });
+            // So an unlink must not wipe the same files from a second place while
+            // that removal is still running.
+            await expect(account.disconnectAccount(user, ownedRecord(user, connection.id)))
+                .rejects.toMatchObject({ code: 'AI_BUSY' });
+            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
+    }, 30000);
+
+    it('frees a stopped runtime\'s identity once its files are gone', async () => {
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        expect(fs.existsSync(session.paths.authFile)).toBe(true);
+        runtime.stopRuntime(session);
+        await session.client.exited;
+        // The identity stays claimed as a cleanup reservation while its files go
+        // and is released once they are. That the removal itself runs outside the
+        // database transaction is a property of the code, not of this test.
+        await until(() => !fs.existsSync(session.paths.authFile), 10000);
+        expect(() => db.prepare("INSERT INTO settings(key,value) VALUES('probe-write','1') ON CONFLICT(key) DO UPDATE SET value='1'").run()).not.toThrow();
+        await idleRuntimes();
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
+        db.prepare("DELETE FROM settings WHERE key='probe-write'").run();
+    }, 30000);
+
     it('keeps a slow cleanup\'s reservation even once its lease looks expired', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();

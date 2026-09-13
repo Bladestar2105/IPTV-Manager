@@ -359,11 +359,18 @@ async function completeLogin(row, ownerKey, connectionId, notification) {
 // Marks whatever holds this identity as revoked and waits for its owner to
 // acknowledge by releasing the lease. Reports whether that happened.
 async function revokeAndWait(ownerKey, connectionId) {
-    if (!runtimeState(ownerKey, connectionId)) return true;
+    const state = runtimeState(ownerKey, connectionId);
+    if (!state) return true;
     const live = liveRuntime(ownerKey, connectionId);
     if (live) stopRuntime(live, 'AI_CODEX_RUNTIME_CLOSED');
-    db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
-        .run(Date.now(), ownerKey, connectionId);
+    // A cleanup reservation is not a runtime that can be revoked: nothing is
+    // running behind it, its holder is removing files and releases the row when
+    // that is done. Marking it revoked would only make the wait below succeed
+    // while those files are still going.
+    if (state.state !== 'cleanup') {
+        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+            .run(Date.now(), ownerKey, connectionId);
+    }
     return waitForLeaseRelease(ownerKey, connectionId);
 }
 

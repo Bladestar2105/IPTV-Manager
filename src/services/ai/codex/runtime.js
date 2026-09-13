@@ -168,10 +168,15 @@ export function runtimeState(ownerKey, connectionId) {
         .get(ownerKey, connectionId);
     if (!row) return null;
     if (row.expires_at >= Date.now()) return row;
-    // An expired lease that still names a process is not a free identity. This is
-    // what a teardown reads to decide whether the identity was handed back, so
-    // hiding such a row here would let an unlink or a deletion wipe the credential
-    // and the directory underneath a process that is still using them.
+    // A cleanup reservation is released by its holder, never by a clock, so an
+    // expired one is still a held identity. Reporting it as free would let a
+    // teardown take the removal for an acknowledgement and wipe the same files
+    // from a second place.
+    if (row.state === 'cleanup') return row;
+    // An expired lease that still names a process is not a free identity either.
+    // This is what a teardown reads to decide whether the identity was handed
+    // back, so hiding such a row here would let an unlink or a deletion wipe the
+    // credential and the directory underneath a process that is still using them.
     return row.child_pid && identityProcessAlive(ownerKey, connectionId, row.child_pid) ? row : null;
 }
 
@@ -240,15 +245,24 @@ function releaseAfterExit(ownerKey, connectionId, leaseId, client) {
     // land between the release and the check, or between the check and the
     // removal.
     const release = () => {
-        db.transaction(() => {
-            const stillOurs = db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
-                .get(ownerKey, connectionId, leaseId);
+        // Two short transactions with the file removal between them. Deleting a
+        // work directory is synchronous and can take a while on a slow data
+        // directory; doing it inside the transaction would hold SQLite's writer
+        // lock for that whole time and time out every other worker's writes.
+        // Exclusivity comes from the lease, not from the lock: the row stays
+        // claimed as a cleanup reservation, which no acquisition and no other
+        // cleanup may take, so a replacement still cannot own this identity while
+        // its files are being removed.
+        const claimed = db.transaction(() => db.prepare("UPDATE ai_codex_runtimes SET state='cleanup', updated_at=? WHERE owner_key=? AND connection_id=? AND lease_id=?")
+            .run(Date.now(), ownerKey, connectionId, leaseId).changes > 0).immediate();
+        try {
             // Someone force-released this identity and it may already belong to
             // another runtime; the sweeps clean up what is left behind.
-            if (stillOurs) clearPlaintext(ownerKey, connectionId);
+            if (claimed) clearPlaintext(ownerKey, connectionId);
+        } finally {
             db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND lease_id=?')
                 .run(ownerKey, connectionId, leaseId);
-        }).immediate();
+        }
     };
     client.exited.then(release, release);
     return client.exited;
