@@ -318,14 +318,48 @@ export function sweepOrphans() {
 // plaintext credentials it hydrated are removed, because the primary keeps
 // running and would otherwise leave the raw token on disk until the whole server
 // restarts. Directories are untouched: other workers may be mid-sign-in.
-export function releaseWorkerRuntimes(workerPid) {
+// A process that is gone, or was never recorded. Signalling with 0 only asks
+// whether it exists; EPERM means it exists but belongs to someone else, which is
+// not a process this manager started.
+function processGone(pid) {
+    if (!Number.isInteger(pid) || pid <= 1) return true;
+    try { process.kill(pid, 0); return false; } catch (error) { return error?.code !== 'EPERM'; }
+}
+
+// Ends a sandboxed runtime whose worker died. Its lease is only released once
+// the process is really gone: bubblewrap dies with its parent, but the macOS
+// backend has no equivalent, so an orphan can outlive the worker that spawned
+// it and would otherwise share an identity with its replacement.
+async function endOrphan(pid) {
+    if (processGone(pid)) return true;
+    for (const signal of ['SIGTERM', 'SIGKILL']) {
+        try { process.kill(pid, signal); } catch { /* it may have exited in between */ }
+        for (let waited = 0; waited < (signal === 'SIGTERM' ? 20 : 10); waited += 1) {
+            if (processGone(pid)) return true;
+            await new Promise(resolve => { const timer = setTimeout(resolve, 100); timer.unref?.(); });
+        }
+    }
+    return processGone(pid);
+}
+
+export async function releaseWorkerRuntimes(workerPid) {
     // A worker that died during a sign-in wrote a credential file but never
     // sealed it, so it has no record for the credential-driven pass to find. Its
     // own leases are the only trace of those identities.
-    const held = db.prepare('SELECT owner_key,connection_id FROM ai_codex_runtimes WHERE worker_pid=?').all(workerPid);
+    const held = db.prepare('SELECT owner_key,connection_id,child_pid FROM ai_codex_runtimes WHERE worker_pid=?').all(workerPid);
     let leases = 0;
     let cleared = 0;
+    let retained = 0;
     for (const row of held) {
+        // The identity stays claimed while its process lives. Handing it on now
+        // would let a replacement hydrate the same credential beside an orphan
+        // that is still running on it.
+        if (!(await endOrphan(row.child_pid))) {
+            db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=? AND worker_pid=?")
+                .run(Date.now(), row.owner_key, row.connection_id, workerPid);
+            retained += 1;
+            continue;
+        }
         // Releasing the dead worker's lease and taking the cleanup lease happen in
         // one step, so no other worker can slip in and hydrate between them.
         const replaced = db.transaction(() => {
@@ -341,8 +375,11 @@ export function releaseWorkerRuntimes(workerPid) {
         try { if (clearIdentityPlaintext(row.owner_key, row.connection_id)) cleared += 1; }
         finally { db.prepare("DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=? AND state='cleanup'").run(row.owner_key, row.connection_id); }
     }
-    leases += db.prepare('DELETE FROM ai_codex_runtimes WHERE worker_pid=?').run(workerPid).changes;
-    return { leases, cleared: cleared + clearAbandonedPlaintext() };
+    // Anything still recorded for that worker either had no process of its own or
+    // has just been confirmed gone; a retained lease was marked revoked above and
+    // is left alone, to expire once nothing refreshes it.
+    leases += db.prepare("DELETE FROM ai_codex_runtimes WHERE worker_pid=? AND state<>'revoked'").run(workerPid).changes;
+    return { leases, retained, cleared: cleared + clearAbandonedPlaintext() };
 }
 
 // No sign-in and no runtime lease survives a restart: a device-code attempt

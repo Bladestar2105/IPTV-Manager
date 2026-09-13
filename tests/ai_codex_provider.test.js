@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 // The personal ChatGPT adapter is exercised against a synthetic app server that
 // speaks the real newline-delimited JSON-RPC protocol, so the manager's own
@@ -946,7 +947,7 @@ describe('personal ChatGPT runtime robustness', () => {
         // running, so the startup sweep is not going to happen.
         await seedLease(connection.id, 'dead-worker-lease', { pid: 987654 });
         expect(fs.existsSync(paths.authFile)).toBe(true);
-        const released = credentials.releaseWorkerRuntimes(987654);
+        const released = await credentials.releaseWorkerRuntimes(987654);
         expect(released).toMatchObject({ leases: 1, cleared: 1 });
         expect(fs.existsSync(paths.authFile)).toBe(false);
         expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
@@ -970,7 +971,7 @@ describe('personal ChatGPT runtime robustness', () => {
         await idleRuntimes();
         fs.writeFileSync(paths.authFile, JSON.stringify({ tokens: { access_token: 'unsealed-token' } }), { mode: 0o600 });
         await seedLease(connection.id, 'dead', { pid });
-        expect(credentials.releaseWorkerRuntimes(pid).cleared).toBeGreaterThan(0);
+        expect((await credentials.releaseWorkerRuntimes(pid)).cleared).toBeGreaterThan(0);
         expect(fs.existsSync(paths.authFile)).toBe(false);
         expect(started.status).toBe('pending');
     }, 30000);
@@ -1007,7 +1008,7 @@ describe('personal ChatGPT runtime robustness', () => {
         try {
             expect(fs.existsSync(session.paths.authFile)).toBe(true);
             // Recovering an unrelated worker must not touch a leased runtime.
-            expect(credentials.releaseWorkerRuntimes(987654)).toMatchObject({ leases: 0, cleared: 0 });
+            expect(await credentials.releaseWorkerRuntimes(987654)).toMatchObject({ leases: 0, cleared: 0 });
             expect(fs.existsSync(session.paths.authFile)).toBe(true);
         } finally { runtime.stopRuntime(session); }
     });
@@ -1592,6 +1593,46 @@ describe('personal ChatGPT runtime ownership', () => {
         expect(after.account_hash).toBe(before.account_hash);
     }, 30000);
 
+    it('ends an orphaned sandbox child before handing its identity on', async () => {
+        // A child that ignores SIGTERM, as an orphan of a crashed worker can.
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        const pid = session.client.pid;
+        // The lease knows which process holds this identity.
+        expect(db.prepare('SELECT child_pid FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).child_pid).toBe(pid);
+        // The worker is gone without stopping anything; only the primary is left
+        // to clean up, and it must not free the identity while that child runs.
+        db.prepare('UPDATE ai_codex_runtimes SET worker_pid=? WHERE connection_id=?').run(424242, connection.id);
+        const released = await credentials.releaseWorkerRuntimes(424242);
+        expect(released.retained).toBe(0);
+        expect(() => process.kill(pid, 0)).toThrow();
+        expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)).toBeUndefined();
+        runtime.stopRuntime(session);
+        await idleRuntimes();
+    }, 30000);
+
+    it('keeps the identity claimed while an orphan cannot be ended', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const now = Date.now();
+        // A live process this manager is not allowed to signal stands in for one
+        // that will not go away. Without such a process on the host there is
+        // nothing to model here.
+        const foreign = Number(execFileSync('ps', ['-axo', 'pid=,uid='], { encoding: 'utf8' })
+            .split('\n').map(line => line.trim().split(/\s+/)).find(([pid, uid]) => uid === '0' && Number(pid) > 1)?.[0]);
+        if (!Number.isInteger(foreign)) return;
+        db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at,child_pid) VALUES(?,?,?,?,?,?,?,?)')
+            .run('user:1', connection.id, 'orphaned', 424243, 'running', now + 60000, now, foreign);
+        try {
+            const released = await credentials.releaseWorkerRuntimes(424243);
+            expect(released.retained).toBe(1);
+            // Still claimed, and marked so nothing treats it as a healthy runtime.
+            expect(db.prepare('SELECT state FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).state).toBe('revoked');
+            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
+    }, 30000);
+
     it('does not delete the files of a runtime that starts while cleanup runs', async () => {
         const connection = await linkedConnection();
         const session = await runtime.startRuntime('user:1', connection.id);
@@ -1600,7 +1641,7 @@ describe('personal ChatGPT runtime ownership', () => {
             // leave its hydrated credential and work directory intact.
             expect(fs.existsSync(session.paths.authFile)).toBe(true);
             expect(credentials.sweepOrphans().cleared).toBe(0);
-            expect(credentials.releaseWorkerRuntimes(999999)).toMatchObject({ cleared: 0 });
+            expect(await credentials.releaseWorkerRuntimes(999999)).toMatchObject({ cleared: 0 });
             expect(fs.existsSync(session.paths.authFile)).toBe(true);
             expect(fs.existsSync(session.paths.workDir)).toBe(true);
         } finally { runtime.stopRuntime(session); }

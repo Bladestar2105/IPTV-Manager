@@ -479,6 +479,12 @@ disabled and reports the specific cause (`AI_CODEX_SANDBOX_MISSING`,
   marker is exempt. Ownership is verified once more after the handshake, because
   that can outlast a revocation's wait, and a session is never handed to its
   caller once its identity has been released.
+* A lease records the sandboxed process it belongs to. When a worker dies, the
+  primary ends that process — signalled, then killed — and only releases the
+  lease once it is really gone: bubblewrap dies with its parent, the macOS
+  backend has no equivalent, and an orphan sharing an identity with its
+  replacement would mean two processes on one credential. A process that cannot
+  be ended keeps its identity claimed, marked revoked, until its lease expires.
 * One runtime per identity and connection, held by a database lease with a
   heartbeat. The lease is the promise that no process is using that identity, so
   a stopping runtime keeps it until its child has actually exited — closing only

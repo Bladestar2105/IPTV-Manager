@@ -43,6 +43,10 @@ export function migrateAiSchema(db) {
     // version: an ordinary token refresh advances the version too, and relinking
     // an already linked connection finds the credential it was about to replace.
     if(!db.prepare('PRAGMA table_info(ai_codex_credentials)').all().some(column=>column.name==='login_id')) db.exec('ALTER TABLE ai_codex_credentials ADD COLUMN login_id TEXT');
+    // The sandboxed process a lease belongs to. A worker can die while its child
+    // is still alive — macOS has no equivalent of bubblewrap's die-with-parent —
+    // and the identity must not be handed on before that child is really gone.
+    if(!db.prepare('PRAGMA table_info(ai_codex_runtimes)').all().some(column=>column.name==='child_pid')) db.exec('ALTER TABLE ai_codex_runtimes ADD COLUMN child_pid INTEGER');
     db.exec(`
         CREATE TRIGGER IF NOT EXISTS ai_delete_user AFTER DELETE ON users BEGIN
             DELETE FROM ai_connections WHERE owner_key='user:' || OLD.id;

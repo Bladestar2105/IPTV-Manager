@@ -97,7 +97,7 @@ let redisClient = null;
       // full startup sweep.
       try {
         const {releaseWorkerRuntimes} = await import('./services/ai/codex/credentials.js');
-        releaseWorkerRuntimes(worker.process.pid);
+        await releaseWorkerRuntimes(worker.process.pid);
       } catch(e) { console.error('AI runtime cleanup error:', e.message); }
 
       // A worker that exited because the container is stopping is not replaced.

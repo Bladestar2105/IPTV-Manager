@@ -279,6 +279,12 @@ export async function startRuntime(ownerKey, connectionId, { onNotification, onC
             }
         });
         session.client = client;
+        // Recorded before anything else can fail: if this worker dies, the
+        // primary needs to know which process still holds this identity.
+        if (Number.isInteger(client.pid)) {
+            db.prepare('UPDATE ai_codex_runtimes SET child_pid=? WHERE owner_key=? AND connection_id=? AND lease_id=?')
+                .run(client.pid, ownerKey, connectionId, leaseId);
+        }
         await handshake(client, paths, availability.version, budget(HANDSHAKE_TIMEOUT_MS));
         // The handshake may outlast a revocation's wait, after which the unlink
         // has already forced the lease away, wiped the credential and cleared its
