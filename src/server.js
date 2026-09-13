@@ -68,7 +68,7 @@ let redisClient = null;
       // No sign-in, runtime lease or teardown marker survives a restart, so clear
       // them first; the sweep then sees an accurate set of directories still in
       // use, and no connection stays blocked by an interrupted teardown.
-      resetInterruptedRuntimes();
+      await resetInterruptedRuntimes();
       clearAbandonedTeardowns();
       sweepOrphans();
     } catch { /* An unavailable optional runtime never blocks startup. */ }
@@ -126,7 +126,7 @@ let redisClient = null;
       }
       try {
         const {resetInterruptedRuntimes, sweepOrphans} = await import('./services/ai/codex/credentials.js');
-        resetInterruptedRuntimes();
+        await resetInterruptedRuntimes();
         sweepOrphans();
       } catch { /* An unavailable optional runtime never blocks shutdown. */ }
     };

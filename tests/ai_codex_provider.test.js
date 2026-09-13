@@ -39,8 +39,13 @@ vi.mock('../src/services/ai/codex/isolation.js', async () => {
         // Keeps the real environment construction so inheritance is still proven;
         // only the interpreter path and the fixture's own config pointer are
         // added so the synthetic server can start at all.
+        // Mirrors what every real backend puts on the command line: bubblewrap
+        // binds the identity's directories and sets `--chdir`, seatbelt names its
+        // profile inside the identity's home. The manager identifies its own
+        // orphaned runtimes by exactly that, so the stand-in carries it too.
         wrapCommand: (_backend, { codexHome, workDir, command }) =>
-            ({ file: command[0], args: command.slice(1), environment: actual.sandboxEnvironment(codexHome, workDir) })
+            ({ file: command[0], args: [...command.slice(1), '--sandbox-home', codexHome, '--sandbox-cwd', workDir],
+                environment: actual.sandboxEnvironment(codexHome, workDir) })
     };
 });
 
@@ -930,7 +935,7 @@ describe('personal ChatGPT runtime robustness', () => {
         // it would otherwise reach a data-directory backup.
         credentials.hydrate('user:1', connection.id);
         expect(fs.existsSync(paths.authFile)).toBe(true);
-        credentials.resetInterruptedRuntimes();
+        await credentials.resetInterruptedRuntimes();
         const swept = credentials.sweepOrphans();
         expect(swept.cleared).toBeGreaterThan(0);
         expect(fs.existsSync(paths.authFile)).toBe(false);
@@ -1612,25 +1617,38 @@ describe('personal ChatGPT runtime ownership', () => {
         await idleRuntimes();
     }, 30000);
 
-    it('keeps the identity claimed while an orphan cannot be ended', async () => {
+    it('never signals a recycled pid that is not this identity\'s runtime', async () => {
         const connection = await linkedConnection();
         await idleRuntimes();
         const now = Date.now();
-        // A live process this manager is not allowed to signal stands in for one
-        // that will not go away. Without such a process on the host there is
-        // nothing to model here.
+        // A recorded pid that now belongs to something else entirely — across a
+        // restart that is the normal case. It must be left alone, not signalled,
+        // and it must not keep the identity claimed either.
         const foreign = Number(execFileSync('ps', ['-axo', 'pid=,uid='], { encoding: 'utf8' })
             .split('\n').map(line => line.trim().split(/\s+/)).find(([pid, uid]) => uid === '0' && Number(pid) > 1)?.[0]);
         if (!Number.isInteger(foreign)) return;
         db.prepare('INSERT INTO ai_codex_runtimes(owner_key,connection_id,lease_id,worker_pid,state,expires_at,updated_at,child_pid) VALUES(?,?,?,?,?,?,?,?)')
             .run('user:1', connection.id, 'orphaned', 424243, 'running', now + 60000, now, foreign);
-        try {
-            const released = await credentials.releaseWorkerRuntimes(424243);
-            expect(released.retained).toBe(1);
-            // Still claimed, and marked so nothing treats it as a healthy runtime.
-            expect(db.prepare('SELECT state FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id).state).toBe('revoked');
-            expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
-        } finally { db.prepare('DELETE FROM ai_codex_runtimes WHERE connection_id=?').run(connection.id); }
+        const released = await credentials.releaseWorkerRuntimes(424243);
+        expect(released.retained).toBe(0);
+        expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)).toBeUndefined();
+        // The stranger is still running: nothing was sent to it.
+        expect(() => execFileSync('ps', ['-p', String(foreign)], { stdio: 'ignore' })).not.toThrow();
+    }, 30000);
+
+    it('ends a sandbox child that outlived the whole manager', async () => {
+        fake({ ignoreTerm: true, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        const session = await runtime.startRuntime('user:1', connection.id);
+        const pid = session.client.pid;
+        // A primary that was killed rather than drained: the lease and the child
+        // are both still there when the next start runs.
+        const reset = await credentials.resetInterruptedRuntimes();
+        expect(reset.retained).toBe(0);
+        expect(() => process.kill(pid, 0)).toThrow();
+        expect(db.prepare('SELECT 1 FROM ai_codex_runtimes WHERE connection_id=?').get(connection.id)).toBeUndefined();
+        runtime.stopRuntime(session);
+        await idleRuntimes();
     }, 30000);
 
     it('does not delete the files of a runtime that starts while cleanup runs', async () => {
@@ -2363,9 +2381,11 @@ describe('personal ChatGPT runtime ownership', () => {
         const started = await account.startAccountLink(user, ownedRecord(user, connection.id), 'fp');
         expect(runtime.runtimeState('user:1', connection.id)).toBeTruthy();
         // A restart cannot inherit an in-flight attempt or a held lease.
-        const reset = credentials.resetInterruptedRuntimes();
+        const reset = await credentials.resetInterruptedRuntimes();
         expect(reset.logins).toBe(1);
-        expect(reset.leases).toBeGreaterThan(0);
+        // However the row went — reaped here or released by the child's own exit
+        // — the identity is free again.
+        expect(runtime.runtimeState('user:1', connection.id)).toBeNull();
         expect(db.prepare('SELECT status,error_code FROM ai_codex_logins WHERE id=?').get(started.id))
             .toMatchObject({ status: 'failed', error_code: 'ai_codex_login_interrupted' });
         credentials.sweepOrphans();

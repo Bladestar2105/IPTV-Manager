@@ -1,4 +1,5 @@
 import crypto, { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import db from '../../../database/db.js';
@@ -326,12 +327,22 @@ function processGone(pid) {
     try { process.kill(pid, 0); return false; } catch (error) { return error?.code !== 'EPERM'; }
 }
 
+// A recorded pid may have been recycled — across a restart it almost certainly
+// was — so it is only ever signalled when the process still looks like this very
+// identity's runtime. Every sandbox command carries the identity's own
+// directory, which no unrelated process has in its arguments.
+function runsThisIdentity(pid, root) {
+    if (processGone(pid)) return false;
+    try { return execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 }).includes(root); }
+    catch { return false; }
+}
+
 // Ends a sandboxed runtime whose worker died. Its lease is only released once
 // the process is really gone: bubblewrap dies with its parent, but the macOS
 // backend has no equivalent, so an orphan can outlive the worker that spawned
 // it and would otherwise share an identity with its replacement.
-async function endOrphan(pid) {
-    if (processGone(pid)) return true;
+async function endOrphan(pid, root) {
+    if (!runsThisIdentity(pid, root)) return true;
     for (const signal of ['SIGTERM', 'SIGKILL']) {
         try { process.kill(pid, signal); } catch { /* it may have exited in between */ }
         for (let waited = 0; waited < (signal === 'SIGTERM' ? 20 : 10); waited += 1) {
@@ -354,7 +365,7 @@ export async function releaseWorkerRuntimes(workerPid) {
         // The identity stays claimed while its process lives. Handing it on now
         // would let a replacement hydrate the same credential beside an orphan
         // that is still running on it.
-        if (!(await endOrphan(row.child_pid))) {
+        if (!(await endOrphan(row.child_pid, identityPaths(row.owner_key, row.connection_id).root))) {
             db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=? AND worker_pid=?")
                 .run(Date.now(), row.owner_key, row.connection_id, workerPid);
             retained += 1;
@@ -385,11 +396,28 @@ export async function releaseWorkerRuntimes(workerPid) {
 // No sign-in and no runtime lease survives a restart: a device-code attempt
 // lives only in the worker that started it. Called once by the primary process
 // before workers start, so the following sweep sees an accurate live set.
-export function resetInterruptedRuntimes() {
+export async function resetInterruptedRuntimes() {
     const logins = db.prepare("UPDATE ai_codex_logins SET status='failed', error_code='ai_codex_login_interrupted', updated_at=? WHERE status IN ('starting','pending')")
         .run(Date.now()).changes;
-    const leases = db.prepare('DELETE FROM ai_codex_runtimes').run().changes;
-    return { logins, leases };
+    // A primary that was killed rather than drained leaves its sandbox children
+    // behind on a backend that does not tie them to their parent. Releasing those
+    // leases before the processes are gone would hand a live identity to the
+    // worker that starts next, and the sweep below could delete files underneath
+    // it.
+    let retained = 0;
+    let reaped = 0;
+    for (const row of db.prepare('SELECT owner_key,connection_id,child_pid FROM ai_codex_runtimes WHERE child_pid IS NOT NULL').all()) {
+        if (await endOrphan(row.child_pid, identityPaths(row.owner_key, row.connection_id).root)) {
+            reaped += db.prepare('DELETE FROM ai_codex_runtimes WHERE owner_key=? AND connection_id=?')
+                .run(row.owner_key, row.connection_id).changes;
+            continue;
+        }
+        db.prepare("UPDATE ai_codex_runtimes SET state='revoked', updated_at=? WHERE owner_key=? AND connection_id=?")
+            .run(Date.now(), row.owner_key, row.connection_id);
+        retained += 1;
+    }
+    const leases = reaped + db.prepare("DELETE FROM ai_codex_runtimes WHERE state<>'revoked'").run().changes;
+    return { logins, leases, retained };
 }
 
 // Deleting an account removes exactly its own tree. A global sweep here would
