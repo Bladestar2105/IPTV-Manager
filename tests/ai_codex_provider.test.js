@@ -171,6 +171,19 @@ describe('personal ChatGPT adapter availability', () => {
         expect(fs.existsSync(recordPath)).toBe(false);
     });
 
+    it('charges runtime startup against the caller\'s deadline', async () => {
+        // The handshake is part of the operation. Left outside the budget, a slow
+        // host outlives the reservation that bounds the request.
+        fake({ initializeDelayMs: 800, recordPath, recordApprovalPath: approvalPath });
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        const started = Date.now();
+        await expect(runtime.startRuntime('user:1', connection.id, { deadline: Date.now() + 300 }))
+            .rejects.toMatchObject({ code: 'AI_TIMEOUT' });
+        expect(Date.now() - started).toBeLessThan(700);
+        await idleRuntimes();
+    }, 30000);
+
     it('spends one deadline across the whole turn, not one per phase', async () => {
         // A server that is slow to acknowledge the turn and then never completes
         // it. Giving each phase its own budget would hold the runtime for a
@@ -649,6 +662,33 @@ describe('personal ChatGPT sign-in', () => {
         }
         await idleRuntimes();
     }, 60000);
+
+    it('keeps the connection when its local teardown fails', async () => {
+        const connection = await linkedConnection();
+        await idleRuntimes();
+        // A local teardown that cannot complete: ending the connection's open
+        // sign-in fails. Removing the connection row anyway would drop the lease
+        // and the credential record through the deletion trigger while that
+        // teardown never happened, and report success for it.
+        const now = Date.now();
+        db.prepare(`INSERT INTO ai_codex_logins(id,owner_key,connection_id,login_id,status,verification_url,user_code,actor_version,session_hash,created_at,updated_at,expires_at,last_seen_at)
+            VALUES('stuck-attempt','user:1',?,'login-3','pending','https://auth.openai.com/codex/device','ABCD-1234',0,'fp',?,?,?,?)`)
+            .run(connection.id, now, now, now + 600000, now);
+        db.exec(`CREATE TRIGGER test_attempt_fail BEFORE UPDATE ON ai_codex_logins WHEN OLD.id='stuck-attempt'
+            BEGIN SELECT RAISE(ABORT,'attempt could not be ended'); END;`);
+        try {
+            await expect(ai.removeConnection(user, connection.id)).rejects.toBeTruthy();
+        } finally {
+            db.exec('DROP TRIGGER test_attempt_fail');
+            db.prepare("DELETE FROM ai_codex_logins WHERE id='stuck-attempt'").run();
+        }
+        const row = db.prepare('SELECT data_json FROM ai_connections WHERE id=?').get(connection.id);
+        expect(row).toBeTruthy();
+        // Nothing left blocking the connection that survived, either, and the
+        // link it still has is intact.
+        expect(JSON.parse(row.data_json).teardown).toBeUndefined();
+        expect(credentials.readCredentialRecord('user:1', connection.id)).not.toBeNull();
+    }, 30000);
 
     it('clears the teardown marker when the removal itself is refused', async () => {
         const connection = await linkedConnection();

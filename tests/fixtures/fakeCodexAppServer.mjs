@@ -127,13 +127,18 @@ function handle(message) {
     const reply = result => send({ id, result });
     const failure = text => send({ id, error: { code: -32600, message: text } });
     switch (method) {
-        case 'initialize':
-            return reply({
+        case 'initialize': {
+            // A slow handshake: part of the operation, so a caller with an
+            // overall deadline must charge it against that deadline.
+            const answer = () => reply({
                 userAgent: `iptv-manager/${config.reportedVersion || version} (Test OS; arm64) unknown (iptv-manager; 1.0.0)`,
                 codexHome: config.reportedHome || codexHome,
                 platformFamily: 'unix',
                 platformOs: 'linux'
             });
+            if (config.initializeDelayMs) { later(config.initializeDelayMs, answer); return undefined; }
+            return answer();
+        }
         case 'getAuthStatus':
             return reply({ authMethod: authStatus(), authToken: null, requiresOpenaiAuth: true });
         case 'account/read':

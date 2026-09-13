@@ -345,6 +345,10 @@ the existing `chat/completions` transport.
   suffix included, prerelease and build metadata together — in
   `AI_CODEX_VERSION_OVERRIDE` after validating it separately. The version probe and the runtime handshake read the same token,
   so an allowed build passes both gates rather than one.
+* A request spends one deadline across everything it does: waiting for the
+  identity to be handed over, the handshake, the authentication check and then
+  the turn or the model catalog. The startup is part of the operation, so a slow
+  host cannot make it outlive the reservation that bounds it.
 * A turn spends one deadline across all of its phases — opening the thread,
   submitting it and waiting for the answer — so a slow server cannot hold a
   runtime for a multiple of the caller's limit and outlive the reservation that
@@ -587,7 +591,12 @@ after its scan and have its runtime removed underneath it; the marker is counted
 overlapping teardown keeps it in place, and it is cleared again once the last one
 finishes, because the connection itself survives an unlink. A marker abandoned by
 a process that died mid-teardown is cleared on the next start, so no connection
-stays blocked, and a removal that is itself refused — by a session revoked while
+stays blocked. A removal whose local teardown fails — an attempt that cannot be
+ended, a credential that cannot be removed — does not delete the connection
+either: the deletion trigger would drop the lease and the credential record for
+a teardown that never happened. Only a remote sign-out that could not be
+confirmed is a reported outcome rather than a failure. A removal that is itself
+refused — by a session revoked while
 the sign-out was running, say — clears its own marker instead of leaving a
 surviving connection unusable. Storing a credential re-checks the marker in the same transaction,
 so a sign-in that was already authorized — including one whose completion is in

@@ -270,7 +270,13 @@ export async function removeConnection(actor,id) {
     let removed=false;
     try {
         const {disconnectAccount}=await import('./codex/account.js');
-        try { await disconnectAccount(actor,connection); } catch { /* removal proceeds even when the sign-out fails */ }
+        // Not caught: a remote sign-out that could not be confirmed is already a
+        // reported outcome rather than a failure, so anything that still throws
+        // here means the local teardown did not finish — a runtime that never
+        // acknowledged, or a credential that could not be removed. Deleting the
+        // row then drops the lease and the credential record under a live child,
+        // whose own cleanup no longer owns what it would remove.
+        await disconnectAccount(actor,connection);
         const result=deleteConnection(actor,id);
         removed=true;
         return result;

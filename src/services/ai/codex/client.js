@@ -38,9 +38,9 @@ function mapTurnError(error) {
     return 'AI_UNAVAILABLE';
 }
 
-export async function getAuthStatus(session) {
+export async function getAuthStatus(session, { timeoutMs = AUTH_STATUS_TIMEOUT_MS } = {}) {
     // The token itself is never requested; only the active method matters here.
-    const status = await session.client.request('getAuthStatus', { includeToken: false, refreshToken: false }, { timeoutMs: 15000 });
+    const status = await session.client.request('getAuthStatus', { includeToken: false, refreshToken: false }, { timeoutMs });
     return { authMethod: status?.authMethod ?? null, requiresOpenaiAuth: status?.requiresOpenaiAuth ?? null };
 }
 
@@ -54,8 +54,8 @@ export async function readAccount(session, { refreshToken = false } = {}) {
 // Managed ChatGPT sign-in must be the active mode for every billable request.
 // An inherited API key or any other credential source is a hard failure, never
 // a silent fallback.
-export async function requireChatGptAuth(session) {
-    const status = await getAuthStatus(session);
+export async function requireChatGptAuth(session, { timeoutMs } = {}) {
+    const status = await getAuthStatus(session, timeoutMs ? { timeoutMs } : {});
     if (status.authMethod === null) throw codexError('AI_CODEX_NOT_LINKED', 'No ChatGPT account is connected.', 409);
     if (status.authMethod !== 'chatgpt') throw codexError('AI_CODEX_UNEXPECTED_AUTH', 'An unexpected authentication mode is active.', 409);
     return status;
@@ -160,6 +160,7 @@ function turnInput(messages, schema) {
 // same size as the manager's response limit; it is deliberately not derived from
 // the token budget, because a token can be far more than a few bytes and that
 // would reject valid answers well below the promised limit.
+const AUTH_STATUS_TIMEOUT_MS = 15000;
 const MAX_STREAM_BYTES = 512 * 1024;
 // The documented app-server handshake budget for opening a thread, and never
 // more than what is left of the turn's own deadline.

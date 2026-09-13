@@ -32,18 +32,24 @@ export const chatgptAccountProvider = {
     requestTimeout(operation) { return operation === 'models' ? CODEX_SETUP_TIMEOUT_MS : CODEX_TURN_TIMEOUT_MS; },
     async execute({ connection, ownerKey, operation, payload, signal, beforeSend, tokenVersion }) {
         if (liveRuntime(ownerKey, connection.id)) throw aiError('AI_BUSY', 409);
+        // One deadline for everything this request does, established before the
+        // runtime is started. Waiting for a hand-off, the handshake and the
+        // authentication check are part of the operation; leaving them outside
+        // the budget let a slow host outlive the reservation that bounds it.
+        const deadline = Date.now() + chatgptAccountProvider.requestTimeout(operation);
+        const remaining = () => Math.max(1, deadline - Date.now());
         try {
             // The orchestrator's own recheck, evaluated inside the lease
             // transaction as well: access can be withdrawn while this request
             // waits for a runtime.
             const verifyEligible = () => { try { beforeSend?.(); return true; } catch { return false; } };
             return await withRuntime(ownerKey, connection.id, async session => {
-                await requireChatGptAuth(session);
+                await requireChatGptAuth(session, { timeoutMs: remaining() });
                 // Re-checked immediately before the billable request, exactly as the
                 // API transport does.
                 beforeSend?.();
                 if (operation === 'models') {
-                    const models = await listModels(session, { timeoutMs: CODEX_SETUP_TIMEOUT_MS });
+                    const models = await listModels(session, { timeoutMs: remaining() });
                     const usable = models.filter(model => MODEL_ID.test(model.id));
                     if (!usable.length) throw aiError('AI_INVALID_RESPONSE', 502);
                     return { result: { models: usable }, usage: { prompt_tokens: null, completion_tokens: null } };
@@ -55,7 +61,7 @@ export const chatgptAccountProvider = {
                     structured: payload.structured !== false,
                     maxTokens: payload.maxTokens,
                     signal,
-                    timeoutMs: CODEX_TURN_TIMEOUT_MS,
+                    timeoutMs: remaining(),
                     // Re-checked once more inside, immediately before the turn is
                     // submitted, because starting the thread can take long enough
                     // for access to change.
@@ -64,7 +70,7 @@ export const chatgptAccountProvider = {
                 // A token refreshed during the turn is captured before teardown.
                 seal(ownerKey, connection.id, {}, { refreshOnly: true });
                 return { result: { content: turn.content }, usage: turn.usage };
-            }, { verifyEligible, tokenVersion });
+            }, { verifyEligible, tokenVersion, deadline });
         } catch (error) { throw translate(error); }
     }
 };
