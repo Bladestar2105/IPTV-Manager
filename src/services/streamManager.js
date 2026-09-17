@@ -1,3 +1,4 @@
+import { formatDbError } from '../database/sqliteWrites.js';
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
@@ -93,7 +94,7 @@ class StreamManager {
       try {
         this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, data.last_activity, ip, this.pid, providerId);
       } catch (e) {
-        console.error('DB Add Error:', e.message);
+        console.error('DB Add Error:', formatDbError(e));
       }
     }
 
@@ -137,7 +138,7 @@ class StreamManager {
           await this.remove(row.id);
         }
       } catch (e) {
-        console.error('DB Session Cleanup Error:', e.message);
+        console.error('DB Session Cleanup Error:', formatDbError(e));
       }
     }
   }
@@ -197,7 +198,7 @@ class StreamManager {
           await this.remove(row.id);
         }
       } catch (e) {
-        console.error('DB Cleanup Error:', e.message);
+        console.error('DB Cleanup Error:', formatDbError(e));
       }
     }
   }
@@ -231,7 +232,7 @@ class StreamManager {
       try {
         this.stmtTouch.run(now, id);
       } catch (e) {
-        console.error('DB Touch Error:', e.message);
+        console.error('DB Touch Error:', formatDbError(e));
       }
     }
   }

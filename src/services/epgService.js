@@ -2,6 +2,7 @@ import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
+import { formatDbError } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 import { importEpgFromUrl } from './epgImportService.js';
@@ -90,7 +91,7 @@ async function importChannelsFromProvider(providerId) {
 
         console.info(`✅ Imported ${channels.length} channels from provider ${providerId} into EPG DB`);
     } catch (e) {
-        console.error(`❌ Failed to import channels from provider ${providerId}:`, e.message);
+        console.error(`❌ Failed to import channels from provider ${providerId}:`, formatDbError(e));
         throw e;
     } finally {
         importDb.close();

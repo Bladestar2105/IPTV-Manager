@@ -9,6 +9,13 @@ services:
       - "0.0.0.0:3000:3000"
     volumes:
       - ./data:/data
+    # Without a limit the JSON log file grows without bound and older output is
+    # never rotated away, so a past incident cannot be reconstructed.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       - DATA_DIR=/data
       - NODE_ENV=production

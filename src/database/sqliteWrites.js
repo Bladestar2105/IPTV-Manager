@@ -52,3 +52,17 @@ export async function runWriteWithRetry(operation, options = {}) {
     }
   }
 }
+
+/**
+ * `message [CODE]` for SQLite errors, plain message otherwise.
+ *
+ * Logging only `e.message` made "database is locked" indistinguishable between
+ * SQLITE_BUSY (a writer that waited out its busy_timeout) and
+ * SQLITE_BUSY_SNAPSHOT (a deferred transaction whose snapshot went stale) —
+ * two problems with completely different fixes.
+ */
+export function formatDbError(error) {
+  if (!error) return 'unknown error';
+  const message = error.message || String(error);
+  return error.code ? `${message} [${error.code}]` : message;
+}

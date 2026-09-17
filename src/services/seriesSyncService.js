@@ -1,5 +1,5 @@
 import { clearChannelsCache } from './cacheService.js';
-import { immediateTransaction, runWriteWithRetry } from '../database/sqliteWrites.js';
+import { formatDbError, immediateTransaction, runWriteWithRetry } from '../database/sqliteWrites.js';
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
@@ -247,7 +247,7 @@ export async function syncSeriesEpisodes(providerId) {
           }
         } catch (e) {
           failed++;
-          console.debug(`Episode fetch failed for series ${item.sid}: ${e.message}`);
+          console.debug(`Episode fetch failed for series ${item.sid}: ${formatDbError(e)}`);
         }
       }
     };

@@ -217,6 +217,20 @@ redirect re-checks and DNS rebinding protection. HTTPS EPG sources may use
 self-signed certificates; this exception is scoped to EPG downloads and does
 not disable TLS certificate validation globally or for stream proxy requests.
 
+## Logging
+
+Every line carries the emitting process id (`[<timestamp>] [w<pid>] ...`). The
+cluster interleaves the output of one primary and one worker per CPU in a single
+stream, so without it two adjacent lines cannot be attributed to a run or to two
+workers competing for the same lock. SQLite failures additionally carry the
+error code (`database is locked [SQLITE_BUSY]`), because the same message is
+produced by a writer that waited out its busy timeout and by a deferred
+transaction whose read snapshot went stale.
+
+The Compose file configures `json-file` log rotation (`max-size: 20m`,
+`max-file: 5`). Without it Docker keeps one unbounded file, and a past incident
+can no longer be reconstructed once it has been truncated or lost.
+
 ## Docker Notes
 
 The Docker image builds on Node.js 24 Alpine and uses `/data` for mutable
