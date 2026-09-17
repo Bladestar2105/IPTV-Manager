@@ -54,8 +54,10 @@ let redisClient = null;
     initDb(true);
     initEpgDb();
 
-    // Staging tables an aborted EPG import left behind. Safe here because no
-    // worker is running yet, so this can never hit a live import.
+    // Staging tables an abandoned EPG import left behind. Having no workers here
+    // does not mean no import is running: during an overlapping restart another
+    // process may share DATA_DIR. Only tables older than EPG_STAGE_STALE_MS are
+    // dropped, so a live import is never touched.
     const orphanedStages = dropOrphanedStagingTables(epgDb);
     if (orphanedStages > 0) console.info(`🧹 Removed ${orphanedStages} orphaned EPG staging table(s)`);
   }

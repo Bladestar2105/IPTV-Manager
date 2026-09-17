@@ -9,8 +9,9 @@ vi.mock('../src/database/db.js', () => ({
 }));
 vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.fn() }));
 
-const { importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, EPG_STAGE_PREFIX } =
-  await import('../src/services/epgImportService.js');
+const {
+  importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt, EPG_STAGE_PREFIX,
+} = await import('../src/services/epgImportService.js');
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const epgDb = (await import('../src/database/epgDb.js')).default;
 
@@ -52,7 +53,8 @@ describe('staged EPG import', () => {
     vi.clearAllMocks();
     epgDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
     epgDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
-    dropOrphanedStagingTables(epgDb);
+    epgDb.prepare('DELETE FROM epg_import_state WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+    dropOrphanedStagingTables(epgDb, { staleMs: 1, now: Date.now() + 86400000 });
   });
 
   afterAll(() => {
@@ -117,8 +119,8 @@ describe('staged EPG import', () => {
   });
 
   it('rejects an unusable source identity instead of building a table name from it', () => {
-    expect(stagingTableNames('custom"; DROP TABLE epg_channels; --', 1, 'tok').channels)
-      .toBe(`${EPG_STAGE_PREFIX}channels_customdroptableepgchannels_1_tok`);
+    expect(stagingTableNames('custom"; DROP TABLE epg_channels; --', 1, 'tok', 1000).channels)
+      .toBe(`${EPG_STAGE_PREFIX}channels_customdroptableepgchannels_1_${(1000).toString(36)}_tok`);
     expect(() => stagingTableNames('custom', '1; DROP TABLE epg_channels')).toThrow(/Invalid EPG source identity/);
     expect(() => stagingTableNames('', 1)).toThrow(/Invalid EPG source identity/);
     // A hostile token cannot inject DDL: only [a-z0-9] survives, and an empty
@@ -127,6 +129,7 @@ describe('staged EPG import', () => {
     expect(hostile.channels).toMatch(/^[a-z0-9_]+$/);
     expect(hostile.programs).toMatch(/^[a-z0-9_]+$/);
     expect(() => stagingTableNames('custom', 1, '!!!')).toThrow(/Invalid EPG source identity/);
+    expect(() => stagingTableNames('custom', 1, 'tok', 0)).toThrow(/Invalid EPG source identity/);
   });
 
   it('gives two runs of the same source separate staging tables', () => {
@@ -139,12 +142,48 @@ describe('staged EPG import', () => {
     expect(a.channels.startsWith(`${EPG_STAGE_PREFIX}channels_${SOURCE_TYPE}_${SOURCE_ID}_`)).toBe(true);
   });
 
-  it('sweeps staging tables an aborted run left behind', () => {
-    const orphan = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
-    epgDb.exec(`CREATE TABLE ${orphan.channels} (id TEXT); CREATE TABLE ${orphan.programs} (id TEXT);`);
-    expect(stagingTableCount()).toBe(2);
+  it('sweeps only staging tables that are old enough to be abandoned', () => {
+    const now = Date.now();
+    const fresh = stagingTableNames(SOURCE_TYPE, SOURCE_ID, 'freshrun', now - 60000);
+    const abandoned = stagingTableNames(SOURCE_TYPE, SOURCE_ID, 'oldrun', now - 7 * 60 * 60 * 1000);
+    epgDb.exec(`CREATE TABLE ${fresh.channels} (id TEXT); CREATE TABLE ${fresh.programs} (id TEXT);`);
+    epgDb.exec(`CREATE TABLE ${abandoned.channels} (id TEXT); CREATE TABLE ${abandoned.programs} (id TEXT);`);
+    expect(stagingTableCount()).toBe(4);
 
-    expect(dropOrphanedStagingTables(epgDb)).toBe(2);
+    // During an overlapping restart another process may still be filling its
+    // tables, so a blanket sweep would break its prepared inserts.
+    expect(dropOrphanedStagingTables(epgDb, { now })).toBe(2);
+    expect(stagingTableCount()).toBe(2);
+    expect(stagingTableStartedAt(fresh.channels)).toBe(now - 60000);
+
+    epgDb.exec(`DROP TABLE ${fresh.channels}; DROP TABLE ${fresh.programs};`);
+  });
+
+  it('refuses a promotion from a run that started before the current snapshot', async () => {
+    // A slower import that started earlier must not roll back the newer feed.
+    fetchSafe.mockResolvedValue({
+      ok: true,
+      body: Readable.from([xml([{ start: future(1), stop: future(2), title: 'Newer Show' }])]),
+    });
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+    const promotedSeq = epgDb.prepare('SELECT promoted_seq FROM epg_import_state WHERE source_type = ? AND source_id = ?')
+      .get(SOURCE_TYPE, SOURCE_ID).promoted_seq;
+    expect(promotedSeq).toBeGreaterThan(0);
+
+    // Pretend a much newer import already promoted while this one was parsing.
+    epgDb.prepare('UPDATE epg_import_state SET promoted_seq = ? WHERE source_type = ? AND source_id = ?')
+      .run(promotedSeq + 3600000, SOURCE_TYPE, SOURCE_ID);
+
+    fetchSafe.mockResolvedValue({
+      ok: true,
+      body: Readable.from([xml([{ start: future(3), stop: future(4), title: 'Older Show' }])]),
+    });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .rejects.toThrow(/newer EPG import already promoted/i);
+
+    const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
+      .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
+    expect(titles).toEqual(['Newer Show']);
     expect(stagingTableCount()).toBe(0);
   });
 });

@@ -68,9 +68,19 @@ describe('fetchSafe request budget', () => {
   it('aborts a body that never finishes', async () => {
     // Regression: the only timer was cleared as soon as the headers arrived, so
     // reading a stalled body hung forever.
+    const started = Date.now();
     const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000, maxDurationMs: 600 });
     expect(response.ok).toBe(true);
     await expect(response.text()).rejects.toThrow();
+    // And it aborts on the *total* budget, not on the larger header timeout.
+    expect(Date.now() - started).toBeLessThan(3000);
+  }, 15000);
+
+  it('treats maxDurationMs as a hard cap even below the header timeout', async () => {
+    const started = Date.now();
+    await expect(fetchSafe(`${base}/slow-headers`, { timeout: 30000, maxDurationMs: 400 }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(Date.now() - started).toBeLessThan(3000);
   }, 15000);
 
   it('still aborts when the headers never arrive', async () => {

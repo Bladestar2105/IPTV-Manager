@@ -57,8 +57,10 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
 
   const headerTimeout = requestTimeout || DEFAULT_HEADER_TIMEOUT_MS;
   const totalBudget = Number(maxDurationMs) > 0 ? Number(maxDurationMs) : resolveMaxRequestDurationMs();
-  // Redirect hops share one overall deadline; each hop gets its own header budget.
-  const effectiveDeadline = deadline ?? Date.now() + Math.max(totalBudget, headerTimeout);
+  // The total budget is a hard cap. Raising it to the header timeout when the
+  // caller asked for a smaller one would silently ignore the configured limit;
+  // the header timer is capped by the remaining total instead.
+  const effectiveDeadline = deadline ?? Date.now() + totalBudget;
   const remainingTotal = () => effectiveDeadline - Date.now();
 
   if (remainingTotal() <= 0) {

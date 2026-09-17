@@ -17,38 +17,74 @@ function decodeXmlIfNeeded(value) {
 
 export const EPG_STAGE_PREFIX = 'epg_stage_';
 
-/**
- * Staging table names for one import run.
- *
- * The names carry a per-run token: two updates of the same source can overlap —
- * a scheduled provider update and the fire-and-forget update after a manual
- * sync — and shared names would let one run drop the tables another is still
- * filling. sourceType and sourceId are validated because they end up in DDL.
- */
-export function stagingTableNames(sourceType, sourceId, runToken = randomUUID()) {
-    const type = String(sourceType).replace(/[^a-z]/gi, '').toLowerCase();
-    const id = Number(sourceId);
-    const token = String(runToken).replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 32);
-    if (!type || !Number.isInteger(id) || id < 0 || !token) {
-        throw new Error(`Invalid EPG source identity: ${sourceType}/${sourceId}`);
-    }
-    return {
-        channels: `${EPG_STAGE_PREFIX}channels_${type}_${id}_${token}`,
-        programs: `${EPG_STAGE_PREFIX}programs_${type}_${id}_${token}`,
-    };
+// An import cannot legitimately run this long: HTTP_MAX_REQUEST_MS caps one
+// download at ten minutes by default. Anything older was abandoned.
+const DEFAULT_STAGE_STALE_MS = 6 * 60 * 60 * 1000;
+
+export function resolveStageStaleMs(raw = process.env.EPG_STAGE_STALE_MS) {
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STAGE_STALE_MS;
+    return Math.max(parsed, 60000);
 }
 
 /**
- * Remove staging tables an aborted process left behind. Only the primary calls
- * this, before any worker is forked, so it can never hit a live import.
+ * Staging table names for one import run.
+ *
+ * The names carry the run's start time and a per-run token: two updates of the
+ * same source can overlap — a scheduled provider update and the fire-and-forget
+ * update after a manual sync — and shared names would let one run drop the
+ * tables another is still filling. The timestamp additionally lets the startup
+ * sweep tell an abandoned table from one another process is still filling.
+ * sourceType and sourceId are validated because they end up in DDL.
  */
-export function dropOrphanedStagingTables(database) {
+export function stagingTableNames(sourceType, sourceId, runToken = randomUUID(), startedAtMs = Date.now()) {
+    const type = String(sourceType).replace(/[^a-z]/gi, '').toLowerCase();
+    const id = Number(sourceId);
+    const token = String(runToken).replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 32);
+    const started = Number(startedAtMs);
+    if (!type || !Number.isInteger(id) || id < 0 || !token || !Number.isFinite(started) || started <= 0) {
+        throw new Error(`Invalid EPG source identity: ${sourceType}/${sourceId}`);
+    }
+    const stamp = Math.floor(started).toString(36);
+    return {
+        channels: `${EPG_STAGE_PREFIX}channels_${type}_${id}_${stamp}_${token}`,
+        programs: `${EPG_STAGE_PREFIX}programs_${type}_${id}_${stamp}_${token}`,
+    };
+}
+
+/** Start time encoded in a staging table name, or null when it has none. */
+export function stagingTableStartedAt(name) {
+    const parts = String(name).split('_');
+    if (parts.length < 3) return null;
+    const stamp = parseInt(parts[parts.length - 2], 36);
+    return Number.isFinite(stamp) && stamp > 0 ? stamp : null;
+}
+
+/**
+ * Remove staging tables an abandoned run left behind.
+ *
+ * Having no workers in this primary does not mean no import is running: during
+ * an overlapping restart another process may share DATA_DIR and still be
+ * filling its tables. Only tables whose encoded start time is older than the
+ * stale threshold are dropped, so a live import is never touched.
+ */
+export function dropOrphanedStagingTables(database, options = {}) {
+    const now = Number(options.now) > 0 ? Number(options.now) : Date.now();
+    const staleMs = Number(options.staleMs) > 0 ? Number(options.staleMs) : resolveStageStaleMs();
     try {
         const rows = database.prepare(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? || '%'"
         ).all(EPG_STAGE_PREFIX);
-        for (const row of rows) database.exec(`DROP TABLE IF EXISTS ${row.name};`);
-        return rows.length;
+        let dropped = 0;
+        for (const row of rows) {
+            const startedAt = stagingTableStartedAt(row.name);
+            // A name without a usable timestamp cannot belong to a run of this
+            // code, so it is abandoned by definition.
+            if (startedAt !== null && now - startedAt <= staleMs) continue;
+            database.exec(`DROP TABLE IF EXISTS ${row.name};`);
+            dropped++;
+        }
+        return dropped;
     } catch (e) {
         console.warn(`Could not sweep EPG staging tables: ${e.message}`);
         return 0;
@@ -57,6 +93,13 @@ export function dropOrphanedStagingTables(database) {
 
 function createStagingTables(database, stage) {
     database.exec(`
+        CREATE TABLE IF NOT EXISTS epg_import_state (
+            source_type TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            promoted_at INTEGER NOT NULL,
+            promoted_seq INTEGER NOT NULL,
+            PRIMARY KEY (source_type, source_id)
+        );
         CREATE TABLE ${stage.channels} (
             id TEXT NOT NULL,
             name TEXT,
@@ -93,9 +136,20 @@ function dropStagingTables(database, stage) {
  * Replace the live rows of one source with the staged import, in one
  * transaction. Until this runs, the previous EPG data stays queryable.
  */
-function promoteStagedEpg(database, stage, sourceType, sourceId) {
+function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq) {
     const count = sql => Number(database.prepare(sql).get()?.c) || 0;
     return immediateTransaction(database, () => {
+        // Per-run staging tables keep two overlapping imports from dropping each
+        // other's data, but promotion still has to be ordered: a slower run that
+        // started earlier must not overwrite the newer snapshot with its older
+        // feed. The sequence is the run's start time in milliseconds.
+        const promoted = database.prepare(
+            'SELECT promoted_seq FROM epg_import_state WHERE source_type = ? AND source_id = ?'
+        ).get(sourceType, sourceId);
+        if (promoted && Number(promoted.promoted_seq) >= runSeq) {
+            throw new Error('A newer EPG import already promoted this source; discarding the older snapshot');
+        }
+
         const staged = {
             channels: count(`SELECT COUNT(*) AS c FROM ${stage.channels}`),
             programs: count(`SELECT COUNT(*) AS c FROM ${stage.programs}`),
@@ -121,6 +175,13 @@ function promoteStagedEpg(database, stage, sourceType, sourceId) {
             INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
             SELECT channel_id, source_type, source_id, start, stop, title, desc, lang FROM ${stage.programs}
         `).run();
+        database.prepare(`
+            INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_type, source_id) DO UPDATE SET
+                promoted_at = excluded.promoted_at,
+                promoted_seq = excluded.promoted_seq
+        `).run(sourceType, sourceId, Math.floor(Date.now() / 1000), runSeq);
         return staged;
     })();
 }
@@ -151,7 +212,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
     // error or a truncated download left the source without any EPG data until
     // the next successful run. The names are unique per run, so two concurrent
     // updates of the same source cannot drop each other's tables.
-    const stage = stagingTableNames(sourceType, sourceId);
+    const runSeq = Date.now();
+    const stage = stagingTableNames(sourceType, sourceId, undefined, runSeq);
 
     try {
         createStagingTables(importDb, stage);
@@ -351,7 +413,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             WHERE channel_id NOT IN (SELECT id FROM ${stage.channels})
         `).run();
 
-        const imported = promoteStagedEpg(importDb, stage, sourceType, sourceId);
+        const imported = promoteStagedEpg(importDb, stage, sourceType, sourceId, runSeq);
 
         if (sourceType === 'custom') {
             mainDb.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
@@ -370,6 +432,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         }
         throw e;
     } finally {
+        // This run owns these exact names, so they are dropped unconditionally.
         dropStagingTables(importDb, stage);
         importDb.close();
     }

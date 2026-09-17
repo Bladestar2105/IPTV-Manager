@@ -40,6 +40,16 @@ export function initEpgDb() {
 
       CREATE INDEX IF NOT EXISTS idx_epg_programs_source ON epg_programs(source_type, source_id);
       CREATE INDEX IF NOT EXISTS idx_epg_channels_source ON epg_channels(source_type, source_id);
+
+      -- Orders the promotions of overlapping imports of the same source, so a
+      -- slower run that started earlier cannot roll back a newer snapshot.
+      CREATE TABLE IF NOT EXISTS epg_import_state (
+        source_type TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        promoted_at INTEGER NOT NULL,
+        promoted_seq INTEGER NOT NULL,
+        PRIMARY KEY (source_type, source_id)
+      );
     `);
 
     console.log("✅ EPG Database initialized");

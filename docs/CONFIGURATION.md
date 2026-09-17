@@ -212,6 +212,12 @@ until this is exercised on a real Proxmox host.
 
 ## EPG Downloads
 
+- `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
+  abandoned and is removed at startup. Defaults to `21600000` (6 hours), minimum
+  `60000`. An import cannot legitimately run that long, and during an overlapping
+  restart another process may still be filling its tables, so the sweep must not
+  be unconditional.
+
 EPG imports still validate URLs with the SSRF-safe fetch path, including
 redirect re-checks and DNS rebinding protection. HTTPS EPG sources may use
 self-signed certificates; this exception is scoped to EPG downloads and does
