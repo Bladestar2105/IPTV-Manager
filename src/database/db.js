@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { DATA_DIR } from '../config/constants.js';
+import { openSqliteConnection } from './sqliteConnection.js';
 import * as migrations from './migrations.js';
 
 // Ensure Data Directory exists
@@ -10,16 +10,13 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
 
 export function openDbConnection() {
-    const connection = new Database(DB_PATH, { timeout: 5000 });
-    connection.pragma('foreign_keys = ON');
-    connection.pragma('busy_timeout = 5000');
-    connection.pragma('synchronous = NORMAL');
-    return connection;
+    // Shared settings for every connection: see src/database/sqliteConnection.js.
+    // A per-connection busy_timeout that is shorter than the longest write
+    // transaction turns normal lock contention into "database is locked".
+    return openSqliteConnection(DB_PATH);
 }
 
 const db = openDbConnection();
-// Performance tuning
-db.pragma('journal_mode = WAL');
 
 export function initDb(isPrimary) {
     if (isPrimary) {

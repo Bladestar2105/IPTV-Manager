@@ -19,6 +19,23 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 - `INITIAL_ADMIN_PASSWORD`: Optional first admin password. If omitted, a random
   password is generated and printed on first startup.
 
+## SQLite
+
+Every SQLite connection in the process is opened through
+`src/database/sqliteConnection.js` so the lock behavior is identical in the
+request path, the schedulers, and the EPG import. Both databases run in WAL
+mode.
+
+- `SQLITE_BUSY_TIMEOUT_MS`: How long a statement waits for a lock held by
+  another connection or worker. Defaults to `30000`, clamped to
+  `1000`–`300000`. It must stay above the longest write transaction the
+  application performs; a provider sync or a provider deletion can hold the
+  write lock for tens of seconds. Too low a value turns ordinary contention
+  into `database is locked`.
+- `SQLITE_WAL_SIZE_LIMIT_BYTES`: Upper bound for a `-wal` file after a
+  checkpoint. Defaults to `67108864` (64 MB), minimum `1048576`. Without the
+  limit a checkpointed WAL is reused in place and never shrinks again.
+
 ## Per-User Provider Access
 
 Administrators can enable the stored `provider_access` setting separately for

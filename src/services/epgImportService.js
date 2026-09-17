@@ -1,11 +1,11 @@
 import zlib from 'zlib';
 import { Transform } from 'stream';
-import Database from 'better-sqlite3';
 import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
+import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 function decodeXmlIfNeeded(value) {
@@ -24,11 +24,13 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
     }
 
-    // Create dedicated connection for import to handle large transactions and foreign key checks
-    const importDb = new Database(EPG_DB_PATH);
-    // Disable Foreign Keys during import to allow inserting programs before channels or missing channels
-    importDb.pragma('foreign_keys = OFF');
-    importDb.pragma('journal_mode = WAL');
+    // Dedicated connection for the import so the large batches do not block the
+    // shared one. Foreign keys stay OFF: programs may arrive before their
+    // channel, and `INSERT OR REPLACE INTO epg_channels` would otherwise cascade
+    // the delete into the programs that were just written.
+    // The shared factory supplies busy_timeout; a bare `new Database(path)` left
+    // it at 0, which made every collision an immediate "database is locked".
+    const importDb = openSqliteConnection(EPG_DB_PATH, { foreignKeys: false });
 
     const now = Math.floor(Date.now() / 1000);
 

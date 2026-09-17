@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { EPG_DB_PATH } from '../config/constants.js';
+import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 import { importEpgFromUrl } from './epgImportService.js';
@@ -54,7 +54,9 @@ async function importChannelsFromProvider(providerId) {
 
     if (channels.length === 0) return;
 
-    const importDb = new Database(EPG_DB_PATH);
+    // Foreign keys stay OFF for the same reason as in epgImportService:
+    // `INSERT OR REPLACE INTO epg_channels` would cascade into epg_programs.
+    const importDb = openSqliteConnection(EPG_DB_PATH, { foreignKeys: false });
     const now = Math.floor(Date.now() / 1000);
     const sourceType = 'provider';
     const sourceId = providerId;
