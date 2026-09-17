@@ -8,6 +8,7 @@ import { prePopulateProviderIconCache } from './logoResolver.js';
 import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
 import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
+import { acquireProviderLock, describeProviderLock } from './providerLockService.js';
 
 /**
  * Delete one provider channel without violating the dependent foreign keys.
@@ -265,6 +266,17 @@ export async function performSync(providerId, userId, options = {}) {
   let aiSnapshot = null;
   let status = 'error';
   let catalogFailures = [];
+
+  // One provider at a time, across every cluster worker. A manual sync used to
+  // be able to start while the scheduler was already syncing the same provider,
+  // and a provider deletion could run while its own sync was still in flight.
+  const lock = acquireProviderLock(providerId, 'sync');
+  if (!lock) {
+    const holder = describeProviderLock(providerId);
+    errorMessage = `Provider ${providerId} is already being ${holder?.operation === 'delete' ? 'deleted' : 'synchronized'}`;
+    console.warn(`⏳ ${errorMessage}; skipping this run`);
+    return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'locked' };
+  }
 
   try {
     config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
@@ -849,6 +861,8 @@ export async function performSync(providerId, userId, options = {}) {
       providerId, userId, startTime, config, status, errorMessage,
       channelsAdded, channelsUpdated, categoriesAdded
     });
+  } finally {
+    lock.release();
   }
 
   return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status };

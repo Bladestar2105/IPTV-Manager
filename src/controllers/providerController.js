@@ -3,6 +3,7 @@ import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry, deleteProviderChannelCascade } from '../services/syncService.js';
+import { acquireProviderLock, describeProviderLock } from '../services/providerLockService.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
@@ -486,6 +487,16 @@ export const bulkUpdateProviderUrls = async (req, res) => {
 };
 
 export const deleteProvider = (req, res) => {
+  // Deleting a provider while its own sync is still running made the sync's
+  // sync_logs insert fail with SQLITE_CONSTRAINT_FOREIGNKEY. The lock is shared
+  // with performSync and spans cluster workers.
+  const lock = acquireProviderLock(Number(req.params.id), 'delete');
+  if (!lock) {
+    const holder = describeProviderLock(Number(req.params.id));
+    return res.status(409).json({
+      error: `Provider is currently being ${holder?.operation === 'delete' ? 'deleted' : 'synchronized'}; try again once it finished`
+    });
+  }
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = Number(req.params.id);
@@ -522,6 +533,8 @@ export const deleteProvider = (req, res) => {
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
+  } finally {
+    lock.release();
   }
 };
 
@@ -553,6 +566,10 @@ export const syncProvider = async (req, res) => {
       allowCrossOwner: allow_cross_owner === true,
       restoreRevokedAssignments: restore_revoked_assignments === true
     });
+
+    if (result.status === 'locked') {
+      return res.status(409).json({error: result.errorMessage});
+    }
 
     if (result.status === 'error' || (result.errorMessage && result.status !== 'partial')) {
       return res.status(500).json({error: result.errorMessage || 'Sync failed'});

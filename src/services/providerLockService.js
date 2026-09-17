@@ -1,0 +1,123 @@
+import { randomUUID } from 'crypto';
+import db from '../database/db.js';
+
+// A provider sync runs for minutes. The lock outlives a slow run but expires
+// soon enough that a crashed worker does not block the provider for hours; a
+// held lock is renewed while the work is still in progress.
+const DEFAULT_TTL_SECONDS = 900;
+const RENEW_INTERVAL_MS = 60000;
+
+let tableState = 'unknown';
+
+/**
+ * The lock table is infrastructure for this service, so it is created here as
+ * well as in initDb. Creation is idempotent.
+ * Returns false when this database cannot hold locks (fixtures, mocks); callers
+ * then fall back to the previous, unsynchronized behaviour.
+ */
+function ensureTable() {
+  if (tableState !== 'unknown') return tableState === 'ready';
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_locks (
+        provider_id INTEGER PRIMARY KEY,
+        operation TEXT NOT NULL,
+        owner_pid INTEGER NOT NULL,
+        owner_token TEXT NOT NULL,
+        acquired_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+    `);
+    tableState = 'ready';
+  } catch (e) {
+    tableState = 'unavailable';
+    console.warn('Provider locks unavailable, concurrent provider operations are not serialized:', e.message);
+  }
+  return tableState === 'ready';
+}
+
+/** Test seam: forget the cached probe result. */
+export function resetProviderLockState() {
+  tableState = 'unknown';
+}
+
+/**
+ * Try to become the single owner of `providerId` for `operation`.
+ *
+ * schedulerService kept a per-process `Set`, which cannot see a manual sync
+ * running in another cluster worker, and provider deletion had no guard at all.
+ * The lock lives in the database so it spans workers and processes.
+ *
+ * @returns {{providerId:number, operation:string, token:string, release:Function}|null}
+ *          null when somebody else holds the lock.
+ */
+export function acquireProviderLock(providerId, operation, options = {}) {
+  const ttlSeconds = Number(options.ttlSeconds) > 0 ? Number(options.ttlSeconds) : DEFAULT_TTL_SECONDS;
+  if (!ensureTable()) return { providerId, operation, token: null, degraded: true, release() {} };
+
+  const now = Math.floor(Date.now() / 1000);
+  const token = randomUUID();
+  try {
+    db.prepare('DELETE FROM provider_locks WHERE provider_id = ? AND expires_at <= ?').run(providerId, now);
+    const inserted = db.prepare(`
+      INSERT INTO provider_locks (provider_id, operation, owner_pid, owner_token, acquired_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider_id) DO NOTHING
+    `).run(providerId, operation, process.pid, token, now, now + ttlSeconds).changes;
+    if (inserted !== 1) return null;
+  } catch (e) {
+    console.warn(`Could not acquire provider lock ${providerId}/${operation}:`, e.message);
+    return { providerId, operation, token: null, degraded: true, release() {} };
+  }
+
+  const renew = setInterval(() => {
+    try {
+      db.prepare('UPDATE provider_locks SET expires_at = ? WHERE provider_id = ? AND owner_token = ?')
+        .run(Math.floor(Date.now() / 1000) + ttlSeconds, providerId, token);
+    } catch { /* the release below clears it anyway */ }
+  }, RENEW_INTERVAL_MS);
+  renew.unref?.();
+
+  return {
+    providerId,
+    operation,
+    token,
+    degraded: false,
+    release() {
+      clearInterval(renew);
+      try {
+        db.prepare('DELETE FROM provider_locks WHERE provider_id = ? AND owner_token = ?').run(providerId, token);
+      } catch (e) {
+        console.warn(`Could not release provider lock ${providerId}:`, e.message);
+      }
+    },
+  };
+}
+
+export function releaseProviderLock(lock) {
+  if (lock && typeof lock.release === 'function') lock.release();
+}
+
+/** Who currently holds the lock, for diagnostics and 409 responses. */
+export function describeProviderLock(providerId) {
+  if (!ensureTable()) return null;
+  try {
+    return db.prepare('SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE provider_id = ?')
+      .get(providerId) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Drop every lock. Only the primary calls this, before any worker is forked, so
+ * a lock left behind by a killed container never blocks the next start.
+ */
+export function clearProviderLocks() {
+  if (!ensureTable()) return 0;
+  try {
+    return db.prepare('DELETE FROM provider_locks').run().changes;
+  } catch {
+    return 0;
+  }
+}

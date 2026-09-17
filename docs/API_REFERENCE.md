@@ -239,8 +239,14 @@ reports the outcome of the run:
   arrived and was applied; `warning` names the sections that failed. Stream
   types whose list or categories failed are not marked complete and are
   therefore never used for stale-row cleanup.
+- `409 {error}` — another sync or a deletion of the same provider is still
+  running. Sync and deletion of one provider are serialized through a lock in
+  the database, so the guard also holds across cluster workers.
 - `500 {error}` — the provider delivered nothing usable, or the run failed.
   Previously such a run answered `200 {success: true}` with `0/0/0` counters.
+
+`DELETE /api/providers/:id` answers `409` for the same reason while a sync of
+that provider is in flight.
 
 `sync_logs.status` uses the same three values: `success`, `partial`, `error`.
 A run that delivered nothing leaves `sync_configs.last_sync` untouched and

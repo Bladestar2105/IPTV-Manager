@@ -174,6 +174,17 @@ export function initDb(isPrimary) {
       FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
     );
 
+    -- Serializes sync and deletion of one provider across cluster workers.
+    -- No foreign key: the lock is held *while* the provider row is deleted.
+    CREATE TABLE IF NOT EXISTS provider_locks (
+      provider_id INTEGER PRIMARY KEY,
+      operation TEXT NOT NULL,
+      owner_pid INTEGER NOT NULL,
+      owner_token TEXT NOT NULL,
+      acquired_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS category_mappings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_id INTEGER NOT NULL,
@@ -280,6 +291,11 @@ export function initDb(isPrimary) {
     -- ⚡ Bolt: Add composite index for rapid rate-limiting queries to prevent full table scans during brute-force DoS attacks
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
+
+            // Nothing can hold a provider lock before the workers are forked,
+            // so anything left here is from a killed container.
+            const staleLocks = db.prepare('DELETE FROM provider_locks').run().changes;
+            if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} stale provider lock(s)`);
 
             console.log("✅ Database OK");
 
