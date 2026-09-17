@@ -548,6 +548,10 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const fetchOptions = { ...options };
     delete fetchOptions.agent;
     delete fetchOptions.redirect;
+    // Everything fetched here is proxied to a player: the body is a media stream
+    // that legitimately outlives any fixed duration, so only the wait for the
+    // headers is bounded.
+    fetchOptions.unboundedBody = true;
 
     for (const u of urls) {
         if (!u) continue;

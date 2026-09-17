@@ -426,7 +426,9 @@ export const proxySegment = async (req, res) => {
 
     let upstream;
     if (isOriginSafe) {
-        upstream = await fetchSafe(targetUrl, { headers });
+        // Proxied media: the body is streamed to the client and must not be
+        // cut by the global request deadline.
+        upstream = await fetchSafe(targetUrl, { headers, unboundedBody: true });
     } else {
         // If the original URL was unsafe (e.g. manually added loopback by an admin and we didn't check it)
         // Then we should probably not use fetchSafe because fetchSafe strictly forbids unsafe IPs.

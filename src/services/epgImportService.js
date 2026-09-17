@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { Transform } from 'stream';
 import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, resolveMaxRequestDurationMs } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
@@ -18,13 +18,23 @@ function decodeXmlIfNeeded(value) {
 export const EPG_STAGE_PREFIX = 'epg_stage_';
 
 // An import cannot legitimately run this long: HTTP_MAX_REQUEST_MS caps one
-// download at ten minutes by default. Anything older was abandoned.
+// download, so anything older than a wide multiple of that budget is abandoned.
 const DEFAULT_STAGE_STALE_MS = 6 * 60 * 60 * 1000;
+const STAGE_STALE_REQUEST_FACTOR = 4;
 
+/**
+ * Age after which a leftover staging table counts as abandoned.
+ *
+ * The floor is derived from the request budget instead of being a fixed
+ * constant: the sweep must never classify a live import of another process as
+ * stale, and that import can legitimately keep a body open for the whole of
+ * HTTP_MAX_REQUEST_MS. The two settings are therefore not independent.
+ */
 export function resolveStageStaleMs(raw = process.env.EPG_STAGE_STALE_MS) {
+    const floor = Math.max(60000, resolveMaxRequestDurationMs() * STAGE_STALE_REQUEST_FACTOR);
     const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STAGE_STALE_MS;
-    return Math.max(parsed, 60000);
+    const requested = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STAGE_STALE_MS;
+    return Math.max(requested, floor);
 }
 
 /**
@@ -187,6 +197,12 @@ function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq) {
 }
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
+    // Sampled before the first network wait: the sequence has to reflect the
+    // order the runs *started*. Taken after the fetch, a run whose headers
+    // arrive late would get the higher sequence and could overwrite a snapshot
+    // from a run that actually started later.
+    const runSeq = Date.now();
+
     console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
     // fetchSafe performs isSafeUrl check
     const response = await fetchSafe(url, { allowSelfSigned: true });
@@ -212,7 +228,6 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
     // error or a truncated download left the source without any EPG data until
     // the next successful run. The names are unique per run, so two concurrent
     // updates of the same source cannot drop each other's tables.
-    const runSeq = Date.now();
     const stage = stagingTableNames(sourceType, sourceId, undefined, runSeq);
 
     try {

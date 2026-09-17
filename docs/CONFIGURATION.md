@@ -185,6 +185,9 @@ until this is exercised on a real Proxmox host.
   Defaults to `600000` (10 minutes). The per-call `timeout` still bounds only
   the wait for the response headers; before this budget existed, a provider
   that answered fast and then stalled its body could hang a sync indefinitely.
+  It does **not** apply to proxied media: the stream paths pass `unboundedBody`,
+  so only their wait for the headers is bounded and a healthy live session is
+  never cut at the deadline.
 
 ## Stream Tracking
 
@@ -213,10 +216,11 @@ until this is exercised on a real Proxmox host.
 ## EPG Downloads
 
 - `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
-  abandoned and is removed at startup. Defaults to `21600000` (6 hours), minimum
-  `60000`. An import cannot legitimately run that long, and during an overlapping
-  restart another process may still be filling its tables, so the sweep must not
-  be unconditional.
+  abandoned and is removed at startup. Defaults to `21600000` (6 hours). The
+  effective value is never below four times `HTTP_MAX_REQUEST_MS`, because a
+  live import of another process may legitimately hold its body open for that
+  whole budget and the sweep must not classify it as stale during an overlapping
+  restart.
 
 EPG imports still validate URLs with the SSRF-safe fetch path, including
 redirect re-checks and DNS rebinding protection. HTTPS EPG sources may use

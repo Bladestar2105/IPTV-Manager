@@ -2,7 +2,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 
 const { fetchSafe } = vi.hoisted(() => ({ fetchSafe: vi.fn() }));
-vi.mock('../src/utils/network.js', () => ({ fetchSafe }));
+// Keep the real module's other exports: epgImportService derives its staging
+// stale floor from resolveMaxRequestDurationMs.
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
+  fetchSafe,
+}));
 vi.mock('../src/database/db.js', () => ({
   default: { prepare: () => ({ run: () => ({ changes: 0 }), get: () => undefined, all: () => [] }) },
   initDb: vi.fn(),
@@ -10,7 +15,8 @@ vi.mock('../src/database/db.js', () => ({
 vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.fn() }));
 
 const {
-  importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt, EPG_STAGE_PREFIX,
+  importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt,
+  resolveStageStaleMs, EPG_STAGE_PREFIX,
 } = await import('../src/services/epgImportService.js');
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const epgDb = (await import('../src/database/epgDb.js')).default;
@@ -116,6 +122,56 @@ describe('staged EPG import', () => {
     fetchSafe.mockResolvedValue({ ok: true, body: Readable.from(['<?xml version="1.0"?><tv></tv>']) });
     await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID)).resolves.toMatchObject({ success: true });
     expect(liveCounts()).toEqual({ channels: 0, programs: 0 });
+  });
+
+  it('keeps the stale threshold above the maximum request duration', () => {
+    // A live import of another process can legitimately hold a body open for
+    // the whole request budget, so the sweep threshold cannot be configured
+    // below it.
+    const previous = process.env.HTTP_MAX_REQUEST_MS;
+    const previousStale = process.env.EPG_STAGE_STALE_MS;
+    try {
+      process.env.HTTP_MAX_REQUEST_MS = '600000';
+      process.env.EPG_STAGE_STALE_MS = '60000';
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(600000);
+
+      process.env.HTTP_MAX_REQUEST_MS = '3600000';
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
+
+      delete process.env.EPG_STAGE_STALE_MS;
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
+    } finally {
+      if (previous === undefined) delete process.env.HTTP_MAX_REQUEST_MS;
+      else process.env.HTTP_MAX_REQUEST_MS = previous;
+      if (previousStale === undefined) delete process.env.EPG_STAGE_STALE_MS;
+      else process.env.EPG_STAGE_STALE_MS = previousStale;
+    }
+  });
+
+  it('numbers a run by its start, not by when its headers arrive', async () => {
+    // Import A starts first but its headers are delayed; B starts later and
+    // answers immediately. A must still carry the lower sequence.
+    const seen = [];
+    const slowHeaders = new Promise(resolve => setTimeout(resolve, 150));
+    fetchSafe.mockImplementation(async () => {
+      seen.push(Date.now());
+      if (seen.length === 1) await slowHeaders;
+      return { ok: true, body: Readable.from([xml([{ start: future(1), stop: future(2), title: `Run ${seen.length}` }])]) };
+    });
+
+    const first = importEpgFromUrl('https://epg.example/a.xml', SOURCE_TYPE, SOURCE_ID);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const second = importEpgFromUrl('https://epg.example/b.xml', SOURCE_TYPE, SOURCE_ID);
+
+    const results = await Promise.allSettled([first, second]);
+    // The later-started run wins; the earlier one is refused on promotion.
+    expect(results[1].status).toBe('fulfilled');
+    expect(results[0].status).toBe('rejected');
+    expect(String(results[0].reason?.message)).toMatch(/newer EPG import already promoted/i);
+
+    const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
+      .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
+    expect(titles).toEqual(['Run 2']);
   });
 
   it('rejects an unusable source identity instead of building a table name from it', () => {

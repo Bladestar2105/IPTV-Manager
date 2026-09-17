@@ -35,6 +35,10 @@ export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_M
  * @param {number} [options.timeout=15000] time to response headers, per hop
  * @param {number} [options.maxDurationMs] whole exchange; default HTTP_MAX_REQUEST_MS
  * @param {number} [options.maxBytes] reject when Content-Length exceeds this
+ * @param {boolean} [options.unboundedBody=false] the response body is a media
+ *        stream with no natural end (the proxy paths). The header budget still
+ *        applies; the total budget is dropped once the headers are in, because a
+ *        healthy live session legitimately outlives any fixed duration.
  * @param {boolean} [options.allowSelfSigned=false]
  */
 export async function fetchSafe(url, options = {}, redirectCount = 0, deadline = null) {
@@ -51,6 +55,7 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     timeout: requestTimeout = DEFAULT_HEADER_TIMEOUT_MS,
     maxDurationMs,
     maxBytes,
+    unboundedBody = false,
     allowSelfSigned = false,
     ...fetchOptionOverrides
   } = options;
@@ -136,6 +141,13 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
   } catch (e) {
     disarm();
     throw e;
+  }
+
+  if (unboundedBody) {
+    // A proxied media stream has no finite length. Bounding it would cut a
+    // healthy live session at the deadline.
+    disarm();
+    return response;
   }
 
   const body = response.body;
