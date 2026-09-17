@@ -94,7 +94,14 @@ function createSeriesEpisodeWriter(sourceKey) {
 
 async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, applySeries) {
   const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_info&series_id=${sid}`, { timeout: 30000 });
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    // A panel answering 401/429/5xx fast is exactly the case the breaker is
+    // for. Returning null here made it a silent per-series skip, so a refusing
+    // panel still received one request for every queued series.
+    const error = new Error(`HTTP ${resp.status}`);
+    error.upstreamStatus = resp.status;
+    throw error;
+  }
   // One series document; bounded so a stalled body cannot hold a worker slot.
   const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 32 * 1024 * 1024 });
   // Error payloads (auth failures etc.) carry neither episodes nor info;
@@ -142,15 +149,23 @@ export async function syncSeriesEpisode(providerId, seriesRemoteId) {
   const password = decrypt(series.password);
   const baseUrl = series.url.replace(/\/+$/, '');
   const authParams = `username=${encodeURIComponent(series.username)}&password=${encodeURIComponent(password)}`;
-  const episodeCount = await fetchSeriesEpisodesOnce(sourceKey, sid, () =>
-    fetchSeriesEpisodes(
-      baseUrl,
-      authParams,
-      sid,
-      lastModified,
-      createSeriesEpisodeWriter(sourceKey)
-    )
-  );
+  let episodeCount;
+  try {
+    episodeCount = await fetchSeriesEpisodesOnce(sourceKey, sid, () =>
+      fetchSeriesEpisodes(
+        baseUrl,
+        authParams,
+        sid,
+        lastModified,
+        createSeriesEpisodeWriter(sourceKey)
+      )
+    );
+  } catch (e) {
+    // The on-demand path reports a failed refresh; only the batch run counts
+    // failures toward its breaker.
+    console.debug(`Episode fetch failed for series ${sid}: ${formatDbError(e)}`);
+    return { synced: 0, failed: 1 };
+  }
   if (episodeCount === null) return { synced: 0, failed: 1 };
   if (episodeCount > 0) clearChannelsCache();
   return { synced: 1, failed: 0, episodes: episodeCount };

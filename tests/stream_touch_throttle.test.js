@@ -26,6 +26,25 @@ describe('stream activity throttle', () => {
     memDb.close();
   });
 
+  it('writes the heartbeat through the latency connection', async () => {
+    // Regression: the latency connection was assigned but the statement was
+    // still prepared from the shared one, so a contended heartbeat could block
+    // the worker for the full batch timeout.
+    const latency = new Database(':memory:');
+    latency.exec('CREATE TABLE marker (v INTEGER)');
+    const prepared = [];
+    latency.prepare = new Proxy(latency.prepare, {
+      apply(target, thisArg, args) { prepared.push(args[0]); return Reflect.apply(target, thisArg, args); },
+    });
+    try {
+      streamManager.init(memDb, null, latency);
+      expect(prepared.some(sql => /UPDATE current_streams SET last_activity/i.test(sql))).toBe(true);
+    } finally {
+      latency.close();
+      streamManager.init(memDb, null);
+    }
+  });
+
   it('collapses the flood of progress events into one write per window', async () => {
     await streamManager.add('s1', user, 'Channel', '10.0.0.1', null, 1, { dedupe: false });
     const afterAdd = lastActivity('s1');

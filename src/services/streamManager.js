@@ -63,7 +63,7 @@ class StreamManager {
           this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)');
           this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)');
           this.stmtIsActive = this.db.prepare('SELECT 1 FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? LIMIT 1');
-          this.stmtTouch = this.db.prepare('UPDATE current_streams SET last_activity = ? WHERE id = ?');
+          this.stmtTouch = this.latencyDb.prepare('UPDATE current_streams SET last_activity = ? WHERE id = ?');
           this.stmtGetById = this.db.prepare('SELECT * FROM current_streams WHERE id = ?');
           this.stmtDeleteByPid = this.db.prepare('DELETE FROM current_streams WHERE worker_pid = ?');
         } catch (e) {

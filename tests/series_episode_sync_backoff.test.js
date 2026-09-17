@@ -95,6 +95,18 @@ describe('episode sync back-off', () => {
     expect(fetchSafe.mock.calls.length).toBe(60);
   }, 20000);
 
+  it('gives up on a panel that refuses every request with an HTTP error', async () => {
+    // A fast 429/5xx was a silent per-series skip, so a refusing panel still
+    // received one request for every queued series.
+    seedSeries(400);
+    fetchSafe.mockImplementation(async () => ({ ok: false, status: 429, headers: { get: () => null } }));
+
+    const result = await syncSeriesEpisodes(1);
+
+    expect(result.gaveUp).toBe(true);
+    expect(fetchSafe.mock.calls.length).toBeLessThan(60);
+  }, 20000);
+
   it('does not give up because the local database is contended', async () => {
     // SQLITE_BUSY says the database is busy, not that the panel is down.
     // Counting it would drop the queue and blame the wrong side.

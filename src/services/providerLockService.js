@@ -1,5 +1,31 @@
 import { randomUUID } from 'crypto';
-import db from '../database/db.js';
+import * as dbModule from '../database/db.js';
+
+const db = dbModule.default;
+
+// The renewal fires from a timer while the worker may be pumping streams, and
+// better-sqlite3 blocks the event loop while it waits for a lock. A missed
+// renewal is harmless — the lease still has most of its TTL left and the next
+// tick retries — so it uses a connection that gives up quickly instead.
+// A namespace import keeps this optional: test doubles of the db module need
+// not provide it.
+let renewalDb = null;
+function renewalConnection() {
+  if (renewalDb) return renewalDb;
+  try {
+    renewalDb = typeof dbModule.openLatencyDbConnection === 'function'
+      ? dbModule.openLatencyDbConnection()
+      : db;
+  } catch {
+    renewalDb = db;
+  }
+  return renewalDb;
+}
+
+/** Test seam: forget the cached renewal connection. */
+export function resetProviderLockConnections() {
+  renewalDb = null;
+}
 
 // A provider sync runs for minutes. The lock outlives a slow run but expires
 // soon enough that a crashed worker does not block the provider for hours; a
@@ -117,9 +143,13 @@ export function acquireLock(lockKey, operation, options = {}) {
 
   const renew = setInterval(() => {
     try {
-      db.prepare('UPDATE provider_locks SET expires_at = ? WHERE lock_key = ? AND owner_token = ?')
+      renewalConnection()
+        .prepare('UPDATE provider_locks SET expires_at = ? WHERE lock_key = ? AND owner_token = ?')
         .run(Math.floor(Date.now() / 1000) + ttlSeconds, lockKey, token);
-    } catch { /* the release below clears it anyway */ }
+    } catch {
+      // A contended renewal is skipped, not waited out: the lease keeps most of
+      // its TTL and the next tick retries long before it expires.
+    }
   }, RENEW_INTERVAL_MS);
   renew.unref?.();
 
