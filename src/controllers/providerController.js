@@ -1,5 +1,5 @@
 import db from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry, deleteAllProviderChannels } from '../services/syncService.js';
@@ -36,7 +36,9 @@ const fetchProviderDetails = async (url, username, password) => {
     clearTimeout(timeout);
 
     if (resp.ok) {
-      const data = await resp.json();
+      // The AbortController above stops covering anything once the headers are
+      // in, so the body read carries its own bound.
+      const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 10000, maxBytes: 8 * 1024 * 1024 });
       if (data && data.user_info && data.user_info.max_connections) {
         const maxCon = parseInt(data.user_info.max_connections, 10);
         if (!isNaN(maxCon)) {

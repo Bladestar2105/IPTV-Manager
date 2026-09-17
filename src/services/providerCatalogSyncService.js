@@ -1,5 +1,5 @@
 import { Xtream } from '@iptv/xtream-api';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { armStreamDeadline, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { sanitizeErrorMessage } from '../utils/helpers.js';
 
@@ -100,7 +100,22 @@ export async function fetchProviderCatalog(provider, xtream) {
         // Try fetching as M3U
         const m3uResp = await fetchSafe(provider.url, { timeout: CATALOG_TIMEOUT_MS }); // Use original URL
         if (m3uResp.ok) {
-          const parsed = await parseM3uStream(m3uResp.body);
+          // The playlist is parsed from the stream rather than buffered, so it
+          // needs its own deadline. Without one a panel that answers and then
+          // stalls wedges performSync forever — and performSync holds the
+          // provider lock, whose lease keeps renewing, so every later sync of
+          // that provider is skipped until the process restarts.
+          const disarm = armStreamDeadline(
+            m3uResp.body,
+            CATALOG_BODY_TIMEOUT_MS,
+            `M3U download exceeded ${CATALOG_BODY_TIMEOUT_MS}ms`
+          );
+          let parsed;
+          try {
+            parsed = await parseM3uStream(m3uResp.body);
+          } finally {
+            disarm();
+          }
           if (parsed.isM3u) {
             console.debug('  📂 Detected M3U Playlist');
             m3uMode = true;

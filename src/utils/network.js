@@ -207,3 +207,23 @@ export async function readBodyWithLimit(response, options = {}) {
   const text = buffer.toString('utf8');
   return as === 'json' ? JSON.parse(text) : text;
 }
+
+/**
+ * Destroy a stream that has not finished within `timeoutMs`.
+ *
+ * For consumers that pipe a body into a parser instead of buffering it, where
+ * `readBodyWithLimit` does not apply. `fetchSafe` bounds only the wait for the
+ * headers, so without this such a read has no upper bound at all.
+ *
+ * @returns {Function} call it once the read finished, to disarm the deadline
+ */
+export function armStreamDeadline(stream, timeoutMs, message = 'Stream exceeded its deadline') {
+  if (!stream || typeof stream.destroy !== 'function' || !(Number(timeoutMs) > 0)) return () => {};
+  const timer = setTimeout(() => {
+    const error = new Error(message);
+    error.name = 'AbortError';
+    try { stream.destroy(error); } catch { /* already gone */ }
+  }, Number(timeoutMs));
+  timer.unref?.();
+  return () => clearTimeout(timer);
+}

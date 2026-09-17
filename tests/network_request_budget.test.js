@@ -10,7 +10,8 @@ vi.mock('../src/utils/helpers.js', async importOriginal => ({
   safeLookup: (hostname, options, callback) => dns.lookup(hostname, options, callback),
 }));
 
-const { fetchSafe, readBodyWithLimit, resolveMaxRequestDurationMs } = await import('../src/utils/network.js');
+const { armStreamDeadline, fetchSafe, readBodyWithLimit, resolveMaxRequestDurationMs } =
+  await import('../src/utils/network.js');
 
 let server;
 let base;
@@ -145,5 +146,41 @@ describe('fetchSafe request budget', () => {
     const response = await fetchSafe(`${base}/ok`, { timeout: 5000, maxBytes: 1024 });
     expect(response.ok).toBe(true);
     await response.text();
+  });
+});
+
+describe('armStreamDeadline', () => {
+  it('destroys a stream that never finishes', async () => {
+    // For consumers that parse from the stream instead of buffering it, where
+    // readBodyWithLimit does not apply — the M3U playlist and the EPG feed.
+    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000 });
+    const disarm = armStreamDeadline(response.body, 300, 'too slow');
+
+    const outcome = await new Promise(resolve => {
+      response.body.on('data', () => {});
+      response.body.once('error', e => resolve(e.message));
+      setTimeout(() => resolve('still open'), 2000);
+    });
+    disarm();
+    expect(outcome).toBe('too slow');
+  }, 15000);
+
+  it('does nothing once disarmed', async () => {
+    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000 });
+    const disarm = armStreamDeadline(response.body, 200, 'too slow');
+    disarm();
+
+    const outcome = await new Promise(resolve => {
+      response.body.on('data', () => {});
+      response.body.once('error', () => resolve('destroyed'));
+      setTimeout(() => resolve('still open'), 800);
+    });
+    response.body.destroy();
+    expect(outcome).toBe('still open');
+  }, 15000);
+
+  it('tolerates a value that is not a stream', () => {
+    expect(() => armStreamDeadline(null, 100)()).not.toThrow();
+    expect(() => armStreamDeadline({}, 100)()).not.toThrow();
   });
 });

@@ -289,6 +289,9 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         createStagingTables(importDb, stage);
 
         let stream = response.body;
+        // Every stage of the pipeline, so the watchdog can tear all of them
+        // down: destroying only the last one leaves the upstream socket open.
+        const pipelineStages = [response.body];
 
         // Check for GZIP signature (magic bytes 0x1f 0x8b)
         try {
@@ -312,6 +315,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                     }
                 });
 
+                pipelineStages.push(originalStream, gunzip, sizeChecker);
                 originalStream.pipe(gunzip).pipe(sizeChecker);
                 gunzip.on('error', (err) => {
                     sizeChecker.destroy(err);
@@ -329,7 +333,12 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 stream = originalStream;
             }
         } catch (e) {
-            console.warn(`⚠️ Failed to peek stream, proceeding as plain text: ${e.message}`);
+            // A rejected peek means the body errored before the first chunk —
+            // a reset connection, say. The stream is dead, and a listener added
+            // now never sees the event that already fired, so continuing would
+            // hang until the watchdog fires half an hour later with a
+            // misleading message. Fail with the real cause instead.
+            throw new Error(`EPG download failed before any data arrived: ${e.message}`);
         }
 
         const insertChannel = importDb.prepare(`
@@ -388,7 +397,9 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                 const error = new Error(`EPG download exceeded ${bodyTimeoutMs}ms`);
                 error.name = 'AbortError';
                 reject(error);
-                try { stream.destroy?.(error); } catch { /* already gone */ }
+                for (const stage of new Set([...pipelineStages, stream])) {
+                    try { stage?.destroy?.(error); } catch { /* already gone */ }
+                }
             }, bodyTimeoutMs);
             bodyTimer.unref?.();
 

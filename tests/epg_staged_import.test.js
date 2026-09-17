@@ -83,6 +83,24 @@ describe('staged EPG import', () => {
     expect(stagingTableCount()).toBe(0);
   });
 
+  it('fails fast when the body errors before any data arrives', async () => {
+    // A reset connection during the gzip sniff used to be swallowed; the import
+    // then hung until the watchdog fired half an hour later with a misleading
+    // message, holding the connection, the staging tables and is_updating.
+    seedExisting();
+    const before = liveCounts();
+    const dead = new Readable({ read() { this.destroy(new Error('ECONNRESET')); } });
+    fetchSafe.mockResolvedValue({ ok: true, body: dead });
+
+    const started = Date.now();
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .rejects.toThrow(/before any data arrived/i);
+    expect(Date.now() - started).toBeLessThan(5000);
+
+    expect(liveCounts()).toEqual(before);
+    expect(stagingTableCount()).toBe(0);
+  }, 20000);
+
   it('keeps the previous data when the download breaks mid-stream', async () => {
     seedExisting();
     const before = liveCounts();
