@@ -8,6 +8,18 @@ end
 return 0`;
 const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 2 * 60 * 1000);
 const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 * 1000);
+// ffmpeg emits `progress` roughly once per second per stream, and every one of
+// those used to become an UPDATE on the shared database. Only the inactivity
+// timeout depends on the value, so refreshing it far more often than that is
+// pure write amplification — and the failing updates showed up as
+// "DB Touch Error: database is locked" whenever a long write transaction ran.
+const STREAM_TOUCH_MIN_INTERVAL_MS = Math.max(
+  1000,
+  Math.min(
+    Number(process.env.STREAM_TOUCH_MIN_INTERVAL_MS) || Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 4),
+    Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 2))
+  )
+);
 
 class StreamManager {
   constructor() {
@@ -15,6 +27,7 @@ class StreamManager {
     this.redis = null;
     this.pid = process.pid;
     this.localStreams = new Map();
+    this.lastTouchAt = new Map();
   }
 
   init(db, redisClient) {
@@ -87,6 +100,9 @@ class StreamManager {
     if (resource) {
       this.localStreams.set(id, resource);
     }
+
+    // add() already stored last_activity; start the throttle window here.
+    this.lastTouchAt.set(id, data.last_activity);
   }
 
   async cleanupSession(userId, ip, channelName, providerId = 0, excludeId = null) {
@@ -158,6 +174,8 @@ class StreamManager {
         this.stmtRemove.run(id);
       } catch { /* ignore */ }
     }
+
+    this.lastTouchAt.delete(id);
   }
 
   async cleanupUser(userId, ip) {
@@ -184,8 +202,20 @@ class StreamManager {
     }
   }
 
-  async touch(id) {
+  /**
+   * Refresh the activity timestamp of a session.
+   * @param {string} id
+   * @param {object} [options]
+   * @param {boolean} [options.force=false] write even inside the throttle window
+   */
+  async touch(id, options = {}) {
     const now = Date.now();
+
+    if (!options.force) {
+      const previous = this.lastTouchAt.get(id) || 0;
+      if (now - previous < STREAM_TOUCH_MIN_INTERVAL_MS) return;
+    }
+    this.lastTouchAt.set(id, now);
 
     if (this.redis) {
       try {

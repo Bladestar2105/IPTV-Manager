@@ -1,4 +1,5 @@
 import { clearChannelsCache } from './cacheService.js';
+import { immediateTransaction, runWriteWithRetry } from '../database/sqliteWrites.js';
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
@@ -69,7 +70,10 @@ function createSeriesEpisodeWriter(sourceKey) {
       synced_at = excluded.synced_at
   `);
 
-  return db.transaction((sid, lastModified, episodes) => {
+  // BEGIN IMMEDIATE: this body upserts, then reads the existing episodes, then
+  // deletes. A deferred transaction failed here with "database is locked" while
+  // a catalog sync was writing.
+  return immediateTransaction(db, (sid, lastModified, episodes) => {
     const keep = new Set();
     for (const ep of episodes) {
       upsertEpisode.run(sourceKey, sid, ep.remote_episode_id, ep.season, ep.episode_num, ep.title, ep.container_extension, ep.logo, ep.added);
@@ -90,7 +94,9 @@ async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, apply
   // skip instead of wiping previously synced episodes.
   if (!data || typeof data !== 'object' || (!data.episodes && !data.info)) return null;
   const episodes = parseSeriesInfoEpisodes(data);
-  applySeries(sid, lastModified, episodes);
+  // The write is short and fully repeatable: it rebuilds the episode set for
+  // this series from the payload that is already in memory.
+  await runWriteWithRetry(() => applySeries(sid, lastModified, episodes), { label: `series ${sid} episodes` });
   return episodes.length;
 }
 

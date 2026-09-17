@@ -4,6 +4,7 @@ import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry, deleteAllProviderChannels } from '../services/syncService.js';
 import { acquireProviderLock, describeProviderLock } from '../services/providerLockService.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
@@ -502,7 +503,7 @@ export const deleteProvider = (req, res) => {
     const id = Number(req.params.id);
     const providerRow = db.prepare('SELECT url FROM providers WHERE id = ?').get(id);
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       deleteAllProviderChannels(db, id);
 
       db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);

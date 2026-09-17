@@ -189,6 +189,11 @@ until this is exercised on a real Proxmox host.
   `86400000` (24 hours).
 - `STREAM_INACTIVITY_TIMEOUT_MS`: Inactivity timeout for stream sessions.
   Defaults to `120000` (2 minutes).
+- `STREAM_TOUCH_MIN_INTERVAL_MS`: Smallest gap between two activity updates of
+  the same session. Defaults to a quarter of `STREAM_INACTIVITY_TIMEOUT_MS` and
+  is clamped to at most half of it, so a session can never time out because its
+  refresh was throttled. Without this, every ffmpeg progress event became an
+  `UPDATE current_streams`, which collided with long write transactions.
 
 ## Scheduled Jobs and GeoIP
 

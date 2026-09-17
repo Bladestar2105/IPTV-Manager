@@ -9,6 +9,7 @@ import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
 import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
 import { acquireProviderLock, describeProviderLock } from './providerLockService.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 
 /**
  * Delete one provider channel without violating the dependent foreign keys.
@@ -493,8 +494,11 @@ export async function performSync(providerId, userId, options = {}) {
       if (remoteId > 0) currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
     }
 
-    // Execute all DB operations in a single transaction
-    db.transaction(() => {
+    // Execute all DB operations in a single transaction.
+    // BEGIN IMMEDIATE: the body starts with SELECTs and writes afterwards, so a
+    // deferred transaction would fail with SQLITE_BUSY_SNAPSHOT as soon as any
+    // other connection committed in between.
+    immediateTransaction(db, () => {
       aiSnapshot = captureSyncSnapshot(providerId);
       // Pre-calculate max sort order for optimization
       const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);

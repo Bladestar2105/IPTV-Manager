@@ -1,0 +1,108 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { openSqliteConnection } from '../src/database/sqliteConnection.js';
+import {
+  immediateTransaction, isRetryableSqliteError, runWriteWithRetry,
+} from '../src/database/sqliteWrites.js';
+
+const dirs = [];
+function tempDb() {
+  const dir = mkdtempSync(join(tmpdir(), 'iptv-sqlite-writes-'));
+  dirs.push(dir);
+  const file = join(dir, 'db.sqlite');
+  const setup = openSqliteConnection(file);
+  setup.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER); INSERT INTO t VALUES (1, 0), (2, 0);');
+  setup.close();
+  return file;
+}
+
+afterEach(() => {
+  while (dirs.length) rmSync(dirs.pop(), { recursive: true, force: true });
+});
+
+describe('isRetryableSqliteError', () => {
+  it('recognises the lock-contention codes only', () => {
+    expect(isRetryableSqliteError({ code: 'SQLITE_BUSY' })).toBe(true);
+    expect(isRetryableSqliteError({ code: 'SQLITE_BUSY_SNAPSHOT' })).toBe(true);
+    expect(isRetryableSqliteError({ code: 'SQLITE_LOCKED' })).toBe(true);
+    expect(isRetryableSqliteError({ code: 'SQLITE_CONSTRAINT_FOREIGNKEY' })).toBe(false);
+    expect(isRetryableSqliteError(new Error('boom'))).toBe(false);
+    expect(isRetryableSqliteError(null)).toBe(false);
+  });
+});
+
+describe('immediateTransaction', () => {
+  it('survives a concurrent commit between its read and its write', () => {
+    const file = tempDb();
+    const worker = openSqliteConnection(file);
+    const intruder = openSqliteConnection(file);
+    try {
+      // A deferred transaction takes its read snapshot at the first SELECT and
+      // only then asks for the write lock, so this shape fails.
+      const deferred = worker.transaction(() => {
+        worker.prepare('SELECT v FROM t WHERE id = 1').get();
+        intruder.prepare('UPDATE t SET v = v + 1 WHERE id = 2').run();
+        worker.prepare('UPDATE t SET v = v + 1 WHERE id = 1').run();
+      });
+      expect(() => deferred()).toThrowError(expect.objectContaining({ code: 'SQLITE_BUSY_SNAPSHOT' }));
+
+      const immediate = immediateTransaction(worker, () => {
+        worker.prepare('SELECT v FROM t WHERE id = 1').get();
+        worker.prepare('UPDATE t SET v = v + 1 WHERE id = 1').run();
+      });
+      expect(() => immediate()).not.toThrow();
+      expect(worker.prepare('SELECT v FROM t WHERE id = 1').get().v).toBe(1);
+    } finally {
+      worker.close();
+      intruder.close();
+    }
+  });
+
+  it('falls back to the plain transaction on a connection without modes', () => {
+    const fake = { transaction: fn => (...args) => fn(...args) };
+    const run = immediateTransaction(fake, value => value * 2);
+    expect(run(21)).toBe(42);
+  });
+
+  it('passes arguments through', () => {
+    const file = tempDb();
+    const db = openSqliteConnection(file);
+    try {
+      const write = immediateTransaction(db, (id, value) => {
+        db.prepare('UPDATE t SET v = ? WHERE id = ?').run(value, id);
+      });
+      write(2, 7);
+      expect(db.prepare('SELECT v FROM t WHERE id = 2').get().v).toBe(7);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('runWriteWithRetry', () => {
+  it('repeats a contended write and returns the successful result', async () => {
+    const operation = vi.fn()
+      .mockImplementationOnce(() => { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY_SNAPSHOT'; throw e; })
+      .mockImplementationOnce(() => 'written');
+
+    await expect(runWriteWithRetry(operation, { baseDelayMs: 0 })).resolves.toBe('written');
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after the configured number of attempts', async () => {
+    const operation = vi.fn(() => { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY'; throw e; });
+    await expect(runWriteWithRetry(operation, { attempts: 3, baseDelayMs: 0 }))
+      .rejects.toMatchObject({ code: 'SQLITE_BUSY' });
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('never retries an error that a repeat cannot fix', async () => {
+    const operation = vi.fn(() => { const e = new Error('FOREIGN KEY constraint failed'); e.code = 'SQLITE_CONSTRAINT_FOREIGNKEY'; throw e; });
+    await expect(runWriteWithRetry(operation, { baseDelayMs: 0 }))
+      .rejects.toMatchObject({ code: 'SQLITE_CONSTRAINT_FOREIGNKEY' });
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+});

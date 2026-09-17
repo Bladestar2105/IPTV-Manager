@@ -533,11 +533,9 @@ export function attachResponseCleanup(req, res, cleanup) {
 export function attachStreamHeartbeat(upstreamBody, connectionId) {
   if (!upstreamBody || typeof upstreamBody.on !== 'function') return;
 
-  let lastTouch = 0;
+  // streamManager.touch() throttles itself, so every activity signal can be
+  // forwarded without a second, differently tuned rate limit here.
   upstreamBody.on('data', () => {
-    const now = Date.now();
-    if (now - lastTouch < 30000) return;
-    lastTouch = now;
     streamManager.touch(connectionId);
   });
 }

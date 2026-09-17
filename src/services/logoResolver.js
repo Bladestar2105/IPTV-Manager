@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import epgDb from '../database/epgDb.js';
 import crypto from 'crypto';
 
@@ -214,7 +215,7 @@ export function prePopulateProviderIconCache(providerId) {
 
         let count = 0;
         if (pending.length > 0) {
-            db.transaction(() => {
+            immediateTransaction(db, () => {
                 const insertStmt = db.prepare(`
                     INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
                     VALUES (?, ?, ?)
@@ -223,7 +224,7 @@ export function prePopulateProviderIconCache(providerId) {
                     insertStmt.run(providerId, logo, getLogoCacheHash(logo));
                     count++;
                 }
-            }).immediate();
+            })();
         }
 
         // Update memory cache
