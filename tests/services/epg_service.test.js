@@ -23,8 +23,10 @@ vi.mock('better-sqlite3', () => ({
             exec: vi.fn(),
             prepare: vi.fn(() => ({
                 run: vi.fn(() => ({ changes: 0 })),
-                get: vi.fn(),
-                all: vi.fn(),
+                // Covers both the COUNT probes and the claimed_seq the import
+                // asks the database to issue.
+                get: vi.fn(() => ({ c: 0, claimed_seq: 1 })),
+                all: vi.fn(() => []),
                 iterate: vi.fn()
             })),
             transaction: vi.fn((fn) => (...args) => fn(...args)),

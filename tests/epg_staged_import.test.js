@@ -16,7 +16,7 @@ vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.
 
 const {
   importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt,
-  resolveStageStaleMs, EPG_STAGE_PREFIX,
+  resolveStageStaleMs, claimPromotionSequence, ensureImportStateTable, EPG_STAGE_PREFIX,
 } = await import('../src/services/epgImportService.js');
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const epgDb = (await import('../src/database/epgDb.js')).default;
@@ -146,6 +146,22 @@ describe('staged EPG import', () => {
       if (previousStale === undefined) delete process.env.EPG_STAGE_STALE_MS;
       else process.env.EPG_STAGE_STALE_MS = previousStale;
     }
+  });
+
+  it('issues a strictly monotonic promotion sequence per source', () => {
+    // A millisecond timestamp collides when two workers start inside the same
+    // millisecond, and a clock that steps back inverts the order outright.
+    ensureImportStateTable(epgDb);
+    const seen = [];
+    for (let i = 0; i < 5; i++) seen.push(claimPromotionSequence(epgDb, SOURCE_TYPE, SOURCE_ID));
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen[0]).toBeGreaterThan(0);
+
+    // A different source has its own counter.
+    const other = claimPromotionSequence(epgDb, SOURCE_TYPE, SOURCE_ID + 1);
+    expect(other).toBe(1);
+    epgDb.prepare('DELETE FROM epg_import_state WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID + 1);
   });
 
   it('numbers a run by its start, not by when its headers arrive', async () => {

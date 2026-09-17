@@ -70,8 +70,9 @@ describe('updateProviderEpg', () => {
         });
         mockImportDb.prepare.mockReturnValue({
             run: vi.fn(() => ({ changes: 0 })),
-            // The staged import counts staging and live rows before promoting.
-            get: vi.fn(() => ({ c: 0 })),
+            // The staged import counts staging and live rows before promoting
+            // and claims a database-issued promotion sequence.
+            get: vi.fn(() => ({ c: 0, claimed_seq: 1 })),
             all: vi.fn(() => []),
         });
     });

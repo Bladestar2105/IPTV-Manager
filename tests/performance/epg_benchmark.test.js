@@ -31,7 +31,8 @@ vi.mock('better-sqlite3', () => {
         this.prepare = vi.fn().mockReturnValue({
           run: vi.fn().mockReturnValue({ changes: 0 }),
           all: vi.fn().mockReturnValue([]),
-          get: vi.fn().mockReturnValue({ c: 0 }),
+          // COUNT probes and the database-issued promotion sequence.
+          get: vi.fn().mockReturnValue({ c: 0, claimed_seq: 1 }),
           iterate: vi.fn().mockReturnValue([]),
         });
         this.transaction = vi.fn().mockImplementation((fn) => fn);

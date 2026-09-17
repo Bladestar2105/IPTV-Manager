@@ -43,14 +43,22 @@ export function initEpgDb() {
 
       -- Orders the promotions of overlapping imports of the same source, so a
       -- slower run that started earlier cannot roll back a newer snapshot.
+      -- claimed_seq is issued by the database, not derived from the clock.
       CREATE TABLE IF NOT EXISTS epg_import_state (
         source_type TEXT NOT NULL,
         source_id INTEGER NOT NULL,
-        promoted_at INTEGER NOT NULL,
-        promoted_seq INTEGER NOT NULL,
+        promoted_at INTEGER NOT NULL DEFAULT 0,
+        promoted_seq INTEGER NOT NULL DEFAULT 0,
+        claimed_seq INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (source_type, source_id)
       );
     `);
+
+    // Idempotent upgrade for a database created before claimed_seq existed.
+    const importStateColumns = db.pragma('table_info(epg_import_state)').map(column => column.name);
+    if (!importStateColumns.includes('claimed_seq')) {
+      db.exec('ALTER TABLE epg_import_state ADD COLUMN claimed_seq INTEGER NOT NULL DEFAULT 0');
+    }
 
     console.log("✅ EPG Database initialized");
   } catch (e) {

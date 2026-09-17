@@ -101,15 +101,49 @@ export function dropOrphanedStagingTables(database, options = {}) {
     }
 }
 
-function createStagingTables(database, stage) {
+/**
+ * Bookkeeping for promotion order. Created here as well as in initEpgDb because
+ * the import owns its own connection and must not depend on startup order.
+ */
+export function ensureImportStateTable(database) {
     database.exec(`
         CREATE TABLE IF NOT EXISTS epg_import_state (
             source_type TEXT NOT NULL,
             source_id INTEGER NOT NULL,
-            promoted_at INTEGER NOT NULL,
-            promoted_seq INTEGER NOT NULL,
+            promoted_at INTEGER NOT NULL DEFAULT 0,
+            promoted_seq INTEGER NOT NULL DEFAULT 0,
+            claimed_seq INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (source_type, source_id)
         );
+    `);
+}
+
+/**
+ * Claim the next promotion sequence for a source.
+ *
+ * A millisecond timestamp is not usable here: two workers can start within the
+ * same millisecond, and a clock that steps back inverts the order outright. The
+ * counter is issued by the database inside one transaction, so it is strictly
+ * monotonic per source no matter how many processes are involved.
+ */
+export function claimPromotionSequence(database, sourceType, sourceId) {
+    return immediateTransaction(database, () => {
+        const row = database.prepare(`
+            INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq, claimed_seq)
+            VALUES (?, ?, 0, 0, 1)
+            ON CONFLICT(source_type, source_id) DO UPDATE SET claimed_seq = claimed_seq + 1
+            RETURNING claimed_seq
+        `).get(sourceType, sourceId);
+        const claimed = Number(row?.claimed_seq);
+        if (!Number.isFinite(claimed) || claimed <= 0) {
+            throw new Error('Could not claim an EPG promotion sequence');
+        }
+        return claimed;
+    })();
+}
+
+function createStagingTables(database, stage) {
+    database.exec(`
         CREATE TABLE ${stage.channels} (
             id TEXT NOT NULL,
             name TEXT,
@@ -197,22 +231,6 @@ function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq) {
 }
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
-    // Sampled before the first network wait: the sequence has to reflect the
-    // order the runs *started*. Taken after the fetch, a run whose headers
-    // arrive late would get the higher sequence and could overwrite a snapshot
-    // from a run that actually started later.
-    const runSeq = Date.now();
-
-    console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
-    // fetchSafe performs isSafeUrl check
-    const response = await fetchSafe(url, { allowSelfSigned: true });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    // Update status in main DB
-    if (sourceType === 'custom') {
-        mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
-    }
-
     // Dedicated connection for the import so the large batches do not block the
     // shared one. Foreign keys stay OFF: programs may arrive before their
     // channel, and `INSERT OR REPLACE INTO epg_channels` would otherwise cascade
@@ -221,16 +239,32 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
     // it at 0, which made every collision an immediate "database is locked".
     const importDb = openSqliteConnection(EPG_DB_PATH, { foreignKeys: false });
 
-    const now = Math.floor(Date.now() / 1000);
-
-    // The import writes into staging tables and only replaces the live rows once
-    // the whole feed has been parsed. Deleting first meant that a lock, a parse
-    // error or a truncated download left the source without any EPG data until
-    // the next successful run. The names are unique per run, so two concurrent
-    // updates of the same source cannot drop each other's tables.
-    const stage = stagingTableNames(sourceType, sourceId, undefined, runSeq);
+    // The staging tables are unique per run, so two concurrent updates of the
+    // same source cannot drop each other's tables.
+    let stage = null;
 
     try {
+        ensureImportStateTable(importDb);
+
+        // Claimed before the first network wait: the sequence has to reflect the
+        // order the runs *started*. Taken after the fetch, a run whose headers
+        // arrive late would get the higher sequence and could overwrite a
+        // snapshot from a run that actually started later.
+        const runSeq = claimPromotionSequence(importDb, sourceType, sourceId);
+        stage = stagingTableNames(sourceType, sourceId);
+
+        console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
+        // fetchSafe performs isSafeUrl check
+        const response = await fetchSafe(url, { allowSelfSigned: true });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        // Update status in main DB
+        if (sourceType === 'custom') {
+            mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
+        }
+
+        const now = Math.floor(Date.now() / 1000);
+
         createStagingTables(importDb, stage);
 
         let stream = response.body;
@@ -448,7 +482,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         throw e;
     } finally {
         // This run owns these exact names, so they are dropped unconditionally.
-        dropStagingTables(importDb, stage);
+        if (stage) dropStagingTables(importDb, stage);
         importDb.close();
     }
 }
