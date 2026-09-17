@@ -530,7 +530,8 @@ export const syncProvider = async (req, res) => {
     const id = Number(req.params.id);
     const { user_id, allow_cross_owner, restore_revoked_assignments } = req.body;
 
-    if (!user_id) {
+    const targetUserId = Number(user_id);
+    if (!user_id || !Number.isInteger(targetUserId) || targetUserId <= 0) {
       return res.status(400).json({error: 'user_id required'});
     }
 
@@ -538,21 +539,32 @@ export const syncProvider = async (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    const result = await performSync(id, user_id, {
+    // sync_logs references providers(id) and users(id). Accepting an id that no
+    // longer exists turned into a FOREIGN KEY error deep inside performSync.
+    if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(targetUserId)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+    if (!db.prepare('SELECT 1 AS ok FROM providers WHERE id = ?').get(id)) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+
+    const result = await performSync(id, targetUserId, {
       mode: 'manual',
       allowCrossOwner: allow_cross_owner === true,
       restoreRevokedAssignments: restore_revoked_assignments === true
     });
 
-    // Also trigger EPG update
-    updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
-
-    if (result.errorMessage) {
-      return res.status(500).json({error: result.errorMessage});
+    if (result.status === 'error' || (result.errorMessage && result.status !== 'partial')) {
+      return res.status(500).json({error: result.errorMessage || 'Sync failed'});
     }
+
+    // Only trigger EPG for a run that actually delivered something.
+    updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
 
     res.json({
       success: true,
+      status: result.status || 'success',
+      ...(result.status === 'partial' ? { warning: result.errorMessage } : {}),
       channels_added: result.channelsAdded,
       channels_updated: result.channelsUpdated,
       categories_added: result.categoriesAdded

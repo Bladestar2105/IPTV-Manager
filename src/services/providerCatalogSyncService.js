@@ -2,6 +2,8 @@ import { Xtream } from '@iptv/xtream-api';
 import { fetchSafe } from '../utils/network.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 
+const CATALOG_TIMEOUT_MS = 60000;
+
 export function createXtreamClient(provider) {
   let baseUrl = (provider.url || '').trim();
   if (!/^https?:\/\//i.test(baseUrl)) baseUrl = 'http://' + baseUrl;
@@ -9,6 +11,22 @@ export function createXtreamClient(provider) {
   return new Xtream({ url: baseUrl, username: provider.username, password: provider.password });
 }
 
+/**
+ * Human readable summary of the sections a catalog fetch could not deliver.
+ * Used for sync_logs.error_message, so it must stay short and free of URLs.
+ */
+export function describeCatalogFailures(failures) {
+  if (!Array.isArray(failures) || failures.length === 0) return null;
+  return failures.map(f => `${f.section}: ${f.message}`).join('; ');
+}
+
+/**
+ * Fetch a provider catalog.
+ *
+ * A stream type is reported in `completeStreamTypes` only when both its list and
+ * its categories were retrieved. Everything that failed is reported in
+ * `failures`; callers must not treat an empty catalog as a successful sync.
+ */
 export async function fetchProviderCatalog(provider, xtream) {
   const baseUrl = provider.url.replace(/\/+$/, '');
   const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
@@ -16,28 +34,54 @@ export async function fetchProviderCatalog(provider, xtream) {
   const allCategories = [];
   const completeStreamTypes = new Set();
   const snapshotStates = new Map();
+  const failures = [];
+
+  const fail = (section, error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    failures.push({ section, message });
+    console.error(`${section} fetch failed for provider ${provider.id}:`, message);
+  };
+
+  const markComplete = (streamType, count) => {
+    completeStreamTypes.add(streamType);
+    snapshotStates.set(streamType, { count });
+  };
+
+  async function fetchCategories(section, action, categoryType) {
+    const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=${action}`, { timeout: CATALOG_TIMEOUT_MS });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const cats = await resp.json();
+    if (!Array.isArray(cats)) throw new Error('unexpected category payload');
+    cats.forEach(c => { c.category_type = categoryType; allCategories.push(c); });
+    return true;
+  }
 
   // 1. Live & M3U Fallback
+  let m3uMode = false;
+  let liveChans = [];
+  let liveFetchComplete = false;
   try {
-    let liveChans = [];
-    let m3uMode = false;
-    let liveFetchComplete = false;
-
     // Try Xtream API
+    let apiError = null;
     try {
       liveChans = await xtream.getChannels();
       liveFetchComplete = Array.isArray(liveChans);
-    } catch {
+    } catch (e) {
+      apiError = e;
       try {
-        const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`, { timeout: 60000 });
+        const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`, { timeout: CATALOG_TIMEOUT_MS });
         if (resp.ok) {
           const contentType = resp.headers?.get?.('content-type');
           if (contentType && contentType.includes('application/json')) {
             liveChans = await resp.json();
             liveFetchComplete = Array.isArray(liveChans);
+          } else {
+            apiError = new Error(`unexpected content-type ${contentType || 'none'}`);
           }
+        } else {
+          apiError = new Error(`HTTP ${resp.status}`);
         }
-      } catch {}
+      } catch (e2) { apiError = e2; }
     }
 
     // M3U Fallback if Xtream failed or empty
@@ -46,7 +90,7 @@ export async function fetchProviderCatalog(provider, xtream) {
       liveFetchComplete = false;
       try {
         // Try fetching as M3U
-        const m3uResp = await fetchSafe(provider.url, { timeout: 60000 }); // Use original URL
+        const m3uResp = await fetchSafe(provider.url, { timeout: CATALOG_TIMEOUT_MS }); // Use original URL
         if (m3uResp.ok) {
           const parsed = await parseM3uStream(m3uResp.body);
           if (parsed.isM3u) {
@@ -101,78 +145,60 @@ export async function fetchProviderCatalog(provider, xtream) {
         }
         allChannels.push(c);
       });
-      if (liveFetchComplete) completeStreamTypes.add('live');
-      if (liveFetchComplete) snapshotStates.set('live', { count: liveChans.length });
     }
 
-    if (!m3uMode) {
-      const respCat = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_categories`, { timeout: 60000 });
-      if (respCat.ok) {
-        const cats = await respCat.json();
-        if (Array.isArray(cats)) {
-          cats.forEach(c => { c.category_type = 'live'; allCategories.push(c); });
-        }
-      }
+    if (!liveFetchComplete) {
+      fail('live', apiError || new Error('live stream list unavailable'));
+    } else if (m3uMode) {
+      // An M3U playlist carries its categories inline; there is no second call.
+      markComplete('live', liveChans.length);
+    } else {
+      // Only a list *and* its categories make the type safe to clean up.
+      try {
+        await fetchCategories('live_categories', 'get_live_categories', 'live');
+        markComplete('live', liveChans.length);
+      } catch (e) { fail('live_categories', e); }
     }
-  } catch (e) { console.error('Live sync error:', e); }
+  } catch (e) { fail('live', e); }
 
   // 2. Movies (VOD)
   try {
     console.debug('Fetching VOD streams...');
-    const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`, { timeout: 60000 });
-    if (resp.ok) {
-      const vods = await resp.json();
-      console.debug(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
-      if (Array.isArray(vods)) {
-        vods.forEach(c => {
-          c.stream_type = 'movie';
-          c.category_type = 'movie';
-          allChannels.push(c);
-        });
-        completeStreamTypes.add('movie');
-        snapshotStates.set('movie', { count: vods.length });
-      }
-    } else {
-      console.error(`VOD fetch failed: ${resp.status}`);
-    }
-
-    const respCat = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_categories`, { timeout: 60000 });
-    if (respCat.ok) {
-      const cats = await respCat.json();
-      if (Array.isArray(cats)) {
-        cats.forEach(c => { c.category_type = 'movie'; allCategories.push(c); });
-      }
-    }
-  } catch (e) { console.error('VOD sync error:', e); }
+    const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`, { timeout: CATALOG_TIMEOUT_MS });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const vods = await resp.json();
+    console.debug(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
+    if (!Array.isArray(vods)) throw new Error('unexpected VOD payload');
+    vods.forEach(c => {
+      c.stream_type = 'movie';
+      c.category_type = 'movie';
+      allChannels.push(c);
+    });
+    try {
+      await fetchCategories('vod_categories', 'get_vod_categories', 'movie');
+      markComplete('movie', vods.length);
+    } catch (e) { fail('vod_categories', e); }
+  } catch (e) { fail('vod', e); }
 
   // 3. Series
   try {
-    const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series`, { timeout: 60000 });
-    if (resp.ok) {
-      const series = await resp.json();
-      if (Array.isArray(series)) {
-        series.forEach(c => {
-          c.stream_type = 'series';
-          c.category_type = 'series';
-          // Map series fields to common format
-          c.stream_id = c.series_id;
-          c.stream_icon = c.cover;
-          allChannels.push(c);
-        });
-        completeStreamTypes.add('series');
-        snapshotStates.set('series', { count: series.length });
-      }
-    }
+    const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series`, { timeout: CATALOG_TIMEOUT_MS });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const series = await resp.json();
+    if (!Array.isArray(series)) throw new Error('unexpected series payload');
+    series.forEach(c => {
+      c.stream_type = 'series';
+      c.category_type = 'series';
+      // Map series fields to common format
+      c.stream_id = c.series_id;
+      c.stream_icon = c.cover;
+      allChannels.push(c);
+    });
+    try {
+      await fetchCategories('series_categories', 'get_series_categories', 'series');
+      markComplete('series', series.length);
+    } catch (e) { fail('series_categories', e); }
+  } catch (e) { fail('series', e); }
 
-    const respCat = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_categories`, { timeout: 60000 });
-    if (respCat.ok) {
-      const cats = await respCat.json();
-      if (Array.isArray(cats)) {
-        cats.forEach(c => { c.category_type = 'series'; allCategories.push(c); });
-      }
-    }
-  } catch (e) { console.error('Series sync error:', e); }
-
-  return { allChannels, allCategories, completeStreamTypes, snapshotStates };
+  return { allChannels, allCategories, completeStreamTypes, snapshotStates, failures };
 }
-

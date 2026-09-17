@@ -2608,7 +2608,7 @@ async function showSyncLogs(providerId) {
       logs.forEach(log => {
         const tr = document.createElement('tr');
         const date = new Date(log.sync_time * 1000);
-        const statusClass = log.status === 'success' ? 'success' : 'danger';
+        const statusClass = log.status === 'success' ? 'success' : (log.status === 'partial' ? 'warning' : 'danger');
         
         tr.innerHTML = `
           <td>${date.toLocaleString()}</td>

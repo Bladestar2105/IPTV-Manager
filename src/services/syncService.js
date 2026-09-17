@@ -6,7 +6,7 @@ import { isAdultCategory } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
-import { createXtreamClient, fetchProviderCatalog } from './providerCatalogSyncService.js';
+import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
 
 /**
@@ -144,6 +144,117 @@ export function calculateNextSync(interval) {
   }
 }
 
+// A run that fetched nothing must come back sooner than a full interval, but a
+// permanently unreachable provider must not be retried every few minutes: each
+// failed attempt costs several upstream timeouts.
+const SYNC_RETRY_BASE_SECONDS = 900;
+const SYNC_RETRY_MAX_DOUBLINGS = 5;
+
+/**
+ * Next attempt after a run that produced no usable catalog: exponential backoff
+ * from the number of consecutive non-successful runs, never later than the
+ * configured interval.
+ */
+export function calculateRetrySync(config, providerId, userId) {
+  const now = Math.floor(Date.now() / 1000);
+  const intervalNext = calculateNextSync(config.sync_interval);
+  let consecutiveFailures = 0;
+  try {
+    const rows = db.prepare(
+      'SELECT status FROM sync_logs WHERE provider_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?'
+    ).all(providerId, userId, SYNC_RETRY_MAX_DOUBLINGS + 1);
+    for (const row of rows) {
+      if (row.status === 'success') break;
+      consecutiveFailures++;
+    }
+  } catch {
+    consecutiveFailures = 0;
+  }
+  const backoff = SYNC_RETRY_BASE_SECONDS * Math.pow(2, Math.min(consecutiveFailures, SYNC_RETRY_MAX_DOUBLINGS));
+  return Math.min(intervalNext, now + backoff);
+}
+
+/**
+ * Re-read the rows the run was authorized against.
+ *
+ * Fetching a provider catalog takes seconds to minutes. Provider, owner or
+ * target user can be changed or deleted while that call is in flight, and the
+ * schedule/log writes at the end of the run reference them by foreign key.
+ */
+function assertSyncTargetStillValid(providerId, userId, provider) {
+  const current = db.prepare('SELECT id, user_id FROM providers WHERE id = ?').get(providerId);
+  if (!current) throw new Error('Provider was removed while its catalog was being fetched');
+  // providers.user_id is nullable, so normalize before comparing owners.
+  const ownerOf = row => (row?.user_id === null || row?.user_id === undefined ? null : Number(row.user_id));
+  if (ownerOf(current) !== ownerOf(provider)) {
+    throw new Error('Provider ownership changed while its catalog was being fetched');
+  }
+  try {
+    if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(userId)) {
+      throw new Error('Target user was removed while the catalog was being fetched');
+    }
+  } catch (e) {
+    // Fixture schemas without a users table must not fail the run here; a real
+    // missing user is still caught by the guarded sync_logs insert.
+    if (e.code !== 'SQLITE_ERROR') throw e;
+  }
+}
+
+/**
+ * Persist the outcome of a run.
+ *
+ * Order matters. sync_configs is written first so that a failing log insert can
+ * never leave next_sync in the past and make the scheduler restart the provider
+ * every minute. The log insert is guarded and its own failure is reported
+ * separately, so bookkeeping problems never replace the original error.
+ */
+export function finishSyncRun({
+  providerId, userId, startTime, config, status, errorMessage,
+  channelsAdded = 0, channelsUpdated = 0, categoriesAdded = 0,
+}) {
+  const progressed = status === 'success' || status === 'partial';
+
+  try {
+    if (config) {
+      if (progressed) {
+        const nextSync = calculateNextSync(config.sync_interval);
+        db.prepare('UPDATE sync_configs SET last_sync = ?, next_sync = ? WHERE id = ?')
+          .run(startTime, nextSync, config.id);
+      } else {
+        // last_sync stays put: it records the last run that actually delivered.
+        const nextSync = calculateRetrySync(config, providerId, userId);
+        db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id);
+      }
+    }
+  } catch (e) {
+    console.error(`Failed to update sync schedule for provider ${providerId} [${e.code || 'Error'}]:`, e.message);
+  }
+
+  let targetsExist = true;
+  try {
+    const row = db.prepare(
+      'SELECT (SELECT 1 FROM providers WHERE id = ?) AS provider_ok, (SELECT 1 FROM users WHERE id = ?) AS user_ok'
+    ).get(providerId, userId);
+    targetsExist = Boolean(row?.provider_ok) && Boolean(row?.user_ok);
+  } catch {
+    // Fixture schemas without a users table: fall through and let the insert decide.
+  }
+
+  if (!targetsExist) {
+    console.warn(`Skipping sync log for provider ${providerId} / user ${userId}: removed during the run`);
+    return;
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, channels_added, channels_updated, categories_added, error_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(providerId, userId, startTime, status, channelsAdded, channelsUpdated, categoriesAdded, errorMessage || null);
+  } catch (e) {
+    console.error(`Failed to write sync log for provider ${providerId} [${e.code || 'Error'}]:`, e.message);
+  }
+}
+
 export async function performSync(providerId, userId, options = {}) {
   const startTime = Math.floor(Date.now() / 1000);
   let channelsAdded = 0;
@@ -152,12 +263,14 @@ export async function performSync(providerId, userId, options = {}) {
   let errorMessage = null;
   let config = null;
   let aiSnapshot = null;
+  let status = 'error';
+  let catalogFailures = [];
 
   try {
     config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
     const isManual = options?.mode === 'manual';
     if ((!config || Number(config.enabled) !== 1) && !isManual) {
-      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'skipped' };
     }
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
@@ -178,7 +291,7 @@ export async function performSync(providerId, userId, options = {}) {
       );
       console.warn(`Blocked unapproved cross-owner sync for provider ${providerId}; disabled ${disabled} config(s)`);
       errorMessage = 'Cross-owner sync requires explicit administrator approval';
-      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'error' };
     }
 
     const assignmentGrant = crossOwner ? 1 : 0;
@@ -197,8 +310,14 @@ export async function performSync(providerId, userId, options = {}) {
 
     // Fetch and normalize the provider catalog before applying local mappings.
     const xtream = createXtreamClient(provider);
-    const { allChannels, allCategories, completeStreamTypes, snapshotStates } =
+    const { allChannels, allCategories, completeStreamTypes, snapshotStates, failures } =
       await fetchProviderCatalog(provider, xtream);
+    catalogFailures = failures || [];
+
+    // The catalog fetch can take minutes. Anything the run was authorized
+    // against may have been changed or removed in the meantime, so re-read it
+    // before touching the database again.
+    assertSyncTargetStillValid(providerId, userId, provider);
 
     // Process categories and create mappings
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
@@ -681,10 +800,15 @@ export async function performSync(providerId, userId, options = {}) {
       }
     })();
 
-    // Update sync config
-    if (config) {
-      const nextSync = calculateNextSync(config.sync_interval);
-      db.prepare('UPDATE sync_configs SET last_sync = ?, next_sync = ? WHERE id = ?').run(startTime, nextSync, config.id);
+    // A catalog the provider could not fully deliver is never a success: an
+    // empty or half-fetched catalog must not look like "nothing changed
+    // upstream". `error` means the provider returned nothing usable at all,
+    // `partial` means some of it arrived.
+    if (catalogFailures.length === 0) {
+      status = 'success';
+    } else {
+      errorMessage = describeCatalogFailures(catalogFailures);
+      status = (allChannels.length === 0 && allCategories.length === 0) ? 'error' : 'partial';
     }
 
     // Invalidate cache since channels might have been added/updated
@@ -693,13 +817,19 @@ export async function performSync(providerId, userId, options = {}) {
     // Pre-populate provider icon cache for faster logo lookups
     prePopulateProviderIconCache(providerId);
 
-    // Log success
-    db.prepare(`
-      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, channels_added, channels_updated, categories_added)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(providerId, userId, startTime, 'success', channelsAdded, channelsUpdated, categoriesAdded);
+    finishSyncRun({
+      providerId, userId, startTime, config, status, errorMessage,
+      channelsAdded, channelsUpdated, categoriesAdded
+    });
 
-    console.info(`✅ Sync completed: ${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`);
+    const summary = `${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`;
+    if (status === 'success') {
+      console.info(`✅ Sync completed: ${summary}`);
+    } else if (status === 'partial') {
+      console.warn(`⚠️ Sync partially completed: ${summary} — ${errorMessage}`);
+    } else {
+      console.error(`❌ Sync delivered no catalog for provider ${providerId}: ${errorMessage}`);
+    }
 
     scheduleSyncFollowups(recordSyncSnapshot(providerId,aiSnapshot));
 
@@ -711,23 +841,17 @@ export async function performSync(providerId, userId, options = {}) {
     }
 
   } catch (e) {
+    status = 'error';
     errorMessage = e.message;
-    console.error(`❌ Sync failed:`, e);
+    console.error(`❌ Sync failed for provider ${providerId} [${e.code || e.name || 'Error'}]:`, e);
 
-    // Log error
-    db.prepare(`
-      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, error_message)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(providerId, userId, startTime, 'error', errorMessage);
-
-    // Update next_sync even on failure to respect interval
-    if (config) {
-      const nextSync = calculateNextSync(config.sync_interval);
-      db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id);
-    }
+    finishSyncRun({
+      providerId, userId, startTime, config, status, errorMessage,
+      channelsAdded, channelsUpdated, categoriesAdded
+    });
   }
 
-  return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+  return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status };
 }
 
 import { parseSeriesInfoEpisodes, syncSeriesEpisode, syncSeriesEpisodes } from './seriesSyncService.js';

@@ -230,6 +230,23 @@ Deleting a provider removes dependent channel assignments, EPG mappings, stream
 stats, sync data, category mappings, and provider icon cache entries before the
 provider row is deleted.
 
+`POST /api/providers/:id/sync` requires an existing `user_id` in the body and
+reports the outcome of the run:
+
+- `200 {success: true, status: "success", channels_added, channels_updated,
+  categories_added}` — every catalog section was retrieved.
+- `200 {success: true, status: "partial", warning, ...}` — part of the catalog
+  arrived and was applied; `warning` names the sections that failed. Stream
+  types whose list or categories failed are not marked complete and are
+  therefore never used for stale-row cleanup.
+- `500 {error}` — the provider delivered nothing usable, or the run failed.
+  Previously such a run answered `200 {success: true}` with `0/0/0` counters.
+
+`sync_logs.status` uses the same three values: `success`, `partial`, `error`.
+A run that delivered nothing leaves `sync_configs.last_sync` untouched and
+schedules the next attempt with an exponential backoff (from 15 minutes,
+never later than the configured interval).
+
 Provider synchronization treats a complete empty response conservatively: one
 empty snapshot preserves an existing local catalog, while a second consecutive
 authoritative empty snapshot permits cleanup. Failed, invalid, or incomplete
