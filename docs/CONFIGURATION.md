@@ -174,6 +174,11 @@ until this is exercised on a real Proxmox host.
   per IP within `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`. Defaults to `120`.
 - `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`: Client log rate limit window in
   milliseconds. Defaults to `3600000` (1 hour).
+- `HTTP_MAX_REQUEST_MS`: Hard upper bound for one outgoing request made through
+  the SSRF-safe fetch path, covering redirects *and* reading the response body.
+  Defaults to `600000` (10 minutes). The per-call `timeout` still bounds only
+  the wait for the response headers; before this budget existed, a provider
+  that answered fast and then stalled its body could hang a sync indefinitely.
 
 ## Stream Tracking
 
