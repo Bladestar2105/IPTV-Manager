@@ -12,6 +12,7 @@ import db, { initDb } from './database/db.js';
 import { initEpgDb } from './database/epgDb.js';
 import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler, startGeoIpUpdater } from './services/schedulerService.js';
+import { startWalMaintenance } from './services/walMaintenanceService.js';
 import { startSSDP } from './services/ssdpService.js';
 import { createDefaultAdmin } from './services/authService.js';
 import { PORT } from './config/constants.js';
@@ -174,6 +175,7 @@ let redisClient = null;
       startCleanupScheduler();
       startSSDP();
       startGeoIpUpdater();
+      startWalMaintenance();
     }
 
     app.listen(PORT, () => {

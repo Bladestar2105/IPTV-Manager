@@ -18,8 +18,11 @@ vi.mock('better-sqlite3', () => ({
     default: vi.fn(function MockDatabase() {
         return {
             pragma: vi.fn(),
+            // The EPG import creates per-source staging tables, so the double
+            // needs DDL support as well.
+            exec: vi.fn(),
             prepare: vi.fn(() => ({
-                run: vi.fn(),
+                run: vi.fn(() => ({ changes: 0 })),
                 get: vi.fn(),
                 all: vi.fn(),
                 iterate: vi.fn()

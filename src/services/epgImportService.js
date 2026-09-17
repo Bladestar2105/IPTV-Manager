@@ -6,11 +6,99 @@ import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 function decodeXmlIfNeeded(value) {
     if (!value) return '';
     return value.includes('&') ? decodeXml(value) : value;
+}
+
+/**
+ * Per-source staging table names. sourceType is an internal enum and sourceId an
+ * integer, but both are validated because they end up in DDL.
+ */
+export function stagingTableNames(sourceType, sourceId) {
+    const type = String(sourceType).replace(/[^a-z]/gi, '').toLowerCase();
+    const id = Number(sourceId);
+    if (!type || !Number.isInteger(id) || id < 0) {
+        throw new Error(`Invalid EPG source identity: ${sourceType}/${sourceId}`);
+    }
+    return {
+        channels: `epg_stage_channels_${type}_${id}`,
+        programs: `epg_stage_programs_${type}_${id}`,
+    };
+}
+
+function createStagingTables(database, stage) {
+    dropStagingTables(database, stage);
+    database.exec(`
+        CREATE TABLE ${stage.channels} (
+            id TEXT NOT NULL,
+            name TEXT,
+            logo TEXT,
+            source_type TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            updated_at INTEGER,
+            PRIMARY KEY (id, source_type, source_id)
+        );
+        CREATE TABLE ${stage.programs} (
+            channel_id TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            start INTEGER NOT NULL,
+            stop INTEGER NOT NULL,
+            title TEXT,
+            desc TEXT,
+            lang TEXT,
+            PRIMARY KEY (channel_id, source_type, source_id, start)
+        );
+    `);
+}
+
+function dropStagingTables(database, stage) {
+    if (!stage) return;
+    try {
+        database.exec(`DROP TABLE IF EXISTS ${stage.programs}; DROP TABLE IF EXISTS ${stage.channels};`);
+    } catch (e) {
+        console.warn(`Could not drop EPG staging tables: ${e.message}`);
+    }
+}
+
+/**
+ * Replace the live rows of one source with the staged import, in one
+ * transaction. Until this runs, the previous EPG data stays queryable.
+ */
+function promoteStagedEpg(database, stage, sourceType, sourceId) {
+    const count = sql => Number(database.prepare(sql).get()?.c) || 0;
+    return immediateTransaction(database, () => {
+        const staged = {
+            channels: count(`SELECT COUNT(*) AS c FROM ${stage.channels}`),
+            programs: count(`SELECT COUNT(*) AS c FROM ${stage.programs}`),
+        };
+        const live = Number(
+            database.prepare('SELECT COUNT(*) AS c FROM epg_channels WHERE source_type = ? AND source_id = ?')
+                .get(sourceType, sourceId)?.c
+        ) || 0;
+
+        // An empty feed is a failed download far more often than a source that
+        // genuinely lost all its data. Never trade existing EPG data for it.
+        if (staged.channels === 0 && staged.programs === 0 && live > 0) {
+            throw new Error('EPG feed delivered no channels or programmes; keeping the previous data');
+        }
+
+        database.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        database.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        database.prepare(`
+            INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
+            SELECT id, name, logo, source_type, source_id, updated_at FROM ${stage.channels}
+        `).run();
+        database.prepare(`
+            INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
+            SELECT channel_id, source_type, source_id, start, stop, title, desc, lang FROM ${stage.programs}
+        `).run();
+        return staged;
+    })();
 }
 
 export async function importEpgFromUrl(url, sourceType, sourceId) {
@@ -34,10 +122,14 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
     const now = Math.floor(Date.now() / 1000);
 
+    // The import writes into staging tables and only replaces the live rows once
+    // the whole feed has been parsed. Deleting first meant that a lock, a parse
+    // error or a truncated download left the source without any EPG data until
+    // the next successful run.
+    const stage = stagingTableNames(sourceType, sourceId);
+
     try {
-        // Clear existing data for this source
-        importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
-        importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        createStagingTables(importDb, stage);
 
         let stream = response.body;
 
@@ -76,12 +168,12 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         }
 
         const insertChannel = importDb.prepare(`
-            INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
+            INSERT OR REPLACE INTO ${stage.channels} (id, name, logo, source_type, source_id, updated_at)
             VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
         `);
 
         const insertProgram = importDb.prepare(`
-            INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
+            INSERT OR IGNORE INTO ${stage.programs} (channel_id, source_type, source_id, start, stop, title, desc, lang)
             VALUES (@channelId, @sourceType, @sourceId, @start, @stop, @title, @desc, @lang)
         `);
 
@@ -230,13 +322,11 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
         // Cleanup orphaned programs after successful parsing
         importDb.prepare(`
-            DELETE FROM epg_programs
-            WHERE source_type = ? AND source_id = ?
-            AND channel_id NOT IN (
-                SELECT id FROM epg_channels
-                WHERE source_type = ? AND source_id = ?
-            )
-        `).run(sourceType, sourceId, sourceType, sourceId);
+            DELETE FROM ${stage.programs}
+            WHERE channel_id NOT IN (SELECT id FROM ${stage.channels})
+        `).run();
+
+        const imported = promoteStagedEpg(importDb, stage, sourceType, sourceId);
 
         if (sourceType === 'custom') {
             mainDb.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);
@@ -245,8 +335,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         // Invalidate EPG logos cache after successful update
         invalidateEpgLogosCache();
 
-        console.info(`✅ EPG updated for ${sourceType} ${sourceId}`);
-        return { success: true };
+        console.info(`✅ EPG updated for ${sourceType} ${sourceId}: ${imported.channels} channels, ${imported.programs} programmes`);
+        return { success: true, channels: imported.channels, programs: imported.programs };
 
     } catch (e) {
         console.error(`❌ EPG update failed: ${url}`, e.message);
@@ -255,6 +345,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         }
         throw e;
     } finally {
+        dropStagingTables(importDb, stage);
         importDb.close();
     }
 }

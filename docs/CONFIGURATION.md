@@ -35,6 +35,12 @@ mode.
 - `SQLITE_WAL_SIZE_LIMIT_BYTES`: Upper bound for a `-wal` file after a
   checkpoint. Defaults to `67108864` (64 MB), minimum `1048576`. Without the
   limit a checkpointed WAL is reused in place and never shrinks again.
+- `SQLITE_CHECKPOINT_INTERVAL_MS`: How often the scheduler worker runs a passive
+  WAL checkpoint on both databases. Defaults to `300000` (5 minutes), minimum
+  `30000`. SQLite only auto-checkpoints at the end of a write transaction and a
+  checkpoint cannot reclaim frames an active reader still needs, so without this
+  the WAL of a busy instance can grow past the size of the database itself. The
+  checkpoint is `PASSIVE` and therefore never waits for a reader.
 
 ## Per-User Provider Access
 

@@ -9,6 +9,8 @@ const { mockMainDb, mockImportDb } = vi.hoisted(() => {
     };
     const mockImportDb = {
         pragma: vi.fn(),
+        // The EPG import creates per-source staging tables.
+        exec: vi.fn(),
         prepare: vi.fn(),
         transaction: vi.fn((cb) => cb),
         close: vi.fn(),
@@ -67,7 +69,10 @@ describe('updateProviderEpg', () => {
             run: vi.fn(),
         });
         mockImportDb.prepare.mockReturnValue({
-            run: vi.fn(),
+            run: vi.fn(() => ({ changes: 0 })),
+            // The staged import counts staging and live rows before promoting.
+            get: vi.fn(() => ({ c: 0 })),
+            all: vi.fn(() => []),
         });
     });
 

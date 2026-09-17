@@ -26,10 +26,12 @@ vi.mock('better-sqlite3', () => {
     default: class Database {
       constructor() {
         this.pragma = vi.fn();
+        // The EPG import creates per-source staging tables before parsing.
+        this.exec = vi.fn();
         this.prepare = vi.fn().mockReturnValue({
-          run: vi.fn(),
+          run: vi.fn().mockReturnValue({ changes: 0 }),
           all: vi.fn().mockReturnValue([]),
-          get: vi.fn(),
+          get: vi.fn().mockReturnValue({ c: 0 }),
           iterate: vi.fn().mockReturnValue([]),
         });
         this.transaction = vi.fn().mockImplementation((fn) => fn);
