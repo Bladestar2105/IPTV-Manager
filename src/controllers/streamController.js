@@ -4,9 +4,18 @@ import http from 'http';
 import https from 'https';
 import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
+// A manifest is a finite document. fetchSafe bounds only the wait for the
+// headers, so an upstream that answers and then stalls would otherwise hold the
+// request and its stream session open indefinitely.
+const MANIFEST_BODY_TIMEOUT_MS = Number(process.env.MANIFEST_BODY_TIMEOUT_MS) || 30000;
+const MANIFEST_MAX_BYTES = Number(process.env.MANIFEST_MAX_BYTES) || 32 * 1024 * 1024;
+const readManifest = response => readBodyWithLimit(response, {
+  timeoutMs: MANIFEST_BODY_TIMEOUT_MS,
+  maxBytes: MANIFEST_MAX_BYTES,
+});
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 import { formatXtreamTimeshiftStart, getEffectiveTimeshiftTimezone, isSupportedEpoch } from '../utils/timezone.js';
@@ -103,7 +112,7 @@ export const proxyMpd = async (req, res) => {
     }
 
     if (relativePath.endsWith('.mpd')) {
-        const text = await upstream.text();
+        const text = await readManifest(upstream);
         const baseUrl = `${getBaseUrl(req)}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
         let newText = text.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
         res.setHeader('Content-Type', 'application/dash+xml');
@@ -265,7 +274,7 @@ export const proxyLive = async (req, res) => {
     const cookies = upstream.headers.get('set-cookie');
 
     if (reqExt === 'm3u8') {
-      const text = await upstream.text();
+      const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
@@ -597,7 +606,7 @@ export const proxyTimeshift = async (req, res) => {
     }
 
     if (reqExt === 'm3u8') {
-      const text = await upstream.text();
+      const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 

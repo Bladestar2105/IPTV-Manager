@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { Transform } from 'stream';
 import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
-import { fetchSafe, resolveMaxRequestDurationMs } from '../utils/network.js';
+import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
@@ -20,18 +20,31 @@ export const EPG_STAGE_PREFIX = 'epg_stage_';
 // An import cannot legitimately run this long: HTTP_MAX_REQUEST_MS caps one
 // download, so anything older than a wide multiple of that budget is abandoned.
 const DEFAULT_STAGE_STALE_MS = 6 * 60 * 60 * 1000;
-const STAGE_STALE_REQUEST_FACTOR = 4;
+const STAGE_STALE_IMPORT_FACTOR = 4;
+// A full XMLTV download can legitimately take a long time, but not forever.
+// fetchSafe bounds only the wait for the headers, so the body needs its own
+// deadline — without one an import has no upper bound at all and no age can
+// tell a live one from an abandoned one.
+const DEFAULT_IMPORT_BODY_TIMEOUT_MS = 30 * 60 * 1000;
+
+export function resolveImportBodyTimeoutMs(raw = process.env.EPG_IMPORT_BODY_TIMEOUT_MS) {
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_IMPORT_BODY_TIMEOUT_MS;
+    // A hard floor against 0 or a negative value, not a policy: an operator who
+    // sets a second knows what they are asking for.
+    return Math.max(parsed, 1000);
+}
 
 /**
  * Age after which a leftover staging table counts as abandoned.
  *
- * The floor is derived from the request budget instead of being a fixed
- * constant: the sweep must never classify a live import of another process as
- * stale, and that import can legitimately keep a body open for the whole of
- * HTTP_MAX_REQUEST_MS. The two settings are therefore not independent.
+ * The floor derives from how long an import may actually run, not from a
+ * header-only budget: the sweep must never classify a live import of another
+ * process as stale, and an import lives for as long as its body deadline
+ * allows. The two settings are therefore not independent.
  */
 export function resolveStageStaleMs(raw = process.env.EPG_STAGE_STALE_MS) {
-    const floor = Math.max(60000, resolveMaxRequestDurationMs() * STAGE_STALE_REQUEST_FACTOR);
+    const floor = Math.max(60000, resolveImportBodyTimeoutMs() * STAGE_STALE_IMPORT_FACTOR);
     const parsed = Number.parseInt(raw, 10);
     const requested = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STAGE_STALE_MS;
     return Math.max(requested, floor);
@@ -354,7 +367,31 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let currentProgram = null;
         let currentText = '';
 
-        await new Promise((resolve, reject) => {
+        const bodyTimeoutMs = resolveImportBodyTimeoutMs();
+        await new Promise((settleResolve, settleReject) => {
+            // Total budget for receiving and parsing the feed. Without it the
+            // body has no bound at all, and a stalled download would hold the
+            // import connection and the staging tables for the process lifetime.
+            let settled = false;
+            const once = fn => (...args) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(bodyTimer);
+                fn(...args);
+            };
+            // Wrap the originals exactly once. Wrapping an already-wrapped
+            // callback makes the inner call a no-op, and the promise then never
+            // settles at all.
+            const resolve = once(settleResolve);
+            const reject = once(settleReject);
+            const bodyTimer = setTimeout(() => {
+                const error = new Error(`EPG download exceeded ${bodyTimeoutMs}ms`);
+                error.name = 'AbortError';
+                reject(error);
+                try { stream.destroy?.(error); } catch { /* already gone */ }
+            }, bodyTimeoutMs);
+            bodyTimer.unref?.();
+
             parser.on('error', function (e) {
                 console.error("XML Parse Error", e);
                 reject(e);

@@ -16,7 +16,8 @@ vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.
 
 const {
   importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt,
-  resolveStageStaleMs, claimPromotionSequence, ensureImportStateTable, EPG_STAGE_PREFIX,
+  resolveStageStaleMs, resolveImportBodyTimeoutMs, claimPromotionSequence, ensureImportStateTable,
+  EPG_STAGE_PREFIX,
 } = await import('../src/services/epgImportService.js');
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const epgDb = (await import('../src/database/epgDb.js')).default;
@@ -124,25 +125,76 @@ describe('staged EPG import', () => {
     expect(liveCounts()).toEqual({ channels: 0, programs: 0 });
   });
 
-  it('keeps the stale threshold above the maximum request duration', () => {
-    // A live import of another process can legitimately hold a body open for
-    // the whole request budget, so the sweep threshold cannot be configured
-    // below it.
-    const previous = process.env.HTTP_MAX_REQUEST_MS;
+  it('bounds the import body and keeps the stale threshold above it', () => {
+    // fetchSafe bounds only the headers, so without an import body deadline an
+    // import has no upper bound at all — and then no age can tell a live one
+    // from an abandoned one, which is what the sweep relies on.
+    const previousBody = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
     const previousStale = process.env.EPG_STAGE_STALE_MS;
     try {
-      process.env.HTTP_MAX_REQUEST_MS = '600000';
+      delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      expect(resolveImportBodyTimeoutMs()).toBeGreaterThanOrEqual(60000);
+
+      process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '3600000';
+      process.env.EPG_STAGE_STALE_MS = '60000';
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
+    } finally {
+      if (previousBody === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previousBody;
+      if (previousStale === undefined) delete process.env.EPG_STAGE_STALE_MS;
+      else process.env.EPG_STAGE_STALE_MS = previousStale;
+    }
+  });
+
+  it('aborts an import whose body never finishes', async () => {
+    // fetchSafe bounds only the headers. Without this watchdog a stalled feed
+    // held the import connection and the staging tables for the process lifetime.
+    const previousBody = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '1000';
+    try {
+      seedExisting();
+      const before = liveCounts();
+      // Push once, then stay open and idle. Pushing on every read() spins the
+      // event loop so hard that no timer ever gets to run.
+      let pushed = false;
+      const stalled = new Readable({
+        read() {
+          if (pushed) return;
+          pushed = true;
+          this.push('<?xml version="1.0"?><tv>');
+        },
+      });
+      fetchSafe.mockResolvedValue({ ok: true, body: stalled });
+
+      await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+        .rejects.toThrow(/exceeded/i);
+
+      expect(liveCounts()).toEqual(before);
+      expect(stagingTableCount()).toBe(0);
+    } finally {
+      if (previousBody === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previousBody;
+    }
+  }, 20000);
+
+  it('keeps the stale threshold above how long an import may run', () => {
+    // The floor derives from the import body deadline, not from a header-only
+    // budget: the sweep must never call another process's live import stale.
+    const previousBody = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    const previousStale = process.env.EPG_STAGE_STALE_MS;
+    try {
+      process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '600000';
       process.env.EPG_STAGE_STALE_MS = '60000';
       expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(600000);
 
-      process.env.HTTP_MAX_REQUEST_MS = '3600000';
+      process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '3600000';
       expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
 
       delete process.env.EPG_STAGE_STALE_MS;
       expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
     } finally {
-      if (previous === undefined) delete process.env.HTTP_MAX_REQUEST_MS;
-      else process.env.HTTP_MAX_REQUEST_MS = previous;
+      if (previousBody === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previousBody;
       if (previousStale === undefined) delete process.env.EPG_STAGE_STALE_MS;
       else process.env.EPG_STAGE_STALE_MS = previousStale;
     }

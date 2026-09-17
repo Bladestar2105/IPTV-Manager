@@ -200,6 +200,15 @@ until this is exercised on a real Proxmox host.
 - `CATALOG_BODY_TIMEOUT_MS`: Budget for reading one provider catalog document
   (live/VOD/series lists and their categories). Defaults to `300000`
   (5 minutes); a large VOD catalog is hundreds of megabytes.
+- `MANIFEST_BODY_TIMEOUT_MS` / `MANIFEST_MAX_BYTES`: Budget and size cap for
+  reading an MPD or M3U8 manifest in the stream proxy. Default `30000` and
+  `33554432`. Without them an upstream that sends manifest headers and then
+  stalls holds the request and its stream session open indefinitely.
+- `EPG_IMPORT_BODY_TIMEOUT_MS`: Total budget for receiving and parsing one EPG
+  feed. Defaults to `1800000` (30 minutes). The EPG body is streamed into the
+  parser rather than buffered, so it needs its own deadline; without one an
+  import has no upper bound and no age can tell a live one from an abandoned
+  one.
 
 ## Stream Tracking
 
@@ -234,9 +243,9 @@ until this is exercised on a real Proxmox host.
   towards the limit — it says the database is busy, not that the panel is down.
 - `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
   abandoned and is removed at startup. Defaults to `21600000` (6 hours). The
-  effective value is never below four times `HTTP_MAX_REQUEST_MS`, because a
-  live import of another process may legitimately hold its body open for that
-  whole budget and the sweep must not classify it as stale during an overlapping
+  effective value is never below four times `EPG_IMPORT_BODY_TIMEOUT_MS`,
+  because that is how long a live import of another process may legitimately
+  run, and the sweep must not classify it as stale during an overlapping
   restart.
 
 EPG imports still validate URLs with the SSRF-safe fetch path, including
