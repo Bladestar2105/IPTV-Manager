@@ -149,25 +149,30 @@ describe('staged EPG import', () => {
   });
 
   it('numbers a run by its start, not by when its headers arrive', async () => {
-    // Import A starts first but its headers are delayed; B starts later and
-    // answers immediately. A must still carry the lower sequence.
-    const seen = [];
-    const slowHeaders = new Promise(resolve => setTimeout(resolve, 150));
+    // Import A starts first but its headers are withheld until B has finished.
+    // A must still carry the lower sequence and lose the promotion.
+    let aEntered;
+    const aHasEntered = new Promise(resolve => { aEntered = resolve; });
+    let releaseA;
+    const aMayAnswer = new Promise(resolve => { releaseA = resolve; });
+
+    let call = 0;
     fetchSafe.mockImplementation(async () => {
-      seen.push(Date.now());
-      if (seen.length === 1) await slowHeaders;
-      return { ok: true, body: Readable.from([xml([{ start: future(1), stop: future(2), title: `Run ${seen.length}` }])]) };
+      const index = ++call;
+      if (index === 1) {
+        aEntered();
+        await aMayAnswer;
+      }
+      return { ok: true, body: Readable.from([xml([{ start: future(1), stop: future(2), title: `Run ${index}` }])]) };
     });
 
     const first = importEpgFromUrl('https://epg.example/a.xml', SOURCE_TYPE, SOURCE_ID);
-    await new Promise(resolve => setTimeout(resolve, 20));
-    const second = importEpgFromUrl('https://epg.example/b.xml', SOURCE_TYPE, SOURCE_ID);
+    await aHasEntered;
+    await expect(importEpgFromUrl('https://epg.example/b.xml', SOURCE_TYPE, SOURCE_ID))
+      .resolves.toMatchObject({ success: true });
 
-    const results = await Promise.allSettled([first, second]);
-    // The later-started run wins; the earlier one is refused on promotion.
-    expect(results[1].status).toBe('fulfilled');
-    expect(results[0].status).toBe('rejected');
-    expect(String(results[0].reason?.message)).toMatch(/newer EPG import already promoted/i);
+    releaseA();
+    await expect(first).rejects.toThrow(/newer EPG import already promoted/i);
 
     const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
       .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
