@@ -548,10 +548,10 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const fetchOptions = { ...options };
     delete fetchOptions.agent;
     delete fetchOptions.redirect;
-    // Everything fetched here is proxied to a player: the body is a media stream
-    // that legitimately outlives any fixed duration, so only the wait for the
-    // headers is bounded.
-    fetchOptions.unboundedBody = true;
+    // `unboundedBody` is NOT forced here. Callers that pipe the body to a player
+    // pass it themselves; the manifest fetches (MPD, M3U8) read the body with
+    // response.text() and must keep the request deadline, or an upstream that
+    // sends headers and then stalls hangs the request and its stream session.
 
     for (const u of urls) {
         if (!u) continue;

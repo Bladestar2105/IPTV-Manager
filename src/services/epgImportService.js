@@ -128,10 +128,15 @@ export function ensureImportStateTable(database) {
  */
 export function claimPromotionSequence(database, sourceType, sourceId) {
     return immediateTransaction(database, () => {
+        // MAX(claimed_seq, promoted_seq) + 1, not claimed_seq + 1: a writer from
+        // the timestamp-based build can promote after the migration rebased the
+        // counter, leaving promoted_seq far above it. Rebasing on every claim
+        // means such a writer cannot make the source unpromotable again.
         const row = database.prepare(`
             INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq, claimed_seq)
             VALUES (?, ?, 0, 0, 1)
-            ON CONFLICT(source_type, source_id) DO UPDATE SET claimed_seq = claimed_seq + 1
+            ON CONFLICT(source_type, source_id) DO UPDATE SET
+                claimed_seq = MAX(claimed_seq, promoted_seq) + 1
             RETURNING claimed_seq
         `).get(sourceType, sourceId);
         const claimed = Number(row?.claimed_seq);

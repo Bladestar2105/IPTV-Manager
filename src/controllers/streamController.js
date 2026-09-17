@@ -189,9 +189,12 @@ export const proxyLive = async (req, res) => {
 
     if (shouldTranscode) {
       try {
+        // The body is handed to ffmpeg and streamed on, so it must not be cut by
+        // the global request deadline; the header budget still applies.
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
           headers: fetchHeaders,
-          redirect: 'follow'
+          redirect: 'follow',
+          unboundedBody: true
         });
         const upstream = result.response;
 

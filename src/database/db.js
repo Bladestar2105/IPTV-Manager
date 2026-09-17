@@ -174,10 +174,11 @@ export function initDb(isPrimary) {
       FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
     );
 
-    -- Serializes sync and deletion of one provider across cluster workers.
-    -- No foreign key: the lock is held *while* the provider row is deleted.
+    -- Serializes work across cluster workers. lock_key is 'provider:<id>' for a
+    -- provider sync or deletion and 'source:<url>' for one upstream panel.
+    -- No foreign key: a provider lock is held *while* the provider row is deleted.
     CREATE TABLE IF NOT EXISTS provider_locks (
-      provider_id INTEGER PRIMARY KEY,
+      lock_key TEXT PRIMARY KEY,
       operation TEXT NOT NULL,
       owner_pid INTEGER NOT NULL,
       owner_token TEXT NOT NULL,
@@ -292,13 +293,23 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
 
+            // An earlier shape keyed this table by provider_id. Lock rows are
+            // ephemeral lease state, so replacing the table is the upgrade.
+            const lockColumns = db.pragma('table_info(provider_locks)') || [];
+            if (lockColumns.length > 0 && !lockColumns.some(column => column.name === 'lock_key')) {
+              db.exec('DROP TABLE provider_locks');
+              db.exec(`CREATE TABLE provider_locks (
+                lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
+                owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
+            }
+
             // Only expired leases. Another process may still be using the same
             // DATA_DIR during an overlapping restart, and the lock is explicitly
-            // cross-process — a blanket delete would hand its providers to this
+            // cross-process — a blanket delete would hand its work to this
             // instance. A lock from a killed process expires on its own.
             const now = Math.floor(Date.now() / 1000);
             const staleLocks = db.prepare('DELETE FROM provider_locks WHERE expires_at <= ?').run(now).changes;
-            if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} expired provider lock(s)`);
+            if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} expired lock(s)`);
 
             console.log("✅ Database OK");
 

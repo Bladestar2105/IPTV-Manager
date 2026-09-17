@@ -26,7 +26,7 @@ const { deleteProvider } = await import('../src/controllers/providerController.j
 
 memDb.exec(`
   CREATE TABLE provider_locks (
-    provider_id INTEGER PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
+    lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
     owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
   );
   CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
@@ -82,8 +82,8 @@ describe('provider lock', () => {
   });
 
   it('takes over a lock left behind by a dead worker', () => {
-    memDb.prepare(`INSERT INTO provider_locks (provider_id, operation, owner_pid, owner_token, acquired_at, expires_at)
-                   VALUES (7, 'sync', 999999, 'stale', 1, 2)`).run();
+    memDb.prepare(`INSERT INTO provider_locks (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
+                   VALUES ('provider:7', 'sync', 999999, 'stale', 1, 2)`).run();
     const taken = acquireProviderLock(7, 'sync');
     expect(taken).not.toBeNull();
     taken.release();
@@ -184,9 +184,9 @@ describe('provider lock', () => {
   it('keeps a lock another process still holds when the primary starts', () => {
     const now = Math.floor(Date.now() / 1000);
     const insert = memDb.prepare(`INSERT INTO provider_locks
-      (provider_id, operation, owner_pid, owner_token, acquired_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`);
-    insert.run(7, 'sync', 424242, 'other-process', now - 60, now + 600);   // still leased
-    insert.run(8, 'sync', 424242, 'expired', now - 4000, now - 10);        // lease ran out
+      (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`);
+    insert.run('provider:7', 'sync', 424242, 'other-process', now - 60, now + 600);   // still leased
+    insert.run('provider:8', 'sync', 424242, 'expired', now - 4000, now - 10);        // lease ran out
 
     expect(clearExpiredProviderLocks(now)).toBe(1);
     expect(describeProviderLock(7)?.owner_pid).toBe(424242);

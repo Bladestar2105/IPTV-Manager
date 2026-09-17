@@ -108,6 +108,15 @@ describe('fetchSafe request budget', () => {
     expect(survived).toBe('still streaming');
   }, 15000);
 
+  it('keeps a finite body bounded when unboundedBody is not requested', async () => {
+    // fetchWithBackups also fetches MPD/M3U8 manifests, whose callers read the
+    // body with response.text(). Those must keep the deadline.
+    const started = Date.now();
+    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000, maxDurationMs: 500 });
+    await expect(response.text()).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(3000);
+  }, 15000);
+
   it('rejects a response whose announced size exceeds maxBytes', async () => {
     await expect(fetchSafe(`${base}/huge`, { timeout: 5000, maxBytes: 1024 }))
       .rejects.toThrow(/Response too large/);

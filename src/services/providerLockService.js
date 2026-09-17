@@ -35,9 +35,17 @@ function ensureTable() {
   }
 
   try {
+    // An earlier shape keyed the table by provider_id. Lock rows are ephemeral
+    // lease state, so replacing the table outright is the correct upgrade.
+    if (typeof db.pragma === 'function') {
+      const columns = db.pragma('table_info(provider_locks)') || [];
+      if (columns.length > 0 && !columns.some(column => column.name === 'lock_key')) {
+        db.exec('DROP TABLE provider_locks');
+      }
+    }
     db.exec(`
       CREATE TABLE IF NOT EXISTS provider_locks (
-        provider_id INTEGER PRIMARY KEY,
+        lock_key TEXT PRIMARY KEY,
         operation TEXT NOT NULL,
         owner_pid INTEGER NOT NULL,
         owner_token TEXT NOT NULL,
@@ -64,68 +72,107 @@ export function resetProviderLockState() {
   tableState = 'unknown';
 }
 
+export const providerLockKey = providerId => `provider:${Number(providerId)}`;
+export const sourceLockKey = sourceKey => `source:${String(sourceKey)}`;
+
 /**
- * Try to become the single owner of `providerId` for `operation`.
+ * Try to become the single owner of `lockKey` for `operation`.
  *
- * schedulerService kept a per-process `Set`, which cannot see a manual sync
- * running in another cluster worker, and provider deletion had no guard at all.
- * The lock lives in the database so it spans workers and processes.
+ * schedulerService kept a per-process `Set`, which cannot see work running in
+ * another cluster worker, and provider deletion had no guard at all. The lock
+ * lives in the database so it spans workers and processes.
  *
  * Fails closed: null means the caller must not proceed — either somebody else
  * holds the lock, or the lock could not be taken because of contention. The only
  * degraded result is a database that cannot hold the table at all (fixtures and
  * test doubles), which is decided once in ensureTable().
  *
- * @returns {{providerId:number, operation:string, token:string, release:Function}|null}
+ * @returns {{lockKey:string, operation:string, token:string, release:Function}|null}
  */
-export function acquireProviderLock(providerId, operation, options = {}) {
+export function acquireLock(lockKey, operation, options = {}) {
   const ttlSeconds = Number(options.ttlSeconds) > 0 ? Number(options.ttlSeconds) : DEFAULT_TTL_SECONDS;
   const state = ensureTable();
   // A database that refused the probe is contended, not unsupported: fail closed.
   if (state === 'busy') return null;
-  if (state === 'unsupported') return { providerId, operation, token: null, degraded: true, release() {} };
+  if (state === 'unsupported') return { lockKey, operation, token: null, degraded: true, release() {} };
 
   const now = Math.floor(Date.now() / 1000);
   const token = randomUUID();
   try {
-    db.prepare('DELETE FROM provider_locks WHERE provider_id = ? AND expires_at <= ?').run(providerId, now);
+    db.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND expires_at <= ?').run(lockKey, now);
     const inserted = db.prepare(`
-      INSERT INTO provider_locks (provider_id, operation, owner_pid, owner_token, acquired_at, expires_at)
+      INSERT INTO provider_locks (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
       VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(provider_id) DO NOTHING
-    `).run(providerId, operation, process.pid, token, now, now + ttlSeconds).changes;
+      ON CONFLICT(lock_key) DO NOTHING
+    `).run(lockKey, operation, process.pid, token, now, now + ttlSeconds).changes;
     if (inserted !== 1) return null;
   } catch (e) {
     // Fail closed. Reaching this point means ensureTable() succeeded, so the
     // table exists and the failure is real contention — SQLITE_BUSY here is
     // precisely the situation the lock exists for. Handing out a no-op lock
     // would allow exactly the overlapping operation it has to prevent.
-    console.warn(`Could not acquire provider lock ${providerId}/${operation}: ${e.message} [${e.code || 'Error'}]`);
+    console.warn(`Could not acquire lock ${lockKey}/${operation}: ${e.message} [${e.code || 'Error'}]`);
     return null;
   }
 
   const renew = setInterval(() => {
     try {
-      db.prepare('UPDATE provider_locks SET expires_at = ? WHERE provider_id = ? AND owner_token = ?')
-        .run(Math.floor(Date.now() / 1000) + ttlSeconds, providerId, token);
+      db.prepare('UPDATE provider_locks SET expires_at = ? WHERE lock_key = ? AND owner_token = ?')
+        .run(Math.floor(Date.now() / 1000) + ttlSeconds, lockKey, token);
     } catch { /* the release below clears it anyway */ }
   }, RENEW_INTERVAL_MS);
   renew.unref?.();
 
   return {
-    providerId,
+    lockKey,
     operation,
     token,
     degraded: false,
     release() {
       clearInterval(renew);
       try {
-        db.prepare('DELETE FROM provider_locks WHERE provider_id = ? AND owner_token = ?').run(providerId, token);
+        db.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND owner_token = ?').run(lockKey, token);
       } catch (e) {
-        console.warn(`Could not release provider lock ${providerId}:`, e.message);
+        console.warn(`Could not release lock ${lockKey}:`, e.message);
       }
     },
   };
+}
+
+/** Serializes sync and deletion of one provider. */
+export function acquireProviderLock(providerId, operation, options = {}) {
+  return acquireLock(providerLockKey(providerId), operation, options);
+}
+
+/**
+ * Serializes work against one upstream panel.
+ *
+ * Several provider rows commonly point at the same panel — nine of eleven do on
+ * the deployment this was written for. Without a shared lock each of them runs
+ * its own episode sync, with its own request concurrency, against that single
+ * host.
+ */
+export function acquireSourceLock(sourceKey, operation, options = {}) {
+  return acquireLock(sourceLockKey(sourceKey), operation, options);
+}
+
+export function releaseProviderLock(lock) {
+  if (lock && typeof lock.release === 'function') lock.release();
+}
+
+/** Who currently holds the lock, for diagnostics and 409 responses. */
+export function describeLock(lockKey) {
+  if (ensureTable() !== 'ready') return null;
+  try {
+    return db.prepare('SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE lock_key = ?')
+      .get(lockKey) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function describeProviderLock(providerId) {
+  return describeLock(providerLockKey(providerId));
 }
 
 /**
@@ -141,25 +188,7 @@ export function describeLockConflict(providerId, fallbackOperation = 'processed'
   return `Provider ${providerId} is already being ${what || fallbackOperation}`;
 }
 
-export function releaseProviderLock(lock) {
-  if (lock && typeof lock.release === 'function') lock.release();
-}
-
-/** Who currently holds the lock, for diagnostics and 409 responses. */
-export function describeProviderLock(providerId) {
-  if (ensureTable() !== 'ready') return null;
-  try {
-    return db.prepare('SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE provider_id = ?')
-      .get(providerId) || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Drop every lock. Only the primary calls this, before any worker is forked, so
- * a lock left behind by a killed container never blocks the next start.
- */
+/** Drop every lock. Tests only; startup uses clearExpiredProviderLocks(). */
 export function clearProviderLocks() {
   if (ensureTable() !== 'ready') return 0;
   try {
@@ -174,8 +203,8 @@ export function clearProviderLocks() {
  *
  * Another process may still be using the same DATA_DIR — an overlapping restart,
  * or a second instance — and the lock is explicitly cross-process, so a blanket
- * delete would hand that process's providers to this one. A lock left behind by
- * a killed process disappears on its own once its lease expires
+ * delete would hand that process's work to this one. A lock left behind by a
+ * killed process disappears on its own once its lease expires
  * (DEFAULT_TTL_SECONDS); owner_pid is not usable for liveness because PIDs are
  * namespaced per container and get reused.
  */

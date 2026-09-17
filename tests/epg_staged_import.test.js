@@ -193,6 +193,23 @@ describe('staged EPG import', () => {
     expect(titles).toEqual(['After upgrade']);
   });
 
+  it('outruns a promotion written after the migration rebased the counter', () => {
+    // A writer from the timestamp-based build can promote after initEpgDb() has
+    // rebased the counter. Incrementing claimed_seq alone would leave every
+    // later claim below that value and the source unpromotable until a restart.
+    ensureImportStateTable(epgDb);
+    epgDb.prepare(`INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq, claimed_seq)
+                   VALUES (?, ?, 0, 0, 1)
+                   ON CONFLICT(source_type, source_id) DO UPDATE SET promoted_seq = 0, claimed_seq = 1`)
+      .run(SOURCE_TYPE, SOURCE_ID);
+
+    const legacyPromotion = Date.now();
+    epgDb.prepare('UPDATE epg_import_state SET promoted_seq = ? WHERE source_type = ? AND source_id = ?')
+      .run(legacyPromotion, SOURCE_TYPE, SOURCE_ID);
+
+    expect(claimPromotionSequence(epgDb, SOURCE_TYPE, SOURCE_ID)).toBeGreaterThan(legacyPromotion);
+  });
+
   it('numbers a run by its start, not by when its headers arrive', async () => {
     // Import A starts first but its headers are withheld until B has finished.
     // A must still carry the lower sequence and lose the promotion.
@@ -265,31 +282,4 @@ describe('staged EPG import', () => {
     epgDb.exec(`DROP TABLE ${fresh.channels}; DROP TABLE ${fresh.programs};`);
   });
 
-  it('refuses a promotion from a run that started before the current snapshot', async () => {
-    // A slower import that started earlier must not roll back the newer feed.
-    fetchSafe.mockResolvedValue({
-      ok: true,
-      body: Readable.from([xml([{ start: future(1), stop: future(2), title: 'Newer Show' }])]),
-    });
-    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
-    const promotedSeq = epgDb.prepare('SELECT promoted_seq FROM epg_import_state WHERE source_type = ? AND source_id = ?')
-      .get(SOURCE_TYPE, SOURCE_ID).promoted_seq;
-    expect(promotedSeq).toBeGreaterThan(0);
-
-    // Pretend a much newer import already promoted while this one was parsing.
-    epgDb.prepare('UPDATE epg_import_state SET promoted_seq = ? WHERE source_type = ? AND source_id = ?')
-      .run(promotedSeq + 3600000, SOURCE_TYPE, SOURCE_ID);
-
-    fetchSafe.mockResolvedValue({
-      ok: true,
-      body: Readable.from([xml([{ start: future(3), stop: future(4), title: 'Older Show' }])]),
-    });
-    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
-      .rejects.toThrow(/newer EPG import already promoted/i);
-
-    const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
-      .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
-    expect(titles).toEqual(['Newer Show']);
-    expect(stagingTableCount()).toBe(0);
-  });
 });

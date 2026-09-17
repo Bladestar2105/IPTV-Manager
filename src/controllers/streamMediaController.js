@@ -135,9 +135,12 @@ export const proxyMovie = async (req, res) => {
     }
 
     try {
+        // The body is piped to the player, so it must not be cut by the global
+        // request deadline; the header budget still applies.
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
-            redirect: 'follow'
+            redirect: 'follow',
+            unboundedBody: true
         });
         const upstream = result.response;
 
@@ -310,9 +313,12 @@ export const proxySeries = async (req, res) => {
     }
 
     try {
+        // The body is piped to the player, so it must not be cut by the global
+        // request deadline; the header budget still applies.
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
-            redirect: 'follow'
+            redirect: 'follow',
+            unboundedBody: true
         });
         const upstream = result.response;
 

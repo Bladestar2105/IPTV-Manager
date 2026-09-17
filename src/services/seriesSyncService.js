@@ -1,5 +1,6 @@
 import { clearChannelsCache } from './cacheService.js';
 import { formatDbError, immediateTransaction, runWriteWithRetry } from '../database/sqliteWrites.js';
+import { acquireSourceLock, describeLock, sourceLockKey } from './providerLockService.js';
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
@@ -19,6 +20,11 @@ import { providerSourceKey } from '../utils/helpers.js';
 // remain usable only when they resolve to one authorized cached episode.
 
 const EPISODE_SYNC_CONCURRENCY = 3;
+// An upstream that stops answering does not recover within one run. Grinding
+// through tens of thousands of series against it costs one timeout each, keeps
+// the request slots busy and floods the log; the next scheduled sync retries.
+const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES =
+  Math.max(5, Number(process.env.EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) || 25);
 const EPISODE_SYNC_RETRY_AGE = 7 * 86400; // re-check series lacking last_modified weekly
 
 const episodeSyncLocks = new Set();
@@ -160,6 +166,18 @@ export async function syncSeriesEpisodes(providerId) {
     console.debug(`Episode sync already running for source ${sourceKey}, skipping`);
     return { skipped: true };
   }
+
+  // Provider rows commonly share one upstream panel, and the in-process Set
+  // above cannot see a run in another cluster worker. Without a shared lock each
+  // provider of the same panel starts its own run with its own request
+  // concurrency against that single host.
+  const sourceLock = acquireSourceLock(sourceKey, 'episodes');
+  if (!sourceLock) {
+    const holder = describeLock(sourceLockKey(sourceKey));
+    console.debug(`Episode sync already running for source ${sourceKey}` +
+      `${holder ? ` in pid ${holder.owner_pid}` : ''}, skipping`);
+    return { skipped: true };
+  }
   episodeSyncLocks.add(sourceKey);
 
   try {
@@ -231,9 +249,11 @@ export async function syncSeriesEpisodes(providerId) {
     let failed = 0;
     let episodeCount = 0;
     let cursor = 0;
+    let consecutiveFailures = 0;
+    let givenUp = false;
 
     const worker = async () => {
-      while (cursor < queue.length) {
+      while (cursor < queue.length && !givenUp) {
         const item = queue[cursor++];
         try {
           const count = await fetchSeriesEpisodesOnce(sourceKey, item.sid, () =>
@@ -242,21 +262,32 @@ export async function syncSeriesEpisodes(providerId) {
           if (count === null) { failed++; continue; }
           episodeCount += count;
           processed++;
+          consecutiveFailures = 0;
           if (processed % 250 === 0) {
             console.info(`📺 Episode sync progress (${sourceKey}): ${processed}/${queue.length} series`);
           }
         } catch (e) {
           failed++;
-          console.debug(`Episode fetch failed for series ${item.sid}: ${formatDbError(e)}`);
+          consecutiveFailures++;
+          if (consecutiveFailures <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
+            console.debug(`Episode fetch failed for series ${item.sid}: ${formatDbError(e)}`);
+          }
+          if (consecutiveFailures >= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) givenUp = true;
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(EPISODE_SYNC_CONCURRENCY, queue.length) }, () => worker()));
 
     if (processed > 0) clearChannelsCache();
-    console.info(`✅ Episode sync completed for provider ${provider.name}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
-    return { synced: processed, failed, total: queue.length };
+    if (givenUp) {
+      console.warn(`⚠️ Episode sync for provider ${provider.name} gave up after ${consecutiveFailures} consecutive failures` +
+        ` (${processed}/${queue.length} series updated); the upstream is not answering get_series_info`);
+    } else {
+      console.info(`✅ Episode sync completed for provider ${provider.name}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
+    }
+    return { synced: processed, failed, total: queue.length, gaveUp: givenUp };
   } finally {
     episodeSyncLocks.delete(sourceKey);
+    sourceLock.release();
   }
 }
