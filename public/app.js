@@ -2610,13 +2610,15 @@ async function showSyncLogs(providerId) {
         const date = new Date(log.sync_time * 1000);
         const statusClass = log.status === 'success' ? 'success' : (log.status === 'partial' ? 'warning' : 'danger');
         
+        // error_message can carry text an upstream provider produced, so every
+        // interpolated field is escaped before it becomes markup.
         tr.innerHTML = `
-          <td>${date.toLocaleString()}</td>
-          <td><span class="badge bg-${statusClass}">${log.status}</span></td>
-          <td>${log.channels_added || 0}</td>
-          <td>${log.channels_updated || 0}</td>
-          <td>${log.categories_added || 0}</td>
-          <td>${log.error_message || '-'}</td>
+          <td>${escapeHtml(date.toLocaleString())}</td>
+          <td><span class="badge bg-${statusClass}">${escapeHtml(log.status)}</span></td>
+          <td>${Number(log.channels_added) || 0}</td>
+          <td>${Number(log.channels_updated) || 0}</td>
+          <td>${Number(log.categories_added) || 0}</td>
+          <td>${escapeHtml(log.error_message || '-')}</td>
         `;
         tbody.appendChild(tr);
       });

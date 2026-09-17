@@ -48,8 +48,12 @@ export function resetProviderLockState() {
  * running in another cluster worker, and provider deletion had no guard at all.
  * The lock lives in the database so it spans workers and processes.
  *
+ * Fails closed: null means the caller must not proceed — either somebody else
+ * holds the lock, or the lock could not be taken because of contention. The only
+ * degraded result is a database that cannot hold the table at all (fixtures and
+ * test doubles), which is decided once in ensureTable().
+ *
  * @returns {{providerId:number, operation:string, token:string, release:Function}|null}
- *          null when somebody else holds the lock.
  */
 export function acquireProviderLock(providerId, operation, options = {}) {
   const ttlSeconds = Number(options.ttlSeconds) > 0 ? Number(options.ttlSeconds) : DEFAULT_TTL_SECONDS;
@@ -66,8 +70,12 @@ export function acquireProviderLock(providerId, operation, options = {}) {
     `).run(providerId, operation, process.pid, token, now, now + ttlSeconds).changes;
     if (inserted !== 1) return null;
   } catch (e) {
-    console.warn(`Could not acquire provider lock ${providerId}/${operation}:`, e.message);
-    return { providerId, operation, token: null, degraded: true, release() {} };
+    // Fail closed. Reaching this point means ensureTable() succeeded, so the
+    // table exists and the failure is real contention — SQLITE_BUSY here is
+    // precisely the situation the lock exists for. Handing out a no-op lock
+    // would allow exactly the overlapping operation it has to prevent.
+    console.warn(`Could not acquire provider lock ${providerId}/${operation}: ${e.message} [${e.code || 'Error'}]`);
+    return null;
   }
 
   const renew = setInterval(() => {
@@ -92,6 +100,19 @@ export function acquireProviderLock(providerId, operation, options = {}) {
       }
     },
   };
+}
+
+/**
+ * Wording for a refused operation. A lock that no longer has a holder row means
+ * the acquisition itself failed (contention), not that somebody owns it.
+ */
+export function describeLockConflict(providerId, fallbackOperation = 'processed') {
+  const holder = describeProviderLock(providerId);
+  if (!holder) {
+    return `Provider ${providerId} could not be locked because the database is busy; try again shortly`;
+  }
+  const what = holder.operation === 'delete' ? 'deleted' : 'synchronized';
+  return `Provider ${providerId} is already being ${what || fallbackOperation}`;
 }
 
 export function releaseProviderLock(lock) {

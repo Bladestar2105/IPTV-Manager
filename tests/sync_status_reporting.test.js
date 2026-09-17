@@ -189,6 +189,26 @@ describe('sync status reporting', () => {
     expect(third).toBeLessThanOrEqual(now + 86400);       // never beyond the interval
   });
 
+  it('never persists credentials or markup from an upstream failure', async () => {
+    // fetchSafe embeds the request URL in some of its errors, and that URL
+    // carries the provider account. sync_logs.error_message is rendered in the
+    // admin UI, so upstream-controlled text must not survive either.
+    fetchSafe.mockImplementation(async url => {
+      throw new Error(`Unsafe URL: ${url}<img src=x onerror=alert(1)>`);
+    });
+    xtreamState.error = new Error('Unsafe URL: http://panel.example/player_api.php?username=bob&password=s3cr3t');
+
+    const result = await performSync(7, 1, { mode: 'manual' });
+
+    const stored = logs()[0].error_message || '';
+    expect(stored).not.toMatch(/s3cr3t/);
+    expect(stored).not.toMatch(/password=(?!\*)/);
+    expect(stored).not.toMatch(/username=(?!\*)/);
+    expect(stored).not.toMatch(/[<>]/);
+    expect(stored.length).toBeLessThanOrEqual(300);
+    expect(result.errorMessage).not.toMatch(/s3cr3t/);
+  });
+
   it('does not mark a stream type complete when only its categories failed', async () => {
     routeFetch({
       get_series: [{ series_id: 5, name: 'S', cover: '' }],

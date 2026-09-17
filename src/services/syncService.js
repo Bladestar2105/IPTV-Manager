@@ -2,13 +2,13 @@ import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
-import { isAdultCategory } from '../utils/helpers.js';
+import { isAdultCategory, sanitizeErrorMessage } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
 import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
-import { acquireProviderLock, describeProviderLock } from './providerLockService.js';
+import { acquireProviderLock, describeLockConflict } from './providerLockService.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 
 /**
@@ -146,7 +146,7 @@ export async function checkProviderExpiry(providerId) {
       return expiry;
     }
   } catch (e) {
-    console.error(`Failed to check expiry for provider ${providerId}:`, e.message);
+    console.error(`Failed to check expiry for provider ${providerId}:`, sanitizeErrorMessage(e));
   }
   return null;
 }
@@ -265,10 +265,13 @@ export function finishSyncRun({
   }
 
   try {
+    // Defence in depth: whatever produced the message, nothing unsafe reaches
+    // the column that the admin UI renders.
+    const safeMessage = errorMessage ? sanitizeErrorMessage(errorMessage) : null;
     db.prepare(`
       INSERT INTO sync_logs (provider_id, user_id, sync_time, status, channels_added, channels_updated, categories_added, error_message)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(providerId, userId, startTime, status, channelsAdded, channelsUpdated, categoriesAdded, errorMessage || null);
+    `).run(providerId, userId, startTime, status, channelsAdded, channelsUpdated, categoriesAdded, safeMessage);
   } catch (e) {
     console.error(`Failed to write sync log for provider ${providerId} [${e.code || 'Error'}]:`, e.message);
   }
@@ -290,8 +293,7 @@ export async function performSync(providerId, userId, options = {}) {
   // and a provider deletion could run while its own sync was still in flight.
   const lock = acquireProviderLock(providerId, 'sync');
   if (!lock) {
-    const holder = describeProviderLock(providerId);
-    errorMessage = `Provider ${providerId} is already being ${holder?.operation === 'delete' ? 'deleted' : 'synchronized'}`;
+    errorMessage = describeLockConflict(providerId);
     console.warn(`⏳ ${errorMessage}; skipping this run`);
     return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'locked' };
   }
@@ -875,7 +877,7 @@ export async function performSync(providerId, userId, options = {}) {
 
   } catch (e) {
     status = 'error';
-    errorMessage = e.message;
+    errorMessage = sanitizeErrorMessage(e);
     console.error(`❌ Sync failed for provider ${providerId} [${e.code || e.name || 'Error'}]:`, e);
 
     finishSyncRun({

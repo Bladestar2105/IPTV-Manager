@@ -114,6 +114,33 @@ describe('provider lock', () => {
     }
   });
 
+  it('fails closed when the lock table itself is contended', async () => {
+    // SQLITE_BUSY during acquisition happens exactly while a long write is in
+    // progress — the situation the lock exists for. Degrading to a no-op lock
+    // there would permit the overlap it has to prevent.
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+      if (/INSERT INTO provider_locks/i.test(sql)) {
+        return { run: () => { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY'; throw e; } };
+      }
+      return original(sql);
+    });
+    try {
+      expect(acquireProviderLock(7, 'sync')).toBeNull();
+
+      const result = await performSync(7, 1, { mode: 'manual' });
+      expect(result.status).toBe('locked');
+      expect(memDb.prepare('SELECT COUNT(*) c FROM sync_logs').get().c).toBe(0);
+
+      const res = resDouble();
+      deleteProvider({ params: { id: '7' }, user: { is_admin: 1 } }, res);
+      expect(res.statusCode).toBe(409);
+      expect(memDb.prepare('SELECT COUNT(*) c FROM providers WHERE id = 7').get().c).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('releases the lock again after a completed run', async () => {
     const result = await performSync(7, 1, { mode: 'manual' });
     expect(result.status).not.toBe('locked');

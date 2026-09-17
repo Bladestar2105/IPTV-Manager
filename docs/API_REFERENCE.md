@@ -253,6 +253,12 @@ A run that delivered nothing leaves `sync_configs.last_sync` untouched and
 schedules the next attempt with an exponential backoff (from 15 minutes,
 never later than the configured interval).
 
+`sync_logs.error_message` is sanitized before it is stored: query strings are
+removed from embedded URLs, credential-shaped pairs are masked, markup and
+control characters are stripped and the text is bounded. The field carries
+upstream-controlled text and the SSRF-safe fetch path embeds the request URL —
+which holds the provider account — in some of its errors.
+
 Provider synchronization treats a complete empty response conservatively: one
 empty snapshot preserves an existing local catalog, while a second consecutive
 authoritative empty snapshot permits cleanup. Failed, invalid, or incomplete

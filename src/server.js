@@ -9,7 +9,8 @@ import dotenv from 'dotenv';
 
 import app from './app.js';
 import db, { initDb } from './database/db.js';
-import { initEpgDb } from './database/epgDb.js';
+import epgDb, { initEpgDb } from './database/epgDb.js';
+import { dropOrphanedStagingTables } from './services/epgImportService.js';
 import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler, startGeoIpUpdater } from './services/schedulerService.js';
 import { startWalMaintenance } from './services/walMaintenanceService.js';
@@ -52,6 +53,11 @@ let redisClient = null;
     // Init DB and Run Migrations
     initDb(true);
     initEpgDb();
+
+    // Staging tables an aborted EPG import left behind. Safe here because no
+    // worker is running yet, so this can never hit a live import.
+    const orphanedStages = dropOrphanedStagingTables(epgDb);
+    if (orphanedStages > 0) console.info(`🧹 Removed ${orphanedStages} orphaned EPG staging table(s)`);
   }
 
   // Initialize Stream Manager (Redis or SQLite)

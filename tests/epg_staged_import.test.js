@@ -9,7 +9,8 @@ vi.mock('../src/database/db.js', () => ({
 }));
 vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.fn() }));
 
-const { importEpgFromUrl, stagingTableNames } = await import('../src/services/epgImportService.js');
+const { importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, EPG_STAGE_PREFIX } =
+  await import('../src/services/epgImportService.js');
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const epgDb = (await import('../src/database/epgDb.js')).default;
 
@@ -17,7 +18,6 @@ initEpgDb();
 
 const SOURCE_TYPE = 'custom';
 const SOURCE_ID = 9991;
-const stage = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
 
 const xml = programmes => `<?xml version="1.0" encoding="UTF-8"?><tv>
   <channel id="ch1"><display-name>Channel One</display-name></channel>
@@ -35,9 +35,10 @@ const liveCounts = () => ({
   programs: epgDb.prepare('SELECT COUNT(*) c FROM epg_programs WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).c,
 });
 
-const stagingExists = () =>
-  epgDb.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name IN (?, ?)")
-    .get(stage.channels, stage.programs).c;
+// Staging table names carry a per-run token, so count anything that is one.
+const stagingTableCount = () =>
+  epgDb.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name LIKE ? || '%'")
+    .get(EPG_STAGE_PREFIX).c;
 
 function seedExisting() {
   epgDb.prepare('INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
@@ -51,7 +52,7 @@ describe('staged EPG import', () => {
     vi.clearAllMocks();
     epgDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
     epgDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
-    epgDb.exec(`DROP TABLE IF EXISTS ${stage.programs}; DROP TABLE IF EXISTS ${stage.channels};`);
+    dropOrphanedStagingTables(epgDb);
   });
 
   afterAll(() => {
@@ -70,7 +71,7 @@ describe('staged EPG import', () => {
 
     expect(liveCounts()).toEqual({ channels: 1, programs: 1 });
     expect(epgDb.prepare('SELECT id FROM epg_channels WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).id).toBe('ch1');
-    expect(stagingExists()).toBe(0);
+    expect(stagingTableCount()).toBe(0);
   });
 
   it('keeps the previous data when the download breaks mid-stream', async () => {
@@ -97,7 +98,7 @@ describe('staged EPG import', () => {
 
     expect(liveCounts()).toEqual(before);
     expect(epgDb.prepare('SELECT id FROM epg_channels WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).id).toBe('old-ch');
-    expect(stagingExists()).toBe(0);
+    expect(stagingTableCount()).toBe(0);
   });
 
   it('refuses to trade existing data for an empty feed', async () => {
@@ -116,9 +117,34 @@ describe('staged EPG import', () => {
   });
 
   it('rejects an unusable source identity instead of building a table name from it', () => {
-    expect(() => stagingTableNames('custom"; DROP TABLE epg_channels; --', 1)).not.toThrow();
-    expect(stagingTableNames('custom"; DROP TABLE epg_channels; --', 1).channels).toBe('epg_stage_channels_customdroptableepgchannels_1');
+    expect(stagingTableNames('custom"; DROP TABLE epg_channels; --', 1, 'tok').channels)
+      .toBe(`${EPG_STAGE_PREFIX}channels_customdroptableepgchannels_1_tok`);
     expect(() => stagingTableNames('custom', '1; DROP TABLE epg_channels')).toThrow(/Invalid EPG source identity/);
     expect(() => stagingTableNames('', 1)).toThrow(/Invalid EPG source identity/);
+    // A hostile token cannot inject DDL: only [a-z0-9] survives, and an empty
+    // result is rejected.
+    const hostile = stagingTableNames('custom', 1, '"; DROP TABLE epg_channels; --');
+    expect(hostile.channels).toMatch(/^[a-z0-9_]+$/);
+    expect(hostile.programs).toMatch(/^[a-z0-9_]+$/);
+    expect(() => stagingTableNames('custom', 1, '!!!')).toThrow(/Invalid EPG source identity/);
+  });
+
+  it('gives two runs of the same source separate staging tables', () => {
+    // A scheduled provider update and the update fired after a manual sync can
+    // overlap; shared names let one run drop the tables the other is filling.
+    const a = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
+    const b = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
+    expect(a.channels).not.toBe(b.channels);
+    expect(a.programs).not.toBe(b.programs);
+    expect(a.channels.startsWith(`${EPG_STAGE_PREFIX}channels_${SOURCE_TYPE}_${SOURCE_ID}_`)).toBe(true);
+  });
+
+  it('sweeps staging tables an aborted run left behind', () => {
+    const orphan = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
+    epgDb.exec(`CREATE TABLE ${orphan.channels} (id TEXT); CREATE TABLE ${orphan.programs} (id TEXT);`);
+    expect(stagingTableCount()).toBe(2);
+
+    expect(dropOrphanedStagingTables(epgDb)).toBe(2);
+    expect(stagingTableCount()).toBe(0);
   });
 });

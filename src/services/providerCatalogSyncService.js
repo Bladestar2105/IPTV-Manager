@@ -1,6 +1,7 @@
 import { Xtream } from '@iptv/xtream-api';
 import { fetchSafe } from '../utils/network.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
+import { sanitizeErrorMessage } from '../utils/helpers.js';
 
 const CATALOG_TIMEOUT_MS = 60000;
 
@@ -37,7 +38,10 @@ export async function fetchProviderCatalog(provider, xtream) {
   const failures = [];
 
   const fail = (section, error) => {
-    const message = error instanceof Error ? error.message : String(error);
+    // The message is persisted in sync_logs and rendered in the admin UI. It can
+    // contain upstream-controlled text, and fetchSafe embeds the request URL —
+    // which carries the provider credentials — in some of its errors.
+    const message = sanitizeErrorMessage(error);
     failures.push({ section, message });
     console.error(`${section} fetch failed for provider ${provider.id}:`, message);
   };
@@ -132,7 +136,7 @@ export async function fetchProviderCatalog(provider, xtream) {
             });
           }
         }
-      } catch (e) { console.error('M3U fallback error:', e.message); }
+      } catch (e) { console.error('M3U fallback error:', sanitizeErrorMessage(e)); }
       if (!liveFetchComplete && apiFetchComplete) liveFetchComplete = true;
     }
 

@@ -3,7 +3,7 @@ import { fetchSafe } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { performSync, checkProviderExpiry, deleteAllProviderChannels } from '../services/syncService.js';
-import { acquireProviderLock, describeProviderLock } from '../services/providerLockService.js';
+import { acquireProviderLock, describeLockConflict } from '../services/providerLockService.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
@@ -493,10 +493,7 @@ export const deleteProvider = (req, res) => {
   // with performSync and spans cluster workers.
   const lock = acquireProviderLock(Number(req.params.id), 'delete');
   if (!lock) {
-    const holder = describeProviderLock(Number(req.params.id));
-    return res.status(409).json({
-      error: `Provider is currently being ${holder?.operation === 'delete' ? 'deleted' : 'synchronized'}; try again once it finished`
-    });
+    return res.status(409).json({ error: `${describeLockConflict(Number(req.params.id))}; try again once it finished` });
   }
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});

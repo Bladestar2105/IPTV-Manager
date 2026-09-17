@@ -240,6 +240,50 @@ export function redactUrl(url) {
   }
 }
 
+const MAX_PERSISTED_ERROR_LENGTH = 300;
+
+/**
+ * Make an error message safe to persist and to display.
+ *
+ * Upstream servers control parts of the text that reaches sync_logs, and
+ * fetchSafe embeds the request URL in some of its messages — for provider
+ * catalog calls that URL carries the account credentials. Query strings are
+ * dropped, remaining credential-shaped pairs are masked, markup characters are
+ * removed so a stored message can never become markup, and the result is
+ * bounded.
+ *
+ * @param {unknown} value an Error or any value describing a failure
+ * @returns {string} sanitized single-line message
+ */
+export function sanitizeErrorMessage(value) {
+  const raw = value instanceof Error ? value.message : String(value ?? '');
+  if (!raw) return 'unknown error';
+
+  let text = redactUrl(raw) || raw;
+
+  // Keep scheme, host and path for diagnosis; the query string never survives.
+  text = text.replace(/https?:\/\/[^\s"'`<>]+/gi, match => {
+    try {
+      const parsed = new URL(match);
+      return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    } catch {
+      return '[url]';
+    }
+  });
+
+  // Anything credential-shaped that survived, in a query string or not.
+  text = text.replace(/\b(user(name)?|pass(word)?|token|auth|secret|key|mac)\s*[=:]\s*[^\s&,;]*/gi,
+    (match, name) => `${name}=********`);
+
+  // No markup, no control characters, single line.
+  text = text.replace(/[\u0000-\u001f\u007f<>"'`\\]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  if (!text) return 'unknown error';
+  return text.length > MAX_PERSISTED_ERROR_LENGTH
+    ? `${text.slice(0, MAX_PERSISTED_ERROR_LENGTH - 1)}\u2026`
+    : text;
+}
+
 export function resolveAssignmentGrant({
   categoryOwnerId,
   providerOwnerId,

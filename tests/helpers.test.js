@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey, resolveAssignmentGrant } from '../src/utils/helpers.js';
+import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey, resolveAssignmentGrant, sanitizeErrorMessage } from '../src/utils/helpers.js';
 
 describe('isAdultCategory', () => {
   const adultKeywords = [
@@ -379,5 +379,43 @@ describe('providerSourceKey', () => {
     expect(providerSourceKey('')).toBe('');
     expect(providerSourceKey(null)).toBe('');
     expect(providerSourceKey(undefined)).toBe('');
+  });
+});
+
+describe('sanitizeErrorMessage', () => {
+  it('strips the query string of an embedded URL, credentials included', () => {
+    const out = sanitizeErrorMessage(
+      new Error('Unsafe URL: http://panel.example:8080/player_api.php?username=bob&password=s3cr3t&action=get_series')
+    );
+    expect(out).not.toMatch(/s3cr3t/);
+    expect(out).not.toMatch(/bob/);
+    expect(out).toContain('panel.example:8080');
+    expect(out).toContain('/player_api.php');
+  });
+
+  it('masks credential-shaped pairs outside a URL', () => {
+    const out = sanitizeErrorMessage(new Error('auth failed for username=bob password=hunter2 token=abc'));
+    expect(out).not.toMatch(/hunter2/);
+    expect(out).not.toMatch(/abc\b/);
+    expect(out).toMatch(/password=\*+/);
+  });
+
+  it('removes characters that could become markup', () => {
+    const out = sanitizeErrorMessage(new Error('bad content-type <img src=x onerror="alert(1)">'));
+    expect(out).not.toMatch(/[<>"'`]/);
+    expect(out).toContain('bad content-type');
+  });
+
+  it('collapses control characters and bounds the length', () => {
+    expect(sanitizeErrorMessage(new Error('a\nb\tc'))).toBe('a b c');
+    const long = sanitizeErrorMessage(new Error('x'.repeat(1000)));
+    expect(long.length).toBeLessThanOrEqual(300);
+  });
+
+  it('keeps ordinary messages readable', () => {
+    expect(sanitizeErrorMessage(new Error('The operation was aborted.'))).toBe('The operation was aborted.');
+    expect(sanitizeErrorMessage('HTTP 521')).toBe('HTTP 521');
+    expect(sanitizeErrorMessage(null)).toBe('unknown error');
+    expect(sanitizeErrorMessage(new Error(''))).toBe('unknown error');
   });
 });

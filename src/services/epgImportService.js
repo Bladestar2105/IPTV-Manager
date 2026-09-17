@@ -1,4 +1,5 @@
 import zlib from 'zlib';
+import { randomUUID } from 'crypto';
 import { Transform } from 'stream';
 import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
@@ -14,24 +15,47 @@ function decodeXmlIfNeeded(value) {
     return value.includes('&') ? decodeXml(value) : value;
 }
 
+export const EPG_STAGE_PREFIX = 'epg_stage_';
+
 /**
- * Per-source staging table names. sourceType is an internal enum and sourceId an
- * integer, but both are validated because they end up in DDL.
+ * Staging table names for one import run.
+ *
+ * The names carry a per-run token: two updates of the same source can overlap —
+ * a scheduled provider update and the fire-and-forget update after a manual
+ * sync — and shared names would let one run drop the tables another is still
+ * filling. sourceType and sourceId are validated because they end up in DDL.
  */
-export function stagingTableNames(sourceType, sourceId) {
+export function stagingTableNames(sourceType, sourceId, runToken = randomUUID()) {
     const type = String(sourceType).replace(/[^a-z]/gi, '').toLowerCase();
     const id = Number(sourceId);
-    if (!type || !Number.isInteger(id) || id < 0) {
+    const token = String(runToken).replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 32);
+    if (!type || !Number.isInteger(id) || id < 0 || !token) {
         throw new Error(`Invalid EPG source identity: ${sourceType}/${sourceId}`);
     }
     return {
-        channels: `epg_stage_channels_${type}_${id}`,
-        programs: `epg_stage_programs_${type}_${id}`,
+        channels: `${EPG_STAGE_PREFIX}channels_${type}_${id}_${token}`,
+        programs: `${EPG_STAGE_PREFIX}programs_${type}_${id}_${token}`,
     };
 }
 
+/**
+ * Remove staging tables an aborted process left behind. Only the primary calls
+ * this, before any worker is forked, so it can never hit a live import.
+ */
+export function dropOrphanedStagingTables(database) {
+    try {
+        const rows = database.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? || '%'"
+        ).all(EPG_STAGE_PREFIX);
+        for (const row of rows) database.exec(`DROP TABLE IF EXISTS ${row.name};`);
+        return rows.length;
+    } catch (e) {
+        console.warn(`Could not sweep EPG staging tables: ${e.message}`);
+        return 0;
+    }
+}
+
 function createStagingTables(database, stage) {
-    dropStagingTables(database, stage);
     database.exec(`
         CREATE TABLE ${stage.channels} (
             id TEXT NOT NULL,
@@ -125,7 +149,8 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
     // The import writes into staging tables and only replaces the live rows once
     // the whole feed has been parsed. Deleting first meant that a lock, a parse
     // error or a truncated download left the source without any EPG data until
-    // the next successful run.
+    // the next successful run. The names are unique per run, so two concurrent
+    // updates of the same source cannot drop each other's tables.
     const stage = stagingTableNames(sourceType, sourceId);
 
     try {
