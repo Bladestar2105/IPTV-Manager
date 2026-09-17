@@ -60,6 +60,15 @@ export function initEpgDb() {
       db.exec('ALTER TABLE epg_import_state ADD COLUMN claimed_seq INTEGER NOT NULL DEFAULT 0');
     }
 
+    // Rows written by the timestamp-based implementation carry a millisecond
+    // value in promoted_seq while claimed_seq starts at 0. Lifting the counter
+    // to at least the last promotion keeps both fields in one domain: without
+    // it the next claim would be 1, every promotion would be rejected as older
+    // than the legacy value, and the source could never be updated again.
+    // The statement is the invariant claimed_seq >= promoted_seq, so it is
+    // idempotent and also repairs any later skew.
+    db.exec('UPDATE epg_import_state SET claimed_seq = promoted_seq WHERE claimed_seq < promoted_seq');
+
     console.log("✅ EPG Database initialized");
   } catch (e) {
     console.error("❌ EPG DB Init Error:", e.message);

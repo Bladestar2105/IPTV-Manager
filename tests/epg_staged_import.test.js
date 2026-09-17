@@ -164,6 +164,35 @@ describe('staged EPG import', () => {
     epgDb.prepare('DELETE FROM epg_import_state WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID + 1);
   });
 
+  it('lifts a legacy timestamp promotion into the counter domain', async () => {
+    // A database written by the timestamp-based implementation carries a
+    // millisecond value in promoted_seq. Without rebasing, the next claim is 1,
+    // every promotion is rejected as older, and the source can never update again.
+    const legacy = Date.now();
+    ensureImportStateTable(epgDb);
+    epgDb.prepare(`INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq, claimed_seq)
+                   VALUES (?, ?, ?, ?, 0)
+                   ON CONFLICT(source_type, source_id) DO UPDATE SET promoted_seq = excluded.promoted_seq, claimed_seq = 0`)
+      .run(SOURCE_TYPE, SOURCE_ID, Math.floor(legacy / 1000), legacy);
+
+    initEpgDb();   // idempotent migration
+
+    const state = epgDb.prepare('SELECT claimed_seq, promoted_seq FROM epg_import_state WHERE source_type = ? AND source_id = ?')
+      .get(SOURCE_TYPE, SOURCE_ID);
+    expect(state.claimed_seq).toBeGreaterThanOrEqual(state.promoted_seq);
+
+    fetchSafe.mockResolvedValue({
+      ok: true,
+      body: Readable.from([xml([{ start: future(1), stop: future(2), title: 'After upgrade' }])]),
+    });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .resolves.toMatchObject({ success: true });
+
+    const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
+      .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
+    expect(titles).toEqual(['After upgrade']);
+  });
+
   it('numbers a run by its start, not by when its headers arrive', async () => {
     // Import A starts first but its headers are withheld until B has finished.
     // A must still carry the lower sequence and lose the promotion.
