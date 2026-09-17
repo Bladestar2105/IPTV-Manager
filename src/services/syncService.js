@@ -35,6 +35,23 @@ export function deleteProviderChannelCascade(database, providerId, providerChann
   return deleted;
 }
 
+/**
+ * Remove every channel of a provider and its dependants.
+ *
+ * The per-channel cascade above issues four statements per row, which meant
+ * ~800k statements and a ~40s write transaction for a provider with 200k
+ * channels — long enough to push every other writer past its busy timeout.
+ * Set-based deletes keep the same order and the same single transaction.
+ * The caller owns the surrounding transaction.
+ */
+export function deleteAllProviderChannels(database, providerId) {
+  const scope = 'SELECT id FROM provider_channels WHERE provider_id = ?';
+  database.prepare(`DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (${scope})`).run(providerId);
+  database.prepare(`DELETE FROM stream_stats WHERE channel_id IN (${scope})`).run(providerId);
+  database.prepare(`DELETE FROM user_channels WHERE provider_channel_id IN (${scope})`).run(providerId);
+  return database.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(providerId).changes;
+}
+
 export function selectStaleProviderChannels(
   existingChannels,
   seenRemoteIdsByType,

@@ -49,7 +49,16 @@ vi.mock('../../src/utils/helpers.js', () => ({
 vi.mock('../../src/services/syncService.js', () => ({
   performSync: vi.fn(),
   checkProviderExpiry: vi.fn(),
-  deleteProviderChannelCascade: vi.fn()
+  deleteProviderChannelCascade: vi.fn(),
+  // Set-based cascade used by deleteProvider; run the real statement shapes
+  // through the mocked db so their ordering is still asserted below.
+  deleteAllProviderChannels: vi.fn((database, providerId) => {
+    const scope = 'SELECT id FROM provider_channels WHERE provider_id = ?';
+    database.prepare(`DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (${scope})`).run(providerId);
+    database.prepare(`DELETE FROM stream_stats WHERE channel_id IN (${scope})`).run(providerId);
+    database.prepare(`DELETE FROM user_channels WHERE provider_channel_id IN (${scope})`).run(providerId);
+    database.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(providerId);
+  })
 }));
 
 vi.mock('../../src/services/epgService.js', () => ({

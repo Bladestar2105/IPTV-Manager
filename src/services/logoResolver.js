@@ -192,29 +192,45 @@ export function prePopulateProviderIconCache(providerId) {
             WHERE provider_id = ? AND logo IS NOT NULL AND logo != ''
         `).all(providerId);
 
-        let count = 0;
-        db.transaction(() => {
-            const insertStmt = db.prepare(`
-                INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
-                VALUES (?, ?, ?)
-            `);
+        // Only the logos that are not cached yet are written. Re-running
+        // `INSERT OR IGNORE` for every logo meant a six-figure statement count
+        // and a multi-second write transaction on every sync, even when nothing
+        // had changed.
+        const cachedUrls = new Set(
+            db.prepare('SELECT logo_url FROM provider_icon_cache WHERE provider_id = ?')
+              .all(providerId)
+              .map(row => row.logo_url)
+        );
 
-            for (const ch of channels) {
-                if (ch.logo) {
-                    const hash = getLogoCacheHash(ch.logo);
-                    insertStmt.run(providerId, ch.logo, hash);
+        const allHashes = new Set();
+        const pending = [];
+        for (const ch of channels) {
+            if (!ch.logo) continue;
+            allHashes.add(getLogoCacheHash(ch.logo));
+            if (cachedUrls.has(ch.logo)) continue;
+            cachedUrls.add(ch.logo);
+            pending.push(ch.logo);
+        }
+
+        let count = 0;
+        if (pending.length > 0) {
+            db.transaction(() => {
+                const insertStmt = db.prepare(`
+                    INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
+                    VALUES (?, ?, ?)
+                `);
+                for (const logo of pending) {
+                    insertStmt.run(providerId, logo, getLogoCacheHash(logo));
                     count++;
                 }
-            }
-        })();
+            }).immediate();
+        }
 
         // Update memory cache
-        providerIconMemoryCache.set(providerId, new Set(
-            channels.filter(ch => ch.logo).map(ch => getLogoCacheHash(ch.logo))
-        ));
+        providerIconMemoryCache.set(providerId, allHashes);
 
         if (count > 0) {
-            console.log(`✅ Pre-populated ${count} icon cache entries for provider ${providerId}`);
+            console.log(`✅ Pre-populated ${count} new icon cache entries for provider ${providerId}`);
         }
     } catch (e) {
         console.error('Failed to pre-populate provider icon cache:', e.message);
