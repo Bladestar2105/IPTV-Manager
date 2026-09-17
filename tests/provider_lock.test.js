@@ -18,7 +18,8 @@ vi.mock('../src/services/seriesSyncService.js', () => ({
 vi.mock('../src/services/epgService.js', () => ({ updateProviderEpg: vi.fn().mockResolvedValue(undefined) }));
 
 const {
-  acquireProviderLock, describeProviderLock, clearProviderLocks, resetProviderLockState,
+  acquireProviderLock, describeProviderLock, clearProviderLocks, clearExpiredProviderLocks,
+  resetProviderLockState,
 } = await import('../src/services/providerLockService.js');
 const { performSync } = await import('../src/services/syncService.js');
 const { deleteProvider } = await import('../src/controllers/providerController.js');
@@ -139,6 +140,91 @@ describe('provider lock', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('fails closed when the lock-table probe is refused by the database', async () => {
+    // A transient SQLITE_BUSY on the CREATE TABLE probe must not mark the whole
+    // worker as "locks unavailable" for the rest of its life.
+    resetProviderLockState();
+    const busy = () => { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY'; throw e; };
+    const execSpy = vi.spyOn(memDb, 'exec').mockImplementation(busy);
+    try {
+      expect(acquireProviderLock(7, 'sync')).toBeNull();
+
+      const result = await performSync(7, 1, { mode: 'manual' });
+      expect(result.status).toBe('locked');
+
+      const res = resDouble();
+      deleteProvider({ params: { id: '7' }, user: { is_admin: 1 } }, res);
+      expect(res.statusCode).toBe(409);
+      expect(memDb.prepare('SELECT COUNT(*) c FROM providers WHERE id = 7').get().c).toBe(1);
+    } finally {
+      execSpy.mockRestore();
+    }
+
+    // The refusal was not cached: once the database answers again, locks work.
+    const recovered = acquireProviderLock(7, 'sync');
+    expect(recovered).not.toBeNull();
+    recovered.release();
+  });
+
+  it('still degrades for a connection that cannot be a SQLite database', () => {
+    resetProviderLockState();
+    const execSpy = vi.spyOn(memDb, 'exec').mockImplementation(() => { throw new TypeError('db.exec is not a function'); });
+    try {
+      const lock = acquireProviderLock(7, 'sync');
+      expect(lock).not.toBeNull();
+      expect(lock.degraded).toBe(true);
+    } finally {
+      execSpy.mockRestore();
+      resetProviderLockState();
+    }
+  });
+
+  it('keeps a lock another process still holds when the primary starts', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const insert = memDb.prepare(`INSERT INTO provider_locks
+      (provider_id, operation, owner_pid, owner_token, acquired_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)`);
+    insert.run(7, 'sync', 424242, 'other-process', now - 60, now + 600);   // still leased
+    insert.run(8, 'sync', 424242, 'expired', now - 4000, now - 10);        // lease ran out
+
+    expect(clearExpiredProviderLocks(now)).toBe(1);
+    expect(describeProviderLock(7)?.owner_pid).toBe(424242);
+    expect(describeProviderLock(8)).toBeNull();
+
+    // And the surviving lock still blocks this process.
+    expect(acquireProviderLock(7, 'sync')).toBeNull();
+  });
+
+  it('rejects a non-admin deletion before it can touch the lock table', () => {
+    // Lock acquisition is a synchronous SQLite write. Reaching it without
+    // authorization lets anyone block a worker for the busy timeout and briefly
+    // hold a real deletion lock, which answers legitimate requests with 409.
+    const statements = [];
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+      statements.push(sql);
+      return original(sql);
+    });
+
+    const res = resDouble();
+    try {
+      deleteProvider({ params: { id: '7' }, user: { is_admin: 0 } }, res);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(res.statusCode).toBe(403);
+    expect(statements.some(sql => /provider_locks/i.test(sql))).toBe(false);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_locks').get().c).toBe(0);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM providers WHERE id = 7').get().c).toBe(1);
+  });
+
+  it('rejects an unusable provider id before touching the lock table', () => {
+    const res = resDouble();
+    deleteProvider({ params: { id: 'not-a-number' }, user: { is_admin: 1 } }, res);
+    expect(res.statusCode).toBe(400);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_locks').get().c).toBe(0);
   });
 
   it('releases the lock again after a completed run', async () => {

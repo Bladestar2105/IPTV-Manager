@@ -292,10 +292,13 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
 
-            // Nothing can hold a provider lock before the workers are forked,
-            // so anything left here is from a killed container.
-            const staleLocks = db.prepare('DELETE FROM provider_locks').run().changes;
-            if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} stale provider lock(s)`);
+            // Only expired leases. Another process may still be using the same
+            // DATA_DIR during an overlapping restart, and the lock is explicitly
+            // cross-process — a blanket delete would hand its providers to this
+            // instance. A lock from a killed process expires on its own.
+            const now = Math.floor(Date.now() / 1000);
+            const staleLocks = db.prepare('DELETE FROM provider_locks WHERE expires_at <= ?').run(now).changes;
+            if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} expired provider lock(s)`);
 
             console.log("✅ Database OK");
 

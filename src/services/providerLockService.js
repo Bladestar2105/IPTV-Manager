@@ -7,16 +7,33 @@ import db from '../database/db.js';
 const DEFAULT_TTL_SECONDS = 900;
 const RENEW_INTERVAL_MS = 60000;
 
+// 'ready'       the table exists and locks work
+// 'unsupported' this connection is not a usable SQLite database (test doubles)
+// 'unknown'     not probed yet, or the last probe failed transiently
 let tableState = 'unknown';
 
 /**
  * The lock table is infrastructure for this service, so it is created here as
  * well as in initDb. Creation is idempotent.
- * Returns false when this database cannot hold locks (fixtures, mocks); callers
- * then fall back to the previous, unsynchronized behaviour.
+ *
+ * A failing probe is never silently permanent. Only a connection that cannot be
+ * a SQLite database at all — no `exec`/`prepare`, or an error without a SQLite
+ * code, i.e. a test double — is remembered as unsupported. A real database that
+ * refuses the statement (`SQLITE_BUSY` while another writer holds the lock,
+ * `SQLITE_READONLY`, …) returns 'busy' without caching, so the caller fails
+ * closed and the next call probes again.
+ *
+ * @returns {'ready'|'unsupported'|'busy'}
  */
 function ensureTable() {
-  if (tableState !== 'unknown') return tableState === 'ready';
+  if (tableState === 'ready' || tableState === 'unsupported') return tableState;
+
+  if (typeof db.exec !== 'function' || typeof db.prepare !== 'function') {
+    tableState = 'unsupported';
+    console.warn('Provider locks unavailable: this database cannot hold the lock table');
+    return tableState;
+  }
+
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS provider_locks (
@@ -29,11 +46,17 @@ function ensureTable() {
       );
     `);
     tableState = 'ready';
+    return tableState;
   } catch (e) {
-    tableState = 'unavailable';
+    if (typeof e?.code === 'string' && e.code.startsWith('SQLITE_')) {
+      // A real database said no. Do not cache: the next attempt probes again.
+      console.warn(`Provider lock table unavailable right now: ${e.message} [${e.code}]`);
+      return 'busy';
+    }
+    tableState = 'unsupported';
     console.warn('Provider locks unavailable, concurrent provider operations are not serialized:', e.message);
+    return tableState;
   }
-  return tableState === 'ready';
 }
 
 /** Test seam: forget the cached probe result. */
@@ -57,7 +80,10 @@ export function resetProviderLockState() {
  */
 export function acquireProviderLock(providerId, operation, options = {}) {
   const ttlSeconds = Number(options.ttlSeconds) > 0 ? Number(options.ttlSeconds) : DEFAULT_TTL_SECONDS;
-  if (!ensureTable()) return { providerId, operation, token: null, degraded: true, release() {} };
+  const state = ensureTable();
+  // A database that refused the probe is contended, not unsupported: fail closed.
+  if (state === 'busy') return null;
+  if (state === 'unsupported') return { providerId, operation, token: null, degraded: true, release() {} };
 
   const now = Math.floor(Date.now() / 1000);
   const token = randomUUID();
@@ -121,7 +147,7 @@ export function releaseProviderLock(lock) {
 
 /** Who currently holds the lock, for diagnostics and 409 responses. */
 export function describeProviderLock(providerId) {
-  if (!ensureTable()) return null;
+  if (ensureTable() !== 'ready') return null;
   try {
     return db.prepare('SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE provider_id = ?')
       .get(providerId) || null;
@@ -135,10 +161,30 @@ export function describeProviderLock(providerId) {
  * a lock left behind by a killed container never blocks the next start.
  */
 export function clearProviderLocks() {
-  if (!ensureTable()) return 0;
+  if (ensureTable() !== 'ready') return 0;
   try {
     return db.prepare('DELETE FROM provider_locks').run().changes;
   } catch {
+    return 0;
+  }
+}
+
+/**
+ * Startup recovery: drop only locks whose lease has run out.
+ *
+ * Another process may still be using the same DATA_DIR — an overlapping restart,
+ * or a second instance — and the lock is explicitly cross-process, so a blanket
+ * delete would hand that process's providers to this one. A lock left behind by
+ * a killed process disappears on its own once its lease expires
+ * (DEFAULT_TTL_SECONDS); owner_pid is not usable for liveness because PIDs are
+ * namespaced per container and get reused.
+ */
+export function clearExpiredProviderLocks(now = Math.floor(Date.now() / 1000)) {
+  if (ensureTable() !== 'ready') return 0;
+  try {
+    return db.prepare('DELETE FROM provider_locks WHERE expires_at <= ?').run(now).changes;
+  } catch (e) {
+    console.warn('Could not sweep expired provider locks:', e.message);
     return 0;
   }
 }

@@ -488,16 +488,23 @@ export const bulkUpdateProviderUrls = async (req, res) => {
 };
 
 export const deleteProvider = (req, res) => {
+  // Authorize before touching the lock table. Lock acquisition is a synchronous
+  // SQLite write: letting an unauthorized request reach it would let anyone
+  // block a worker for the busy timeout and briefly hold a real deletion lock,
+  // which makes legitimate sync and delete requests answer 409.
+  if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({error: 'Invalid provider id'});
+
   // Deleting a provider while its own sync is still running made the sync's
   // sync_logs insert fail with SQLITE_CONSTRAINT_FOREIGNKEY. The lock is shared
   // with performSync and spans cluster workers.
-  const lock = acquireProviderLock(Number(req.params.id), 'delete');
+  const lock = acquireProviderLock(id, 'delete');
   if (!lock) {
-    return res.status(409).json({ error: `${describeLockConflict(Number(req.params.id))}; try again once it finished` });
+    return res.status(409).json({ error: `${describeLockConflict(id)}; try again once it finished` });
   }
   try {
-    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const id = Number(req.params.id);
     const providerRow = db.prepare('SELECT url FROM providers WHERE id = ?').get(id);
 
     immediateTransaction(db, () => {
