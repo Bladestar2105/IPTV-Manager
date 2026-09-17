@@ -8,7 +8,7 @@ import { createClient } from 'redis';
 import dotenv from 'dotenv';
 
 import app from './app.js';
-import db, { initDb } from './database/db.js';
+import db, { initDb, openLatencyDbConnection } from './database/db.js';
 import epgDb, { initEpgDb } from './database/epgDb.js';
 import { dropOrphanedStagingTables } from './services/epgImportService.js';
 import streamManager from './services/streamManager.js';
@@ -60,10 +60,17 @@ let redisClient = null;
     // dropped, so a live import is never touched.
     const orphanedStages = dropOrphanedStagingTables(epgDb);
     if (orphanedStages > 0) console.info(`🧹 Removed ${orphanedStages} orphaned EPG staging table(s)`);
+
+    // The checkpoint is synchronous and can copy a large WAL. The primary serves
+    // no HTTP and pumps no streams, so it is the only process where that stall
+    // costs nothing.
+    startWalMaintenance();
   }
 
-  // Initialize Stream Manager (Redis or SQLite)
-  streamManager.init(db, redisClient);
+  // Initialize Stream Manager (Redis or SQLite). The heartbeat gets its own
+  // connection so a contended lock cannot block this worker's event loop, and
+  // with it every stream the worker is pumping.
+  streamManager.init(db, redisClient, redisClient ? null : openLatencyDbConnection());
 
   if (cluster.isPrimary) {
     // Create default admin
@@ -183,7 +190,6 @@ let redisClient = null;
       startCleanupScheduler();
       startSSDP();
       startGeoIpUpdater();
-      startWalMaintenance();
     }
 
     app.listen(PORT, () => {

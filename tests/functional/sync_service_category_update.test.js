@@ -4,7 +4,8 @@ import { performSync } from '../../src/services/syncService.js';
 import { encrypt } from '../../src/utils/crypto.js';
 
 // Mock the network calls inside syncService
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
   fetchSafe: vi.fn().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve({ user_info: { exp_date: 'null' } })

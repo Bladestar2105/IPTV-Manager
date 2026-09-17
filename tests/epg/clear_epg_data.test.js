@@ -31,7 +31,8 @@ vi.mock('../../src/database/db.js', () => ({
 }));
 
 // Mock other dependencies to avoid side effects during import
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
     fetchSafe: vi.fn(),
 }));
 

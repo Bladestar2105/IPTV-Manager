@@ -95,6 +95,32 @@ describe('episode sync back-off', () => {
     expect(fetchSafe.mock.calls.length).toBe(60);
   }, 20000);
 
+  it('does not give up because the local database is contended', async () => {
+    // SQLITE_BUSY says the database is busy, not that the panel is down.
+    // Counting it would drop the queue and blame the wrong side.
+    seedSeries(400);
+    fetchSafe.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ info: { name: 'x' }, episodes: { 1: [{ id: 1, episode_num: 1, title: 't' }] } }),
+    }));
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+      if (/INSERT INTO provider_series_episodes/i.test(sql)) {
+        return { run: () => { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY'; throw e; } };
+      }
+      return original(sql);
+    });
+    try {
+      const result = await syncSeriesEpisodes(1);
+      expect(result.gaveUp).toBeFalsy();
+      expect(result.dbFailures).toBeGreaterThan(0);
+      // The whole queue was attempted rather than abandoned after 25 rows.
+      expect(fetchSafe.mock.calls.length).toBe(400);
+    } finally {
+      spy.mockRestore();
+    }
+  }, 30000);
+
   it('does not start a second run for a panel another worker is syncing', async () => {
     seedSeries(10);
     fetchSafe.mockImplementation(async () => { throw aborted(); });

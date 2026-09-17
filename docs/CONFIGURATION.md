@@ -32,11 +32,18 @@ mode.
   application performs; a provider sync or a provider deletion can hold the
   write lock for tens of seconds. Too low a value turns ordinary contention
   into `database is locked`.
+- `SQLITE_LATENCY_BUSY_TIMEOUT_MS`: Lock wait for connections on latency
+  critical paths, currently the stream activity heartbeat. Defaults to `250`
+  and is never longer than `SQLITE_BUSY_TIMEOUT_MS`. better-sqlite3 is
+  synchronous and its busy handler sleeps on the main thread, so a long wait
+  blocks the whole worker — including every stream it is pumping. Losing one
+  activity update is cheaper than stalling playback.
 - `SQLITE_WAL_SIZE_LIMIT_BYTES`: Upper bound for a `-wal` file after a
   checkpoint. Defaults to `67108864` (64 MB), minimum `1048576`. Without the
   limit a checkpointed WAL is reused in place and never shrinks again.
-- `SQLITE_CHECKPOINT_INTERVAL_MS`: How often the scheduler worker runs a passive
-  WAL checkpoint on both databases. Defaults to `300000` (5 minutes), minimum
+- `SQLITE_CHECKPOINT_INTERVAL_MS`: How often the primary process runs a passive
+  WAL checkpoint on both databases. It runs in the primary because a checkpoint
+  is synchronous and can copy a large WAL; the primary serves no traffic. Defaults to `300000` (5 minutes), minimum
   `30000`. SQLite only auto-checkpoints at the end of a write transaction and a
   checkpoint cannot reclaim frames an active reader still needs, so without this
   the WAL of a busy instance can grow past the size of the database itself. The
@@ -180,14 +187,19 @@ until this is exercised on a real Proxmox host.
   per IP within `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`. Defaults to `120`.
 - `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`: Client log rate limit window in
   milliseconds. Defaults to `3600000` (1 hour).
-- `HTTP_MAX_REQUEST_MS`: Hard upper bound for one outgoing request made through
-  the SSRF-safe fetch path, covering redirects *and* reading the response body.
-  Defaults to `600000` (10 minutes). The per-call `timeout` still bounds only
-  the wait for the response headers; before this budget existed, a provider
-  that answered fast and then stalled its body could hang a sync indefinitely.
-  It does **not** apply to proxied media: the stream paths pass `unboundedBody`,
-  so only their wait for the headers is bounded and a healthy live session is
-  never cut at the deadline.
+- `HTTP_MAX_REQUEST_MS`: Upper bound for the wait for response headers of one
+  outgoing request through the SSRF-safe fetch path, across the whole redirect
+  chain. Defaults to `600000` (10 minutes); the per-call `timeout` bounds each
+  single hop.
+  The **body is not bounded here**. Most bodies this path returns are media
+  proxied to a player, and a healthy live session legitimately outlives any
+  fixed duration — bounding them by default means one missed call site cuts a
+  viewer's stream. Callers that buffer a finite document (provider catalogs,
+  series info, EPG metadata, proxied images) bound the read themselves with
+  `readBodyWithLimit()`, which owns both the time and the size cap.
+- `CATALOG_BODY_TIMEOUT_MS`: Budget for reading one provider catalog document
+  (live/VOD/series lists and their categories). Defaults to `300000`
+  (5 minutes); a large VOD catalog is hundreds of megabytes.
 
 ## Stream Tracking
 
@@ -215,6 +227,11 @@ until this is exercised on a real Proxmox host.
 
 ## EPG Downloads
 
+- `EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES`: How many consecutive *upstream*
+  failures end an episode sync run. Defaults to `25`, minimum `5`. A panel that
+  stops answering `get_series_info` does not recover within one run, and a queue
+  can hold tens of thousands of series. Local SQLite contention does not count
+  towards the limit — it says the database is busy, not that the panel is down.
 - `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
   abandoned and is removed at startup. Defaults to `21600000` (6 hours). The
   effective value is never below four times `HTTP_MAX_REQUEST_MS`, because a

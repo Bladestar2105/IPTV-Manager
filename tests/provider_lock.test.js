@@ -4,7 +4,8 @@ import Database from 'better-sqlite3';
 const memDb = new Database(':memory:');
 
 vi.mock('../src/database/db.js', () => ({ default: memDb, initDb: vi.fn(), openDbConnection: () => memDb }));
-vi.mock('../src/utils/network.js', () => ({ fetchSafe: vi.fn() }));
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()), fetchSafe: vi.fn() }));
 vi.mock('../src/utils/crypto.js', () => ({ decrypt: v => v, encrypt: v => v }));
 vi.mock('../src/utils/playlistParser.js', () => ({ parseM3uStream: vi.fn() }));
 vi.mock('../src/services/logoResolver.js', () => ({ prePopulateProviderIconCache: vi.fn() }));

@@ -4,12 +4,13 @@ import dns from 'node:dns';
 
 // The SSRF guard blocks loopback addresses. Allow the local fixture server
 // through, but keep the real DNS lookup so the agent still behaves normally.
-vi.mock('../src/utils/helpers.js', () => ({
+vi.mock('../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   isSafeUrl: async () => true,
   safeLookup: (hostname, options, callback) => dns.lookup(hostname, options, callback),
 }));
 
-const { fetchSafe, resolveMaxRequestDurationMs } = await import('../src/utils/network.js');
+const { fetchSafe, readBodyWithLimit, resolveMaxRequestDurationMs } = await import('../src/utils/network.js');
 
 let server;
 let base;
@@ -65,22 +66,49 @@ describe('fetchSafe request budget', () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
-  it('aborts a body that never finishes', async () => {
-    // Regression: the only timer was cleared as soon as the headers arrived, so
-    // reading a stalled body hung forever.
-    const started = Date.now();
-    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000, maxDurationMs: 600 });
+  it('aborts a stalled body through the bounded reader', async () => {
+    // fetchSafe deliberately leaves the body alone — most bodies it returns are
+    // piped to a player. A caller that buffers a finite document bounds the read.
+    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000 });
     expect(response.ok).toBe(true);
-    await expect(response.text()).rejects.toThrow();
-    // And it aborts on the *total* budget, not on the larger header timeout.
+
+    const started = Date.now();
+    await expect(readBodyWithLimit(response, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ name: 'AbortError' });
     expect(Date.now() - started).toBeLessThan(3000);
   }, 15000);
 
-  it('treats maxDurationMs as a hard cap even below the header timeout', async () => {
+  it('leaves a piped body running, so a live stream is never cut', async () => {
+    // Regression guard: bounding every body by default cut each live session at
+    // the deadline, on the most-used endpoint in the app.
+    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000, maxDurationMs: 300 });
+    expect(response.ok).toBe(true);
+
+    const errored = new Promise(resolve => response.body.once('error', () => resolve('aborted')));
+    response.body.on('data', () => {});
+    const outcome = await Promise.race([
+      errored,
+      new Promise(resolve => setTimeout(() => resolve('still streaming'), 1200)),
+    ]);
+    response.body.destroy();
+    expect(outcome).toBe('still streaming');
+  }, 15000);
+
+  it('treats maxDurationMs as a hard cap for the headers even below the header timeout', async () => {
     const started = Date.now();
     await expect(fetchSafe(`${base}/slow-headers`, { timeout: 30000, maxDurationMs: 400 }))
       .rejects.toMatchObject({ name: 'AbortError' });
     expect(Date.now() - started).toBeLessThan(3000);
+  }, 15000);
+
+  it('rejects a body that exceeds the read size cap', async () => {
+    const response = await fetchSafe(`${base}/ok`, { timeout: 5000 });
+    await expect(readBodyWithLimit(response, { maxBytes: 4 })).rejects.toThrow(/Response too large/);
+  }, 15000);
+
+  it('reads a finite body as json', async () => {
+    const response = await fetchSafe(`${base}/ok`, { timeout: 5000 });
+    await expect(readBodyWithLimit(response, { as: 'json' })).resolves.toEqual({ ok: true });
   }, 15000);
 
   it('still aborts when the headers never arrive', async () => {
@@ -106,15 +134,6 @@ describe('fetchSafe request budget', () => {
     ]);
     response.body.destroy();
     expect(survived).toBe('still streaming');
-  }, 15000);
-
-  it('keeps a finite body bounded when unboundedBody is not requested', async () => {
-    // fetchWithBackups also fetches MPD/M3U8 manifests, whose callers read the
-    // body with response.text(). Those must keep the deadline.
-    const started = Date.now();
-    const response = await fetchSafe(`${base}/stalled-body`, { timeout: 5000, maxDurationMs: 500 });
-    await expect(response.text()).rejects.toThrow();
-    expect(Date.now() - started).toBeLessThan(3000);
   }, 15000);
 
   it('rejects a response whose announced size exceeds maxBytes', async () => {

@@ -127,7 +127,8 @@ vi.mock('../../src/utils/crypto.js', () => ({
   decrypt: vi.fn((val) => val),
   encrypt: vi.fn((val) => val),
 }));
-vi.mock('../../src/utils/helpers.js', () => ({
+vi.mock('../../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   getBaseUrl: vi.fn(() => 'http://localhost'),
   isSafeUrl: vi.fn(() => Promise.resolve(true)),
   safeLookup: vi.fn((hostname, options, cb) => cb(null, '127.0.0.1', 4)),

@@ -189,12 +189,9 @@ export const proxyLive = async (req, res) => {
 
     if (shouldTranscode) {
       try {
-        // The body is handed to ffmpeg and streamed on, so it must not be cut by
-        // the global request deadline; the header budget still applies.
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
           headers: fetchHeaders,
-          redirect: 'follow',
-          unboundedBody: true
+          redirect: 'follow'
         });
         const upstream = result.response;
 
@@ -429,9 +426,7 @@ export const proxySegment = async (req, res) => {
 
     let upstream;
     if (isOriginSafe) {
-        // Proxied media: the body is streamed to the client and must not be
-        // cut by the global request deadline.
-        upstream = await fetchSafe(targetUrl, { headers, unboundedBody: true });
+        upstream = await fetchSafe(targetUrl, { headers });
     } else {
         // If the original URL was unsafe (e.g. manually added loopback by an admin and we didn't check it)
         // Then we should probably not use fetchSafe because fetchSafe strictly forbids unsafe IPs.

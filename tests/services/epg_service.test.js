@@ -36,7 +36,8 @@ vi.mock('better-sqlite3', () => ({
 }));
 
 // Mock other dependencies if necessary
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
     fetchSafe: vi.fn()
 }));
 

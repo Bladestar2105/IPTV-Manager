@@ -59,6 +59,19 @@ describe('stream activity throttle', () => {
     expect(lastActivity('s3')).toBeGreaterThan(0);
   });
 
+  it('prunes throttle timestamps of sessions it will never see again', async () => {
+    // A session another worker's stale sweep removed never reaches remove()
+    // here, so without pruning the map only ever grows.
+    for (let i = 0; i < 12005; i++) streamManager.lastTouchAt.set(`ghost-${i}`, Date.now() - 48 * 3600 * 1000);
+    expect(streamManager.lastTouchAt.size).toBeGreaterThan(10000);
+
+    await streamManager.add('live', user, 'Channel', '10.0.0.9', null, 1, { dedupe: false });
+    await streamManager.touch('live', { force: true });
+
+    expect(streamManager.lastTouchAt.size).toBeLessThanOrEqual(10000);
+    streamManager.lastTouchAt.clear();
+  });
+
   it('forgets a session so a reused id is not silently throttled', async () => {
     await streamManager.add('s4', user, 'Channel', '10.0.0.4', null, 1, { dedupe: false });
     await streamManager.remove('s4');

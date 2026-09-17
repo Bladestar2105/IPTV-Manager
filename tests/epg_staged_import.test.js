@@ -234,7 +234,10 @@ describe('staged EPG import', () => {
       .resolves.toMatchObject({ success: true });
 
     releaseA();
-    await expect(first).rejects.toThrow(/newer EPG import already promoted/i);
+    // Losing the race is not a failure: the newer snapshot is live, the older
+    // run reports that it was superseded instead of raising an error that would
+    // back the source off for 15 minutes.
+    await expect(first).resolves.toMatchObject({ success: true, superseded: true });
 
     const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
       .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);

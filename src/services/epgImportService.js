@@ -196,7 +196,10 @@ function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq) {
             'SELECT promoted_seq FROM epg_import_state WHERE source_type = ? AND source_id = ?'
         ).get(sourceType, sourceId);
         if (promoted && Number(promoted.promoted_seq) >= runSeq) {
-            throw new Error('A newer EPG import already promoted this source; discarding the older snapshot');
+            // Not a failure: a newer run won the race and its snapshot is live.
+            // Raising this as an error made the scheduler back the source off
+            // for 15 minutes right after it had been updated successfully.
+            return { superseded: true, channels: 0, programs: 0 };
         }
 
         const staged = {
@@ -298,6 +301,14 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
                 originalStream.pipe(gunzip).pipe(sizeChecker);
                 gunzip.on('error', (err) => {
+                    sizeChecker.destroy(err);
+                });
+                // `pipe` unpipes on a source error but never ends or destroys
+                // the downstream, so without this a dropped socket left the
+                // parser waiting forever — holding the import connection, the
+                // staging tables and, for a custom source, is_updating = 1.
+                originalStream.on('error', (err) => {
+                    gunzip.destroy(err);
                     sizeChecker.destroy(err);
                 });
                 stream = sizeChecker;
@@ -448,13 +459,11 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
             stream.on('error', (err) => {
                 if (err.message === 'unexpected end of file') {
-                    console.warn(`⚠️ Ignoring unexpected end of file in GZIP stream for ${sourceType} ${sourceId}, saving parsed data...`);
-                    try {
-                        processBatches();
-                        resolve({ success: true });
-                    } catch (e) {
-                        reject(e);
-                    }
+                    // A truncated feed is not a complete one. Promoting what was
+                    // parsed would replace a complete snapshot with a partial
+                    // one, which is exactly what staging exists to prevent.
+                    console.warn(`⚠️ Truncated GZIP stream for ${sourceType} ${sourceId}; keeping the previous data`);
+                    reject(new Error('EPG download ended unexpectedly; the feed was incomplete'));
                 } else {
                     reject(err);
                 }
@@ -468,6 +477,13 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         `).run();
 
         const imported = promoteStagedEpg(importDb, stage, sourceType, sourceId, runSeq);
+        if (imported.superseded) {
+            console.info(`⏭️ EPG import for ${sourceType} ${sourceId} superseded by a newer run; older snapshot discarded`);
+            if (sourceType === 'custom') {
+                mainDb.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
+            }
+            return { success: true, superseded: true, channels: 0, programs: 0 };
+        }
 
         if (sourceType === 'custom') {
             mainDb.prepare('UPDATE epg_sources SET last_update = ?, is_updating = 0 WHERE id = ?').run(now, sourceId);

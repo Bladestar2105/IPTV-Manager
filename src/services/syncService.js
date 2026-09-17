@@ -1,6 +1,6 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory, sanitizeErrorMessage } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
@@ -131,7 +131,7 @@ export async function checkProviderExpiry(providerId) {
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}`, { timeout: 30000 });
     if (!resp.ok) return null;
 
-    const data = await resp.json();
+    const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 1024 * 1024 });
     if (data && data.user_info && data.user_info.exp_date !== undefined) {
       let expDate = data.user_info.exp_date;
       let expiry = null;

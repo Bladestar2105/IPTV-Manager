@@ -5,7 +5,8 @@ import fetch from 'node-fetch';
 
 // Mock dependencies
 vi.mock('node-fetch');
-vi.mock('../src/utils/helpers.js', () => ({
+vi.mock('../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   isSafeUrl: vi.fn(),
   safeLookup: vi.fn(),
 }));

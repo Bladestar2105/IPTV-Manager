@@ -9,7 +9,8 @@ const { fetchSafe, xtreamState, hooks } = vi.hoisted(() => ({
 const memDb = new Database(':memory:');
 
 vi.mock('../src/database/db.js', () => ({ default: memDb, initDb: vi.fn(), openDbConnection: () => memDb }));
-vi.mock('../src/utils/network.js', () => ({ fetchSafe }));
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()), fetchSafe }));
 vi.mock('@iptv/xtream-api', () => ({
   Xtream: class {
     getChannels() {
@@ -19,7 +20,8 @@ vi.mock('@iptv/xtream-api', () => ({
   },
 }));
 vi.mock('../src/utils/crypto.js', () => ({ decrypt: value => value, encrypt: value => value }));
-vi.mock('../src/utils/playlistParser.js', () => ({ parseM3uStream: vi.fn().mockResolvedValue({ isM3u: false }) }));
+const { parseM3uStream } = vi.hoisted(() => ({ parseM3uStream: vi.fn() }));
+vi.mock('../src/utils/playlistParser.js', () => ({ parseM3uStream }));
 vi.mock('../src/services/logoResolver.js', () => ({ prePopulateProviderIconCache: vi.fn() }));
 vi.mock('../src/services/ai/syncHistory.js', () => ({
   captureSyncSnapshot: () => null,
@@ -129,6 +131,7 @@ describe('sync status reporting', () => {
       'sync_configs', 'providers', 'users',
     ]) memDb.prepare(`DELETE FROM ${table}`).run();
     vi.clearAllMocks();
+    parseM3uStream.mockResolvedValue({ isM3u: false });
     hooks.beforeSeries = null;
     xtreamState.channels = null;
     xtreamState.error = aborted();
@@ -222,6 +225,28 @@ describe('sync status reporting', () => {
     // must never become eligible for stale-row cleanup.
     const states = memDb.prepare('SELECT stream_type FROM provider_sync_state').all();
     expect(states.map(s => s.stream_type)).not.toContain('series');
+  });
+
+  it('does not report player_api failures for an M3U playlist provider', async () => {
+    // A playlist provider has no player_api endpoint. Calling it anyway made
+    // every otherwise perfect run a permanent 'partial' with an error string in
+    // the admin UI.
+    xtreamState.error = aborted();
+    fetchSafe.mockImplementation(async url => {
+      if (url.includes('player_api.php')) throw new Error('should not be called for an M3U provider');
+      return { ok: true, status: 200, headers: { get: () => 'application/x-mpegurl' }, body: null };
+    });
+    parseM3uStream.mockResolvedValue({
+      isM3u: true,
+      channels: [{ name: 'Ch', url: 'http://panel.example/a.ts', stream_type: 'live', category_id: 1 }],
+      categories: [{ category_id: 1, category_name: 'News', category_type: 'live' }],
+    });
+
+    const result = await performSync(7, 1, { mode: 'manual' });
+
+    expect(result.status).toBe('success');
+    expect(result.errorMessage).toBeNull();
+    expect(logs()[0].status).toBe('success');
   });
 
   it('reports a fully delivered catalog as success', async () => {

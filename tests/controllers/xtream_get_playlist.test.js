@@ -49,7 +49,8 @@ vi.mock('../../src/utils/crypto.js', () => ({
   decrypt: vi.fn((val) => val),
 }));
 
-vi.mock('../../src/utils/helpers.js', () => ({
+vi.mock('../../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   getBaseUrl: vi.fn().mockReturnValue('http://localhost'),
   safeLookup: vi.fn((hostname, options, callback) => callback(null, '127.0.0.1', 4)),
   providerSourceKey: vi.fn((url) => `key:${url}`),

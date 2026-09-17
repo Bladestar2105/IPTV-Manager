@@ -1,9 +1,13 @@
 import { Xtream } from '@iptv/xtream-api';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { sanitizeErrorMessage } from '../utils/helpers.js';
 
 const CATALOG_TIMEOUT_MS = 60000;
+// fetchSafe bounds only the headers, so a catalog that starts and then stalls
+// needs its own read budget. Generous: a large VOD list is hundreds of MB.
+const CATALOG_BODY_TIMEOUT_MS = Number(process.env.CATALOG_BODY_TIMEOUT_MS) || 300000;
+const readCatalogJson = response => readBodyWithLimit(response, { as: 'json', timeoutMs: CATALOG_BODY_TIMEOUT_MS });
 
 export function createXtreamClient(provider) {
   let baseUrl = (provider.url || '').trim();
@@ -54,7 +58,7 @@ export async function fetchProviderCatalog(provider, xtream) {
   async function fetchCategories(section, action, categoryType) {
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=${action}`, { timeout: CATALOG_TIMEOUT_MS });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const cats = await resp.json();
+    const cats = await readCatalogJson(resp);
     if (!Array.isArray(cats)) throw new Error('unexpected category payload');
     cats.forEach(c => { c.category_type = categoryType; allCategories.push(c); });
     return true;
@@ -77,7 +81,7 @@ export async function fetchProviderCatalog(provider, xtream) {
         if (resp.ok) {
           const contentType = resp.headers?.get?.('content-type');
           if (contentType && contentType.includes('application/json')) {
-            liveChans = await resp.json();
+            liveChans = await readCatalogJson(resp);
             liveFetchComplete = Array.isArray(liveChans);
           } else {
             apiError = new Error(`unexpected content-type ${contentType || 'none'}`);
@@ -166,11 +170,18 @@ export async function fetchProviderCatalog(provider, xtream) {
   } catch (e) { fail('live', e); }
 
   // 2. Movies (VOD)
+  // An M3U playlist has no player_api endpoint. Calling it anyway produced two
+  // guaranteed failures per run, which now turn an otherwise perfect sync into
+  // a permanent 'partial' with an error message in the admin UI.
+  if (m3uMode) {
+    return { allChannels, allCategories, completeStreamTypes, snapshotStates, failures };
+  }
+
   try {
     console.debug('Fetching VOD streams...');
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`, { timeout: CATALOG_TIMEOUT_MS });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const vods = await resp.json();
+    const vods = await readCatalogJson(resp);
     console.debug(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
     if (!Array.isArray(vods)) throw new Error('unexpected VOD payload');
     vods.forEach(c => {
@@ -188,7 +199,7 @@ export async function fetchProviderCatalog(provider, xtream) {
   try {
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series`, { timeout: CATALOG_TIMEOUT_MS });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const series = await resp.json();
+    const series = await readCatalogJson(resp);
     if (!Array.isArray(series)) throw new Error('unexpected series payload');
     series.forEach(c => {
       c.stream_type = 'series';

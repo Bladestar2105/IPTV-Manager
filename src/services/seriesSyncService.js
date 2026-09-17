@@ -1,8 +1,8 @@
 import { clearChannelsCache } from './cacheService.js';
-import { formatDbError, immediateTransaction, runWriteWithRetry } from '../database/sqliteWrites.js';
+import { formatDbError, immediateTransaction, isRetryableSqliteError, runWriteWithRetry } from '../database/sqliteWrites.js';
 import { acquireSourceLock, describeLock, sourceLockKey } from './providerLockService.js';
 import db from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { providerSourceKey } from '../utils/helpers.js';
@@ -95,7 +95,8 @@ function createSeriesEpisodeWriter(sourceKey) {
 async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, applySeries) {
   const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_info&series_id=${sid}`, { timeout: 30000 });
   if (!resp.ok) return null;
-  const data = await resp.json();
+  // One series document; bounded so a stalled body cannot hold a worker slot.
+  const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 32 * 1024 * 1024 });
   // Error payloads (auth failures etc.) carry neither episodes nor info;
   // skip instead of wiping previously synced episodes.
   if (!data || typeof data !== 'object' || (!data.episodes && !data.info)) return null;
@@ -250,6 +251,7 @@ export async function syncSeriesEpisodes(providerId) {
     let episodeCount = 0;
     let cursor = 0;
     let consecutiveFailures = 0;
+    let dbFailures = 0;
     let givenUp = false;
 
     const worker = async () => {
@@ -268,11 +270,16 @@ export async function syncSeriesEpisodes(providerId) {
           }
         } catch (e) {
           failed++;
-          consecutiveFailures++;
-          if (consecutiveFailures <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
+          // Only an unanswering upstream trips the breaker. A local SQLITE_BUSY
+          // says the database is contended, not that the panel is down, and
+          // aborting the queue for it would both drop the work and blame the
+          // wrong side.
+          const upstreamFailure = !isRetryableSqliteError(e);
+          if (upstreamFailure) consecutiveFailures++; else dbFailures++;
+          if (!upstreamFailure || consecutiveFailures <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
             console.debug(`Episode fetch failed for series ${item.sid}: ${formatDbError(e)}`);
           }
-          if (consecutiveFailures >= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) givenUp = true;
+          if (upstreamFailure && consecutiveFailures >= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) givenUp = true;
         }
       }
     };
@@ -280,12 +287,15 @@ export async function syncSeriesEpisodes(providerId) {
 
     if (processed > 0) clearChannelsCache();
     if (givenUp) {
-      console.warn(`⚠️ Episode sync for provider ${provider.name} gave up after ${consecutiveFailures} consecutive failures` +
-        ` (${processed}/${queue.length} series updated); the upstream is not answering get_series_info`);
+      console.warn(`⚠️ Episode sync for provider ${provider.name} gave up after ${consecutiveFailures} consecutive upstream failures` +
+        ` (${processed}/${queue.length} series updated); the panel is not answering get_series_info`);
     } else {
       console.info(`✅ Episode sync completed for provider ${provider.name}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
     }
-    return { synced: processed, failed, total: queue.length, gaveUp: givenUp };
+    if (dbFailures > 0) {
+      console.warn(`Episode sync for provider ${provider.name}: ${dbFailures} write(s) lost to database contention`);
+    }
+    return { synced: processed, failed, dbFailures, total: queue.length, gaveUp: givenUp };
   } finally {
     episodeSyncLocks.delete(sourceKey);
     sourceLock.release();

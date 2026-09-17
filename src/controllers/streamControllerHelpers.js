@@ -548,10 +548,9 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const fetchOptions = { ...options };
     delete fetchOptions.agent;
     delete fetchOptions.redirect;
-    // `unboundedBody` is NOT forced here. Callers that pipe the body to a player
-    // pass it themselves; the manifest fetches (MPD, M3U8) read the body with
-    // response.text() and must keep the request deadline, or an upstream that
-    // sends headers and then stalls hangs the request and its stream session.
+    // fetchSafe bounds only the wait for the headers. A body this returns is
+    // either piped to a player (must not be bounded) or read as a manifest by
+    // the caller, which bounds that read with readBodyWithLimit().
 
     for (const u of urls) {
         if (!u) continue;

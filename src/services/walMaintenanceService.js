@@ -54,8 +54,12 @@ export function checkpointDatabase(connection, dbPath, label) {
 }
 
 /**
- * Start the periodic checkpoint. Only the scheduler worker calls this; one
- * checkpoint per interval is enough for all workers, they share the files.
+ * Start the periodic checkpoint.
+ *
+ * Only the primary calls this. A checkpoint is synchronous and can copy a large
+ * WAL, so running it in a worker would stall the streams that worker is pumping;
+ * the primary serves no traffic. One checkpoint per interval covers every
+ * worker, because they all share the same files.
  */
 export function startWalMaintenance() {
   const intervalMs = resolveCheckpointIntervalMs();

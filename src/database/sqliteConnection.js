@@ -28,6 +28,18 @@ export function resolveBusyTimeoutMs(raw = process.env.SQLITE_BUSY_TIMEOUT_MS) {
   return clampedInt(raw, DEFAULT_BUSY_TIMEOUT_MS, MIN_BUSY_TIMEOUT_MS, MAX_BUSY_TIMEOUT_MS);
 }
 
+// better-sqlite3 is synchronous and its busy handler sleeps on the main thread,
+// so the wait blocks the whole worker — every live stream it is pumping
+// included. Latency-critical bookkeeping therefore gives up quickly instead:
+// losing one activity update is cheaper than stalling playback.
+const DEFAULT_LATENCY_BUSY_TIMEOUT_MS = 250;
+
+export function resolveLatencyBusyTimeoutMs(raw = process.env.SQLITE_LATENCY_BUSY_TIMEOUT_MS) {
+  const resolved = clampedInt(raw, DEFAULT_LATENCY_BUSY_TIMEOUT_MS, 10, MAX_BUSY_TIMEOUT_MS);
+  // Never longer than the general wait, whatever the operator configured.
+  return Math.min(resolved, resolveBusyTimeoutMs());
+}
+
 /** Upper bound for the WAL file after a checkpoint, in bytes. */
 export function resolveJournalSizeLimit(raw = process.env.SQLITE_WAL_SIZE_LIMIT_BYTES) {
   return clampedInt(raw, DEFAULT_JOURNAL_SIZE_LIMIT, MIN_JOURNAL_SIZE_LIMIT, Number.MAX_SAFE_INTEGER);
@@ -41,10 +53,13 @@ export function resolveJournalSizeLimit(raw = process.env.SQLITE_WAL_SIZE_LIMIT_
  * @param {boolean} [options.readonly=false] open read-only and skip write pragmas
  * @param {boolean} [options.foreignKeys=true] enforce foreign keys on this connection
  * @param {boolean} [options.walMode=true] ensure WAL journal mode and the size limit
+ * @param {boolean} [options.latency=false] this connection serves a latency
+ *        critical path: give up on a lock quickly instead of blocking the
+ *        worker's event loop for the batch timeout
  */
 export function openSqliteConnection(filePath, options = {}) {
-  const { readonly = false, foreignKeys = true, walMode = true, fileMustExist = false } = options;
-  const busyTimeout = resolveBusyTimeoutMs();
+  const { readonly = false, foreignKeys = true, walMode = true, fileMustExist = false, latency = false } = options;
+  const busyTimeout = latency ? resolveLatencyBusyTimeoutMs() : resolveBusyTimeoutMs();
 
   const connection = new Database(filePath, { readonly, fileMustExist, timeout: busyTimeout });
   connection.pragma(`busy_timeout = ${busyTimeout}`);

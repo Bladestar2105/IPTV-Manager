@@ -9,11 +9,20 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
 
-export function openDbConnection() {
+export function openDbConnection(options = {}) {
     // Shared settings for every connection: see src/database/sqliteConnection.js.
     // A per-connection busy_timeout that is shorter than the longest write
     // transaction turns normal lock contention into "database is locked".
-    return openSqliteConnection(DB_PATH);
+    return openSqliteConnection(DB_PATH, options);
+}
+
+/**
+ * Connection for bookkeeping on the streaming path. better-sqlite3 blocks the
+ * event loop while it waits for a lock, so this one gives up quickly: a lost
+ * activity update costs nothing, a stalled worker stalls every viewer it serves.
+ */
+export function openLatencyDbConnection() {
+    return openSqliteConnection(DB_PATH, { latency: true });
 }
 
 const db = openDbConnection();

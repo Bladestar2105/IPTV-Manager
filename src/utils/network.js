@@ -24,21 +24,22 @@ export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_M
 /**
  * SSRF-safe fetch with two separate time budgets.
  *
- * `timeout` bounds the wait for the response *headers*, as before. It used to be
- * the only timer, and it was cleared as soon as the headers arrived — which left
- * the body download completely unbounded, so a provider that answers fast and
- * then stalls could hang a sync indefinitely. `maxDurationMs` now bounds the
- * whole exchange, including redirects and reading the body.
+ * `timeout` bounds the wait for the response *headers*, including redirects.
+ * The body is deliberately NOT bounded here: most bodies this function returns
+ * are media streamed to a player, and a healthy live session outlives any fixed
+ * duration. Bounding them by default meant one missed call site cut a viewer's
+ * stream at the deadline.
+ *
+ * A caller that buffers a finite document bounds the read itself with
+ * `readBodyWithLimit()`, which owns both the time and the size cap. Forgetting
+ * that leaves the body unbounded — the behaviour before this budget existed —
+ * instead of terminating a stream.
  *
  * @param {string} url
  * @param {object} [options]
  * @param {number} [options.timeout=15000] time to response headers, per hop
- * @param {number} [options.maxDurationMs] whole exchange; default HTTP_MAX_REQUEST_MS
+ * @param {number} [options.maxDurationMs] headers + redirects; default HTTP_MAX_REQUEST_MS
  * @param {number} [options.maxBytes] reject when Content-Length exceeds this
- * @param {boolean} [options.unboundedBody=false] the response body is a media
- *        stream with no natural end (the proxy paths). The header budget still
- *        applies; the total budget is dropped once the headers are in, because a
- *        healthy live session legitimately outlives any fixed duration.
  * @param {boolean} [options.allowSelfSigned=false]
  */
 export async function fetchSafe(url, options = {}, redirectCount = 0, deadline = null) {
@@ -55,7 +56,6 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     timeout: requestTimeout = DEFAULT_HEADER_TIMEOUT_MS,
     maxDurationMs,
     maxBytes,
-    unboundedBody = false,
     allowSelfSigned = false,
     ...fetchOptionOverrides
   } = options;
@@ -80,19 +80,11 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     : controller.signal;
 
   const abort = () => controller.abort();
+  // One timer, covering the wait for the headers of this hop, bounded by what is
+  // left of the overall budget for the redirect chain.
   const headerTimer = setTimeout(abort, Math.min(headerTimeout, remainingTotal()));
-  const totalTimer = setTimeout(abort, remainingTotal());
-  // A caller that never reads the body would otherwise keep these timers, and
-  // with them the event loop, alive until the deadline.
   headerTimer.unref?.();
-  totalTimer.unref?.();
-  let armed = true;
-  const disarm = () => {
-    if (!armed) return;
-    armed = false;
-    clearTimeout(headerTimer);
-    clearTimeout(totalTimer);
-  };
+  const disarm = () => clearTimeout(headerTimer);
 
   const fetchOptions = {
     ...fetchOptionOverrides,
@@ -111,9 +103,6 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     disarm();
     throw e;
   }
-
-  // Headers are in; only the total budget still applies from here on.
-  clearTimeout(headerTimer);
 
   try {
     if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
@@ -143,23 +132,78 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     throw e;
   }
 
-  if (unboundedBody) {
-    // A proxied media stream has no finite length. Bounding it would cut a
-    // healthy live session at the deadline.
-    disarm();
-    return response;
-  }
-
-  const body = response.body;
-  if (body && typeof body.once === 'function') {
-    // Keep the abort armed while the body streams. The listeners also make sure
-    // a late abort never surfaces as an unhandled 'error' on an unread body.
-    body.once('end', disarm);
-    body.once('close', disarm);
-    body.once('error', disarm);
-  } else {
-    disarm();
-  }
-
+  disarm();
   return response;
+}
+
+const DEFAULT_BODY_TIMEOUT_MS = 120000;
+
+/**
+ * Read a finite response body with a time and a size cap.
+ *
+ * For the callers that buffer a whole document — provider catalogs, series info,
+ * EPG metadata, manifests, proxied images. `fetchSafe` bounds only the headers,
+ * so without this a server that answers fast and then stalls its body hangs the
+ * caller for as long as the socket stays open.
+ *
+ * @param {Response} response a node-fetch response from fetchSafe
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=120000] budget for reading the whole body
+ * @param {number} [options.maxBytes] reject once this many bytes arrived
+ * @param {'text'|'json'|'buffer'} [options.as='text']
+ */
+export async function readBodyWithLimit(response, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_BODY_TIMEOUT_MS;
+  const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : 0;
+  const as = options.as || 'text';
+  const body = response.body;
+
+  if (!body || typeof body.on !== 'function') {
+    // No Node stream to meter — an already-buffered body or a test double.
+    // Fall back to the response's own reader; there is nothing to bound.
+    if (as === 'json' && typeof response.json === 'function') return response.json();
+    if (as === 'buffer' && typeof response.arrayBuffer === 'function') {
+      return Buffer.from(await response.arrayBuffer());
+    }
+    const text = typeof response.text === 'function' ? await response.text() : '';
+    return as === 'json' ? JSON.parse(text) : as === 'buffer' ? Buffer.from(text) : text;
+  }
+
+  const chunks = [];
+  let received = 0;
+
+  const buffer = await new Promise((resolve, reject) => {
+    const fail = error => {
+      clearTimeout(timer);
+      body.destroy?.();
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      const error = new Error('The operation was aborted.');
+      error.name = 'AbortError';
+      fail(error);
+    }, timeoutMs);
+    timer.unref?.();
+
+    body.on('data', chunk => {
+      // A stream may hand out strings rather than Buffers; normalize so the
+      // byte count and the concatenation below are both correct.
+      const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      received += piece.length;
+      if (maxBytes && received > maxBytes) {
+        fail(new Error(`Response too large: exceeded the ${maxBytes} byte limit`));
+        return;
+      }
+      chunks.push(piece);
+    });
+    body.once('error', fail);
+    body.once('end', () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+  });
+
+  if (as === 'buffer') return buffer;
+  const text = buffer.toString('utf8');
+  return as === 'json' ? JSON.parse(text) : text;
 }

@@ -52,7 +52,8 @@ vi.mock('../src/services/logoResolver.js', () => ({
 }));
 
 const { fetchSafeMock } = vi.hoisted(() => ({ fetchSafeMock: vi.fn() }));
-vi.mock('../src/utils/network.js', () => ({
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
     fetchSafe: fetchSafeMock
 }));
 

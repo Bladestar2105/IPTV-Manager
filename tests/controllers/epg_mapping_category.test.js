@@ -37,7 +37,8 @@ vi.mock('../../src/utils/crypto.js', () => {
 });
 
 // Mock network
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
   fetchSafe: vi.fn()
 }));
 

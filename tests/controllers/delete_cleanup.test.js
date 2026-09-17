@@ -33,11 +33,13 @@ vi.mock('../../src/utils/crypto.js', () => ({
   decrypt: (value) => value
 }));
 
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
   fetchSafe: vi.fn()
 }));
 
-vi.mock('../../src/utils/helpers.js', () => ({
+vi.mock('../../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   isSafeUrl: vi.fn(),
   isAdultCategory: vi.fn(),
   redactUrl: vi.fn((url) => url),

@@ -14,6 +14,9 @@ const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 *
 // timeout depends on the value, so refreshing it far more often than that is
 // pure write amplification — and the failing updates showed up as
 // "DB Touch Error: database is locked" whenever a long write transaction ran.
+// A session removed by another worker's stale sweep leaves this worker's entry
+// behind, so the map is pruned instead of growing for the process lifetime.
+const STREAM_TOUCH_MAP_LIMIT = 10000;
 const STREAM_TOUCH_MIN_INTERVAL_MS = Math.max(
   1000,
   Math.min(
@@ -31,8 +34,17 @@ class StreamManager {
     this.lastTouchAt = new Map();
   }
 
-  init(db, redisClient) {
+  /**
+   * @param {object} db shared connection for stream bookkeeping
+   * @param {object|null} redisClient
+   * @param {object|null} [latencyDb] connection for the activity heartbeat. It
+   *        gives up on a contended lock quickly, because better-sqlite3 blocks
+   *        the event loop while it waits and this worker is pumping streams.
+   *        Falls back to `db` when not supplied (tests, Redis mode).
+   */
+  init(db, redisClient, latencyDb = null) {
     this.db = db;
+    this.latencyDb = latencyDb || db;
     this.redis = redisClient;
     if (this.redis) {
       console.info(`⚡ StreamManager using Redis (Worker ${this.pid})`);
@@ -217,6 +229,7 @@ class StreamManager {
       if (now - previous < STREAM_TOUCH_MIN_INTERVAL_MS) return;
     }
     this.lastTouchAt.set(id, now);
+    if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.pruneTouchTimestamps(now);
 
     if (this.redis) {
       try {
@@ -235,6 +248,20 @@ class StreamManager {
         console.error('DB Touch Error:', formatDbError(e));
       }
     }
+  }
+
+  /**
+   * Drop throttle timestamps of sessions that can no longer be active. A
+   * session another worker's stale sweep removed never reaches remove() here,
+   * so without this the map only ever grows.
+   */
+  pruneTouchTimestamps(now = Date.now()) {
+    for (const [id, at] of this.lastTouchAt) {
+      if (now - at > STREAM_MAX_AGE_MS) this.lastTouchAt.delete(id);
+    }
+    // Still over the limit means the entries are genuinely recent; dropping
+    // them only costs one extra activity write per affected session.
+    if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.lastTouchAt.clear();
   }
 
   isWorkerAlive(workerPid) {
