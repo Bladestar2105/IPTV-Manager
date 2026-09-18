@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 import app from './app.js';
 import db, { initDb, openLatencyDbConnection } from './database/db.js';
 import epgDb, { initEpgDb } from './database/epgDb.js';
-import { dropOrphanedStagingTables } from './services/epgImportService.js';
+import { dropOrphanedStagingTables, resetAbandonedEpgImports, startEpgStageMaintenance } from './services/epgImportService.js';
 import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler, startGeoIpUpdater } from './services/schedulerService.js';
 import { startWalMaintenance } from './services/walMaintenanceService.js';
@@ -61,10 +61,21 @@ let redisClient = null;
     const orphanedStages = dropOrphanedStagingTables(epgDb);
     if (orphanedStages > 0) console.info(`🧹 Removed ${orphanedStages} orphaned EPG staging table(s)`);
 
+    // The same crash strands epg_sources.is_updating at 1, and the scheduler
+    // selects on `is_updating = 0` — so without this the source silently drops
+    // out of every update path for good.
+    const revivedSources = resetAbandonedEpgImports(epgDb);
+    if (revivedSources > 0) console.info(`🧹 Re-enabled ${revivedSources} EPG source(s) whose import had died`);
+
     // The checkpoint is synchronous and can copy a large WAL. The primary serves
     // no HTTP and pumps no streams, so it is the only process where that stall
     // costs nothing.
     startWalMaintenance();
+
+    // Imports run in a worker and the stale threshold is hours, so a worker
+    // killed mid-import is restarted long before the next cold start could
+    // reclaim anything. Sweeping only at startup meant, in practice, never.
+    startEpgStageMaintenance(epgDb);
   }
 
   // Initialize Stream Manager (Redis or SQLite). The heartbeat gets its own

@@ -256,6 +256,12 @@ until this is exercised on a real Proxmox host.
   Giving up says the panel is down, and a panel is commonly shared by several
   provider rows; without the cooldown each of them takes the freed lock in turn
   and spends its own full failure budget against the same dead host.
+- `EPG_STAGE_SWEEP_INTERVAL_MS`: How often the primary looks for the leftovers
+  of a killed EPG import — staging tables and an `epg_sources.is_updating` flag
+  nothing will clear. Defaults to `3600000` (1 hour), minimum `60000`. Imports
+  run in a worker and the stale threshold below is hours, so a worker killed
+  mid-import is restarted long before the next cold start could reclaim
+  anything; sweeping only at startup meant, in practice, never.
 - `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
   abandoned and is removed at startup. Defaults to `21600000` (6 hours). The
   effective value is never below four times `EPG_IMPORT_BODY_TIMEOUT_MS`,

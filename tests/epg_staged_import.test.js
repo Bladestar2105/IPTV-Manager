@@ -16,9 +16,11 @@ vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.
 
 const {
   importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt,
+  stagingTableIdentity, resetAbandonedEpgImports, startEpgStageMaintenance,
   resolveStageStaleMs, resolveImportBodyTimeoutMs, claimPromotionSequence, ensureImportStateTable,
   EPG_STAGE_PREFIX,
 } = await import('../src/services/epgImportService.js');
+const Database = (await import('better-sqlite3')).default;
 const { initEpgDb } = await import('../src/database/epgDb.js');
 const epgDb = (await import('../src/database/epgDb.js')).default;
 
@@ -353,6 +355,77 @@ describe('staged EPG import', () => {
     expect(stagingTableStartedAt(fresh.channels)).toBe(now - 60000);
 
     epgDb.exec(`DROP TABLE ${fresh.channels}; DROP TABLE ${fresh.programs};`);
+  });
+
+  it('reads the source identity back out of a staging table name', () => {
+    const names = stagingTableNames('custom', 42, 'token', 1700000000000);
+    expect(stagingTableIdentity(names.channels)).toEqual({ kind: 'channels', type: 'custom', id: 42 });
+    expect(stagingTableIdentity(names.programs)).toEqual({ kind: 'programs', type: 'custom', id: 42 });
+    expect(stagingTableIdentity('not_a_stage_table')).toBeNull();
+  });
+
+  describe('recovering a killed import', () => {
+    const mainDatabase = new Database(':memory:');
+    mainDatabase.exec('CREATE TABLE epg_sources (id INTEGER PRIMARY KEY, name TEXT, is_updating INTEGER DEFAULT 0);');
+    const updating = () => mainDatabase.prepare('SELECT id FROM epg_sources WHERE is_updating = 1 ORDER BY id')
+      .all().map(row => row.id);
+
+    beforeEach(() => {
+      mainDatabase.prepare('DELETE FROM epg_sources').run();
+      mainDatabase.exec("INSERT INTO epg_sources (id, name, is_updating) VALUES (1, 'a', 1), (2, 'b', 1), (3, 'c', 0)");
+    });
+
+    afterAll(() => mainDatabase.close());
+
+    it('clears the flag of a source with nothing running behind it', () => {
+      // is_updating is set before the import and cleared in its finally, so a
+      // killed process strands it at 1 — and the scheduler selects on
+      // `is_updating = 0`, which drops the source out of every update path for
+      // good, since nothing else ever resets it.
+      const now = Date.now();
+      const alive = stagingTableNames('custom', 2, 'liverun', now - 60000);
+      epgDb.exec(`CREATE TABLE ${alive.channels} (id TEXT); CREATE TABLE ${alive.programs} (id TEXT);`);
+      try {
+        expect(resetAbandonedEpgImports(epgDb, { now, mainDatabase })).toBe(1);
+        // Source 2 still has fresh staging tables, so its import is alive.
+        expect(updating()).toEqual([2]);
+      } finally {
+        epgDb.exec(`DROP TABLE ${alive.channels}; DROP TABLE ${alive.programs};`);
+      }
+    });
+
+    it('does not rescue a source whose staging tables are already stale', () => {
+      const now = Date.now();
+      const old = stagingTableNames('custom', 2, 'deadrun', now - 7 * 60 * 60 * 1000);
+      epgDb.exec(`CREATE TABLE ${old.channels} (id TEXT); CREATE TABLE ${old.programs} (id TEXT);`);
+      try {
+        expect(resetAbandonedEpgImports(epgDb, { now, mainDatabase })).toBe(2);
+        expect(updating()).toEqual([]);
+      } finally {
+        epgDb.exec(`DROP TABLE ${old.channels}; DROP TABLE ${old.programs};`);
+      }
+    });
+
+    it('sweeps periodically, not only at a cold start', () => {
+      // Imports run in a worker and the stale threshold is hours, so a worker
+      // killed mid-import is restarted long before the next cold start could
+      // reclaim anything. Sweeping only at startup meant, in practice, never.
+      const abandoned = stagingTableNames('custom', 2, 'deadrun', Date.now() - 7 * 60 * 60 * 1000);
+      epgDb.exec(`CREATE TABLE ${abandoned.channels} (id TEXT); CREATE TABLE ${abandoned.programs} (id TEXT);`);
+      expect(stagingTableCount()).toBe(2);
+
+      vi.useFakeTimers();
+      const timer = startEpgStageMaintenance(epgDb, 60000);
+      try {
+        // Nothing happens before the first tick.
+        expect(stagingTableCount()).toBe(2);
+        vi.advanceTimersByTime(60000);
+        expect(stagingTableCount()).toBe(0);
+      } finally {
+        clearInterval(timer);
+        vi.useRealTimers();
+      }
+    });
   });
 
 });
