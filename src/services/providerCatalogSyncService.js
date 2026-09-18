@@ -31,7 +31,18 @@ export function createXtreamClient(provider) {
  */
 export function describeCatalogFailures(failures) {
   if (!Array.isArray(failures) || failures.length === 0) return null;
-  return failures.map(f => `${f.section}: ${f.message}`).join('; ');
+
+  // An unreachable panel fails every section for the same reason, and repeating
+  // it once per section pushed the useful part past the 300 character bound
+  // sanitizeErrorMessage applies — so the operator saw two and a half of the
+  // three identical reasons and could not tell that all of them had failed.
+  const bySection = new Map();
+  for (const failure of failures) {
+    const message = String(failure?.message ?? '');
+    if (!bySection.has(message)) bySection.set(message, []);
+    bySection.get(message).push(String(failure?.section ?? '?'));
+  }
+  return [...bySection].map(([message, sections]) => `${sections.join(', ')}: ${message}`).join('; ');
 }
 
 /**

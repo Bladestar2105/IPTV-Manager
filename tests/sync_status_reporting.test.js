@@ -233,6 +233,26 @@ describe('sync status reporting', () => {
     expect(next).toBeGreaterThan(now + 3000);
   });
 
+  it('names every failed section once when they share a cause', async () => {
+    // An unreachable panel fails all three sections for the same reason.
+    // Repeating it per section pushed the message past the 300 character bound
+    // sanitizeErrorMessage applies, so the operator saw two and a half of three
+    // identical reasons and could not tell that everything had failed.
+    const reason = 'request to http://panel.example:8080/player_api.php failed,' +
+      ' reason: getaddrinfo ENOTFOUND panel.example';
+    xtreamState.error = new Error(reason);
+    fetchSafe.mockRejectedValue(new Error(reason));
+
+    await performSync(7, 1, { mode: 'manual' });
+
+    const [log] = logs();
+    expect(log.status).toBe('error');
+    expect(log.error_message).toMatch(/^live, vod, series: /);
+    // Short enough to survive the bound, so the whole cause is still readable.
+    expect(log.error_message).toContain('ENOTFOUND');
+    expect(log.error_message.endsWith('\u2026')).toBe(false);
+  });
+
   it('never persists credentials or markup from an upstream failure', async () => {
     // fetchSafe embeds the request URL in some of its errors, and that URL
     // carries the provider account. sync_logs.error_message is rendered in the
