@@ -262,49 +262,59 @@ export async function syncSeriesEpisodes(providerId) {
     const queue = [];
     const seen = new Set();
     let totalSeries = 0;
-    // The triggering provider decides first, so a series it carries is fetched
-    // with its own credentials. Streamed rather than materialized: the union
-    // across siblings is a multiple of one provider's catalog.
-    const seriesRows = db.prepare(`
-      SELECT provider_id, remote_stream_id, metadata FROM provider_channels
-      WHERE provider_id IN (${siblingPlaceholders}) AND stream_type = 'series'
-      ORDER BY CASE WHEN provider_id = ? THEN 0 ELSE 1 END, provider_id
-    `).iterate(...siblingProviderIds, providerId);
-    for (const row of seriesRows) {
-      const sid = Number(row.remote_stream_id);
-      if (!sid || seen.has(sid)) continue;
-      let lastModified = '';
-      let fromM3u = false;
-      try {
-        const meta = JSON.parse(row.metadata || '{}');
-        if (meta.last_modified !== undefined && meta.last_modified !== null) lastModified = String(meta.last_modified);
-        // Entries parsed from an M3U playlist have no Xtream API behind them;
-        // get_series_info would fail on every sync, so never queue them.
-        if (meta.original_url) fromM3u = true;
-      } catch { /* ignore malformed metadata */ }
-      // Skip the row, not the series: a sibling may carry the same series as a
-      // real Xtream entry that can be fetched.
-      //
-      // Claiming the id here would not be an entitlement boundary. Episodes are
-      // read back by source_key alone (see xtreamController), so the moment any
-      // provider of this panel fetches the series, every provider of it resolves
-      // those episodes — whether this run fetched them or not. Claiming would
-      // only decide which provider happens to trigger the fetch, at the price of
-      // never fetching the series at all whenever the M3U row sorts first.
-      if (fromM3u) continue;
-      const credential = credentials.get(row.provider_id);
-      if (!credential) continue;
-      seen.add(sid);
-      totalSeries++;
 
-      const providerId_ = row.provider_id;
-      const state = stateMap.get(sid);
-      if (!state) {
-        queue.push({ sid, lastModified, credential, providerId: providerId_ });
-      } else if (lastModified) {
-        if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified, credential, providerId: providerId_ });
-      } else if ((nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE) {
-        queue.push({ sid, lastModified, credential, providerId: providerId_ });
+    // The triggering provider decides first, so a series it carries is fetched
+    // with its own credentials. Two passes rather than one query ordered by
+    // `CASE WHEN provider_id = ?`: that ordering made SQLite sort the whole
+    // union in a temp B-tree before yielding a row — on the deployment this was
+    // written for, 403,763 rows carrying 87.6 MiB of metadata — which also
+    // defeated the point of iterating instead of materializing. Two plain index
+    // scans need no sort at all.
+    const passes = [[providerId]];
+    const otherSiblingIds = siblingProviderIds.filter(id => id !== providerId);
+    if (otherSiblingIds.length > 0) passes.push(otherSiblingIds);
+
+    for (const ids of passes) {
+      const seriesRows = db.prepare(`
+        SELECT provider_id, remote_stream_id, metadata FROM provider_channels
+        WHERE provider_id IN (${ids.map(() => '?').join(',')}) AND stream_type = 'series'
+      `).iterate(...ids);
+      for (const row of seriesRows) {
+        const sid = Number(row.remote_stream_id);
+        if (!sid || seen.has(sid)) continue;
+        let lastModified = '';
+        let fromM3u = false;
+        try {
+          const meta = JSON.parse(row.metadata || '{}');
+          if (meta.last_modified !== undefined && meta.last_modified !== null) lastModified = String(meta.last_modified);
+          // Entries parsed from an M3U playlist have no Xtream API behind them;
+          // get_series_info would fail on every sync, so never queue them.
+          if (meta.original_url) fromM3u = true;
+        } catch { /* ignore malformed metadata */ }
+        // Skip the row, not the series: a sibling may carry the same series as a
+        // real Xtream entry that can be fetched.
+        //
+        // Claiming the id here would not be an entitlement boundary. Episodes are
+        // read back by source_key alone (see xtreamController), so the moment any
+        // provider of this panel fetches the series, every provider of it resolves
+        // those episodes — whether this run fetched them or not. Claiming would
+        // only decide which provider happens to trigger the fetch, at the price of
+        // never fetching the series at all whenever the M3U row sorts first.
+        if (fromM3u) continue;
+        const credential = credentials.get(row.provider_id);
+        if (!credential) continue;
+        seen.add(sid);
+        totalSeries++;
+
+        const providerId_ = row.provider_id;
+        const state = stateMap.get(sid);
+        if (!state) {
+          queue.push({ sid, lastModified, credential, providerId: providerId_ });
+        } else if (lastModified) {
+          if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified, credential, providerId: providerId_ });
+        } else if ((nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE) {
+          queue.push({ sid, lastModified, credential, providerId: providerId_ });
+      }
       }
     }
 

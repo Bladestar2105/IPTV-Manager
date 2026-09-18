@@ -61,6 +61,41 @@ describe('episode sync back-off', () => {
 
   afterAll(() => memDb.close());
 
+  it('reads the series of a panel without making SQLite sort them', async () => {
+    // The queue used to come from one query ordered by
+    // `CASE WHEN provider_id = ? THEN 0 ELSE 1`, which makes SQLite build a temp
+    // B-tree over the whole union before it yields a row — on the deployment
+    // this was written for, 403,763 rows carrying 87.6 MiB of metadata, which
+    // also defeats the point of iterating instead of materializing.
+    memDb.exec('CREATE INDEX IF NOT EXISTS idx_pc_prov_type ON provider_channels(provider_id, stream_type)');
+    memDb.prepare('INSERT INTO providers (id, name, url, username, password, user_id) VALUES (2, ?, ?, ?, ?, 1)')
+      .run('sibling', `${SOURCE}/`, 'u2', 'p2');
+    seedSeries(5);
+    fetchSafe.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ info: { name: 'x' }, episodes: { 1: [{ id: 1, episode_num: 1, title: 't' }] } }),
+    }));
+
+    const prepared = [];
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => { prepared.push(sql); return original(sql); });
+    try {
+      await syncSeriesEpisodes(1);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const seriesReads = prepared.filter(sql =>
+      /SELECT[\s\S]*remote_stream_id[\s\S]*FROM provider_channels/i.test(sql) && /stream_type = 'series'/i.test(sql));
+    expect(seriesReads.length).toBeGreaterThan(0);
+    for (const sql of seriesReads) {
+      const plan = memDb.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...new Array((sql.match(/\?/g) || []).length).fill(1));
+      const detail = plan.map(row => row.detail).join(' | ');
+      expect(detail).not.toMatch(/TEMP B-TREE/i);
+      expect(detail).toMatch(/idx_pc_prov_type/);
+    }
+  }, 20000);
+
   it('stops a run against an upstream that answers nothing', async () => {
     // Production ground 36,086 series at one 30s timeout each, ~20 hours of
     // failing requests and 30 log lines per minute.
