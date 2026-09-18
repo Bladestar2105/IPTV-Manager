@@ -267,6 +267,37 @@ describe('sync status reporting', () => {
     expect(config().last_sync).toBeGreaterThanOrEqual(startedAt);
   });
 
+  it('refuses a cross-owner run whose approval was revoked while fetching', async () => {
+    // The transaction creates assignments with granted_by_admin = 1 and clears
+    // authorization_revoked, so acting on the pre-fetch decision would silently
+    // re-establish a grant an administrator had just withdrawn.
+    memDb.prepare('INSERT INTO users (id, username) VALUES (2, ?)').run('borrower');
+    memDb.prepare(`INSERT INTO sync_configs
+                     (id, provider_id, user_id, enabled, sync_interval, auto_add_channels,
+                      auto_add_categories, last_sync, next_sync, sync_series_episodes, granted_by_admin)
+                   VALUES (2, 7, 2, 1, 'daily', 1, 1, 111, 222, 0, 1)`).run();
+
+    xtreamState.error = null;
+    xtreamState.channels = [];
+    hooks.beforeSeries = () => {
+      // Administrator revokes the approval while the catalog is in flight.
+      memDb.prepare('UPDATE sync_configs SET granted_by_admin = 0, enabled = 0 WHERE id = 2').run();
+    };
+    routeFetch({
+      get_live_categories: [],
+      get_vod_streams: [],
+      get_vod_categories: [],
+      get_series: [],
+      get_series_categories: [],
+    });
+
+    const result = await performSync(7, 2, { mode: 'scheduled' });
+
+    expect(result.status).toBe('error');
+    expect(result.errorMessage).toMatch(/revoked/i);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM user_channels').get().c).toBe(0);
+  });
+
   it('survives a provider that is deleted while its catalog is fetched', async () => {
     xtreamState.error = null;
     xtreamState.channels = [];

@@ -302,14 +302,23 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
 
-            // An earlier shape keyed this table by provider_id. Lock rows are
-            // ephemeral lease state, so replacing the table is the upgrade.
+            // An earlier shape keyed this table by provider_id. The rows are
+            // leases another process may still hold — the cross-process guard
+            // is the whole point of the table — so they are carried over rather
+            // than dropped. Dropping them would let this instance take a lock
+            // somebody else is holding, which is exactly the double-run the
+            // table prevents.
             const lockColumns = db.pragma('table_info(provider_locks)') || [];
             if (lockColumns.length > 0 && !lockColumns.some(column => column.name === 'lock_key')) {
-              db.exec('DROP TABLE provider_locks');
-              db.exec(`CREATE TABLE provider_locks (
+              db.exec(`CREATE TABLE IF NOT EXISTS provider_locks_v2 (
                 lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
-                owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
+                owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+              INSERT OR IGNORE INTO provider_locks_v2
+                (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
+                SELECT 'provider:' || provider_id, operation, owner_pid, owner_token, acquired_at, expires_at
+                FROM provider_locks;
+              DROP TABLE provider_locks;
+              ALTER TABLE provider_locks_v2 RENAME TO provider_locks;`);
             }
 
             // Only expired leases. Another process may still be using the same

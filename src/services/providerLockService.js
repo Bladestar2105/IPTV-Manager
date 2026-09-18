@@ -61,12 +61,21 @@ function ensureTable() {
   }
 
   try {
-    // An earlier shape keyed the table by provider_id. Lock rows are ephemeral
-    // lease state, so replacing the table outright is the correct upgrade.
+    // An earlier shape keyed the table by provider_id. Carry the rows over:
+    // they are leases another process may still hold, and dropping them would
+    // let this process take a lock somebody else owns.
     if (typeof db.pragma === 'function') {
       const columns = db.pragma('table_info(provider_locks)') || [];
       if (columns.length > 0 && !columns.some(column => column.name === 'lock_key')) {
-        db.exec('DROP TABLE provider_locks');
+        db.exec(`CREATE TABLE IF NOT EXISTS provider_locks_v2 (
+                lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
+                owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+              INSERT OR IGNORE INTO provider_locks_v2
+                (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
+                SELECT 'provider:' || provider_id, operation, owner_pid, owner_token, acquired_at, expires_at
+                FROM provider_locks;
+              DROP TABLE provider_locks;
+              ALTER TABLE provider_locks_v2 RENAME TO provider_locks;`);
       }
     }
     db.exec(`

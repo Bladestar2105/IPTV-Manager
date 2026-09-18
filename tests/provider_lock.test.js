@@ -182,6 +182,31 @@ describe('provider lock', () => {
     }
   });
 
+  it('carries live leases across the lock table shape upgrade', () => {
+    // The old shape keyed the table by provider_id. Dropping it would let this
+    // process take a lock another process is still holding — the exact
+    // double-run the table exists to prevent.
+    const now = Math.floor(Date.now() / 1000);
+    memDb.exec('DROP TABLE provider_locks');
+    memDb.exec(`CREATE TABLE provider_locks (
+      provider_id INTEGER PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
+      owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
+    memDb.prepare(`INSERT INTO provider_locks
+      (provider_id, operation, owner_pid, owner_token, acquired_at, expires_at)
+      VALUES (7, 'sync', 424242, 'other-process', ?, ?)`).run(now - 60, now + 600);
+
+    resetProviderLockState();
+    // The probe performs the upgrade.
+    expect(acquireProviderLock(8, 'sync')).not.toBeNull();
+
+    const columns = memDb.pragma('table_info(provider_locks)').map(c => c.name);
+    expect(columns).toContain('lock_key');
+    expect(describeProviderLock(7)?.owner_pid).toBe(424242);
+    expect(acquireProviderLock(7, 'sync')).toBeNull();
+
+    clearProviderLocks();
+  });
+
   it('keeps a lock another process still holds when the primary starts', () => {
     const now = Math.floor(Date.now() / 1000);
     const insert = memDb.prepare(`INSERT INTO provider_locks

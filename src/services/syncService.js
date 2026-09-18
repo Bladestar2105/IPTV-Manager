@@ -196,11 +196,15 @@ export function calculateRetrySync(config, providerId, userId) {
 /**
  * Re-read the rows the run was authorized against.
  *
- * Fetching a provider catalog takes seconds to minutes. Provider, owner or
- * target user can be changed or deleted while that call is in flight, and the
- * schedule/log writes at the end of the run reference them by foreign key.
+ * Fetching a provider catalog takes seconds to minutes. Provider, owner, target
+ * user or the cross-owner approval can all change while that call is in flight,
+ * and the schedule/log writes at the end of the run reference them by foreign
+ * key.
+ *
+ * @param {object} [authorization] the cross-owner decision taken before the
+ *        fetch, so it can be re-checked against the current grant
  */
-function assertSyncTargetStillValid(providerId, userId, provider) {
+function assertSyncTargetStillValid(providerId, userId, provider, authorization = null) {
   const current = db.prepare('SELECT id, user_id FROM providers WHERE id = ?').get(providerId);
   if (!current) throw new Error('Provider was removed while its catalog was being fetched');
   // providers.user_id is nullable, so normalize before comparing owners.
@@ -216,6 +220,23 @@ function assertSyncTargetStillValid(providerId, userId, provider) {
     // Fixture schemas without a users table must not fail the run here; a real
     // missing user is still caught by the guarded sync_logs insert.
     if (e.code !== 'SQLITE_ERROR') throw e;
+  }
+
+  // A run that borrows somebody else's provider does so on the strength of the
+  // persisted administrator grant read before the fetch. An administrator can
+  // revoke that grant while the fetch is in flight, and the transaction below
+  // both creates assignments with granted_by_admin = 1 and clears
+  // authorization_revoked — so a stale decision would silently re-establish
+  // exactly what was just revoked, with no later path that walks it back.
+  // Scheduling state (`enabled`) is deliberately not re-checked here: it is a
+  // preference, not an authorization.
+  if (authorization?.crossOwner && authorization.hasPersistedGrant && !authorization.hasManualGrant) {
+    const currentConfig = db.prepare(
+      'SELECT granted_by_admin FROM sync_configs WHERE provider_id = ? AND user_id = ?'
+    ).get(providerId, userId);
+    if (Number(currentConfig?.granted_by_admin) !== 1) {
+      throw new Error('Cross-owner approval was revoked while the catalog was being fetched');
+    }
   }
 }
 
@@ -349,7 +370,7 @@ export async function performSync(providerId, userId, options = {}) {
     // The catalog fetch can take minutes. Anything the run was authorized
     // against may have been changed or removed in the meantime, so re-read it
     // before touching the database again.
-    assertSyncTargetStillValid(providerId, userId, provider);
+    assertSyncTargetStillValid(providerId, userId, provider, { crossOwner, hasPersistedGrant, hasManualGrant });
 
     // Process categories and create mappings
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
