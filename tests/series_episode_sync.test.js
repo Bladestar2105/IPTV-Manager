@@ -301,11 +301,12 @@ describe('Series episode sync', () => {
       expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_state').get().c).toBe(2);
     });
 
-    it('never enumerates an M3U series with a sibling account credentials', async () => {
-      // An M3U-derived row has no Xtream API behind it. Letting a sibling login
-      // enumerate it would attach an episode list to this provider's channel
-      // that this provider could not obtain itself, and its users would get
-      // playable aliases for it.
+    it('still fetches a series a sibling carries via Xtream when this row came from M3U', async () => {
+      // The M3U row has no Xtream API behind it, but the sibling's does, and
+      // episodes are stored per source. Letting the M3U row claim the id would
+      // skip the series for the whole run — and skip it again every cycle the
+      // same provider wins the lock, which is the starvation the union queue
+      // exists to remove.
       memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
         VALUES (1, 555, 'A M3U Show', 'series', '{"original_url":"http://cdn.example/a.m3u8"}'),
                (2, 555, 'B Xtream Show', 'series', '{"last_modified":"1000"}')`).run();
@@ -313,9 +314,21 @@ describe('Series episode sync', () => {
 
       const result = await syncSeriesEpisodes(1);
 
+      expect(result.synced).toBe(1);
+      // Fetched with the credentials of the account that actually carries it.
+      expect(fetchSafeMock.mock.calls[0][0]).toContain('username=userB');
+      expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(1);
+    });
+
+    it('never queues a series that only exists as an M3U entry', async () => {
+      // get_series_info would fail on every sync for a row with no Xtream API.
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 556, 'M3U Only', 'series', '{"original_url":"http://cdn.example/a.m3u8"}')`).run();
+
+      const result = await syncSeriesEpisodes(1);
+
       expect(result.synced).toBe(0);
       expect(fetchSafeMock).not.toHaveBeenCalled();
-      expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(0);
     });
 
     it('keeps reused remote episode IDs separate across series', async () => {

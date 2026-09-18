@@ -29,8 +29,15 @@ const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES =
 // pointing at it would otherwise take the freed lock in turn and spend its own
 // full budget against the same dead host, multiplying the cost of the breaker
 // by the number of siblings. Keep the source locked until it is worth retrying.
-const EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS =
-  Math.max(60, Number(process.env.EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS) || 1800);
+// Seconds, in a configuration surface that is otherwise milliseconds, so it is
+// capped as well as floored: the lease is written into the lock table with
+// nobody renewing it, survives every restart and can only be waited out, so an
+// operator who writes 1800000 out of habit would lose episode sync on that panel
+// for three weeks.
+const EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS = Math.min(
+  6 * 3600,
+  Math.max(60, Number.parseInt(process.env.EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS, 10) || 1800)
+);
 const EPISODE_SYNC_RETRY_AGE = 7 * 86400; // re-check series lacking last_modified weekly
 
 const episodeSyncLocks = new Set();
@@ -275,13 +282,16 @@ export async function syncSeriesEpisodes(providerId) {
         // get_series_info would fail on every sync, so never queue them.
         if (meta.original_url) fromM3u = true;
       } catch { /* ignore malformed metadata */ }
-      // An M3U-derived row has no Xtream API behind it, and the series id is
-      // claimed all the same: letting a sibling's login enumerate it would
-      // attach an episode list to this provider's channel that this provider
-      // could not obtain itself, and its users would get playable aliases for
-      // it. Falling through to a sibling is an entitlement decision, not a
-      // convenience, so it is refused.
-      if (fromM3u) { seen.add(sid); continue; }
+      // Skip the row, not the series: a sibling may carry the same series as a
+      // real Xtream entry that can be fetched.
+      //
+      // Claiming the id here would not be an entitlement boundary. Episodes are
+      // read back by source_key alone (see xtreamController), so the moment any
+      // provider of this panel fetches the series, every provider of it resolves
+      // those episodes — whether this run fetched them or not. Claiming would
+      // only decide which provider happens to trigger the fetch, at the price of
+      // never fetching the series at all whenever the M3U row sorts first.
+      if (fromM3u) continue;
       const credential = credentials.get(row.provider_id);
       if (!credential) continue;
       seen.add(sid);
