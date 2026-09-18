@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { Transform } from 'stream';
 import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { armStreamDeadline, fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { redactUrl, sanitizeErrorMessage } from '../utils/helpers.js';
 import { EPG_DB_PATH } from '../config/constants.js';
@@ -383,9 +383,24 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         // down: destroying only the last one leaves the upstream socket open.
         const pipelineStages = [response.body];
 
+        // Bounds both the peek below and the parse further down.
+        const bodyTimeoutMs = resolveImportBodyTimeoutMs();
+
         // Check for GZIP signature (magic bytes 0x1f 0x8b)
         try {
-            const [chunk, originalStream] = await peekStream(stream);
+            // The body deadline below is armed only once the parse starts, so
+            // without this the peek is the one unbounded wait in the import: an
+            // upstream that sends headers and then goes quiet — or drops the
+            // connection without an error — held the staging tables, the
+            // is_updating flag and the scheduler's in-flight entry for the
+            // lifetime of the process.
+            const disarmPeek = armStreamDeadline(stream, bodyTimeoutMs, 'EPG feed sent no data after its headers');
+            let chunk, originalStream;
+            try {
+                [chunk, originalStream] = await peekStream(stream);
+            } finally {
+                disarmPeek();
+            }
             if (chunk && chunk.length >= 2 && chunk[0] === 0x1f && chunk[1] === 0x8b) {
                 console.debug(`📦 Detected GZIP stream for ${sourceType} ${sourceId}, decompressing...`);
 
@@ -466,7 +481,6 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let currentProgram = null;
         let currentText = '';
 
-        const bodyTimeoutMs = resolveImportBodyTimeoutMs();
         await new Promise((settleResolve, settleReject) => {
             // Total budget for receiving and parsing the feed. Without it the
             // body has no bound at all, and a stalled download would hold the
@@ -683,9 +697,7 @@ function peekStream(stream) {
     return new Promise((resolve, reject) => {
         const onData = (chunk) => {
             // Remove listeners to avoid double handling
-            stream.removeListener('data', onData);
-            stream.removeListener('error', onError);
-            stream.removeListener('end', onEnd);
+            detach();
 
             // Pause stream to stop flow
             stream.pause();
@@ -697,22 +709,35 @@ function peekStream(stream) {
         };
 
         const onError = (err) => {
-            stream.removeListener('data', onData);
-            stream.removeListener('error', onError);
-            stream.removeListener('end', onEnd);
+            detach();
             reject(err);
         };
 
         const onEnd = () => {
-             stream.removeListener('data', onData);
-             stream.removeListener('error', onError);
-             stream.removeListener('end', onEnd);
+             detach();
              resolve([null, stream]);
         };
+
+        // A stream destroyed without an error emits neither 'end' nor 'error',
+        // only 'close' — and this promise has no other way to settle.
+        const onClose = () => {
+            detach();
+            const error = new Error('EPG feed closed before sending any data');
+            error.name = 'AbortError';
+            reject(error);
+        };
+
+        function detach() {
+            stream.removeListener('data', onData);
+            stream.removeListener('error', onError);
+            stream.removeListener('end', onEnd);
+            stream.removeListener('close', onClose);
+        }
 
         stream.on('data', onData);
         stream.on('error', onError);
         stream.on('end', onEnd);
+        stream.on('close', onClose);
     });
 }
 

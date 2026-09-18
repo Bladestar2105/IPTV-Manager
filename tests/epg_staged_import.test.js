@@ -166,6 +166,40 @@ describe('staged EPG import', () => {
     }
   });
 
+  it('gives up when the feed sends headers and then nothing', async () => {
+    // The body deadline is armed only once the parse starts, so the peek that
+    // sniffs for gzip was the one unbounded wait in the import: an upstream that
+    // answers and then goes quiet held the staging tables, the is_updating flag
+    // and the scheduler's in-flight entry for the lifetime of the process.
+    process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '1000';
+    try {
+      const silent = new Readable({ read() {} });   // headers arrived, no data, never ends
+      fetchSafe.mockResolvedValue({ ok: true, status: 200, body: silent, headers: { get: () => null } });
+
+      const started = Date.now();
+      await expect(importEpgFromUrl('http://feed.example/quiet.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+      expect(Date.now() - started).toBeLessThan(15000);
+      expect(stagingTableCount()).toBe(0);
+    } finally {
+      delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    }
+  }, 30000);
+
+  it('gives up when the feed closes before sending anything', async () => {
+    // A connection dropped without an error emits neither 'end' nor 'error',
+    // only 'close' — and the peek had no other way to settle.
+    const dropped = new Readable({ read() {} });
+    fetchSafe.mockResolvedValue({ ok: true, status: 200, body: dropped, headers: { get: () => null } });
+    setTimeout(() => dropped.destroy(), 20);
+
+    const started = Date.now();
+    await expect(importEpgFromUrl('http://feed.example/dropped.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(stagingTableCount()).toBe(0);
+  }, 20000);
+
   it('aborts an import whose body never finishes', async () => {
     // fetchSafe bounds only the headers. Without this watchdog a stalled feed
     // held the import connection and the staging tables for the process lifetime.
