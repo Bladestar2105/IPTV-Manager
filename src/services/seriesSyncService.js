@@ -6,6 +6,7 @@ import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { providerSourceKey, sanitizeErrorMessage } from '../utils/helpers.js';
+import { resolveBudget } from '../utils/env.js';
 
 // --- Series episode sync ----------------------------------------------------
 // Xtream get.php playlists list every episode of every series. Episodes are
@@ -23,8 +24,9 @@ const EPISODE_SYNC_CONCURRENCY = 3;
 // An upstream that stops answering does not recover within one run. Grinding
 // through tens of thousands of series against it costs one timeout each, keeps
 // the request slots busy and floods the log; the next scheduled sync retries.
-const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES =
-  Math.max(5, Number(process.env.EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) || 25);
+const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES = resolveBudget(
+  process.env.EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES, 25, 5, Number.MAX_SAFE_INTEGER,
+  'EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES');
 // Giving up says the panel is down, and the panel is shared: every provider row
 // pointing at it would otherwise take the freed lock in turn and spend its own
 // full budget against the same dead host, multiplying the cost of the breaker
@@ -34,10 +36,9 @@ const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES =
 // nobody renewing it, survives every restart and can only be waited out, so an
 // operator who writes 1800000 out of habit would lose episode sync on that panel
 // for three weeks.
-const EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS = Math.min(
-  6 * 3600,
-  Math.max(60, Number.parseInt(process.env.EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS, 10) || 1800)
-);
+const EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS = resolveBudget(
+  process.env.EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS, 1800, 60, 6 * 3600,
+  'EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS');
 const EPISODE_SYNC_RETRY_AGE = 7 * 86400; // re-check series lacking last_modified weekly
 
 const episodeSyncLocks = new Set();

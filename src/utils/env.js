@@ -22,6 +22,11 @@ export function resetEnvWarnings() {
 }
 
 const INTEGER = /^\s*\d+\s*$/;
+// Split out only so the negative case gets the message the JSDoc below promises
+// it: `-5` never reaches the sign check, because INTEGER has already rejected
+// it, and being told a plain negative number "is not a plain integer (no unit
+// suffixes)" sends the operator looking for a unit that is not there.
+const NEGATIVE = /^\s*-\d+\s*$/;
 
 /**
  * A positive integer setting from the environment.
@@ -45,25 +50,33 @@ const INTEGER = /^\s*\d+\s*$/;
  * @param {string|null} [name] the variable's name, for the log line
  */
 export function resolveBudget(raw, fallback, min = 1, max = Number.MAX_SAFE_INTEGER, name = null) {
-  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  const text = String(raw ?? '');
+  if (raw === undefined || raw === null || text.trim() === '') return fallback;
+  const shown = text.trim();
 
-  if (!INTEGER.test(String(raw))) {
+  if (!INTEGER.test(text)) {
     if (name) {
-      warnOnce(`⚠️ ${name}="${raw}" is not a plain integer (no unit suffixes); using ${fallback}`,
-        `${name}:${raw}`);
+      warnOnce(NEGATIVE.test(text)
+        ? `⚠️ ${name}="${shown}" is negative; using ${fallback}`
+        : `⚠️ ${name}="${shown}" is not a plain integer (no unit suffixes); using ${fallback}`,
+      `${name}:${raw}`);
     }
     return fallback;
   }
 
-  const parsed = Number.parseInt(String(raw), 10);
+  const parsed = Number.parseInt(text, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    if (name) warnOnce(`⚠️ ${name}="${raw}" is not a positive integer; using ${fallback}`, `${name}:${raw}`);
+    if (name) warnOnce(`⚠️ ${name}="${shown}" is not a positive integer; using ${fallback}`, `${name}:${raw}`);
     return fallback;
   }
 
   const resolved = Math.min(Math.max(parsed, min), max);
   if (name && resolved !== parsed) {
-    warnOnce(`⚠️ ${name}=${parsed} is outside the supported range; using ${resolved}`, `${name}:${raw}`);
+    // What the operator typed, not the re-parsed number: echoing `parsed` turns
+    // 99999999999999999999 into 100000000000000000000, a value that appears
+    // nowhere in their configuration.
+    warnOnce(`⚠️ ${name}="${shown}" is outside the supported range (${min}–${max}); using ${resolved}`,
+      `${name}:${raw}`);
   }
   return resolved;
 }

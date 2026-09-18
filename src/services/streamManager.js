@@ -1,4 +1,5 @@
 import { formatDbError } from '../database/sqliteWrites.js';
+import { resolveBudget } from '../utils/env.js';
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
@@ -7,8 +8,25 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
 return 0`;
-const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 2 * 60 * 1000);
-const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 * 1000);
+// `Number(raw || default)` let a value with a unit — the shape operators keep
+// writing — through as NaN, and every comparison against NaN is false: the
+// inactivity sweep switched itself off, the touch throttle stopped throttling
+// and every ffmpeg progress event became an UPDATE again. That write
+// amplification is the contention this whole change set is about, so the one
+// file on the hot path must not be the one still parsing by hand.
+//
+// `0` is kept as a real setting here — it is what the guard in isStale() reads,
+// and it means "never reap on inactivity", which a long recording needs.
+// resolveBudget refuses 0, so it is recognised before asking.
+const DISABLED = /^\s*0+\s*$/;
+const STREAM_INACTIVITY_TIMEOUT_MS = DISABLED.test(String(process.env.STREAM_INACTIVITY_TIMEOUT_MS ?? ''))
+  ? 0
+  : resolveBudget(process.env.STREAM_INACTIVITY_TIMEOUT_MS, 2 * 60 * 1000, 1000,
+    Number.MAX_SAFE_INTEGER, 'STREAM_INACTIVITY_TIMEOUT_MS');
+// No such reading for the age cap: 0 would make every session with a start time
+// instantly stale, which is a typo's result rather than anybody's intent.
+const STREAM_MAX_AGE_MS = resolveBudget(
+  process.env.STREAM_MAX_AGE_MS, 24 * 60 * 60 * 1000, 1000, Number.MAX_SAFE_INTEGER, 'STREAM_MAX_AGE_MS');
 // ffmpeg emits `progress` roughly once per second per stream, and every one of
 // those used to become an UPDATE on the shared database. Only the inactivity
 // timeout depends on the value, so refreshing it far more often than that is
@@ -17,13 +35,16 @@ const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 *
 // A session removed by another worker's stale sweep leaves this worker's entry
 // behind, so the map is pruned instead of growing for the process lifetime.
 const STREAM_TOUCH_MAP_LIMIT = 10000;
-const STREAM_TOUCH_MIN_INTERVAL_MS = Math.max(
-  1000,
-  Math.min(
-    Number(process.env.STREAM_TOUCH_MIN_INTERVAL_MS) || Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 4),
-    Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 2))
-  )
-);
+// Half the inactivity timeout, so a session can never expire because its
+// refresh was throttled. With the sweep switched off there is nothing to stay
+// under, and the derived default is floored rather than clamped to it.
+const STREAM_TOUCH_CEILING_MS = STREAM_INACTIVITY_TIMEOUT_MS > 0
+  ? Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 2))
+  : Number.MAX_SAFE_INTEGER;
+const STREAM_TOUCH_MIN_INTERVAL_MS = resolveBudget(
+  process.env.STREAM_TOUCH_MIN_INTERVAL_MS,
+  Math.min(Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 4)), STREAM_TOUCH_CEILING_MS),
+  1000, STREAM_TOUCH_CEILING_MS, 'STREAM_TOUCH_MIN_INTERVAL_MS');
 // A heartbeat whose write failed must not burn the whole window. The latency
 // connection gives up on a contended lock after a few hundred milliseconds, so
 // a long write transaction elsewhere can fail several in a row — and with a

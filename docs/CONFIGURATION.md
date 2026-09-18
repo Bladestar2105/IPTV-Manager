@@ -3,6 +3,14 @@
 This file documents runtime configuration used by the server, Docker image, and
 tests. Keep it in sync when environment variables or startup behavior changes.
 
+Every numeric setting in this document takes a **plain integer, with no unit
+suffix**. `30s`, `10m` and `512MB` are refused outright and the default is used
+— not read as 30, 10 and 512, which is what `parseInt` would do and which would
+silently turn a five minute budget into one second. A value that is a clean
+integer is honoured and only clamped when it falls outside the supported range.
+Every refusal and every clamp is logged, naming the variable: an operator should
+never have to infer a typo from the symptom.
+
 ## Core Runtime
 
 - `PORT`: HTTP port. Defaults to `3000`.
@@ -11,7 +19,11 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 - `DATA_DIR`: Directory for runtime databases, secrets, uploads, and cache.
   Defaults to the repository root in local runs. Docker sets `DATA_DIR=/data`.
 - `JWT_EXPIRES_IN`: Admin JWT lifetime. Defaults to `30d`.
-- `BCRYPT_ROUNDS`: Bcrypt cost factor. Defaults to `10`.
+- `BCRYPT_ROUNDS`: Bcrypt cost factor. Defaults to `10`, minimum `4`, maximum
+  `31` — bcrypt's own bounds, which it otherwise applies silently. A value
+  below the default is honoured and weakens every password hash, so set it
+  only deliberately; anything that is not a plain integer is refused and
+  logged, because a typo here is invisible in the resulting hashes.
 - `JWT_SECRET`: Optional static JWT secret. If omitted, `jwt.secret` is created
   under `DATA_DIR`.
 - `ENCRYPTION_KEY`: Optional static encryption key. If omitted, `secret.key` is
@@ -212,14 +224,6 @@ until this is exercised on a real Proxmox host.
   manifest headers and then stalls holds the request and its stream session open
   indefinitely.
 
-Every numeric setting in this document — not only the budgets above — takes a
-**plain integer, with no unit suffix**. `30s`,
-`10m` and `512MB` are refused outright and the default is used — not read as 30,
-10 and 512, which is what `parseInt` would do and which would silently turn a
-five minute budget into one second. A value that is a clean integer is honoured
-and only clamped when it falls outside the supported range. Every refusal and
-every clamp is logged, naming the variable: an operator should never have to
-infer a typo from the symptom.
 - `EPG_IMPORT_BODY_TIMEOUT_MS`: Total budget for receiving and parsing one EPG
   feed. Defaults to `1800000` (30 minutes), minimum `1000`. The EPG body is streamed into the
   parser rather than buffered, so it needs its own deadline; without one an
@@ -232,14 +236,17 @@ infer a typo from the symptom.
   workers or instances. When Redis is unavailable or not configured, the
   SQLite `current_streams` table is used instead.
 - `STREAM_MAX_AGE_MS`: Hard safety cap for stale stream sessions. Defaults to
-  `86400000` (24 hours).
+  `86400000` (24 hours), minimum `1000`.
 - `STREAM_INACTIVITY_TIMEOUT_MS`: Inactivity timeout for stream sessions.
-  Defaults to `120000` (2 minutes).
+  Defaults to `120000` (2 minutes), minimum `1000`. `0` switches the inactivity
+  sweep off entirely — the age cap above still applies — which is the setting
+  for sessions that are meant to run for hours without a heartbeat.
 - `STREAM_TOUCH_MIN_INTERVAL_MS`: Smallest gap between two activity updates of
-  the same session. Defaults to a quarter of `STREAM_INACTIVITY_TIMEOUT_MS` and
-  is clamped to at most half of it, so a session can never time out because its
-  refresh was throttled. Without this, every ffmpeg progress event became an
-  `UPDATE current_streams`, which collided with long write transactions.
+  the same session. Defaults to a quarter of `STREAM_INACTIVITY_TIMEOUT_MS`,
+  minimum `1000`, and is clamped to at most half of the timeout, so a session
+  can never time out because its refresh was throttled. Without this, every
+  ffmpeg progress event became an `UPDATE current_streams`, which collided with
+  long write transactions.
 
 ## Scheduled Jobs and GeoIP
 
