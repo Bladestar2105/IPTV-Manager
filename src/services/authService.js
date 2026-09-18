@@ -154,7 +154,13 @@ export async function createDefaultAdmin() {
       console.log('🔐 DEFAULT ADMIN USER CREATED (WebGUI Only)');
       console.log('='.repeat(60));
       console.log(`Username: ${username}`);
-      console.log(`Password: ${passwordToUse}`);
+      // A generated password exists nowhere else, so it has to be printed once.
+      // A password the operator supplied does not: printing it copies a secret
+      // they chose deliberately into the container log, where it stays for as
+      // long as the log is kept and travels wherever the log is shipped.
+      console.log(initialPassword
+        ? 'Password: the value of INITIAL_ADMIN_PASSWORD'
+        : `Password: ${passwordToUse}`);
       console.log('='.repeat(60));
       console.log('⚠️  IMPORTANT: Please change this password after first login!');
       console.log('ℹ️  NOTE: Admin user is for WebGUI only, not for IPTV streams!');

@@ -29,7 +29,10 @@ never have to infer a typo from the symptom.
 - `ENCRYPTION_KEY`: Optional static encryption key. If omitted, `secret.key` is
   created under `DATA_DIR`.
 - `INITIAL_ADMIN_PASSWORD`: Optional first admin password. If omitted, a random
-  password is generated and printed on first startup.
+  password is generated and printed on first startup — it exists nowhere else,
+  so it has to be. A password supplied here is *not* printed: the operator
+  already has it, and echoing it would copy a deliberately chosen secret into
+  the container log for as long as that log is kept.
 
 ## SQLite
 
