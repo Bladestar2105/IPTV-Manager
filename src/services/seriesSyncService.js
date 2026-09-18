@@ -5,7 +5,7 @@ import db from '../database/db.js';
 import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
-import { providerSourceKey } from '../utils/helpers.js';
+import { providerSourceKey, sanitizeErrorMessage } from '../utils/helpers.js';
 
 // --- Series episode sync ----------------------------------------------------
 // Xtream get.php playlists list every episode of every series. Episodes are
@@ -116,7 +116,16 @@ async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, apply
   const episodes = parseSeriesInfoEpisodes(data);
   // The write is short and fully repeatable: it rebuilds the episode set for
   // this series from the payload that is already in memory.
-  await runWriteWithRetry(() => applySeries(sid, lastModified, episodes), { label: `series ${sid} episodes` });
+  try {
+    await runWriteWithRetry(() => applySeries(sid, lastModified, episodes), { label: `series ${sid} episodes` });
+  } catch (e) {
+    // Tag it at the one place that knows where the failure came from. Deciding
+    // by "is this one of the three retryable SQLite codes" made SQLITE_FULL, an
+    // I/O error and a driver TypeError all look like an unanswering panel, so a
+    // full disk could cool a perfectly healthy upstream down for half an hour.
+    if (e && typeof e === 'object') e.localFailure = true;
+    throw e;
+  }
   return episodes.length;
 }
 
@@ -169,7 +178,7 @@ export async function syncSeriesEpisode(providerId, seriesRemoteId) {
   } catch (e) {
     // The on-demand path reports a failed refresh; only the batch run counts
     // failures toward its breaker.
-    console.debug(`Episode fetch failed for series ${sid}: ${formatDbError(e)}`);
+    console.debug(`Episode fetch failed for series ${sid}: ${sanitizeErrorMessage(e)}`);
     return { synced: 0, failed: 1 };
   }
   if (episodeCount === null) return { synced: 0, failed: 1 };
@@ -266,21 +275,26 @@ export async function syncSeriesEpisodes(providerId) {
         // get_series_info would fail on every sync, so never queue them.
         if (meta.original_url) fromM3u = true;
       } catch { /* ignore malformed metadata */ }
-      // Skip the row, not the series: a sibling may carry the same series as a
-      // real Xtream entry that can be fetched.
-      if (fromM3u) continue;
+      // An M3U-derived row has no Xtream API behind it, and the series id is
+      // claimed all the same: letting a sibling's login enumerate it would
+      // attach an episode list to this provider's channel that this provider
+      // could not obtain itself, and its users would get playable aliases for
+      // it. Falling through to a sibling is an entitlement decision, not a
+      // convenience, so it is refused.
+      if (fromM3u) { seen.add(sid); continue; }
       const credential = credentials.get(row.provider_id);
       if (!credential) continue;
       seen.add(sid);
       totalSeries++;
 
+      const providerId_ = row.provider_id;
       const state = stateMap.get(sid);
       if (!state) {
-        queue.push({ sid, lastModified, credential });
+        queue.push({ sid, lastModified, credential, providerId: providerId_ });
       } else if (lastModified) {
-        if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified, credential });
+        if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified, credential, providerId: providerId_ });
       } else if ((nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE) {
-        queue.push({ sid, lastModified, credential });
+        queue.push({ sid, lastModified, credential, providerId: providerId_ });
       }
     }
 
@@ -294,56 +308,91 @@ export async function syncSeriesEpisodes(providerId) {
 
     let processed = 0;
     let failed = 0;
+    let abandoned = 0;
     let episodeCount = 0;
     let cursor = 0;
-    let consecutiveFailures = 0;
     let dbFailures = 0;
-    let givenUp = false;
+
+    // The breaker counts per provider account, not per panel. One sibling whose
+    // subscription lapsed answers every request with an error while the panel
+    // itself is healthy; counting those against the panel would end the run for
+    // every other account on it. And because a failed series never gets a state
+    // row, that sibling's series are re-queued every cycle, so the panel would
+    // be held back again and again on account of one dead login.
+    const queuedProviders = new Set(queue.map(item => item.providerId));
+    const failuresByProvider = new Map();
+    const givenUpProviders = new Set();
+    const noteUpstreamFailure = providerId => {
+      const count = (failuresByProvider.get(providerId) || 0) + 1;
+      failuresByProvider.set(providerId, count);
+      if (count >= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) givenUpProviders.add(providerId);
+      return count;
+    };
 
     const worker = async () => {
-      while (cursor < queue.length && !givenUp) {
+      while (cursor < queue.length) {
         const item = queue[cursor++];
+        if (givenUpProviders.has(item.providerId)) { abandoned++; continue; }
         try {
           const count = await fetchSeriesEpisodesOnce(sourceKey, item.sid, () =>
             fetchSeriesEpisodes(item.credential.baseUrl, item.credential.authParams, item.sid, item.lastModified, applySeries)
           );
-          if (count === null) { failed++; continue; }
+          if (count === null) {
+            // A 200 carrying neither episodes nor info is the panel refusing
+            // this account, not an empty series, so it belongs to the breaker
+            // exactly like an HTTP error does.
+            failed++;
+            noteUpstreamFailure(item.providerId);
+            continue;
+          }
           episodeCount += count;
           processed++;
-          consecutiveFailures = 0;
+          failuresByProvider.set(item.providerId, 0);
           if (processed % 250 === 0) {
             console.info(`📺 Episode sync progress (${sourceKey}): ${processed}/${queue.length} series`);
           }
         } catch (e) {
           failed++;
-          // Only an unanswering upstream trips the breaker. A local SQLITE_BUSY
-          // says the database is contended, not that the panel is down, and
+          // Only an unanswering upstream trips the breaker. A local write
+          // failure says the database is the problem, not the panel, and
           // aborting the queue for it would both drop the work and blame the
           // wrong side.
-          const upstreamFailure = !isRetryableSqliteError(e);
-          if (upstreamFailure) consecutiveFailures++; else dbFailures++;
-          if (!upstreamFailure || consecutiveFailures <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
-            console.debug(`Episode fetch failed for series ${item.sid}: ${formatDbError(e)}`);
+          if (e?.localFailure || isRetryableSqliteError(e)) {
+            dbFailures++;
+            console.debug(`Episode write failed for series ${item.sid}: ${formatDbError(e)}`);
+            continue;
           }
-          if (upstreamFailure && consecutiveFailures >= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) givenUp = true;
+          const count = noteUpstreamFailure(item.providerId);
+          if (count <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
+            console.debug(`Episode fetch failed for series ${item.sid}: ${sanitizeErrorMessage(e)}`);
+          }
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(EPISODE_SYNC_CONCURRENCY, queue.length) }, () => worker()));
 
     if (processed > 0) clearChannelsCache();
+    // Only a panel that refused every account on it is the panel's fault, and
+    // only that justifies holding the shared source back.
+    const givenUp = queuedProviders.size > 0 && [...queuedProviders].every(id => givenUpProviders.has(id));
     if (givenUp) {
       cooldownSeconds = EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS;
-      console.warn(`⚠️ Episode sync for source ${sourceKey} gave up after ${consecutiveFailures} consecutive upstream failures` +
-        ` (${processed}/${queue.length} series updated); the panel is not answering get_series_info.` +
-        ` Holding the source back for ${cooldownSeconds}s so its other providers do not repeat the run`);
+      console.warn(`⚠️ Episode sync for source ${sourceKey} gave up: every one of its ${queuedProviders.size} provider account(s)` +
+        ` hit ${EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES} consecutive upstream failures (${processed}/${queue.length} series updated).` +
+        ` Holding the source back for ${cooldownSeconds}s so its providers do not repeat the run`);
+    } else if (givenUpProviders.size > 0) {
+      console.warn(`⚠️ Episode sync for source ${sourceKey}: ${givenUpProviders.size} of ${queuedProviders.size} provider account(s)` +
+        ` stopped answering and were skipped (${processed}/${queue.length} series updated); the panel itself still answers`);
     } else {
       console.info(`✅ Episode sync completed for source ${sourceKey}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
     }
     if (dbFailures > 0) {
       console.warn(`Episode sync for provider ${provider.name}: ${dbFailures} write(s) lost to database contention`);
     }
-    return { synced: processed, failed, dbFailures, total: queue.length, gaveUp: givenUp };
+    return {
+      synced: processed, failed, abandoned, dbFailures, total: queue.length,
+      gaveUp: givenUp, gaveUpProviders: givenUpProviders.size,
+    };
   } finally {
     episodeSyncLocks.delete(sourceKey);
     sourceLock.release(cooldownSeconds);

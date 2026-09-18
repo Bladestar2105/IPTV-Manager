@@ -301,6 +301,23 @@ describe('Series episode sync', () => {
       expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_state').get().c).toBe(2);
     });
 
+    it('never enumerates an M3U series with a sibling account credentials', async () => {
+      // An M3U-derived row has no Xtream API behind it. Letting a sibling login
+      // enumerate it would attach an episode list to this provider's channel
+      // that this provider could not obtain itself, and its users would get
+      // playable aliases for it.
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'A M3U Show', 'series', '{"original_url":"http://cdn.example/a.m3u8"}'),
+               (2, 555, 'B Xtream Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({ '1': [{ id: 100, episode_num: 1, season: 1 }] }));
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(0);
+      expect(fetchSafeMock).not.toHaveBeenCalled();
+      expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(0);
+    });
+
     it('keeps reused remote episode IDs separate across series', async () => {
       memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
         VALUES (1, 555, 'Show One', 'series', '{"last_modified":"1000"}'),

@@ -133,6 +133,63 @@ describe('episode sync back-off', () => {
     }
   }, 30000);
 
+  it('does not cool the panel down because one account stopped working', async () => {
+    // A lapsed subscription answers every request with an error while the panel
+    // is healthy. Counting those against the panel ended the run for every
+    // other account on it — and since a failed series never gets a state row,
+    // that account's series are re-queued every cycle, so the panel would be
+    // held back again and again on account of one dead login.
+    memDb.prepare('INSERT INTO providers (id, name, url, username, password, user_id) VALUES (2, ?, ?, ?, ?, 1)')
+      .run('lapsed account', `${SOURCE}/`, 'expired', 'p2');
+    const insert = memDb.prepare(
+      "INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (?, ?, ?, 'series')"
+    );
+    memDb.transaction(() => {
+      for (let i = 1; i <= 40; i++) insert.run(2, 1000 + i, `Lapsed ${i}`);
+      for (let i = 1; i <= 5; i++) insert.run(1, i, `Good ${i}`);
+    })();
+    fetchSafe.mockImplementation(async url => {
+      if (url.includes('username=expired')) return { ok: false, status: 401, headers: { get: () => null } };
+      return { ok: true, json: async () => ({ info: { name: 'x' }, episodes: { 1: [{ id: 1, episode_num: 1, title: 't' }] } }) };
+    });
+
+    const result = await syncSeriesEpisodes(1);
+
+    expect(result.gaveUp).toBe(false);
+    expect(result.gaveUpProviders).toBe(1);
+    // The healthy account's series were still synced.
+    expect(result.synced).toBe(5);
+    // And the source is free for the next run rather than cooling down.
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_locks').get().c).toBe(0);
+  }, 30000);
+
+  it('does not blame the panel for a local write failure with any SQLite code', async () => {
+    // Classifying by "is this one of the three retryable codes" made a full
+    // disk, an I/O error and a driver TypeError all look like an unanswering
+    // panel, so SQLITE_FULL could cool a healthy upstream down for half an hour.
+    seedSeries(400);
+    fetchSafe.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ info: { name: 'x' }, episodes: { 1: [{ id: 1, episode_num: 1, title: 't' }] } }),
+    }));
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+      if (/INSERT INTO provider_series_episodes/i.test(sql)) {
+        return { run: () => { const e = new Error('database or disk is full'); e.code = 'SQLITE_FULL'; throw e; } };
+      }
+      return original(sql);
+    });
+    try {
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.gaveUp).toBe(false);
+      expect(result.dbFailures).toBeGreaterThan(0);
+      expect(memDb.prepare('SELECT COUNT(*) c FROM provider_locks').get().c).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  }, 30000);
+
   it('holds the source back after giving up so its siblings do not repeat the run', async () => {
     // The breaker was scoped to one run. Nine provider rows share one panel on
     // the affected deployment, so a dead host used to cost the full failure
