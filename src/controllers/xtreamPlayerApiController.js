@@ -4,7 +4,7 @@ import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgServic
 import { decrypt } from '../utils/crypto.js';
 import { providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import {
@@ -296,7 +296,7 @@ export const playerApi = async (req, res) => {
 
       try {
         const resp = await fetchSafe(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_series_info&series_id=${remoteSeriesId}`);
-        if (!resp.ok) return res.json({});
+        if (!resp.ok) { discardBody(resp); return res.json({}); }
 
         // Bounded: this is an end-user request, and fetchSafe covers only the
         // wait for the headers.
@@ -390,7 +390,7 @@ export const playerApi = async (req, res) => {
 
       try {
         const resp = await fetchSafe(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_vod_info&vod_id=${remoteVodId}`);
-        if (!resp.ok) return res.json({});
+        if (!resp.ok) { discardBody(resp); return res.json({}); }
 
         // Bounded: this is an end-user request, and fetchSafe covers only the
         // wait for the headers.

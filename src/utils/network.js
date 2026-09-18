@@ -65,6 +65,10 @@ export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_M
  * that leaves the body unbounded — the behaviour before this budget existed —
  * instead of terminating a stream.
  *
+ * A caller that abandons the response instead of reading it — on a bad status,
+ * an unexpected content type — must hand it to `discardBody()`; the socket is
+ * otherwise left holding a body nothing will consume.
+ *
  * @param {string} url
  * @param {object} [options]
  * @param {number} [options.timeout=15000] time to response headers, per hop
@@ -165,6 +169,29 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
 
   disarm();
   return response;
+}
+
+/**
+ * Throw away a response nobody is going to read.
+ *
+ * fetchSafe hands back a live socket: it bounds the wait for the headers and
+ * then gets out of the way, because most bodies it returns are media. A caller
+ * that inspects the status or the headers and then abandons the response — an
+ * HTTP error, an unexpected content type — leaves that socket holding a body
+ * nothing consumes, and these agents set neither keepAlive nor a socket
+ * timeout, so it lingers until the far end closes it. A panel that answers
+ * every section with an error page therefore costs one stranded socket per
+ * section per sync, on every worker, for as long as the panel stays broken.
+ *
+ * Safe to call with anything: a test double, an already-read body, undefined.
+ */
+export function discardBody(response) {
+  try {
+    const body = response?.body;
+    if (body && typeof body.destroy === 'function' && !body.destroyed) body.destroy();
+  } catch {
+    // Nothing to do about a body that refuses to be thrown away.
+  }
 }
 
 const DEFAULT_BODY_TIMEOUT_MS = 120000;

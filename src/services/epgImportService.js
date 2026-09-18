@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { Transform } from 'stream';
 import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
-import { armStreamDeadline, fetchSafe } from '../utils/network.js';
+import { armStreamDeadline, discardBody, fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { redactUrl, sanitizeErrorMessage } from '../utils/helpers.js';
 import { resolveBudget } from '../utils/env.js';
@@ -365,7 +365,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${redactUrl(url)}`);
         // fetchSafe performs isSafeUrl check
         const response = await fetchSafe(url, { allowSelfSigned: true });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) { discardBody(response); throw new Error(`HTTP ${response.status}`); }
 
         const now = Math.floor(Date.now() / 1000);
 

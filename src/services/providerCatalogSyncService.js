@@ -1,5 +1,5 @@
 import { Xtream } from '@iptv/xtream-api';
-import { armStreamDeadline, fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { armStreamDeadline, discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { resolveBudget } from '../utils/env.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { sanitizeErrorMessage } from '../utils/helpers.js';
@@ -77,7 +77,7 @@ export async function fetchProviderCatalog(provider, xtream) {
 
   async function fetchCategories(section, action, categoryType) {
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=${action}`, { timeout: CATALOG_TIMEOUT_MS });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) { discardBody(resp); throw new Error(`HTTP ${resp.status}`); }
     const cats = await readCatalogJson(resp);
     if (!Array.isArray(cats)) throw new Error('unexpected category payload');
     cats.forEach(c => { c.category_type = categoryType; allCategories.push(c); });
@@ -104,9 +104,11 @@ export async function fetchProviderCatalog(provider, xtream) {
             liveChans = await readCatalogJson(resp);
             liveFetchComplete = Array.isArray(liveChans);
           } else {
+            discardBody(resp);
             apiError = new Error(`unexpected content-type ${contentType || 'none'}`);
           }
         } else {
+          discardBody(resp);
           apiError = new Error(`HTTP ${resp.status}`);
         }
       } catch (e2) { apiError = e2; }
@@ -119,6 +121,7 @@ export async function fetchProviderCatalog(provider, xtream) {
       try {
         // Try fetching as M3U
         const m3uResp = await fetchSafe(provider.url, { timeout: CATALOG_TIMEOUT_MS }); // Use original URL
+        if (!m3uResp.ok) discardBody(m3uResp);
         if (m3uResp.ok) {
           // The playlist is parsed from the stream rather than buffered, so it
           // needs its own deadline. Without one a panel that answers and then
@@ -215,7 +218,7 @@ export async function fetchProviderCatalog(provider, xtream) {
   try {
     console.debug('Fetching VOD streams...');
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_vod_streams`, { timeout: CATALOG_TIMEOUT_MS });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) { discardBody(resp); throw new Error(`HTTP ${resp.status}`); }
     const vods = await readCatalogJson(resp);
     console.debug(`Fetched ${Array.isArray(vods) ? vods.length : 'invalid'} VODs`);
     if (!Array.isArray(vods)) throw new Error('unexpected VOD payload');
@@ -233,7 +236,7 @@ export async function fetchProviderCatalog(provider, xtream) {
   // 3. Series
   try {
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series`, { timeout: CATALOG_TIMEOUT_MS });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) { discardBody(resp); throw new Error(`HTTP ${resp.status}`); }
     const series = await readCatalogJson(resp);
     if (!Array.isArray(series)) throw new Error('unexpected series payload');
     series.forEach(c => {
