@@ -8,7 +8,7 @@ vi.mock('../src/utils/network.js', async importOriginal => ({
 vi.mock('../src/utils/crypto.js', () => ({ decrypt: v => v, encrypt: v => v }));
 vi.mock('../src/services/logoResolver.js', () => ({ prePopulateProviderIconCache: vi.fn() }));
 
-const { deleteAllProviderChannels, deleteProviderChannelCascade } =
+const { deleteAllProviderChannels, deleteProviderChannelCascade, deleteProviderChannelsByIds } =
   await import('../src/services/syncService.js');
 
 memDb.pragma('foreign_keys = ON');
@@ -60,6 +60,8 @@ const counts = () => ({
   aliases: memDb.prepare('SELECT COUNT(*) c FROM series_episode_aliases').get().c,
 });
 
+afterAll(() => memDb.close());
+
 describe('deleteAllProviderChannels', () => {
   beforeEach(() => {
     for (const table of ['series_episode_aliases', 'user_channels', 'stream_stats', 'epg_channel_mappings', 'provider_channels', 'providers']) {
@@ -68,8 +70,6 @@ describe('deleteAllProviderChannels', () => {
     memDb.prepare('INSERT INTO providers (id, name) VALUES (1, ?)').run('a');
     memDb.prepare('INSERT INTO providers (id, name) VALUES (2, ?)').run('b');
   });
-
-  afterAll(() => memDb.close());
 
   it('removes the provider channels and every dependant row', () => {
     seed(1, 25);
@@ -117,5 +117,91 @@ describe('deleteAllProviderChannels', () => {
     // Four statements in total, not four per channel.
     expect(prepared).toHaveLength(4);
     expect(counts().channels).toBe(0);
+  });
+});
+
+// The catalog transaction removed stale rows one at a time, five compiled
+// statements and five executions per row. A VOD catalog that rotates produces
+// tens of thousands of stale rows on an ordinary sync, inside the one
+// transaction every other worker is blocked on.
+describe('deleteProviderChannelsByIds', () => {
+  const idsOf = providerId =>
+    memDb.prepare('SELECT id FROM provider_channels WHERE provider_id = ? ORDER BY id').all(providerId).map(r => r.id);
+
+  beforeEach(() => {
+    for (const table of ['series_episode_aliases', 'user_channels', 'stream_stats', 'epg_channel_mappings', 'provider_channels', 'providers']) {
+      memDb.prepare(`DELETE FROM ${table}`).run();
+    }
+    memDb.prepare('INSERT INTO providers (id, name) VALUES (1, ?)').run('a');
+    memDb.prepare('INSERT INTO providers (id, name) VALUES (2, ?)').run('b');
+  });
+
+  it('produces the same end state as the per-channel cascade', () => {
+    seed(1, 12);
+    const perChannel = memDb.transaction(() => {
+      for (const id of idsOf(1)) deleteProviderChannelCascade(memDb, 1, id);
+    });
+    perChannel();
+    const afterCascade = counts();
+
+    seed(1, 12);
+    const ids = idsOf(1);
+    const removed = memDb.transaction(() => deleteProviderChannelsByIds(memDb, 1, ids))();
+
+    expect(removed).toBe(12);
+    expect(counts()).toEqual(afterCascade);
+  });
+
+  it('removes only the rows it was given', () => {
+    seed(1, 10);
+    const ids = idsOf(1).slice(0, 4);
+
+    memDb.transaction(() => deleteProviderChannelsByIds(memDb, 1, ids))();
+
+    expect(idsOf(1)).toHaveLength(6);
+    expect(counts()).toEqual({ channels: 6, mappings: 6, stats: 6, assignments: 6, aliases: 6 });
+  });
+
+  it('takes nothing with an id that belongs to another provider', () => {
+    seed(1, 3);
+    seed(2, 3);
+    const foreign = idsOf(2);
+
+    const removed = memDb.transaction(() => deleteProviderChannelsByIds(memDb, 1, foreign))();
+
+    expect(removed).toBe(0);
+    expect(counts()).toEqual({ channels: 6, mappings: 6, stats: 6, assignments: 6, aliases: 6 });
+  });
+
+  it('compiles a constant number of statements regardless of how many rows are stale', () => {
+    seed(1, 1000);
+    const ids = idsOf(1);
+    const prepared = [];
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => { prepared.push(sql); return original(sql); });
+    try {
+      memDb.transaction(() => deleteProviderChannelsByIds(memDb, 1, ids))();
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Three batches — 400, 400, 200 — but only two groups of four statements.
+    expect(prepared).toHaveLength(8);
+    expect(counts()).toEqual({ channels: 0, mappings: 0, stats: 0, assignments: 0, aliases: 0 });
+  });
+
+  it('is a no-op for an empty set', () => {
+    seed(1, 2);
+    const prepared = [];
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => { prepared.push(sql); return original(sql); });
+    try {
+      expect(deleteProviderChannelsByIds(memDb, 1, [])).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(prepared).toEqual([]);
+    expect(counts().channels).toBe(2);
   });
 });

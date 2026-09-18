@@ -15,6 +15,10 @@ import { resolveBusyTimeoutMs } from '../database/sqliteConnection.js';
 /**
  * Delete one provider channel without violating the dependent foreign keys.
  * The caller owns the surrounding transaction.
+ *
+ * Nothing in the application calls this any more — both removal paths are
+ * set-based below — but it is the row-level statement of what a cascade has to
+ * do, and the equivalence tests hold both of those to it.
  */
 export function deleteProviderChannelCascade(database, providerId, providerChannelId) {
   const channel = database.prepare(`
@@ -35,6 +39,58 @@ export function deleteProviderChannelCascade(database, providerId, providerChann
     throw new Error(`Provider channel cleanup removed ${deleted} rows instead of one`);
   }
   return deleted;
+}
+
+// SQLite's default parameter limit is 999 on older builds; stay well under it.
+const CHANNEL_DELETE_BATCH = 400;
+
+/**
+ * Remove a known set of a provider's channels and their dependants.
+ *
+ * The per-channel cascade above compiles five statements and runs five per row.
+ * The catalog transaction called it once per stale row, and a VOD catalog that
+ * rotates produces tens of thousands of those on an ordinary sync — inside the
+ * one transaction every other worker is blocked on, which is the contention
+ * this module keeps trying to shorten. Set-based, in batches, it compiles at
+ * most eight statements in total: one group for a full batch and one for the
+ * remainder.
+ *
+ * Dependants are scoped through provider_channels, as in the bulk delete below,
+ * so an id that does not belong to this provider takes nothing with it.
+ *
+ * The caller owns the surrounding transaction.
+ */
+export function deleteProviderChannelsByIds(database, providerId, channelIds) {
+  const unique = [...new Set(
+    Array.from(channelIds, id => Number(id)).filter(id => Number.isInteger(id) && id > 0)
+  )];
+  if (unique.length === 0) return 0;
+
+  const groups = new Map();
+  const groupFor = size => {
+    if (!groups.has(size)) {
+      const list = new Array(size).fill('?').join(',');
+      const scope = `SELECT id FROM provider_channels WHERE provider_id = ? AND id IN (${list})`;
+      groups.set(size, {
+        mappings: database.prepare(`DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (${scope})`),
+        stats: database.prepare(`DELETE FROM stream_stats WHERE channel_id IN (${scope})`),
+        assignments: database.prepare(`DELETE FROM user_channels WHERE provider_channel_id IN (${scope})`),
+        channels: database.prepare(`DELETE FROM provider_channels WHERE provider_id = ? AND id IN (${list})`),
+      });
+    }
+    return groups.get(size);
+  };
+
+  let removed = 0;
+  for (let from = 0; from < unique.length; from += CHANNEL_DELETE_BATCH) {
+    const batch = unique.slice(from, from + CHANNEL_DELETE_BATCH);
+    const group = groupFor(batch.length);
+    group.mappings.run(providerId, ...batch);
+    group.stats.run(providerId, ...batch);
+    group.assignments.run(providerId, ...batch);
+    removed += group.channels.run(providerId, ...batch).changes;
+  }
+  return removed;
 }
 
 /**
@@ -921,9 +977,7 @@ export async function performSync(providerId, userId, options = {}) {
         cleanupTypes,
         currentTypeByRemoteId
       );
-      for (const stale of staleRows) {
-        deleteProviderChannelCascade(db, providerId, stale.id);
-      }
+      deleteProviderChannelsByIds(db, providerId, staleRows.map(stale => stale.id));
     })();
 
     reportCatalogWriteDuration(providerId, Date.now() - applyStartedAt);
