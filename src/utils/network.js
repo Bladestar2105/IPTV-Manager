@@ -34,12 +34,36 @@ function withoutCredentials(error) {
 
 const DEFAULT_HEADER_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_DURATION_MS = 600000;
+const MIN_MAX_DURATION_MS = 1000;
 
-/** Hard upper bound for one exchange including redirects and the response body. */
-export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_MS) {
+/**
+ * A positive integer budget from the environment.
+ *
+ * `Number(raw) || fallback` accepts a negative number, because it is truthy —
+ * and a negative `maxBytes` reaches readBodyWithLimit as no limit at all,
+ * silently removing the cap it was set to tighten. `parseInt` also takes the
+ * leading digits, so `30s` becomes 30 and `10m` becomes 10; the floor is what
+ * keeps that from taking the instance offline instead of merely misconfiguring
+ * it.
+ */
+export function resolveBudget(raw, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_DURATION_MS;
-  return parsed;
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
+/**
+ * Hard upper bound for the wait for response headers across a whole redirect
+ * chain. Explicitly NOT the body: see fetchSafe below for why bounding that by
+ * default cut live streams at the deadline.
+ *
+ * This gates every outgoing request in the application, so it has a floor: a
+ * value of `10` — which is what `10m` parses to — would abort every fetch after
+ * ten milliseconds, and the resulting AbortError is indistinguishable from a
+ * genuine upstream timeout.
+ */
+export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_MS) {
+  return resolveBudget(raw, DEFAULT_MAX_DURATION_MS, MIN_MAX_DURATION_MS);
 }
 
 /**

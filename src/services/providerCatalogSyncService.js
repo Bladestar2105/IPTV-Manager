@@ -1,18 +1,18 @@
 import { Xtream } from '@iptv/xtream-api';
-import { armStreamDeadline, fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { armStreamDeadline, fetchSafe, readBodyWithLimit, resolveBudget } from '../utils/network.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { sanitizeErrorMessage } from '../utils/helpers.js';
 
 const CATALOG_TIMEOUT_MS = 60000;
 // fetchSafe bounds only the headers, so a catalog that starts and then stalls
 // needs its own read budget. Generous: a large VOD list is hundreds of MB.
-const CATALOG_BODY_TIMEOUT_MS = Number(process.env.CATALOG_BODY_TIMEOUT_MS) || 300000;
+const CATALOG_BODY_TIMEOUT_MS = resolveBudget(process.env.CATALOG_BODY_TIMEOUT_MS, 300000, 1000);
 // Buffering, decoding and parsing a catalog costs several times its wire size
 // in heap at once, and several providers can be syncing concurrently, so a
 // response that never ends has to be refused on size as well as on time. The
 // limit is far above a real catalog: it exists to stop a runaway body, not to
 // second-guess a large VOD list.
-const CATALOG_BODY_MAX_BYTES = Number(process.env.CATALOG_BODY_MAX_BYTES) || 512 * 1024 * 1024;
+const CATALOG_BODY_MAX_BYTES = resolveBudget(process.env.CATALOG_BODY_MAX_BYTES, 512 * 1024 * 1024, 1024 * 1024);
 const readCatalogJson = response => readBodyWithLimit(response, {
   as: 'json', timeoutMs: CATALOG_BODY_TIMEOUT_MS, maxBytes: CATALOG_BODY_MAX_BYTES,
 });

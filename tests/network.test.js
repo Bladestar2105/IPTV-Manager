@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'stream';
-import { fetchSafe, readBodyWithLimit } from '../src/utils/network.js';
+import { fetchSafe, readBodyWithLimit, resolveBudget, resolveMaxRequestDurationMs } from '../src/utils/network.js';
 import * as helpers from '../src/utils/helpers.js';
 import fetch from 'node-fetch';
 
@@ -347,5 +347,38 @@ describe('fetchSafe error redaction', () => {
 
     expect(error.message).not.toContain('s3cr3t');
     expect(error.message).toContain('panel.example:8080');
+  });
+});
+
+describe('resolveBudget', () => {
+  it('falls back instead of disabling the cap it was set to tighten', () => {
+    // `Number(raw) || fallback` let a negative through, because it is truthy,
+    // and readBodyWithLimit reads a negative maxBytes as no limit at all.
+    expect(resolveBudget('-1', 1000, 10)).toBe(1000);
+    expect(resolveBudget('0', 1000, 10)).toBe(1000);
+    expect(resolveBudget('', 1000, 10)).toBe(1000);
+    expect(resolveBudget(undefined, 1000, 10)).toBe(1000);
+    expect(resolveBudget('nonsense', 1000, 10)).toBe(1000);
+  });
+
+  it('floors a value that lost its unit suffix to parseInt', () => {
+    // `30s` parses to 30 and `10m` to 10; without a floor those are catastrophic
+    // rather than merely wrong.
+    expect(resolveBudget('30s', 60000, 1000)).toBe(1000);
+    expect(resolveBudget('10m', 60000, 1000)).toBe(1000);
+    expect(resolveBudget('45000', 60000, 1000)).toBe(45000);
+  });
+
+  it('caps at the maximum when one is given', () => {
+    expect(resolveBudget('999999', 100, 1, 500)).toBe(500);
+  });
+
+  it('keeps the global request budget above a floor', () => {
+    // This gates every outgoing request; ten milliseconds takes the instance
+    // offline with an AbortError that looks like an upstream timeout.
+    expect(resolveMaxRequestDurationMs('10m')).toBe(1000);
+    expect(resolveMaxRequestDurationMs('-5')).toBe(600000);
+    expect(resolveMaxRequestDurationMs(undefined)).toBe(600000);
+    expect(resolveMaxRequestDurationMs('900000')).toBe(900000);
   });
 });
