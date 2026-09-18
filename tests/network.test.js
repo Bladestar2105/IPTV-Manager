@@ -303,3 +303,49 @@ describe('readBodyWithLimit', () => {
       .rejects.toThrow(/exceeded the 512 byte limit/);
   });
 });
+
+describe('fetchSafe error redaction', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const credentialUrl = 'http://panel.example:8080/player_api.php?username=alice&password=s3cr3t&action=get_series_info';
+
+  it('strips the credentials node-fetch puts in its error message', async () => {
+    // node-fetch builds `request to ${url} failed, reason: …`, and a provider
+    // URL carries the panel password. Every caller that logged a failed fetch
+    // printed that password to stdout.
+    helpers.isSafeUrl.mockResolvedValue(true);
+    const upstream = new Error(`request to ${credentialUrl} failed, reason: connect ECONNREFUSED 10.0.0.1:8080`);
+    upstream.code = 'ECONNREFUSED';
+    upstream.type = 'system';
+    fetch.mockRejectedValue(upstream);
+
+    const error = await fetchSafe(credentialUrl).catch(e => e);
+
+    expect(error.message).not.toContain('s3cr3t');
+    expect(error.message).not.toContain('password=');
+    // Still diagnosable: host, path and the system code survive.
+    expect(error.message).toContain('panel.example:8080/player_api.php');
+    expect(error.message).toContain('ECONNREFUSED');
+    expect(error.code).toBe('ECONNREFUSED');
+  });
+
+  it('keeps the abort name so callers can still branch on it', async () => {
+    helpers.isSafeUrl.mockResolvedValue(true);
+    const abort = new Error('The operation was aborted.');
+    abort.name = 'AbortError';
+    fetch.mockRejectedValue(abort);
+
+    const error = await fetchSafe(credentialUrl).catch(e => e);
+
+    expect(error.name).toBe('AbortError');
+  });
+
+  it('does not repeat the credentials when refusing an unsafe URL', async () => {
+    helpers.isSafeUrl.mockResolvedValue(false);
+
+    const error = await fetchSafe(credentialUrl).catch(e => e);
+
+    expect(error.message).not.toContain('s3cr3t');
+    expect(error.message).toContain('panel.example:8080');
+  });
+});

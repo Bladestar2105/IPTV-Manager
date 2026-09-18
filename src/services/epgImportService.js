@@ -5,6 +5,7 @@ import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
+import { redactUrl } from '../utils/helpers.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -75,6 +76,17 @@ export function stagingTableNames(sourceType, sourceId, runToken = randomUUID(),
     };
 }
 
+/** `{kind, type, id}` encoded in a staging table name, or null when malformed. */
+export function stagingTableIdentity(name) {
+    // epg_stage_<kind>_<type>_<id>_<stamp>_<token>; every component but the
+    // prefix is sanitized to characters that cannot contain an underscore.
+    const parts = String(name).split('_');
+    if (parts.length !== 7) return null;
+    const id = Number(parts[4]);
+    if (!Number.isInteger(id) || id < 0) return null;
+    return { kind: parts[2], type: parts[3], id };
+}
+
 /** Start time encoded in a staging table name, or null when it has none. */
 export function stagingTableStartedAt(name) {
     const parts = String(name).split('_');
@@ -112,6 +124,80 @@ export function dropOrphanedStagingTables(database, options = {}) {
         console.warn(`Could not sweep EPG staging tables: ${e.message}`);
         return 0;
     }
+}
+
+/**
+ * Clear the `is_updating` flag of EPG sources whose import died.
+ *
+ * The flag is set before an import and cleared in its `finally`, so a killed
+ * process strands it at 1. The scheduler selects on `is_updating = 0` and the
+ * UI disables the manual button on it, which removes the source from every
+ * update path — silently and permanently, since nothing else ever resets it.
+ *
+ * The flag carries no owner and no lease, so liveness is read from the one
+ * thing a running import leaves behind: a staging table younger than the stale
+ * threshold. That keeps an import running in another process during an
+ * overlapping restart untouched, for the same reason the table sweep does.
+ *
+ * @returns {number} sources re-enabled
+ */
+export function resetAbandonedEpgImports(stageDatabase, options = {}) {
+    const now = Number(options.now) > 0 ? Number(options.now) : Date.now();
+    const staleMs = Number(options.staleMs) > 0 ? Number(options.staleMs) : resolveStageStaleMs();
+    const database = options.mainDatabase || mainDb;
+    try {
+        const alive = new Set();
+        const rows = stageDatabase.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? || '%'"
+        ).all(EPG_STAGE_PREFIX);
+        for (const row of rows) {
+            const startedAt = stagingTableStartedAt(row.name);
+            if (startedAt === null || now - startedAt > staleMs) continue;
+            const identity = stagingTableIdentity(row.name);
+            if (identity && identity.type === 'custom') alive.add(identity.id);
+        }
+
+        const stranded = database.prepare('SELECT id FROM epg_sources WHERE is_updating = 1').all()
+            .filter(row => !alive.has(Number(row.id)));
+        if (stranded.length === 0) return 0;
+        const clear = database.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?');
+        for (const row of stranded) clear.run(row.id);
+        return stranded.length;
+    } catch (e) {
+        console.warn(`Could not reset abandoned EPG imports: ${e.message}`);
+        return 0;
+    }
+}
+
+const DEFAULT_STAGE_SWEEP_INTERVAL_MS = 3600000;
+
+export function resolveStageSweepIntervalMs(raw = process.env.EPG_STAGE_SWEEP_INTERVAL_MS) {
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STAGE_SWEEP_INTERVAL_MS;
+    return Math.max(parsed, 60000);
+}
+
+/**
+ * Sweep abandoned imports periodically, not only at startup.
+ *
+ * Imports run in the scheduler worker, the startup sweep runs only in the
+ * primary, and the stale threshold is hours. A worker killed mid-import is
+ * restarted immediately, so the next cold start is far too early to reclaim
+ * anything — in practice the tables and the flag survived until a restart that
+ * happened to come more than a stale window after the crash. Only the primary
+ * calls this, for the same reason it owns the WAL checkpoint.
+ */
+export function startEpgStageMaintenance(stageDatabase, intervalMs = resolveStageSweepIntervalMs()) {
+    const run = () => {
+        const dropped = dropOrphanedStagingTables(stageDatabase);
+        if (dropped > 0) console.info(`🧹 Removed ${dropped} orphaned EPG staging table(s)`);
+        const revived = resetAbandonedEpgImports(stageDatabase);
+        if (revived > 0) console.info(`🧹 Re-enabled ${revived} EPG source(s) whose import had died`);
+    };
+    const timer = setInterval(run, intervalMs);
+    timer.unref?.();
+    console.info(`🧾 EPG staging maintenance started (every ${Math.round(intervalMs / 1000)}s)`);
+    return timer;
 }
 
 /**
@@ -274,19 +360,22 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         const runSeq = claimPromotionSequence(importDb, sourceType, sourceId);
         stage = stagingTableNames(sourceType, sourceId);
 
-        console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${url}`);
+        console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${redactUrl(url)}`);
         // fetchSafe performs isSafeUrl check
         const response = await fetchSafe(url, { allowSelfSigned: true });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        // Update status in main DB
-        if (sourceType === 'custom') {
-            mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
-        }
-
         const now = Math.floor(Date.now() / 1000);
 
         createStagingTables(importDb, stage);
+
+        // Only now: the staging tables are what the startup and periodic sweeps
+        // read as proof that an import is alive. Setting the flag first would
+        // leave a window in which a sweep sees a flag with nothing behind it and
+        // clears it out from under a running import.
+        if (sourceType === 'custom') {
+            mainDb.prepare('UPDATE epg_sources SET is_updating = 1 WHERE id = ?').run(sourceId);
+        }
 
         let stream = response.body;
         // Every stage of the pipeline, so the watchdog can tear all of them

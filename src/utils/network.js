@@ -1,7 +1,7 @@
 import http from 'http';
 import https from 'https';
 import fetch from 'node-fetch';
-import { isSafeUrl, safeLookup } from './helpers.js';
+import { isSafeUrl, safeLookup, sanitizeErrorMessage } from './helpers.js';
 
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
@@ -10,6 +10,27 @@ const httpsSelfSignedAgent = new https.Agent({
   lookup: safeLookup,
   rejectUnauthorized: false,
 });
+
+/**
+ * Strip credentials from an error that is about to leave this function.
+ *
+ * node-fetch builds its message as `request to ${url} failed, reason: …`, and a
+ * provider URL carries the panel password in its query string. Every caller that
+ * logs a failed fetch therefore printed that password to stdout. The name and
+ * the system error code are preserved because callers branch on `AbortError`
+ * and on codes like ECONNREFUSED; the original object is returned untouched
+ * when it held nothing to redact, so the common abort keeps its stack.
+ */
+function withoutCredentials(error) {
+  const message = sanitizeErrorMessage(error);
+  if (!error || message === error.message) return error;
+  const safe = new Error(message);
+  safe.name = error.name || 'Error';
+  for (const key of ['code', 'type', 'errno']) {
+    if (error[key] !== undefined) safe[key] = error[key];
+  }
+  return safe;
+}
 
 const DEFAULT_HEADER_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_DURATION_MS = 600000;
@@ -49,7 +70,8 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
 
   // Ensure URL is valid and safe (pre-check)
   if (!(await isSafeUrl(url))) {
-    throw new Error(`Unsafe URL: ${url}`);
+    // The rejected URL is worth naming, its query string is not.
+    throw new Error(sanitizeErrorMessage(`Unsafe URL: ${url}`));
   }
 
   const {
@@ -101,7 +123,7 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     response = await fetch(url, fetchOptions);
   } catch (e) {
     disarm();
-    throw e;
+    throw withoutCredentials(e);
   }
 
   try {
@@ -129,7 +151,7 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     }
   } catch (e) {
     disarm();
-    throw e;
+    throw withoutCredentials(e);
   }
 
   disarm();
