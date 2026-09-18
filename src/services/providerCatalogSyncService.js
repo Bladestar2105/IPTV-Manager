@@ -1,5 +1,6 @@
 import { Xtream } from '@iptv/xtream-api';
-import { armStreamDeadline, fetchSafe, readBodyWithLimit, resolveBudget } from '../utils/network.js';
+import { armStreamDeadline, fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { resolveBudget } from '../utils/env.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
 import { sanitizeErrorMessage } from '../utils/helpers.js';
 

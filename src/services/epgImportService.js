@@ -6,6 +6,7 @@ import mainDb from '../database/db.js';
 import { armStreamDeadline, fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
 import { redactUrl, sanitizeErrorMessage } from '../utils/helpers.js';
+import { resolveBudget } from '../utils/env.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -30,11 +31,12 @@ const STAGE_STALE_IMPORT_FACTOR = 4;
 const DEFAULT_IMPORT_BODY_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function resolveImportBodyTimeoutMs(raw = process.env.EPG_IMPORT_BODY_TIMEOUT_MS) {
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_IMPORT_BODY_TIMEOUT_MS;
-    // A hard floor against 0 or a negative value, not a policy: an operator who
-    // sets a second knows what they are asking for.
-    return Math.max(parsed, 1000);
+    // The floor is a guard against 0, not a policy: an operator who sets a
+    // second knows what they are asking for. A value that is not a plain
+    // integer is refused instead of floored — `30m` used to resolve to 1000 ms
+    // and kill every import a second in, silently.
+    return resolveBudget(raw, DEFAULT_IMPORT_BODY_TIMEOUT_MS, 1000,
+        Number.MAX_SAFE_INTEGER, 'EPG_IMPORT_BODY_TIMEOUT_MS');
 }
 
 /**
@@ -47,8 +49,8 @@ export function resolveImportBodyTimeoutMs(raw = process.env.EPG_IMPORT_BODY_TIM
  */
 export function resolveStageStaleMs(raw = process.env.EPG_STAGE_STALE_MS) {
     const floor = Math.max(60000, resolveImportBodyTimeoutMs() * STAGE_STALE_IMPORT_FACTOR);
-    const parsed = Number.parseInt(raw, 10);
-    const requested = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STAGE_STALE_MS;
+    const requested = resolveBudget(raw, DEFAULT_STAGE_STALE_MS, 1,
+        Number.MAX_SAFE_INTEGER, 'EPG_STAGE_STALE_MS');
     return Math.max(requested, floor);
 }
 
@@ -173,9 +175,8 @@ export function resetAbandonedEpgImports(stageDatabase, options = {}) {
 const DEFAULT_STAGE_SWEEP_INTERVAL_MS = 3600000;
 
 export function resolveStageSweepIntervalMs(raw = process.env.EPG_STAGE_SWEEP_INTERVAL_MS) {
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STAGE_SWEEP_INTERVAL_MS;
-    return Math.max(parsed, 60000);
+    return resolveBudget(raw, DEFAULT_STAGE_SWEEP_INTERVAL_MS, 60000,
+        Number.MAX_SAFE_INTEGER, 'EPG_STAGE_SWEEP_INTERVAL_MS');
 }
 
 /**

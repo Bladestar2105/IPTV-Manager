@@ -6,7 +6,8 @@ import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
-import { fetchSafe, readBodyWithLimit, resolveBudget } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { resolveBudget } from '../utils/env.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 

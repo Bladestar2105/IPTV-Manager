@@ -3,6 +3,7 @@ import path from 'path';
 import db from '../database/db.js';
 import epgDb from '../database/epgDb.js';
 import { DATA_DIR, EPG_DB_PATH } from '../config/constants.js';
+import { resolveBudget } from '../utils/env.js';
 
 // SQLite only auto-checkpoints at the end of a write transaction, and a passive
 // checkpoint can never reclaim frames that an active reader still needs. With a
@@ -20,9 +21,8 @@ const MIN_INTERVAL_MS = 30000;
 const WARN_WAL_BYTES = 512 * 1024 * 1024;
 
 export function resolveCheckpointIntervalMs(raw = process.env.SQLITE_CHECKPOINT_INTERVAL_MS) {
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_INTERVAL_MS;
-  return Math.max(parsed, MIN_INTERVAL_MS);
+  return resolveBudget(raw, DEFAULT_INTERVAL_MS, MIN_INTERVAL_MS,
+    Number.MAX_SAFE_INTEGER, 'SQLITE_CHECKPOINT_INTERVAL_MS');
 }
 
 function walSize(dbPath) {

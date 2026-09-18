@@ -3,7 +3,7 @@ import { performSync } from './syncService.js';
 import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgService.js';
 import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
-import { resolveBudget } from '../utils/network.js';
+import { resolveBudget } from '../utils/env.js';
 
 // Reading a provider catalog holds the response bytes, the decoded string and
 // the parsed object graph in the heap at the same time, several times the wire

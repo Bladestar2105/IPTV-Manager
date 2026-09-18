@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'stream';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { fetchSafe, readBodyWithLimit, resolveBudget, resolveMaxRequestDurationMs } from '../src/utils/network.js';
+import { fetchSafe, readBodyWithLimit, resolveMaxRequestDurationMs } from '../src/utils/network.js';
+import { resolveBudget, resetEnvWarnings } from '../src/utils/env.js';
 import * as helpers from '../src/utils/helpers.js';
 import fetch from 'node-fetch';
 
@@ -406,11 +407,18 @@ describe('resolveBudget', () => {
     // A silently replaced value leaves the operator looking at the symptom —
     // every request timing out — with nothing pointing at the cause.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    resetEnvWarnings();
     try {
       resolveBudget('30s', 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEMO_MS="30s"'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('no unit suffixes'));
       warn.mockClear();
+
+      // …and only once per distinct value, because fetchSafe resolves the
+      // request budget for every outgoing request: one line per HLS segment per
+      // viewer is not a diagnostic, it is a second incident.
+      resolveBudget('30s', 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
+      expect(warn).not.toHaveBeenCalled();
 
       resolveBudget('-5', 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
       expect(warn).toHaveBeenCalled();

@@ -249,6 +249,24 @@ describe('staged EPG import', () => {
     }
   }, 20000);
 
+  it('refuses an import budget with a unit suffix instead of flooring it', () => {
+    // This resolver kept parseInt plus a floor after the others were fixed, so
+    // `30m` resolved to 1000ms and killed every import a second in — while the
+    // documentation said such a value was refused.
+    const previous = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    try {
+      expect(resolveImportBodyTimeoutMs('30m')).toBe(1800000);
+      expect(resolveImportBodyTimeoutMs('1800s')).toBe(1800000);
+      expect(resolveImportBodyTimeoutMs('1e6')).toBe(1800000);
+      // Meant literally: honoured, and still floored against zero.
+      expect(resolveImportBodyTimeoutMs('600000')).toBe(600000);
+      expect(resolveImportBodyTimeoutMs('10')).toBe(1000);
+    } finally {
+      if (previous === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previous;
+    }
+  });
+
   it('keeps the stale threshold above how long an import may run', () => {
     // The floor derives from the import body deadline, not from a header-only
     // budget: the sweep must never call another process's live import stale.

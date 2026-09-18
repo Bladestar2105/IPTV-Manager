@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { resolveBudget } from '../utils/env.js';
 
 // Every SQLite connection in the process has to agree on how long a statement
 // waits for a lock. `new Database(path)` without an explicit timeout leaves
@@ -14,18 +15,12 @@ const MAX_BUSY_TIMEOUT_MS = 300000;
 const DEFAULT_JOURNAL_SIZE_LIMIT = 64 * 1024 * 1024;
 const MIN_JOURNAL_SIZE_LIMIT = 1024 * 1024;
 
-function clampedInt(raw, fallback, min, max) {
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.min(Math.max(parsed, min), max);
-}
-
 /**
  * Lock wait used by every connection of this process, in milliseconds.
  * Must stay above the longest write transaction the application performs.
  */
 export function resolveBusyTimeoutMs(raw = process.env.SQLITE_BUSY_TIMEOUT_MS) {
-  return clampedInt(raw, DEFAULT_BUSY_TIMEOUT_MS, MIN_BUSY_TIMEOUT_MS, MAX_BUSY_TIMEOUT_MS);
+  return resolveBudget(raw, DEFAULT_BUSY_TIMEOUT_MS, MIN_BUSY_TIMEOUT_MS, MAX_BUSY_TIMEOUT_MS, 'SQLITE_BUSY_TIMEOUT_MS');
 }
 
 // better-sqlite3 is synchronous and its busy handler sleeps on the main thread,
@@ -35,14 +30,14 @@ export function resolveBusyTimeoutMs(raw = process.env.SQLITE_BUSY_TIMEOUT_MS) {
 const DEFAULT_LATENCY_BUSY_TIMEOUT_MS = 250;
 
 export function resolveLatencyBusyTimeoutMs(raw = process.env.SQLITE_LATENCY_BUSY_TIMEOUT_MS) {
-  const resolved = clampedInt(raw, DEFAULT_LATENCY_BUSY_TIMEOUT_MS, 10, MAX_BUSY_TIMEOUT_MS);
+  const resolved = resolveBudget(raw, DEFAULT_LATENCY_BUSY_TIMEOUT_MS, 10, MAX_BUSY_TIMEOUT_MS, 'SQLITE_LATENCY_BUSY_TIMEOUT_MS');
   // Never longer than the general wait, whatever the operator configured.
   return Math.min(resolved, resolveBusyTimeoutMs());
 }
 
 /** Upper bound for the WAL file after a checkpoint, in bytes. */
 export function resolveJournalSizeLimit(raw = process.env.SQLITE_WAL_SIZE_LIMIT_BYTES) {
-  return clampedInt(raw, DEFAULT_JOURNAL_SIZE_LIMIT, MIN_JOURNAL_SIZE_LIMIT, Number.MAX_SAFE_INTEGER);
+  return resolveBudget(raw, DEFAULT_JOURNAL_SIZE_LIMIT, MIN_JOURNAL_SIZE_LIMIT, Number.MAX_SAFE_INTEGER, 'SQLITE_WAL_SIZE_LIMIT_BYTES');
 }
 
 /**
