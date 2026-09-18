@@ -5,7 +5,7 @@ import XmlStream from 'node-xml-stream';
 import mainDb from '../database/db.js';
 import { fetchSafe } from '../utils/network.js';
 import { decodeXml } from '../utils/epgUtils.js';
-import { redactUrl } from '../utils/helpers.js';
+import { redactUrl, sanitizeErrorMessage } from '../utils/helpers.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -18,8 +18,9 @@ function decodeXmlIfNeeded(value) {
 
 export const EPG_STAGE_PREFIX = 'epg_stage_';
 
-// An import cannot legitimately run this long: HTTP_MAX_REQUEST_MS caps one
-// download, so anything older than a wide multiple of that budget is abandoned.
+// An import cannot legitimately run this long: its body deadline
+// (EPG_IMPORT_BODY_TIMEOUT_MS) caps the download, and resolveStageStaleMs below
+// keeps this threshold a wide multiple of that deadline whatever it is set to.
 const DEFAULT_STAGE_STALE_MS = 6 * 60 * 60 * 1000;
 const STAGE_STALE_IMPORT_FACTOR = 4;
 // A full XMLTV download can legitimately take a long time, but not forever.
@@ -633,7 +634,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         return { success: true, channels: imported.channels, programs: imported.programs };
 
     } catch (e) {
-        console.error(`❌ EPG update failed: ${url}`, e.message);
+        console.error(`❌ EPG update failed: ${redactUrl(url)}`, sanitizeErrorMessage(e));
         if (sourceType === 'custom') {
             mainDb.prepare('UPDATE epg_sources SET is_updating = 0 WHERE id = ?').run(sourceId);
         }
