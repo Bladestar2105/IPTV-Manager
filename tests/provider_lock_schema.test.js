@@ -82,6 +82,46 @@ describe('migrateProviderLockTable', () => {
     } finally { db.close(); }
   });
 
+  it('migrates the old shape even when a half-built orphan is next to it', () => {
+    // The widest window in the old non-atomic migration is between CREATE v2
+    // and DROP provider_locks, so the state it leaves most often is *both*
+    // tables with provider_locks still keyed by provider_id. Merging v2 into it
+    // cannot even prepare — `no such column: lock_key` — and initDb exits on a
+    // database error, so the container crash-loops on a state the migration was
+    // written to repair.
+    const db = open();
+    try {
+      db.exec(V1);
+      db.prepare('INSERT INTO provider_locks VALUES (?, ?, ?, ?, ?, ?)').run(7, 'sync', 99, 'tok', 1, 9999999999);
+      db.exec(V2);
+
+      expect(migrateProviderLockTable(db)).toBe(1);
+
+      expect(tables(db)).toEqual(['provider_locks']);
+      expect(keys(db)).toEqual(['provider:7']);
+    } finally { db.close(); }
+  });
+
+  it('counts only the leases it actually took over', () => {
+    const db = open();
+    try {
+      migrateProviderLockTable(db);
+      const insert = db.prepare('INSERT INTO provider_locks VALUES (?, ?, ?, ?, ?, ?)');
+      insert.run('provider:1', 'sync', 1, 'a', 1, 9999999999);
+      db.exec(V2);
+      const insertOrphan = db.prepare('INSERT INTO provider_locks_v2 VALUES (?, ?, ?, ?, ?, ?)');
+      insertOrphan.run('provider:1', 'sync', 9, 'stale', 1, 9999999999);   // already held
+      insertOrphan.run('provider:2', 'delete', 2, 'b', 1, 9999999999);     // new
+
+      // INSERT OR IGNORE discards the first one; reporting it as carried over
+      // would tell the operator a lease survived that did not.
+      expect(migrateProviderLockTable(db)).toBe(1);
+      expect(keys(db)).toEqual(['provider:1', 'provider:2']);
+      expect(db.prepare("SELECT owner_token FROM provider_locks WHERE lock_key = 'provider:1'").get().owner_token)
+        .toBe('a');
+    } finally { db.close(); }
+  });
+
   it('merges an orphan table into an already migrated one without losing either', () => {
     const db = open();
     try {

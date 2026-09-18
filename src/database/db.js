@@ -184,17 +184,9 @@ export function initDb(isPrimary) {
       FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
     );
 
-    -- Serializes work across cluster workers. lock_key is 'provider:<id>' for a
-    -- provider sync or deletion and 'source:<url>' for one upstream panel.
-    -- No foreign key: a provider lock is held *while* the provider row is deleted.
-    CREATE TABLE IF NOT EXISTS provider_locks (
-      lock_key TEXT PRIMARY KEY,
-      operation TEXT NOT NULL,
-      owner_pid INTEGER NOT NULL,
-      owner_token TEXT NOT NULL,
-      acquired_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
+    -- provider_locks is created by migrateProviderLockTable below, which also
+    -- owns its migration. Two copies of the DDL is how the first migration came
+    -- to be neither atomic nor safe against a second worker.
 
     CREATE TABLE IF NOT EXISTS category_mappings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
