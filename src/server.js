@@ -113,7 +113,12 @@ let redisClient = null;
     }
 
     cluster.on('exit', async (worker, _code, _signal) => {
-      console.error(`Worker ${worker.process.pid} died. Restarting...`);
+      // Not "restarting" during a stop: the guard below does not replace it, and
+      // a dozen console.error lines saying otherwise make an orderly shutdown
+      // read as a crash cascade in the one log an operator checks afterwards.
+      if (shuttingDown) console.info(`Worker ${worker.process.pid} stopped`);
+      else console.error(`Worker ${worker.process.pid} died. Restarting...`);
+
       // Cleanup streams for this worker
       try {
         await streamManager.cleanupWorkerStreams(worker.process.pid);
