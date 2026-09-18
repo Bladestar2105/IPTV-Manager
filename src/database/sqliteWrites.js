@@ -37,6 +37,47 @@ export function immediateTransaction(database, fn) {
   };
 }
 
+/**
+ * Delete rows in short transactions instead of one long one.
+ *
+ * A retention sweep is unbounded by nature: it deletes whatever accumulated
+ * since it last ran, and it last ran whenever the process that owns it happened
+ * to stay up long enough. One `DELETE FROM t WHERE ts < ?` therefore holds the
+ * write lock for a length nobody can predict from the code, which is the stall
+ * this module exists to avoid — and the sweeps run in a worker that is also
+ * pumping streams, where better-sqlite3 blocks the event loop for the duration.
+ *
+ * `LIMIT` on DELETE needs a compile-time option better-sqlite3 does not
+ * guarantee, so the bound goes in a rowid subquery, which every build supports.
+ *
+ * `table` and `where` are interpolated into SQL: callers pass literals from
+ * this repository, never anything derived from input.
+ *
+ * @param {object} database
+ * @param {string} table
+ * @param {string} where SQL predicate with `?` placeholders
+ * @param {Array} [params] values for the placeholders
+ * @param {object} [options]
+ * @param {number} [options.batchSize=5000]
+ * @param {number} [options.maxBatches=2000] stop rather than loop forever if
+ *        something keeps refilling the table faster than this drains it
+ * @returns {number} rows removed
+ */
+export function deleteInBatches(database, table, where, params = [], options = {}) {
+  const batchSize = Number(options.batchSize) > 0 ? Math.floor(Number(options.batchSize)) : 5000;
+  const maxBatches = Number(options.maxBatches) > 0 ? Math.floor(Number(options.maxBatches)) : 2000;
+  const statement = database.prepare(
+    `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${where} LIMIT ?)`);
+
+  let removed = 0;
+  for (let batch = 0; batch < maxBatches; batch++) {
+    const changes = immediateTransaction(database, () => statement.run(...params, batchSize).changes)();
+    removed += changes;
+    if (changes < batchSize) break;
+  }
+  return removed;
+}
+
 // Deliberately NOT unref'd. This timer sits inside an operation the caller is
 // awaiting, not in a background schedule: an unref'd one lets Node exit with the
 // retry still pending, so the write is silently dropped and the awaited promise

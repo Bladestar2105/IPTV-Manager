@@ -2,7 +2,7 @@ import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
-import { formatDbError, immediateTransaction } from '../database/sqliteWrites.js';
+import { deleteInBatches, formatDbError, immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 import { importEpgFromUrl } from './epgImportService.js';
@@ -104,10 +104,22 @@ async function importChannelsFromProvider(providerId) {
     }
 }
 
+/**
+ * Drop programmes whose stop time is older than the retention window.
+ *
+ * In batches: this runs after every EPG import and hourly from the scheduler
+ * worker, so normally it removes an hour or two of expired rows. But it removes
+ * whatever accumulated since it last ran, and it does not run while imports are
+ * failing — the deployment this was written for had every import dying a second
+ * in — so the first successful run after such a stretch faces a backlog of the
+ * whole retention window on a multi-gigabyte table. As one statement that is a
+ * write lock held for as long as it takes, in a worker that is pumping streams
+ * while better-sqlite3 blocks its event loop.
+ */
 export function pruneOldEpgData(days = 7) {
     const cutoff = Math.floor(Date.now() / 1000) - (days * 86400);
-    const result = db.prepare('DELETE FROM epg_programs WHERE stop < ?').run(cutoff);
-    console.info(`🧹 Pruned ${result.changes} old EPG programs`);
+    const removed = deleteInBatches(db, 'epg_programs', 'stop < ?', [cutoff]);
+    if (removed > 0) console.info(`🧹 Pruned ${removed} old EPG programs`);
 }
 
 export function deleteEpgSourceData(sourceId, sourceType) {

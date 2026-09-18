@@ -4,6 +4,7 @@ import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgServic
 import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 import { resolveBudget } from '../utils/env.js';
+import { deleteInBatches } from '../database/sqliteWrites.js';
 
 // Reading a provider catalog holds the response bytes, the decoded string and
 // the parsed object graph in the heap at the same time, several times the wire
@@ -137,26 +138,39 @@ export function startEpgScheduler() {
   console.info('📅 EPG Scheduler started');
 }
 
+const CLEANUP_INTERVAL_MS = 3600000;
+// The sweep is hourly and has no run at startup, so on an instance whose
+// scheduler worker is restarted more often than that — a deploy loop, a worker
+// the primary keeps reviving — it never ran at all, and the tables it is
+// supposed to bound grew without limit. Long enough after boot not to compete
+// with it, short enough that no plausible restart cadence outruns it.
+const CLEANUP_FIRST_RUN_MS = 60000;
+
 export function startCleanupScheduler() {
-  // Check every hour
-  setInterval(() => {
+  const run = () => {
     try {
       const now = Math.floor(Date.now() / 1000);
-      // Clean old client logs (7 days)
       const retention = 7 * 86400;
-      db.prepare('DELETE FROM client_logs WHERE timestamp < ?').run(now - retention);
-      db.prepare('DELETE FROM security_logs WHERE timestamp < ?').run(now - retention);
+      // The two log tables grow with traffic and are swept by age, so a run
+      // after a long gap can face a very large backlog. In batches: this worker
+      // is also pumping streams, and better-sqlite3 blocks its event loop for
+      // as long as the write lock is held.
+      deleteInBatches(db, 'client_logs', 'timestamp < ?', [now - retention]);
+      deleteInBatches(db, 'security_logs', 'timestamp < ?', [now - retention]);
+      // These two are bounded by the number of blocks and shares that exist, so
+      // one statement each is the whole job.
       db.prepare('DELETE FROM blocked_ips WHERE expires_at < ?').run(now);
-      // Clean expired shares
       db.prepare('DELETE FROM shared_links WHERE end_time IS NOT NULL AND end_time < ?').run(now);
 
-      // Clean old EPG data (7 days)
       pruneOldEpgData(7);
-
     } catch (e) {
       console.error('Cleanup error:', e);
     }
-  }, 3600000); // Every hour
+  };
+
+  const first = setTimeout(run, CLEANUP_FIRST_RUN_MS);
+  first.unref?.();
+  setInterval(run, CLEANUP_INTERVAL_MS);
   console.info('🧹 Cleanup Scheduler started');
 }
 

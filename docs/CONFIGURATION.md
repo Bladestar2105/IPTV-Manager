@@ -265,6 +265,15 @@ until this is exercised on a real Proxmox host.
   that is below what the configured intervals demand, the backlog grows and the
   scheduler says so — `⏳ N due provider sync(s) waiting` — at most once every
   15 minutes. Raise the cap, or lengthen the intervals.
+The retention sweep — client and security logs, expired blocks and shares, EPG
+programmes past the 7-day window — runs in the scheduler worker 60 seconds after
+it starts and hourly after that. The first run matters: with an hourly timer and
+nothing at startup, an instance whose scheduler worker was restarted more often
+than once an hour never swept at all. The two log tables are deleted in batches,
+because a sweep after a long gap removes whatever accumulated in it, and
+better-sqlite3 blocks that worker's event loop for as long as it holds the write
+lock.
+
 - `MAXMIND_LICENSE_KEY`: Optional MaxMind license key for GeoLite2 updates.
   The Web UI security settings can also provide this value. Startup checks
   MaxMind checksum files first and skips the heavy `geoip-lite` updater when
