@@ -101,6 +101,39 @@ describe('prePopulateProviderIconCache', () => {
     expect(memDb.prepare("SELECT COUNT(*) c FROM provider_icon_cache WHERE logo_url LIKE '%fresh.png'").get().c).toBe(1);
   });
 
+  it('clears a large backlog in short batches, not one long write', () => {
+    // The first run after the prune shipped has a backlog — 94,972 rows for the
+    // worst provider on the affected deployment. Deleting that in one
+    // transaction would hold the write lock for exactly the kind of stall this
+    // work exists to remove, and asking SQLite which rows are stale cost 807ms
+    // of scanning inside that transaction.
+    for (let i = 0; i < 1500; i++) insertChannel.run(1, `http://cdn.example/logo-${i}.png`);
+    prePopulateProviderIconCache(1);
+    expect(cacheRows()).toBe(1500);
+
+    memDb.prepare("DELETE FROM provider_channels WHERE provider_id = 1").run();
+    insertChannel.run(1, 'http://cdn.example/only.png');
+
+    const statements = [];
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => { statements.push(sql); return original(sql); });
+    try {
+      prePopulateProviderIconCache(1);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(cacheRows()).toBe(1);
+    const deletes = statements.filter(sql => /DELETE FROM provider_icon_cache/i.test(sql));
+    expect(deletes.length).toBeGreaterThan(1);
+    // No statement carries a six-figure parameter list, and none asks SQLite to
+    // work out staleness for itself.
+    for (const sql of deletes) {
+      expect((sql.match(/\?/g) || []).length).toBeLessThanOrEqual(401);
+      expect(sql).not.toMatch(/NOT IN/i);
+    }
+  });
+
   it('never touches another provider cache rows while pruning', () => {
     insertChannel.run(1, 'http://cdn.example/a.png');
     insertChannel.run(2, 'http://cdn.example/b.png');

@@ -182,6 +182,10 @@ export function getProviderCachedIcons(providerId) {
  * Call this after syncing channels to prepare cache entries
  * @param {number} providerId - Provider ID
  */
+// SQLite's default parameter limit is 999 on older builds; stay well under it
+// and keep each transaction short.
+const ICON_CACHE_PRUNE_BATCH = 400;
+
 export function prePopulateProviderIconCache(providerId) {
     if (!providerId) return;
 
@@ -202,12 +206,13 @@ export function prePopulateProviderIconCache(providerId) {
               .all(providerId)
               .map(row => row.logo_url)
         );
-        const cachedBefore = cachedUrls.size;
 
         const allHashes = new Set();
+        const liveUrls = new Set();
         const pending = [];
         for (const ch of channels) {
             if (!ch.logo) continue;
+            liveUrls.add(ch.logo);
             allHashes.add(getLogoCacheHash(ch.logo));
             if (cachedUrls.has(ch.logo)) continue;
             cachedUrls.add(ch.logo);
@@ -216,16 +221,22 @@ export function prePopulateProviderIconCache(providerId) {
 
         // Cache rows are only ever removed with the whole provider, so a catalog
         // that churns — VOD titles rotate constantly — leaves the table holding
-        // every logo the provider ever had. The read above then grows with the
-        // provider's history instead of its current catalog. More rows than the
-        // catalog has distinct logos means stale ones are in there; entries are
-        // looked up by exact logo_url, so a URL no longer in the catalog is
+        // every logo the provider ever had, and the read above then grows with
+        // the provider's history instead of its current catalog. Entries are
+        // looked up by exact logo_url, so a URL the catalog no longer carries is
         // unreachable and safe to drop.
-        const stale = cachedBefore + pending.length > channels.length;
+        //
+        // Which rows are stale is already known here, from two sets that are
+        // in memory anyway. Asking SQLite instead — `NOT IN (SELECT logo …)` —
+        // cost 807ms of scanning on the affected deployment, and it ran inside
+        // the write transaction, which is the one thing this branch exists to
+        // stop doing.
+        const stale = [];
+        for (const url of cachedUrls) if (!liveUrls.has(url)) stale.push(url);
 
         let count = 0;
         let pruned = 0;
-        if (pending.length > 0 || stale) {
+        if (pending.length > 0) {
             immediateTransaction(db, () => {
                 const insertStmt = db.prepare(`
                     INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
@@ -235,16 +246,20 @@ export function prePopulateProviderIconCache(providerId) {
                     insertStmt.run(providerId, logo, getLogoCacheHash(logo));
                     count++;
                 }
-                if (stale) {
-                    pruned = db.prepare(`
-                        DELETE FROM provider_icon_cache
-                        WHERE provider_id = ? AND logo_url NOT IN (
-                            SELECT logo FROM provider_channels
-                            WHERE provider_id = ? AND logo IS NOT NULL AND logo != ''
-                        )
-                    `).run(providerId, providerId).changes;
-                }
             })();
+        }
+
+        // In batches, each its own short transaction. The first run after this
+        // shipped has a backlog to clear — 94,972 rows for the worst provider
+        // measured — and holding the write lock for all of it at once would be
+        // the very stall being removed elsewhere.
+        for (let from = 0; from < stale.length; from += ICON_CACHE_PRUNE_BATCH) {
+            const batch = stale.slice(from, from + ICON_CACHE_PRUNE_BATCH);
+            const deleteStmt = db.prepare(`
+                DELETE FROM provider_icon_cache
+                WHERE provider_id = ? AND logo_url IN (${batch.map(() => '?').join(',')})
+            `);
+            pruned += immediateTransaction(db, () => deleteStmt.run(providerId, ...batch).changes)();
         }
 
         // Update memory cache
