@@ -106,3 +106,30 @@ describe('runWriteWithRetry', () => {
     expect(operation).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('immediateTransaction nesting', () => {
+  it('refuses to run inside another transaction', () => {
+    // better-sqlite3 turns a nested transaction into a SAVEPOINT and discards
+    // its BEGIN, so `.immediate` silently becomes the deferred BEGIN of the
+    // outer one — exactly the SQLITE_BUSY_SNAPSHOT this helper prevents.
+    const database = openSqliteConnection(tempDb());
+    try {
+      const bump = immediateTransaction(database, () => database.prepare('UPDATE t SET v = v + 1 WHERE id = 1').run());
+      bump();
+      expect(database.prepare('SELECT v FROM t WHERE id = 1').get().v).toBe(1);
+
+      const outer = database.transaction(() => bump());
+      expect(() => outer()).toThrow(/cannot run inside another transaction/);
+      expect(database.prepare('SELECT v FROM t WHERE id = 1').get().v).toBe(1);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('still falls back for a connection that does not expose the mode', () => {
+    const calls = [];
+    const double = { transaction: fn => { const wrapped = (...a) => { calls.push('ran'); return fn(...a); }; return wrapped; } };
+    immediateTransaction(double, () => 'ok')();
+    expect(calls).toEqual(['ran']);
+  });
+});

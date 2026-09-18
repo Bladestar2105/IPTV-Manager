@@ -18,13 +18,23 @@ export function isRetryableSqliteError(error) {
  *
  * Falls back to the plain transaction when the connection does not expose the
  * mode (test doubles), so callers never have to branch.
+ *
+ * Throws when called inside another transaction: better-sqlite3 turns a nested
+ * transaction into a SAVEPOINT and discards its BEGIN, so `.immediate` silently
+ * becomes the deferred BEGIN of the outer one — precisely the
+ * SQLITE_BUSY_SNAPSHOT this helper exists to prevent, and with no sign that it
+ * happened. No current caller nests; the guard keeps it that way.
  */
 export function immediateTransaction(database, fn) {
   const transaction = database.transaction(fn);
-  if (typeof transaction.immediate === 'function') {
-    return (...args) => transaction.immediate(...args);
-  }
-  return transaction;
+  if (typeof transaction.immediate !== 'function') return transaction;
+
+  return (...args) => {
+    if (database.inTransaction) {
+      throw new Error('immediateTransaction cannot run inside another transaction: BEGIN IMMEDIATE would be downgraded to a savepoint');
+    }
+    return transaction.immediate(...args);
+  };
 }
 
 const delay = ms => new Promise(resolve => { setTimeout(resolve, ms).unref?.(); });
