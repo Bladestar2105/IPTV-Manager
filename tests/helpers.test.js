@@ -207,6 +207,21 @@ describe('getCookie', () => {
 });
 
 describe('redactUrl', () => {
+  it('stops at whitespace, so it cannot swallow the rest of a message', () => {
+    // These strings are usually `request to <url> failed, reason: …`. With the
+    // credential as the last query parameter, a greedy `[^&]*` ran past the URL
+    // and took the reason with it, so ECONNREFUSED, ENOTFOUND and "certificate
+    // has expired" all collapsed into the same line.
+    const message = 'request to http://panel.example/xmltv.php?username=a&password=s3cr3t' +
+      ' failed, reason: connect ECONNREFUSED 10.0.0.1:8080';
+
+    const redacted = redactUrl(message);
+
+    expect(redacted).not.toContain('s3cr3t');
+    expect(redacted).toContain('password=********');
+    expect(redacted).toContain('connect ECONNREFUSED 10.0.0.1:8080');
+  });
+
   it('should redact Xtream path passwords', () => {
     expect(redactUrl('/live/user/pass/1.ts')).toBe('/live/user/********/1.ts');
     expect(redactUrl('/movie/user/pass/movie.mp4')).toBe('/movie/user/********/movie.mp4');

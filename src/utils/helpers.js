@@ -232,7 +232,12 @@ export function redactUrl(url) {
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
     // 4. Redact credentials and Stalker device metrics while preserving key casing
-    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&]*/gi, '$1$2=********');
+    // `[^&\s]*`, not `[^&]*`: a URL cannot contain a space, and stopping at one
+    // matters because these messages are usually `request to <url> failed,
+    // reason: …`. With the credential as the last parameter the greedy form ran
+    // past the URL and swallowed the reason, so ECONNREFUSED, ENOTFOUND and
+    // "certificate has expired" all collapsed into the same string.
+    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&\s]*/gi, '$1$2=********');
 
     return redacted;
   } catch {
