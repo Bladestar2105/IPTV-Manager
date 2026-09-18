@@ -1152,11 +1152,19 @@ async function loadProviders(filterUserId = null) {
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({user_id: selectedUserId})
             });
-            showToast(t('syncSuccess', {
+            const summary = t('syncSuccess', {
               added: res.channels_added,
               updated: res.channels_updated,
               categories: res.categories_added
-            }), 'success');
+            });
+            // A partial run delivered some sections and failed others. Reporting
+            // it as a plain success is the false-success report this endpoint's
+            // new status field exists to end, so show the warning it carries.
+            if (res.status === 'partial' && res.warning) {
+              showToast(`${summary} — ${res.warning}`, 'warning');
+            } else {
+              showToast(summary, 'success');
+            }
           } catch (e) {
             showToast(e.message, 'danger');
           } finally {
