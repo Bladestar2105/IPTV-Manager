@@ -250,6 +250,13 @@ until this is exercised on a real Proxmox host.
 
 ## Scheduled Jobs and GeoIP
 
+- `CLUSTER_WORKERS`: How many worker processes the primary forks. Defaults to
+  `os.availableParallelism()`, minimum `1`, maximum `64`. Every worker opens its
+  own SQLite connections and competes for the single write lock, so this is the
+  most direct control over write contention. It matters most in a container:
+  neither `availableParallelism()` nor `os.cpus()` reads a cgroup CPU quota, so
+  an image limited to a fraction of a large host still forks one worker per host
+  core, multiplying lock contention without adding throughput.
 - `IS_SCHEDULER`: Internal cluster flag used by the primary process when
   starting the scheduler worker.
 - `SYNC_MAX_CONCURRENT`: How many scheduled provider syncs may run at the same

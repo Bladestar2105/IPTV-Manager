@@ -14,6 +14,7 @@ import { dropOrphanedStagingTables, resetAbandonedEpgImports, startEpgStageMaint
 import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler, startGeoIpUpdater } from './services/schedulerService.js';
 import { startWalMaintenance } from './services/walMaintenanceService.js';
+import { resolveBudget } from './utils/env.js';
 import { startSSDP } from './services/ssdpService.js';
 import { createDefaultAdmin } from './services/authService.js';
 import { PORT } from './config/constants.js';
@@ -100,8 +101,16 @@ let redisClient = null;
       sweepOrphans();
     } catch { /* An unavailable optional runtime never blocks startup. */ }
 
-    const numCPUs = os.cpus().length;
-    console.info(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
+    // Every worker opens its own SQLite connections and competes for the single
+    // write lock, so this number is the most direct control an operator has over
+    // the contention everything else here works around. It was not a control at
+    // all: os.cpus() reports the *host's* cores, which in a container with a CPU
+    // quota is not what this process may use — twelve workers on a fraction of a
+    // CPU multiply the lock contention without adding throughput.
+    // availableParallelism() at least respects the affinity mask; neither it nor
+    // os.cpus() reads a cgroup quota, which is why the override exists.
+    const numCPUs = resolveBudget(process.env.CLUSTER_WORKERS, os.availableParallelism(), 1, 64, 'CLUSTER_WORKERS');
+    console.info(`Primary ${process.pid} is running ${numCPUs} worker(s)`);
 
     let schedulerPid = null;
     let shuttingDown = false;
