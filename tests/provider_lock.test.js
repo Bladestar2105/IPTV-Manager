@@ -19,8 +19,8 @@ vi.mock('../src/services/seriesSyncService.js', () => ({
 vi.mock('../src/services/epgService.js', () => ({ updateProviderEpg: vi.fn().mockResolvedValue(undefined) }));
 
 const {
-  acquireProviderLock, describeProviderLock, clearProviderLocks, clearExpiredProviderLocks,
-  resetProviderLockState,
+  acquireProviderLock, describeProviderLock, describeLockConflict, clearProviderLocks,
+  clearExpiredProviderLocks, resetProviderLockState,
 } = await import('../src/services/providerLockService.js');
 const { performSync } = await import('../src/services/syncService.js');
 const { deleteProvider } = await import('../src/controllers/providerController.js');
@@ -205,6 +205,20 @@ describe('provider lock', () => {
     expect(acquireProviderLock(7, 'sync')).toBeNull();
 
     clearProviderLocks();
+  });
+
+  it('says a source is cooling down rather than claiming a run is in progress', () => {
+    // A cooldown row keeps the key taken on purpose after its run finished.
+    // Reporting it as an operation told the operator a sync was under way.
+    const lock = acquireProviderLock(43, 'sync');
+    lock.release(1800);
+    try {
+      const message = describeLockConflict(43);
+      expect(message).toMatch(/held back until/);
+      expect(message).not.toMatch(/already being/);
+    } finally {
+      clearProviderLocks();
+    }
   });
 
   it('does not present an expired lease as a running operation', () => {

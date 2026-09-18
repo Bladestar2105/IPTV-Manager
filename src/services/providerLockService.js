@@ -229,16 +229,20 @@ export function describeProviderLock(providerId) {
 }
 
 /**
- * Wording for a refused operation. A lock that no longer has a holder row means
- * the acquisition itself failed (contention), not that somebody owns it.
+ * Wording for a refused operation. A lock with no live holder row means the
+ * acquisition itself failed — either real contention on the lock table, or the
+ * benign race where the previous holder released between the refused insert and
+ * this read.
  */
-export function describeLockConflict(providerId, fallbackOperation = 'processed') {
+export function describeLockConflict(providerId) {
   const holder = describeProviderLock(providerId);
   if (!holder) {
-    return `Provider ${providerId} could not be locked because the database is busy; try again shortly`;
+    return `Provider ${providerId} could not be locked; another operation released it just now, or the database is busy`;
   }
-  const what = holder.operation === 'delete' ? 'deleted' : 'synchronized';
-  return `Provider ${providerId} is already being ${what || fallbackOperation}`;
+  if (isCooldownHolder(holder)) {
+    return `Provider ${providerId} is held back until ${new Date(holder.expires_at * 1000).toISOString()} after its upstream stopped answering`;
+  }
+  return `Provider ${providerId} is already being ${holder.operation === 'delete' ? 'deleted' : 'synchronized'}`;
 }
 
 /** Drop every lock. Tests only; startup sweeps expired leases in initDb. */

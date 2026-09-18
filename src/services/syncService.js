@@ -168,6 +168,7 @@ export function calculateNextSync(interval) {
 // failed attempt costs several upstream timeouts.
 const SYNC_RETRY_BASE_SECONDS = 900;
 const SYNC_RETRY_MAX_DOUBLINGS = 5;
+const SYNC_RETRY_JITTER_SECONDS = 300;
 
 /**
  * Next attempt after a run that produced no usable catalog: exponential backoff
@@ -190,7 +191,12 @@ export function calculateRetrySync(config, providerId, userId) {
     consecutiveFailures = 0;
   }
   const backoff = SYNC_RETRY_BASE_SECONDS * Math.pow(2, Math.min(consecutiveFailures, SYNC_RETRY_MAX_DOUBLINGS));
-  return Math.min(intervalNext, now + backoff);
+  // Providers that fail together — everything behind one shared upstream —
+  // would otherwise all come due in the same tick, and a catalog parse is
+  // expensive enough that they should not. Deterministic in the provider, so a
+  // retry time stays reproducible.
+  const jitter = (Number(providerId) * 37 + Number(userId) * 11) % SYNC_RETRY_JITTER_SECONDS;
+  return Math.min(intervalNext, now + backoff + jitter);
 }
 
 // A run refused by the lock never reaches finishSyncRun, so nothing moves

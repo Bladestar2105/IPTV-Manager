@@ -148,6 +148,10 @@ describe('sync status reporting', () => {
                    VALUES (1, 7, 1, 1, 'daily', 1, 1, 111, 222, 0)`).run();
   });
 
+  // Per-provider spread added to the backoff, so providers behind one shared
+  // upstream do not all come due in the same scheduler tick.
+  const JITTER_MAX = 300;
+
   const logs = () => memDb.prepare('SELECT * FROM sync_logs ORDER BY id').all();
   const config = () => memDb.prepare('SELECT * FROM sync_configs WHERE id = 1').get();
 
@@ -175,7 +179,9 @@ describe('sync status reporting', () => {
 
     const next = config().next_sync;
     expect(next).toBeGreaterThan(before);
-    expect(next).toBeLessThanOrEqual(before + 900 + 5);   // first retry: 15 minutes
+    // 15 minutes, plus up to 5 minutes of per-provider jitter so providers that
+    // fail together do not all come back in the same tick.
+    expect(next).toBeLessThanOrEqual(before + 900 + JITTER_MAX + 5);
     expect(next).toBeLessThan(before + 86400);            // and well inside the daily interval
   });
 
@@ -185,14 +191,46 @@ describe('sync status reporting', () => {
     const insert = memDb.prepare(
       'INSERT INTO sync_logs (provider_id, user_id, sync_time, status) VALUES (7, 1, ?, ?)'
     );
-    expect(calculateRetrySync(cfg, 7, 1)).toBeLessThanOrEqual(now + 900 + 5);
+    expect(calculateRetrySync(cfg, 7, 1)).toBeLessThanOrEqual(now + 900 + JITTER_MAX + 5);
     insert.run(now, 'error');
-    expect(calculateRetrySync(cfg, 7, 1)).toBeGreaterThan(now + 900 + 5);
+    // Doubled: past the first step even at its maximum jitter.
+    expect(calculateRetrySync(cfg, 7, 1)).toBeGreaterThan(now + 900 + JITTER_MAX + 5);
     insert.run(now, 'error');
     insert.run(now, 'error');
     const third = calculateRetrySync(cfg, 7, 1);
     expect(third).toBeGreaterThan(now + 3600);
     expect(third).toBeLessThanOrEqual(now + 86400);       // never beyond the interval
+  });
+
+  it('spreads the retries of providers that failed together', () => {
+    // Everything behind one shared upstream fails in the same minute, so an
+    // unjittered backoff brings them all back in the same tick — and a catalog
+    // parse is expensive enough that they should not arrive together.
+    const cfg = config();
+    const nextFor = providerId => calculateRetrySync(cfg, providerId, 1);
+    const times = new Set([nextFor(7), nextFor(8), nextFor(9), nextFor(10)]);
+
+    expect(times.size).toBeGreaterThan(1);
+    // Still deterministic: the same provider always gets the same slot.
+    expect(nextFor(7)).toBe(nextFor(7));
+  });
+
+  it('never delays a retry past the configured interval', () => {
+    // The backoff reaches 900 * 2^5 = 8 hours, so on a daily interval the clamp
+    // never binds and an assertion against it proves nothing. An hourly config
+    // is where it has to hold: three failures already ask for two hours.
+    const now = Math.floor(Date.now() / 1000);
+    const hourly = { ...config(), sync_interval: 'hourly' };
+    const insert = memDb.prepare(
+      'INSERT INTO sync_logs (provider_id, user_id, sync_time, status) VALUES (7, 1, ?, ?)'
+    );
+    for (let i = 0; i < 3; i++) insert.run(now, 'error');
+
+    const next = calculateRetrySync(hourly, 7, 1);
+
+    // The clamp binds against the interval, jitter included.
+    expect(next).toBeLessThanOrEqual(now + 3600 + 5);
+    expect(next).toBeGreaterThan(now + 3000);
   });
 
   it('never persists credentials or markup from an upstream failure', async () => {

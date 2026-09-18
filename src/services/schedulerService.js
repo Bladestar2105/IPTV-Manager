@@ -11,7 +11,11 @@ import { isSafeUrl } from '../utils/helpers.js';
 // happens to cluster — after a restart, or after a shared upstream failed them
 // together — parsed their catalogs concurrently. Configs above the cap keep
 // their next_sync and are simply picked up by a later tick.
-const MAX_CONCURRENT_SYNCS = Math.max(1, Number(process.env.SYNC_MAX_CONCURRENT) || 2);
+const MAX_CONCURRENT_SYNCS = Math.max(1, Number.parseInt(process.env.SYNC_MAX_CONCURRENT, 10) || 2);
+// A backlog is normal for a tick or two. Saying so on every tick would be noise,
+// so it is reported at most this often.
+const BACKLOG_LOG_INTERVAL_MS = 900000;
+let lastBacklogLogAt = 0;
 
 let syncInterval = null;
 let epgInterval = null;
@@ -25,16 +29,30 @@ export function startSyncScheduler() {
   syncInterval = setInterval(async () => {
     try {
       const now = Math.floor(Date.now() / 1000);
-      const configs = db.prepare('SELECT * FROM sync_configs WHERE enabled = 1 AND next_sync <= ?').all(now);
+      // Longest overdue first. Without the order the scan returns rowid order,
+      // which is the same on every tick — so with the cap in place the head of
+      // the list would win every time and the tail would never run at all.
+      const configs = db.prepare(
+        'SELECT * FROM sync_configs WHERE enabled = 1 AND next_sync <= ? ORDER BY next_sync ASC, id ASC'
+      ).all(now);
 
+      let deferred = 0;
       for (const config of configs) {
-        if (runningSyncs.size >= MAX_CONCURRENT_SYNCS) break;
+        if (runningSyncs.size >= MAX_CONCURRENT_SYNCS) { deferred++; continue; }
         if (runningSyncs.has(config.id)) continue;
         runningSyncs.add(config.id);
 
         performSync(config.provider_id, config.user_id, { mode: 'scheduled' })
           .catch(e => console.error(`Scheduled sync error for provider ${config.provider_id}:`, e))
           .finally(() => runningSyncs.delete(config.id));
+      }
+
+      // A config held back by the cap keeps its next_sync and writes no log
+      // row, so without this the provider looks healthy while never syncing.
+      if (deferred > 0 && Date.now() - lastBacklogLogAt >= BACKLOG_LOG_INTERVAL_MS) {
+        lastBacklogLogAt = Date.now();
+        console.warn(`⏳ ${deferred} due provider sync(s) waiting: ${MAX_CONCURRENT_SYNCS} run at a time` +
+          ' (SYNC_MAX_CONCURRENT). Raise it, or lengthen the sync interval, if the backlog does not drain.');
       }
     } catch (e) {
       console.error('Sync Scheduler error:', e);
