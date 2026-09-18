@@ -4615,7 +4615,7 @@ async function loadEpgSuggestions(channelId) {
         <div class="d-flex justify-content-between align-items-center">
           <div>
             <strong>${safeName}</strong> ${safeSource}
-            <span class="badge ${confidence > 80 ? 'bg-success' : 'bg-warning'} ms-2">${t('confidence') || 'Confidence'}: ${confidence}%</span>
+            <span class="badge ${confidence > 80 ? 'bg-success' : 'bg-warning text-dark'} ms-2">${t('confidence') || 'Confidence'}: ${confidence}%</span>
             <br>
             <small class="text-muted">${safeId}</small>
           </div>
