@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchSafe } from '../src/utils/network.js';
+import { Readable } from 'stream';
+import { fetchSafe, readBodyWithLimit } from '../src/utils/network.js';
 import * as helpers from '../src/utils/helpers.js';
 import fetch from 'node-fetch';
 
@@ -267,5 +268,38 @@ describe('fetchSafe', () => {
     expect(defaultAgent.options.rejectUnauthorized).not.toBe(false);
     expect(selfSignedAgent.options.rejectUnauthorized).toBe(false);
     expect(fetchOptions).not.toHaveProperty('allowSelfSigned');
+  });
+});
+
+describe('readBodyWithLimit', () => {
+  // `Buffer#toString('utf8')` keeps a UTF-8 BOM where the `response.text()` /
+  // `response.json()` calls this function replaced dropped it. Xtream panels are
+  // typically PHP, where a stray BOM in an included file is a classic accident.
+  const streamed = text => ({ body: Readable.from([Buffer.from(text, 'utf8')]) });
+
+  it('drops a UTF-8 BOM so the manifest rewriter still sees the leading #', async () => {
+    const text = await readBodyWithLimit(streamed('\uFEFF#EXTM3U\nhttp://cdn.example/seg.ts'));
+
+    expect(text.startsWith('#EXTM3U')).toBe(true);
+    // The rewriter skips comment lines with ^(?!#); a BOM displaces that anchor
+    // and the #EXTM3U line gets replaced by a URL.
+    expect(text.replace(/^(?!#)(.+)$/gm, 'REWRITTEN').split('\n')[0]).toBe('#EXTM3U');
+  });
+
+  it('parses JSON that arrives with a UTF-8 BOM', async () => {
+    const data = await readBodyWithLimit(streamed('\uFEFF{"user_info":{"auth":1}}'), { as: 'json' });
+
+    expect(data).toEqual({ user_info: { auth: 1 } });
+  });
+
+  it('leaves the BOM bytes alone when the caller wants the raw buffer', async () => {
+    const buffer = await readBodyWithLimit(streamed('\uFEFFx'), { as: 'buffer' });
+
+    expect(buffer.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+  });
+
+  it('refuses a body past maxBytes', async () => {
+    await expect(readBodyWithLimit(streamed('x'.repeat(2048)), { maxBytes: 512 }))
+      .rejects.toThrow(/exceeded the 512 byte limit/);
   });
 });

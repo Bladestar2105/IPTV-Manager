@@ -152,6 +152,16 @@ const DEFAULT_BODY_TIMEOUT_MS = 120000;
  * @param {number} [options.maxBytes] reject once this many bytes arrived
  * @param {'text'|'json'|'buffer'} [options.as='text']
  */
+// The calls this function replaced (`response.text()`, `response.json()`) decode
+// through TextDecoder, which drops a leading UTF-8 BOM. `Buffer#toString('utf8')`
+// keeps it, and a kept BOM is not cosmetic: JSON.parse rejects the document
+// outright, and in an m3u8 it displaces the `#` that the manifest rewriter's
+// `^(?!#)` anchor tests for, so the `#EXTM3U` line gets rewritten as a URL.
+// Xtream panels are typically PHP, where a stray BOM in an included file is a
+// classic accident, so decode exactly as the replaced calls did.
+const utf8Decoder = new TextDecoder('utf-8');
+const decodeUtf8 = buffer => utf8Decoder.decode(buffer);
+
 export async function readBodyWithLimit(response, options = {}) {
   const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_BODY_TIMEOUT_MS;
   const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : 0;
@@ -204,7 +214,7 @@ export async function readBodyWithLimit(response, options = {}) {
   });
 
   if (as === 'buffer') return buffer;
-  const text = buffer.toString('utf8');
+  const text = decodeUtf8(buffer);
   return as === 'json' ? JSON.parse(text) : text;
 }
 
