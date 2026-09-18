@@ -200,6 +200,24 @@ describe('staged EPG import', () => {
     expect(stagingTableCount()).toBe(0);
   }, 20000);
 
+  it('gives up at once when the feed dies part-way through the parse', async () => {
+    // pipe() ends the parser when the source ends; a source that is destroyed
+    // never ends it, so the parser emitted neither 'finish' nor 'error' and the
+    // run waited out its whole deadline — 30 minutes by default — for a feed
+    // that had already gone. The deadline is left at its default here on
+    // purpose: a pass has to come from the close handler, not from a timer.
+    const dying = new Readable({ read() {} });
+    dying.push('<?xml version="1.0"?><tv><channel id="ch1"><display-name>One');
+    fetchSafe.mockResolvedValue({ ok: true, status: 200, body: dying, headers: { get: () => null } });
+    setTimeout(() => dying.destroy(), 50);
+
+    const started = Date.now();
+    await expect(importEpgFromUrl('http://feed.example/cut.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(stagingTableCount()).toBe(0);
+  }, 20000);
+
   it('aborts an import whose body never finishes', async () => {
     // fetchSafe bounds only the headers. Without this watchdog a stalled feed
     // held the import connection and the staging tables for the process lifetime.

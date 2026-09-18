@@ -609,6 +609,21 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
             stream.pipe(parser);
 
+            // pipe() calls parser.end() when the source *ends*; a source that is
+            // destroyed instead never ends it, so the parser emits neither
+            // 'finish' nor 'error' and the run waited out its whole deadline —
+            // half an hour by default — for a feed that had already gone. The
+            // 'end' flag is what separates that from a normal completion, where
+            // 'close' legitimately follows 'end' before the parser has flushed.
+            let sourceEnded = false;
+            stream.once('end', () => { sourceEnded = true; });
+            stream.once('close', () => {
+                if (sourceEnded) return;
+                const error = new Error('EPG download ended unexpectedly; the feed was incomplete');
+                error.name = 'AbortError';
+                reject(error);
+            });
+
             stream.on('error', (err) => {
                 if (err.message === 'unexpected end of file') {
                     // A truncated feed is not a complete one. Promoting what was
