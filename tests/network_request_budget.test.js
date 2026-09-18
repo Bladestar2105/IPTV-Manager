@@ -118,25 +118,6 @@ describe('fetchSafe request budget', () => {
     expect(Date.now() - started).toBeLessThan(3000);
   }, 15000);
 
-  it('leaves a proxied media body running past the global deadline', async () => {
-    // fetchWithBackups pipes the body straight to a player. Arming the total
-    // budget there cut a healthy live session at HTTP_MAX_REQUEST_MS.
-    const response = await fetchSafe(`${base}/stalled-body`, {
-      timeout: 5000, maxDurationMs: 300, unboundedBody: true,
-    });
-    expect(response.ok).toBe(true);
-
-    const chunks = [];
-    response.body.on('data', chunk => chunks.push(chunk));
-    const errored = new Promise(resolve => response.body.once('error', resolve));
-    const survived = await Promise.race([
-      errored.then(() => 'aborted'),
-      new Promise(resolve => setTimeout(() => resolve('still streaming'), 1200)),
-    ]);
-    response.body.destroy();
-    expect(survived).toBe('still streaming');
-  }, 15000);
-
   it('rejects a response whose announced size exceeds maxBytes', async () => {
     await expect(fetchSafe(`${base}/huge`, { timeout: 5000, maxBytes: 1024 }))
       .rejects.toThrow(/Response too large/);

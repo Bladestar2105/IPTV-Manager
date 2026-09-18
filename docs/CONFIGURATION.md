@@ -189,8 +189,9 @@ until this is exercised on a real Proxmox host.
   milliseconds. Defaults to `3600000` (1 hour).
 - `HTTP_MAX_REQUEST_MS`: Upper bound for the wait for response headers of one
   outgoing request through the SSRF-safe fetch path, across the whole redirect
-  chain. Defaults to `600000` (10 minutes); the per-call `timeout` bounds each
-  single hop.
+  chain. Defaults to `600000` (10 minutes), minimum `1000`. The per-call
+  `timeout` bounds each single hop, but never beyond what is left of this
+  budget — so setting this low shortens every hop too.
   The **body is not bounded here**. Most bodies this path returns are media
   proxied to a player, and a healthy live session legitimately outlives any
   fixed duration — bounding them by default means one missed call site cuts a
@@ -199,15 +200,22 @@ until this is exercised on a real Proxmox host.
   `readBodyWithLimit()`, which owns both the time and the size cap.
 - `CATALOG_BODY_TIMEOUT_MS`: Budget for reading one provider catalog document
   (live/VOD/series lists and their categories). Defaults to `300000`
-  (5 minutes); a large VOD catalog is hundreds of megabytes.
+  (5 minutes), minimum `1000`; a large VOD catalog is hundreds of megabytes.
 - `CATALOG_BODY_MAX_BYTES`: Size cap for the same read. Defaults to
-  `536870912` (512 MB), far above a real catalog: buffering, decoding and
-  parsing one costs several times its wire size in heap at the same moment, so
-  a body that never ends has to be refused on size as well as on time.
+  `536870912` (512 MB), minimum `1048576`, far above a real catalog: buffering,
+  decoding and parsing one costs several times its wire size in heap at the same
+  moment, so a body that never ends has to be refused on size as well as on
+  time.
 - `MANIFEST_BODY_TIMEOUT_MS` / `MANIFEST_MAX_BYTES`: Budget and size cap for
   reading an MPD or M3U8 manifest in the stream proxy. Default `30000` and
-  `33554432`. Without them an upstream that sends manifest headers and then
-  stalls holds the request and its stream session open indefinitely.
+  `33554432`, minimum `1000` and `65536`. Without them an upstream that sends
+  manifest headers and then stalls holds the request and its stream session open
+  indefinitely.
+
+All of the budgets above are read with `Number.parseInt`, so a value with a unit
+suffix keeps only its leading digits — `30s` is thirty, `10m` is ten. Each one
+therefore has a floor, and a value that is not a positive integer falls back to
+the default rather than disabling the cap.
 - `EPG_IMPORT_BODY_TIMEOUT_MS`: Total budget for receiving and parsing one EPG
   feed. Defaults to `1800000` (30 minutes). The EPG body is streamed into the
   parser rather than buffered, so it needs its own deadline; without one an
@@ -235,10 +243,17 @@ until this is exercised on a real Proxmox host.
   starting the scheduler worker.
 - `SYNC_MAX_CONCURRENT`: How many scheduled provider syncs may run at the same
   time. Defaults to `2`, minimum `1`. Configs above the limit keep their
-  `next_sync` and are picked up by a later tick. Without it every due config
-  started at once, and `next_sync` values cluster — after a restart, or when a
-  shared upstream failed them together — so several hundred-megabyte catalogs
-  were decoded and parsed concurrently in one container.
+  `next_sync` and are picked up by a later tick, longest overdue first, so no
+  provider can be starved by the order of the table. Without the cap every due
+  config started at once, and `next_sync` values cluster — after a restart, or
+  when a shared upstream failed them together — so several hundred-megabyte
+  catalogs were decoded and parsed concurrently in one container.
+
+  The scheduler starts at most this many per 60-second tick, so the sustainable
+  throughput is `SYNC_MAX_CONCURRENT` syncs per `max(sync duration, 60s)`. If
+  that is below what the configured intervals demand, the backlog grows and the
+  scheduler says so — `⏳ N due provider sync(s) waiting` — at most once every
+  15 minutes. Raise the cap, or lengthen the intervals.
 - `MAXMIND_LICENSE_KEY`: Optional MaxMind license key for GeoLite2 updates.
   The Web UI security settings can also provide this value. Startup checks
   MaxMind checksum files first and skips the heavy `geoip-lite` updater when
@@ -247,15 +262,23 @@ until this is exercised on a real Proxmox host.
 ## EPG Downloads
 
 - `EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES`: How many consecutive *upstream*
-  failures end an episode sync run. Defaults to `25`, minimum `5`. A panel that
-  stops answering `get_series_info` does not recover within one run, and a queue
-  can hold tens of thousands of series. Local SQLite contention does not count
-  towards the limit — it says the database is busy, not that the panel is down.
+  failures stop an episode sync for one provider account. Defaults to `25`,
+  minimum `5`. A panel that stops answering `get_series_info` does not recover
+  within one run, and a queue can hold tens of thousands of series. The count is
+  per account, not per panel: several provider rows commonly share one panel,
+  and an account whose subscription lapsed fails every request while the panel
+  itself is healthy. Its series are skipped for the rest of the run and the
+  other accounts continue. A local write failure never counts — it says the
+  database is the problem, not the panel.
 - `EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS`: How long a panel stays off limits
-  after a run gave up on it. Defaults to `1800` (30 minutes), minimum `60`.
-  Giving up says the panel is down, and a panel is commonly shared by several
-  provider rows; without the cooldown each of them takes the freed lock in turn
-  and spends its own full failure budget against the same dead host.
+  after a run gave up on it — that is, after *every* provider account on that
+  panel hit the limit above. **In seconds**, unlike its neighbours here.
+  Defaults to `1800` (30 minutes), minimum `60`, maximum `21600` (6 hours): the
+  cooldown is a lease nobody renews, it survives restarts and can only be waited
+  out, so a value entered in milliseconds by habit must not cost weeks of
+  episode syncs.
+  Without the cooldown each provider row takes the freed lock in turn and spends
+  its own full failure budget against the same dead host.
 - `EPG_STAGE_SWEEP_INTERVAL_MS`: How often the primary looks for the leftovers
   of a killed EPG import — staging tables and an `epg_sources.is_updating` flag
   nothing will clear. Defaults to `3600000` (1 hour), minimum `60000`. Imports
@@ -263,7 +286,8 @@ until this is exercised on a real Proxmox host.
   mid-import is restarted long before the next cold start could reclaim
   anything; sweeping only at startup meant, in practice, never.
 - `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
-  abandoned and is removed at startup. Defaults to `21600000` (6 hours). The
+  abandoned, and after which the `is_updating` flag of a source with no fresher
+  table is cleared. Both are done at startup and by the periodic sweep above. Defaults to `21600000` (6 hours). The
   effective value is never below four times `EPG_IMPORT_BODY_TIMEOUT_MS`,
   because that is how long a live import of another process may legitimately
   run, and the sweep must not classify it as stale during an overlapping
