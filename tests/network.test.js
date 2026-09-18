@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'stream';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { fetchSafe, readBodyWithLimit, resolveBudget, resolveMaxRequestDurationMs } from '../src/utils/network.js';
 import * as helpers from '../src/utils/helpers.js';
 import fetch from 'node-fetch';
@@ -298,6 +300,27 @@ describe('readBodyWithLimit', () => {
     expect(buffer.subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
   });
 
+  it('settles at once when the body closes before it is complete', async () => {
+    // A socket destroyed without an error — a shutdown, an upstream going away —
+    // emits neither 'end' nor 'error'. The read used to wait out its whole
+    // deadline for a body that could no longer arrive.
+    const stalled = new Readable({ read() {} });
+    stalled.push(Buffer.from('{"a":'));
+    const started = Date.now();
+    const pending = readBodyWithLimit({ body: stalled }, { as: 'json', timeoutMs: 60000 });
+    setTimeout(() => stalled.destroy(), 20);
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(Date.now() - started).toBeLessThan(5000);
+  }, 10000);
+
+  it('still returns a body that arrives normally', async () => {
+    // The close handler must not disturb the ordinary path, where 'close'
+    // follows 'end'.
+    await expect(readBodyWithLimit(streamed('{"ok":true}'), { as: 'json' })).resolves.toEqual({ ok: true });
+    await expect(readBodyWithLimit(streamed(''), { as: 'text' })).resolves.toBe('');
+  });
+
   it('refuses a body past maxBytes', async () => {
     await expect(readBodyWithLimit(streamed('x'.repeat(2048)), { maxBytes: 512 }))
       .rejects.toThrow(/exceeded the 512 byte limit/);
@@ -381,4 +404,33 @@ describe('resolveBudget', () => {
     expect(resolveMaxRequestDurationMs(undefined)).toBe(600000);
     expect(resolveMaxRequestDurationMs('900000')).toBe(900000);
   });
+});
+
+describe('readBodyWithLimit deadline', () => {
+  it('settles rather than letting the process exit with the read pending', () => {
+    // The deadline timer was unref'd. For a socket-backed body the socket holds
+    // the loop open, so that hid; for any other stream it meant the documented
+    // timeout never arrived and the process exited with the await unsettled
+    // (exit code 13). A test runner keeps its own loop alive, so this needs a
+    // process of its own.
+    const network = fileURLToPath(new URL('../src/utils/network.js', import.meta.url));
+    const script = `
+      import { Readable } from 'node:stream';
+      import { readBodyWithLimit } from ${JSON.stringify(network)};
+      const orphan = new Readable({ read() {} });
+      try {
+        await readBodyWithLimit({ body: orphan }, { timeoutMs: 300 });
+        console.log('RESOLVED');
+      } catch (e) {
+        console.log('SETTLED ' + e.name);
+      }
+    `;
+    const run = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      encoding: 'utf8', timeout: 20000,
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toMatch(/unsettled top-level await/);
+    expect(run.stdout.trim()).toBe('SETTLED AbortError');
+  }, 30000);
 });

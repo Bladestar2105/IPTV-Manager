@@ -229,17 +229,25 @@ export async function readBodyWithLimit(response, options = {}) {
   let received = 0;
 
   const buffer = await new Promise((resolve, reject) => {
-    const fail = error => {
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      if (!error) { resolve(value); return; }
       body.destroy?.();
       reject(error);
     };
-    const timer = setTimeout(() => {
-      const error = new Error('The operation was aborted.');
+    const abort = message => {
+      const error = new Error(message);
       error.name = 'AbortError';
-      fail(error);
-    }, timeoutMs);
-    timer.unref?.();
+      return error;
+    };
+    // Deliberately NOT unref'd. For a socket-backed body the socket already
+    // holds the loop open, so this costs nothing there; for any other stream it
+    // is the difference between the documented timeout and a promise that never
+    // settles while the process quietly exits.
+    const timer = setTimeout(() => finish(abort('The operation was aborted.')), timeoutMs);
 
     body.on('data', chunk => {
       // A stream may hand out strings rather than Buffers; normalize so the
@@ -247,16 +255,17 @@ export async function readBodyWithLimit(response, options = {}) {
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       received += piece.length;
       if (maxBytes && received > maxBytes) {
-        fail(new Error(`Response too large: exceeded the ${maxBytes} byte limit`));
+        finish(new Error(`Response too large: exceeded the ${maxBytes} byte limit`));
         return;
       }
       chunks.push(piece);
     });
-    body.once('error', fail);
-    body.once('end', () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks));
-    });
+    body.once('error', error => finish(error));
+    body.once('end', () => finish(null, Buffer.concat(chunks)));
+    // A socket destroyed without an error — a shutdown, an upstream that goes
+    // away — emits neither 'end' nor 'error'. Without this the read waits out
+    // its whole deadline for a body that can no longer arrive.
+    body.once('close', () => finish(abort('The response body closed before it was complete.')));
   });
 
   if (as === 'buffer') return buffer;
