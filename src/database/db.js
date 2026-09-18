@@ -8,7 +8,7 @@ import { migrateProviderLockTable, sweepExpiredProviderLocks } from './providerL
 // Ensure Data Directory exists
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
+export const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
 
 export function openDbConnection(options = {}) {
     // Shared settings for every connection: see src/database/sqliteConnection.js.

@@ -395,6 +395,26 @@ describe('providerSourceKey', () => {
     expect(providerSourceKey(null)).toBe('');
     expect(providerSourceKey(undefined)).toBe('');
   });
+
+  it('carries no credentials out of a URL that does not parse', () => {
+    // The source key is not a private value: it is written into
+    // provider_series_episodes and provider_series_state, it is the lock key
+    // for the shared upstream panel, and eight log lines interpolate it. The
+    // parsed branch drops userinfo and the query string; the fallback used to
+    // return the raw string, so one stray space in the host was enough to put
+    // the panel password into the database and onto stdout.
+    const key = providerSourceKey('http://panel example:8080/c?username=joe&password=s3cret');
+    expect(key).not.toMatch(/s3cret/);
+    expect(key).not.toMatch(/joe/);
+    expect(key).toBe('http://panel example:8080/c');
+
+    expect(providerSourceKey('http://joe:s3cret@panel example:8080/c')).toBe('http://panel example:8080/c');
+  });
+
+  it('still tells two unparseable panels apart', () => {
+    expect(providerSourceKey('http://panel example:8080/a'))
+      .not.toBe(providerSourceKey('http://panel example:8080/b'));
+  });
 });
 
 describe('sanitizeErrorMessage', () => {

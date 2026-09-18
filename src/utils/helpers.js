@@ -163,7 +163,17 @@ export function providerSourceKey(url) {
     const path = parsed.pathname.replace(/\/+$/, '');
     return `${parsed.protocol}//${parsed.hostname.toLowerCase()}:${port}${path}`;
   } catch {
-    return raw.replace(/\/+$/, '').toLowerCase();
+    // The URL did not parse — a space or a stray character in the host or path
+    // is enough. Returning it raw put the panel password into the source key,
+    // and the source key is not a private value: it is written into
+    // provider_series_episodes and provider_series_state, it is the lock key
+    // for the shared upstream, and eight log lines interpolate it. So strip
+    // what the parsed branch strips anyway, by hand.
+    return raw
+      .replace(/^(https?:\/\/)[^/@]*@/i, '$1')
+      .split(/[?#]/)[0]
+      .replace(/\/+$/, '')
+      .toLowerCase();
   }
 }
 

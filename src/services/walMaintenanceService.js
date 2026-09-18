@@ -1,8 +1,7 @@
 import fs from 'fs';
-import path from 'path';
-import db from '../database/db.js';
+import db, { DB_PATH } from '../database/db.js';
 import epgDb from '../database/epgDb.js';
-import { DATA_DIR, EPG_DB_PATH } from '../config/constants.js';
+import { EPG_DB_PATH } from '../config/constants.js';
 import { resolveBudget } from '../utils/env.js';
 
 // SQLite only auto-checkpoints at the end of a write transaction, and a passive
@@ -63,10 +62,12 @@ export function checkpointDatabase(connection, dbPath, label) {
  */
 export function startWalMaintenance() {
   const intervalMs = resolveCheckpointIntervalMs();
-  const mainPath = path.join(DATA_DIR, 'db.sqlite');
 
   const run = () => {
-    checkpointDatabase(db, mainPath, 'db.sqlite');
+    // DB_PATH rather than a second copy of the join: this reads the -wal file
+    // beside it, so a renamed database would silently report 0 bytes forever
+    // and the size warning below would never fire again.
+    checkpointDatabase(db, DB_PATH, 'db.sqlite');
     checkpointDatabase(epgDb, EPG_DB_PATH, 'epg.db');
   };
 

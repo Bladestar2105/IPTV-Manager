@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 
 const memDb = new Database(':memory:');
@@ -285,5 +285,88 @@ describe('provider lock', () => {
     const result = await performSync(7, 1, { mode: 'manual' });
     expect(result.status).not.toBe('locked');
     expect(describeProviderLock(7)).toBeNull();
+  });
+
+  // A release that lost the write lock used to log and give up, leaving a row
+  // with a full lease and nothing renewing it: the provider stayed locked for
+  // up to the TTL after a run that had actually succeeded, and every scheduled
+  // attempt in between was deferred without a word.
+  describe('release under contention', () => {
+    /** Throw `error` on the first `times` DELETE executions. */
+    const failDeletes = (times, error) => {
+      let seen = 0;
+      const original = memDb.prepare.bind(memDb);
+      return vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+        const statement = original(sql);
+        if (!/DELETE\s+FROM\s+provider_locks\s+WHERE\s+lock_key\s*=\s*\?\s+AND\s+owner_token/i.test(sql)) {
+          return statement;
+        }
+        const run = statement.run.bind(statement);
+        return new Proxy(statement, {
+          get(target, prop) {
+            if (prop === 'run') {
+              return (...args) => {
+                if (seen++ < times) throw error;
+                return run(...args);
+              };
+            }
+            const value = target[prop];
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      });
+    };
+
+    const busy = () => Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    const held = () => memDb.prepare("SELECT COUNT(*) c FROM provider_locks WHERE lock_key = 'provider:7'").get().c;
+
+    afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+    it('retries until the row is gone instead of holding the provider for the whole lease', () => {
+      vi.useFakeTimers();
+      const lock = acquireProviderLock(7, 'sync');
+      const spy = failDeletes(1, busy());
+
+      lock.release();
+      expect(held()).toBe(1);
+
+      vi.advanceTimersByTime(1000);
+      spy.mockRestore();
+      expect(held()).toBe(0);
+    });
+
+    it('gives up after a bounded number of attempts and says the lease will clear it', () => {
+      vi.useFakeTimers();
+      const warnings = [];
+      vi.spyOn(console, 'warn').mockImplementation(m => warnings.push(String(m)));
+      const lock = acquireProviderLock(7, 'sync');
+      failDeletes(99, busy());
+
+      lock.release();
+      vi.advanceTimersByTime(60000);
+
+      expect(held()).toBe(1);
+      expect(warnings.some(w => /Could not release lock provider:7/.test(w) && /SQLITE_BUSY/.test(w))).toBe(true);
+    });
+
+    it('keeps a cooldown held when the handover itself is refused', () => {
+      const warnings = [];
+      vi.spyOn(console, 'warn').mockImplementation(m => warnings.push(String(m)));
+      const lock = acquireProviderLock(7, 'episodes');
+      const original = memDb.prepare.bind(memDb);
+      vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+        if (/UPDATE\s+provider_locks\s+SET\s+operation/i.test(sql)) {
+          return { run: () => { throw busy(); } };
+        }
+        return original(sql);
+      });
+
+      lock.release(600);
+
+      // Falling through to the delete would hand the dead upstream straight
+      // back to the next caller.
+      expect(held()).toBe(1);
+      expect(warnings.some(w => /into a cooldown/.test(w))).toBe(true);
+    });
   });
 });

@@ -307,15 +307,20 @@ export async function syncSeriesEpisodes(providerId) {
         seen.add(sid);
         totalSeries++;
 
-        const providerId_ = row.provider_id;
+        // Not the provider that triggered the run: the row's own provider is
+        // the one whose credential was looked up above, and a sibling's series
+        // must be fetched with the sibling's account.
+        const rowProviderId = row.provider_id;
         const state = stateMap.get(sid);
         if (!state) {
-          queue.push({ sid, lastModified, credential, providerId: providerId_ });
+          queue.push({ sid, lastModified, credential, providerId: rowProviderId });
         } else if (lastModified) {
-          if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified, credential, providerId: providerId_ });
+          if ((state.last_modified || '') !== lastModified) {
+            queue.push({ sid, lastModified, credential, providerId: rowProviderId });
+          }
         } else if ((nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE) {
-          queue.push({ sid, lastModified, credential, providerId: providerId_ });
-      }
+          queue.push({ sid, lastModified, credential, providerId: rowProviderId });
+        }
       }
     }
 

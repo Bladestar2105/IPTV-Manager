@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as dbModule from '../database/db.js';
 import { migrateProviderLockTable, sweepExpiredProviderLocks } from '../database/providerLockSchema.js';
-import { isRetryableSqliteError } from '../database/sqliteWrites.js';
+import { formatDbError, isRetryableSqliteError } from '../database/sqliteWrites.js';
 
 const db = dbModule.default;
 
@@ -37,6 +37,32 @@ const DEFAULT_TTL_SECONDS = 900;
 // diagnostic message can tell a cooldown apart from work in progress.
 const COOLDOWN_SUFFIX = ':cooldown';
 const RENEW_INTERVAL_MS = 60000;
+// A release that loses the write lock used to leave the row behind with a full
+// lease and nothing renewing it: the provider stayed locked for up to the TTL
+// after a run that succeeded, and every scheduled attempt in between was
+// deferred without a word. The delete is guarded by owner_token, so repeating
+// it can only ever remove this process's own row.
+const RELEASE_RETRY_DELAYS_MS = [1000, 5000, 15000];
+
+/**
+ * Remove this process's own lock row, retrying a lost write lock.
+ *
+ * The retries are unref'd on purpose: a shutdown must not wait for them, and a
+ * release that never happens costs only the remainder of the lease.
+ */
+function deleteOwnLock(database, lockKey, token, attempt = 0) {
+  try {
+    database.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND owner_token = ?').run(lockKey, token);
+  } catch (e) {
+    if (isRetryableSqliteError(e) && attempt < RELEASE_RETRY_DELAYS_MS.length) {
+      const timer = setTimeout(() => deleteOwnLock(database, lockKey, token, attempt + 1),
+        RELEASE_RETRY_DELAYS_MS[attempt]);
+      timer.unref?.();
+      return;
+    }
+    console.warn(`Could not release lock ${lockKey}: ${formatDbError(e)}; it is held until its lease expires`);
+  }
+}
 
 // 'ready'       the table exists and locks work
 // 'unsupported' this connection is not a usable SQLite database (test doubles)
@@ -165,8 +191,8 @@ export function acquireLock(lockKey, operation, options = {}) {
     release(cooldownSeconds = 0) {
       clearInterval(renew);
       const hold = Number(cooldownSeconds) > 0 ? Math.floor(Number(cooldownSeconds)) : 0;
-      try {
-        if (hold > 0) {
+      if (hold > 0) {
+        try {
           // Hand the row to a holder nobody renews, so the key stays taken until
           // the lease runs out and the next acquireLock sweeps it. Written as an
           // UPDATE of the row this process already owns: a delete-then-insert
@@ -175,11 +201,18 @@ export function acquireLock(lockKey, operation, options = {}) {
             'UPDATE provider_locks SET operation = ?, owner_token = ?, expires_at = ? WHERE lock_key = ? AND owner_token = ?'
           ).run(`${operation}${COOLDOWN_SUFFIX}`, `cooldown:${token}`, Math.floor(Date.now() / 1000) + hold, lockKey, token).changes;
           if (changed === 1) return;
+        } catch (e) {
+          // The row keeps this process's token and whatever expires_at the last
+          // renewal wrote, and nothing renews it now — which is the cooldown
+          // that was asked for, over a different length of time. Falling
+          // through to the delete instead would hand the dead upstream straight
+          // back to the next caller.
+          console.warn(`Could not extend lock ${lockKey} into a cooldown: ${formatDbError(e)}; `
+            + 'it is held until its lease expires');
+          return;
         }
-        db.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND owner_token = ?').run(lockKey, token);
-      } catch (e) {
-        console.warn(`Could not release lock ${lockKey}:`, e.message);
       }
+      deleteOwnLock(db, lockKey, token);
     },
   };
 }
