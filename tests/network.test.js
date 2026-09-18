@@ -384,22 +384,53 @@ describe('resolveBudget', () => {
     expect(resolveBudget('nonsense', 1000, 10)).toBe(1000);
   });
 
-  it('floors a value that lost its unit suffix to parseInt', () => {
-    // `30s` parses to 30 and `10m` to 10; without a floor those are catastrophic
-    // rather than merely wrong.
-    expect(resolveBudget('30s', 60000, 1000)).toBe(1000);
-    expect(resolveBudget('10m', 60000, 1000)).toBe(1000);
+  it('refuses a value with a unit suffix instead of reading its leading digits', () => {
+    // parseInt reads `30s` as 30 and `512MB` as 512. Flooring that turns a five
+    // minute budget into one second and a 512 MB cap into 1 MB — worse than the
+    // `Number(raw) || default` it replaced, which at least fell back. The
+    // default is the one outcome never worse than what the operator meant.
+    expect(resolveBudget('30s', 60000, 1000)).toBe(60000);
+    expect(resolveBudget('10m', 60000, 1000)).toBe(60000);
+    expect(resolveBudget('512MB', 536870912, 1048576)).toBe(536870912);
+    expect(resolveBudget('1e9', 33554432, 65536)).toBe(33554432);
+    // A value meant literally is still honoured, and still bounded.
     expect(resolveBudget('45000', 60000, 1000)).toBe(45000);
+    expect(resolveBudget(' 500 ', 60000, 1000)).toBe(1000);
   });
 
   it('caps at the maximum when one is given', () => {
     expect(resolveBudget('999999', 100, 1, 500)).toBe(500);
   });
 
-  it('keeps the global request budget above a floor', () => {
-    // This gates every outgoing request; ten milliseconds takes the instance
-    // offline with an AbortError that looks like an upstream timeout.
-    expect(resolveMaxRequestDurationMs('10m')).toBe(1000);
+  it('names the variable when it replaces or clamps a value', () => {
+    // A silently replaced value leaves the operator looking at the symptom —
+    // every request timing out — with nothing pointing at the cause.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      resolveBudget('30s', 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEMO_MS="30s"'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no unit suffixes'));
+      warn.mockClear();
+
+      resolveBudget('-5', 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
+      expect(warn).toHaveBeenCalled();
+      warn.mockClear();
+
+      // An unset variable is not a misconfiguration.
+      resolveBudget(undefined, 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
+      resolveBudget('45000', 60000, 1000, Number.MAX_SAFE_INTEGER, 'DEMO_MS');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('never lets the global request budget be shortened by a typo', () => {
+    // This gates every outgoing request; ten milliseconds — which is what `10m`
+    // parses to — takes the instance offline with an AbortError that looks
+    // exactly like an upstream timeout.
+    expect(resolveMaxRequestDurationMs('10m')).toBe(600000);
+    expect(resolveMaxRequestDurationMs('10')).toBe(1000);      // meant literally: floored
     expect(resolveMaxRequestDurationMs('-5')).toBe(600000);
     expect(resolveMaxRequestDurationMs(undefined)).toBe(600000);
     expect(resolveMaxRequestDurationMs('900000')).toBe(900000);

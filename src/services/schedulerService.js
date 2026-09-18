@@ -3,6 +3,7 @@ import { performSync } from './syncService.js';
 import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgService.js';
 import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
+import { resolveBudget } from '../utils/network.js';
 
 // Reading a provider catalog holds the response bytes, the decoded string and
 // the parsed object graph in the heap at the same time, several times the wire
@@ -11,7 +12,7 @@ import { isSafeUrl } from '../utils/helpers.js';
 // happens to cluster — after a restart, or after a shared upstream failed them
 // together — parsed their catalogs concurrently. Configs above the cap keep
 // their next_sync and are simply picked up by a later tick.
-const MAX_CONCURRENT_SYNCS = Math.max(1, Number.parseInt(process.env.SYNC_MAX_CONCURRENT, 10) || 2);
+const MAX_CONCURRENT_SYNCS = resolveBudget(process.env.SYNC_MAX_CONCURRENT, 2, 1, 64, 'SYNC_MAX_CONCURRENT');
 // A backlog is normal for a tick or two. Saying so on every tick would be noise,
 // so it is reported at most this often.
 const BACKLOG_LOG_INTERVAL_MS = 900000;
@@ -38,8 +39,12 @@ export function startSyncScheduler() {
 
       let deferred = 0;
       for (const config of configs) {
-        if (runningSyncs.size >= MAX_CONCURRENT_SYNCS) { deferred++; continue; }
+        // Already-running first: a config that is itself one of the in-flight
+        // syncs is not waiting for a slot, and counting it as waiting made the
+        // warning below blame the cap in exactly the steady state where the
+        // constraint is sync duration instead.
         if (runningSyncs.has(config.id)) continue;
+        if (runningSyncs.size >= MAX_CONCURRENT_SYNCS) { deferred++; continue; }
         runningSyncs.add(config.id);
 
         performSync(config.provider_id, config.user_id, { mode: 'scheduled' })

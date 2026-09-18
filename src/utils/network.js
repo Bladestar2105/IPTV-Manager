@@ -39,17 +39,38 @@ const MIN_MAX_DURATION_MS = 1000;
 /**
  * A positive integer budget from the environment.
  *
- * `Number(raw) || fallback` accepts a negative number, because it is truthy —
- * and a negative `maxBytes` reaches readBodyWithLimit as no limit at all,
- * silently removing the cap it was set to tighten. `parseInt` also takes the
- * leading digits, so `30s` becomes 30 and `10m` becomes 10; the floor is what
- * keeps that from taking the instance offline instead of merely misconfiguring
- * it.
+ * Two failure modes, opposite to each other, both of which have bitten here:
+ * `Number(raw) || fallback` accepts a negative number because it is truthy, and
+ * a negative `maxBytes` reaches readBodyWithLimit as no limit at all — removing
+ * the cap it was set to tighten. `Number.parseInt` instead keeps the leading
+ * digits, so `30s` becomes 30 and `512MB` becomes 512, and clamping that to a
+ * floor turns a five minute budget into one second.
+ *
+ * So anything that is not a clean positive integer is refused outright and the
+ * default is used, which is the one outcome that is never worse than the
+ * operator's intent. The floor and ceiling then apply only to a value that was
+ * meant literally. Both paths say so, naming the variable.
  */
-export function resolveBudget(raw, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.min(Math.max(parsed, min), max);
+const INTEGER = /^\s*\d+\s*$/;
+
+export function resolveBudget(raw, fallback, min = 1, max = Number.MAX_SAFE_INTEGER, name = null) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+  if (!INTEGER.test(String(raw))) {
+    if (name) {
+      console.warn(`⚠️ ${name}="${raw}" is not a plain integer (no unit suffixes); using ${fallback}`);
+    }
+    return fallback;
+  }
+  const parsed = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    if (name) console.warn(`⚠️ ${name}="${raw}" is not a positive integer; using ${fallback}`);
+    return fallback;
+  }
+  const resolved = Math.min(Math.max(parsed, min), max);
+  if (name && resolved !== parsed) {
+    console.warn(`⚠️ ${name}=${parsed} is outside the supported range; using ${resolved}`);
+  }
+  return resolved;
 }
 
 /**
@@ -63,7 +84,7 @@ export function resolveBudget(raw, fallback, min = 1, max = Number.MAX_SAFE_INTE
  * genuine upstream timeout.
  */
 export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_MS) {
-  return resolveBudget(raw, DEFAULT_MAX_DURATION_MS, MIN_MAX_DURATION_MS);
+  return resolveBudget(raw, DEFAULT_MAX_DURATION_MS, MIN_MAX_DURATION_MS, Number.MAX_SAFE_INTEGER, 'HTTP_MAX_REQUEST_MS');
 }
 
 /**

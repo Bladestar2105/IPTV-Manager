@@ -212,10 +212,13 @@ until this is exercised on a real Proxmox host.
   manifest headers and then stalls holds the request and its stream session open
   indefinitely.
 
-All of the budgets above are read with `Number.parseInt`, so a value with a unit
-suffix keeps only its leading digits — `30s` is thirty, `10m` is ten. Each one
-therefore has a floor, and a value that is not a positive integer falls back to
-the default rather than disabling the cap.
+All of the budgets above take a **plain integer, with no unit suffix**. `30s`,
+`10m` and `512MB` are refused outright and the default is used — not read as 30,
+10 and 512, which is what `parseInt` would do and which would silently turn a
+five minute budget into one second. A value that is a clean integer is honoured
+and only clamped when it falls outside the supported range. Every refusal and
+every clamp is logged, naming the variable: an operator should never have to
+infer a typo from the symptom.
 - `EPG_IMPORT_BODY_TIMEOUT_MS`: Total budget for receiving and parsing one EPG
   feed. Defaults to `1800000` (30 minutes). The EPG body is streamed into the
   parser rather than buffered, so it needs its own deadline; without one an
