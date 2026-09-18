@@ -91,6 +91,33 @@ describe('stream activity throttle', () => {
     streamManager.lastTouchAt.clear();
   });
 
+  it('does not burn the whole window on a heartbeat whose write failed', async () => {
+    // The latency connection gives up on a contended lock in a few hundred
+    // milliseconds. With the window opening on the attempt, only a handful of
+    // heartbeats fitted inside the inactivity timeout — lose them all and
+    // another worker's sweep reaps a session that is still playing.
+    await streamManager.add('s5', user, 'Channel', '10.0.0.5', null, 1, { dedupe: false });
+    const afterAdd = lastActivity('s5');
+
+    const original = streamManager.stmtTouch;
+    streamManager.stmtTouch = { run: () => { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY'; throw e; } };
+    try {
+      await streamManager.touch('s5', { force: true });
+    } finally {
+      streamManager.stmtTouch = original;
+    }
+
+    // The next attempt comes back long before the window is over.
+    await streamManager.touch('s5');
+    expect(lastActivity('s5')).toBe(afterAdd);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.now() + 4000));
+    await streamManager.touch('s5');
+    vi.useRealTimers();
+    expect(lastActivity('s5')).toBeGreaterThan(afterAdd);
+  });
+
   it('forgets a session so a reused id is not silently throttled', async () => {
     await streamManager.add('s4', user, 'Channel', '10.0.0.4', null, 1, { dedupe: false });
     await streamManager.remove('s4');

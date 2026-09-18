@@ -24,6 +24,14 @@ const STREAM_TOUCH_MIN_INTERVAL_MS = Math.max(
     Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 2))
   )
 );
+// A heartbeat whose write failed must not burn the whole window. The latency
+// connection gives up on a contended lock after a few hundred milliseconds, so
+// a long write transaction elsewhere can fail several in a row — and with a
+// full window between attempts only a handful fit inside the inactivity
+// timeout, after which another worker's sweep reaps a session that is still
+// playing. Retrying on every progress event would instead hammer the database
+// that is already contended, so a failure waits a short fraction of the window.
+const STREAM_TOUCH_RETRY_INTERVAL_MS = Math.max(1000, Math.floor(STREAM_TOUCH_MIN_INTERVAL_MS / 10));
 
 class StreamManager {
   constructor() {
@@ -228,26 +236,32 @@ class StreamManager {
       const previous = this.lastTouchAt.get(id) || 0;
       if (now - previous < STREAM_TOUCH_MIN_INTERVAL_MS) return;
     }
-    this.lastTouchAt.set(id, now);
-    if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.pruneTouchTimestamps(now);
-
+    // The window opens on a write that landed, not on an attempt.
+    let written = true;
     if (this.redis) {
       try {
         const json = await this.redis.hGet(REDIS_KEY_STREAMS, id);
-        if (!json) return;
-        const data = JSON.parse(json);
-        data.last_activity = now;
-        await this.redis.hSet(REDIS_KEY_STREAMS, id, JSON.stringify(data));
+        // Not in the ledger: there is nothing to refresh and nothing to retry.
+        if (json) {
+          const data = JSON.parse(json);
+          data.last_activity = now;
+          await this.redis.hSet(REDIS_KEY_STREAMS, id, JSON.stringify(data));
+        }
       } catch (e) {
+        written = false;
         console.error('Redis Touch Error:', e);
       }
     } else if (this.db) {
       try {
         this.stmtTouch.run(now, id);
       } catch (e) {
+        written = false;
         console.error('DB Touch Error:', formatDbError(e));
       }
     }
+
+    this.lastTouchAt.set(id, written ? now : now - STREAM_TOUCH_MIN_INTERVAL_MS + STREAM_TOUCH_RETRY_INTERVAL_MS);
+    if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.pruneTouchTimestamps(now);
   }
 
   /**
