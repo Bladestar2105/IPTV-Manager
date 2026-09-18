@@ -72,6 +72,7 @@ export function deleteProviderChannelsByIds(database, providerId, channelIds) {
       const list = new Array(size).fill('?').join(',');
       const scope = `SELECT id FROM provider_channels WHERE provider_id = ? AND id IN (${list})`;
       groups.set(size, {
+        owned: database.prepare(`SELECT COUNT(*) AS c FROM provider_channels WHERE provider_id = ? AND id IN (${list})`),
         mappings: database.prepare(`DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (${scope})`),
         stats: database.prepare(`DELETE FROM stream_stats WHERE channel_id IN (${scope})`),
         assignments: database.prepare(`DELETE FROM user_channels WHERE provider_channel_id IN (${scope})`),
@@ -82,13 +83,24 @@ export function deleteProviderChannelsByIds(database, providerId, channelIds) {
   };
 
   let removed = 0;
+  let owned = 0;
   for (let from = 0; from < unique.length; from += CHANNEL_DELETE_BATCH) {
     const batch = unique.slice(from, from + CHANNEL_DELETE_BATCH);
     const group = groupFor(batch.length);
+    owned += group.owned.get(providerId, ...batch).c;
     group.mappings.run(providerId, ...batch);
     group.stats.run(providerId, ...batch);
     group.assignments.run(providerId, ...batch);
     removed += group.channels.run(providerId, ...batch).changes;
+  }
+  // The per-row cascade threw when a delete did not remove exactly its one row,
+  // which rolled the whole synchronization back. Keep that: the caller passes
+  // ids it read inside this same transaction, so removing fewer than it owns
+  // means the set and the table disagree, and continuing would write a catalog
+  // built on a stale reading of it. Ids of another provider are counted out
+  // rather than counted wrong — that case removes nothing and is not an error.
+  if (removed !== owned) {
+    throw new Error(`Provider channel cleanup removed ${removed} rows instead of ${owned}`);
   }
   return removed;
 }

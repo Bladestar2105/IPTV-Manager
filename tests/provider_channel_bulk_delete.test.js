@@ -185,8 +185,8 @@ describe('deleteProviderChannelsByIds', () => {
       spy.mockRestore();
     }
 
-    // Three batches — 400, 400, 200 — but only two groups of four statements.
-    expect(prepared).toHaveLength(8);
+    // Three batches — 400, 400, 200 — but only two groups of five statements.
+    expect(prepared).toHaveLength(10);
     expect(counts()).toEqual({ channels: 0, mappings: 0, stats: 0, assignments: 0, aliases: 0 });
   });
 
@@ -203,5 +203,32 @@ describe('deleteProviderChannelsByIds', () => {
 
     expect(prepared).toEqual([]);
     expect(counts().channels).toBe(2);
+  });
+
+  it('refuses to continue when it removed fewer rows than the provider owns', () => {
+    // The per-row cascade threw when a delete did not remove exactly its one
+    // row, which rolled the whole synchronization back. A catalog written on a
+    // reading of the table that no longer holds is worse than a failed sync.
+    seed(1, 3);
+    const ids = idsOf(1);
+    const original = memDb.prepare.bind(memDb);
+    const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+      const statement = original(sql);
+      if (!/^\s*DELETE FROM provider_channels/.test(sql)) return statement;
+      return new Proxy(statement, {
+        get(target, key) {
+          if (key === 'run') return () => ({ changes: 1 });
+          const value = target[key];
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    });
+
+    try {
+      expect(() => memDb.transaction(() => deleteProviderChannelsByIds(memDb, 1, ids))())
+        .toThrow(/removed 1 rows instead of 3/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
