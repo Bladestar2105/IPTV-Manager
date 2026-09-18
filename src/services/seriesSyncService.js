@@ -1,6 +1,6 @@
 import { clearChannelsCache } from './cacheService.js';
 import { formatDbError, immediateTransaction, isRetryableSqliteError, runWriteWithRetry } from '../database/sqliteWrites.js';
-import { acquireSourceLock, describeLock, sourceLockKey } from './providerLockService.js';
+import { acquireSourceLock, describeLock, isCooldownHolder, sourceLockKey } from './providerLockService.js';
 import db from '../database/db.js';
 import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
@@ -25,6 +25,12 @@ const EPISODE_SYNC_CONCURRENCY = 3;
 // the request slots busy and floods the log; the next scheduled sync retries.
 const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES =
   Math.max(5, Number(process.env.EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) || 25);
+// Giving up says the panel is down, and the panel is shared: every provider row
+// pointing at it would otherwise take the freed lock in turn and spend its own
+// full budget against the same dead host, multiplying the cost of the breaker
+// by the number of siblings. Keep the source locked until it is worth retrying.
+const EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS =
+  Math.max(60, Number(process.env.EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS) || 1800);
 const EPISODE_SYNC_RETRY_AGE = 7 * 86400; // re-check series lacking last_modified weekly
 
 const episodeSyncLocks = new Set();
@@ -190,21 +196,23 @@ export async function syncSeriesEpisodes(providerId) {
   const sourceLock = acquireSourceLock(sourceKey, 'episodes');
   if (!sourceLock) {
     const holder = describeLock(sourceLockKey(sourceKey));
-    console.debug(`Episode sync already running for source ${sourceKey}` +
-      `${holder ? ` in pid ${holder.owner_pid}` : ''}, skipping`);
+    const why = isCooldownHolder(holder)
+      ? 'the panel stopped answering and the source is cooling down'
+      : `a run is already in progress${holder ? ` in pid ${holder.owner_pid}` : ''}`;
+    console.debug(`Episode sync for source ${sourceKey} skipped: ${why}`);
     return { skipped: true };
   }
   episodeSyncLocks.add(sourceKey);
 
-  try {
-    const password = decrypt(provider.password);
-    const baseUrl = provider.url.replace(/\/+$/, '');
-    const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(password)}`;
+  // Set when the run establishes that the upstream is not answering; see the
+  // constant above for why that outcome has to outlive the run.
+  let cooldownSeconds = 0;
 
+  try {
     // All provider rows pointing at the same upstream panel share the catalog
-    const siblingProviderIds = db.prepare('SELECT id, url FROM providers').all()
-      .filter(p => providerSourceKey(p.url) === sourceKey)
-      .map(p => p.id);
+    const siblings = db.prepare('SELECT id, url, username, password FROM providers').all()
+      .filter(p => providerSourceKey(p.url) === sourceKey);
+    const siblingProviderIds = siblings.map(p => p.id);
 
     // Drop episodes/state of series that no longer exist at the upstream
     // (i.e. in no provider row of this source)
@@ -218,20 +226,37 @@ export async function syncSeriesEpisodes(providerId) {
         SELECT remote_stream_id FROM provider_channels WHERE provider_id IN (${siblingPlaceholders}) AND stream_type = 'series')
     `).run(sourceKey, ...siblingProviderIds);
 
-    const seriesRows = db.prepare(`
-      SELECT remote_stream_id, metadata FROM provider_channels
-      WHERE provider_id = ? AND stream_type = 'series'
-    `).all(providerId);
-    if (seriesRows.length === 0) return { synced: 0, failed: 0, total: 0 };
+    // Episodes are stored per source, and this run holds the source lock, so it
+    // is the only run that will touch this panel. A queue filtered to the
+    // triggering provider therefore leaves every series that only a sibling
+    // carries unfetched — and because the provider whose catalog sync finishes
+    // first wins the lock, that tends to be the same provider every cycle, so
+    // those series are never fetched at all. Queue the union of all siblings and
+    // fetch each series with the credentials of a provider that actually carries
+    // it; a sibling's login is not necessarily entitled to another's packages.
+    const credentials = new Map(siblings.map(sib => [sib.id, {
+      baseUrl: (sib.url || '').replace(/\/+$/, ''),
+      authParams: `username=${encodeURIComponent(sib.username)}&password=${encodeURIComponent(decrypt(sib.password))}`,
+    }]));
 
     const stateRows = db.prepare('SELECT series_remote_id, last_modified, synced_at FROM provider_series_state WHERE source_key = ?').all(sourceKey);
     const stateMap = new Map(stateRows.map(s => [Number(s.series_remote_id), s]));
 
     const nowSec = Math.floor(Date.now() / 1000);
     const queue = [];
+    const seen = new Set();
+    let totalSeries = 0;
+    // The triggering provider decides first, so a series it carries is fetched
+    // with its own credentials. Streamed rather than materialized: the union
+    // across siblings is a multiple of one provider's catalog.
+    const seriesRows = db.prepare(`
+      SELECT provider_id, remote_stream_id, metadata FROM provider_channels
+      WHERE provider_id IN (${siblingPlaceholders}) AND stream_type = 'series'
+      ORDER BY CASE WHEN provider_id = ? THEN 0 ELSE 1 END, provider_id
+    `).iterate(...siblingProviderIds, providerId);
     for (const row of seriesRows) {
       const sid = Number(row.remote_stream_id);
-      if (!sid) continue;
+      if (!sid || seen.has(sid)) continue;
       let lastModified = '';
       let fromM3u = false;
       try {
@@ -241,23 +266,29 @@ export async function syncSeriesEpisodes(providerId) {
         // get_series_info would fail on every sync, so never queue them.
         if (meta.original_url) fromM3u = true;
       } catch { /* ignore malformed metadata */ }
+      // Skip the row, not the series: a sibling may carry the same series as a
+      // real Xtream entry that can be fetched.
       if (fromM3u) continue;
+      const credential = credentials.get(row.provider_id);
+      if (!credential) continue;
+      seen.add(sid);
+      totalSeries++;
 
       const state = stateMap.get(sid);
       if (!state) {
-        queue.push({ sid, lastModified });
+        queue.push({ sid, lastModified, credential });
       } else if (lastModified) {
-        if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified });
+        if ((state.last_modified || '') !== lastModified) queue.push({ sid, lastModified, credential });
       } else if ((nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE) {
-        queue.push({ sid, lastModified });
+        queue.push({ sid, lastModified, credential });
       }
     }
 
     if (queue.length === 0) {
-      console.debug(`Episode sync for provider ${provider.name}: everything up to date`);
+      console.debug(`Episode sync for source ${sourceKey}: everything up to date (${totalSeries} series)`);
       return { synced: 0, failed: 0, total: 0 };
     }
-    console.info(`📺 Episode sync for provider ${provider.name}: ${queue.length}/${seriesRows.length} series to update`);
+    console.info(`📺 Episode sync for source ${sourceKey} (triggered by ${provider.name}): ${queue.length}/${totalSeries} series to update`);
 
     const applySeries = createSeriesEpisodeWriter(sourceKey);
 
@@ -274,7 +305,7 @@ export async function syncSeriesEpisodes(providerId) {
         const item = queue[cursor++];
         try {
           const count = await fetchSeriesEpisodesOnce(sourceKey, item.sid, () =>
-            fetchSeriesEpisodes(baseUrl, authParams, item.sid, item.lastModified, applySeries)
+            fetchSeriesEpisodes(item.credential.baseUrl, item.credential.authParams, item.sid, item.lastModified, applySeries)
           );
           if (count === null) { failed++; continue; }
           episodeCount += count;
@@ -302,10 +333,12 @@ export async function syncSeriesEpisodes(providerId) {
 
     if (processed > 0) clearChannelsCache();
     if (givenUp) {
-      console.warn(`⚠️ Episode sync for provider ${provider.name} gave up after ${consecutiveFailures} consecutive upstream failures` +
-        ` (${processed}/${queue.length} series updated); the panel is not answering get_series_info`);
+      cooldownSeconds = EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS;
+      console.warn(`⚠️ Episode sync for source ${sourceKey} gave up after ${consecutiveFailures} consecutive upstream failures` +
+        ` (${processed}/${queue.length} series updated); the panel is not answering get_series_info.` +
+        ` Holding the source back for ${cooldownSeconds}s so its other providers do not repeat the run`);
     } else {
-      console.info(`✅ Episode sync completed for provider ${provider.name}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
+      console.info(`✅ Episode sync completed for source ${sourceKey}: ${processed} series updated (${episodeCount} episodes), ${failed} failed`);
     }
     if (dbFailures > 0) {
       console.warn(`Episode sync for provider ${provider.name}: ${dbFailures} write(s) lost to database contention`);
@@ -313,6 +346,6 @@ export async function syncSeriesEpisodes(providerId) {
     return { synced: processed, failed, dbFailures, total: queue.length, gaveUp: givenUp };
   } finally {
     episodeSyncLocks.delete(sourceKey);
-    sourceLock.release();
+    sourceLock.release(cooldownSeconds);
   }
 }

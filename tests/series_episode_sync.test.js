@@ -280,6 +280,27 @@ describe('Series episode sync', () => {
       `).get(SOURCE)).toEqual({ title: 'Account A Title' });
     });
 
+    it('fetches a series only a sibling account carries, using that sibling credentials', async () => {
+      // Whichever provider finishes its catalog sync first wins the source lock,
+      // and that is the same one every cycle. A queue filtered to the triggering
+      // provider therefore leaves a sibling-only series unfetched indefinitely,
+      // with no error anywhere because the sibling run reports `skipped`.
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'A Show', 'series', '{"last_modified":"1000"}'),
+               (2, 777, 'B Only Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({ '1': [{ id: 100, episode_num: 1, season: 1 }] }));
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(2);
+      const requested = fetchSafeMock.mock.calls.map(([url]) => url);
+      // Each series is fetched with the credentials of a provider that carries
+      // it: another account's login is not entitled to its packages.
+      expect(requested.some(u => u.includes('series_id=555') && u.includes('username=userA'))).toBe(true);
+      expect(requested.some(u => u.includes('series_id=777') && u.includes('username=userB'))).toBe(true);
+      expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_state').get().c).toBe(2);
+    });
+
     it('keeps reused remote episode IDs separate across series', async () => {
       memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
         VALUES (1, 555, 'Show One', 'series', '{"last_modified":"1000"}'),

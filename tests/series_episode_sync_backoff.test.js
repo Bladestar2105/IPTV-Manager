@@ -133,6 +133,42 @@ describe('episode sync back-off', () => {
     }
   }, 30000);
 
+  it('holds the source back after giving up so its siblings do not repeat the run', async () => {
+    // The breaker was scoped to one run. Nine provider rows share one panel on
+    // the affected deployment, so a dead host used to cost the full failure
+    // budget once per sibling, per cycle: the lock frees, the next sibling takes
+    // it and grinds through its own 25 timeouts against the same dead host.
+    memDb.prepare('INSERT INTO providers (id, name, url, username, password, user_id) VALUES (2, ?, ?, ?, ?, 1)')
+      .run('same panel, other account', `${SOURCE}/`, 'u2', 'p2');
+    seedSeries(400);
+    fetchSafe.mockImplementation(async () => { throw aborted(); });
+
+    const first = await syncSeriesEpisodes(1);
+    expect(first.gaveUp).toBe(true);
+    const spent = fetchSafe.mock.calls.length;
+
+    const sibling = await syncSeriesEpisodes(2);
+
+    expect(sibling).toEqual({ skipped: true });
+    expect(fetchSafe.mock.calls.length).toBe(spent);
+  }, 30000);
+
+  it('frees the source again as soon as the cooldown has run out', async () => {
+    seedSeries(400);
+    fetchSafe.mockImplementation(async () => { throw aborted(); });
+    await syncSeriesEpisodes(1);
+
+    // The cooldown is a lease, not a permanent block: expire it the way time
+    // would and the next run proceeds.
+    memDb.prepare('UPDATE provider_locks SET expires_at = 0').run();
+    fetchSafe.mockClear();
+
+    const second = await syncSeriesEpisodes(1);
+
+    expect(second.gaveUp).toBe(true);
+    expect(fetchSafe.mock.calls.length).toBeGreaterThan(0);
+  }, 30000);
+
   it('does not start a second run for a panel another worker is syncing', async () => {
     seedSeries(10);
     fetchSafe.mockImplementation(async () => { throw aborted(); });

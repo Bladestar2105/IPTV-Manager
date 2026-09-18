@@ -31,6 +31,9 @@ export function resetProviderLockConnections() {
 // soon enough that a crashed worker does not block the provider for hours; a
 // held lock is renewed while the work is still in progress.
 const DEFAULT_TTL_SECONDS = 900;
+// Marks a row that is held open on purpose after its run finished, so a
+// diagnostic message can tell a cooldown apart from work in progress.
+const COOLDOWN_SUFFIX = ':cooldown';
 const RENEW_INTERVAL_MS = 60000;
 
 // 'ready'       the table exists and locks work
@@ -167,9 +170,28 @@ export function acquireLock(lockKey, operation, options = {}) {
     operation,
     token,
     degraded: false,
-    release() {
+    /**
+     * @param {number} [cooldownSeconds] keep the key unavailable for this long
+     *        after the run finished. A run that established something about the
+     *        shared resource itself — an upstream panel that stops answering —
+     *        has learned it on behalf of every caller of this key, not just
+     *        itself. Releasing plainly lets the next caller start a fresh run
+     *        and spend its own full failure budget against the same dead host.
+     */
+    release(cooldownSeconds = 0) {
       clearInterval(renew);
+      const hold = Number(cooldownSeconds) > 0 ? Math.floor(Number(cooldownSeconds)) : 0;
       try {
+        if (hold > 0) {
+          // Hand the row to a holder nobody renews, so the key stays taken until
+          // the lease runs out and the next acquireLock sweeps it. Written as an
+          // UPDATE of the row this process already owns: a delete-then-insert
+          // would leave a window for another worker to take the lock.
+          const changed = db.prepare(
+            'UPDATE provider_locks SET operation = ?, owner_token = ?, expires_at = ? WHERE lock_key = ? AND owner_token = ?'
+          ).run(`${operation}${COOLDOWN_SUFFIX}`, `cooldown:${token}`, Math.floor(Date.now() / 1000) + hold, lockKey, token).changes;
+          if (changed === 1) return;
+        }
         db.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND owner_token = ?').run(lockKey, token);
       } catch (e) {
         console.warn(`Could not release lock ${lockKey}:`, e.message);
@@ -195,8 +217,13 @@ export function acquireSourceLock(sourceKey, operation, options = {}) {
   return acquireLock(sourceLockKey(sourceKey), operation, options);
 }
 
-export function releaseProviderLock(lock) {
-  if (lock && typeof lock.release === 'function') lock.release();
+export function releaseProviderLock(lock, cooldownSeconds = 0) {
+  if (lock && typeof lock.release === 'function') lock.release(cooldownSeconds);
+}
+
+/** True when this lock row is a cooldown rather than a live operation. */
+export function isCooldownHolder(holder) {
+  return typeof holder?.operation === 'string' && holder.operation.endsWith(COOLDOWN_SUFFIX);
 }
 
 /** Who currently holds the lock, for diagnostics and 409 responses. */
