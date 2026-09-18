@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { isAdultCategory, resolveAssignmentGrant } from '../utils/helpers.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { upsertMergedUserChannelAssignment } from '../services/userChannelAssignmentService.js';
@@ -37,7 +38,7 @@ export const importCategory = async (req, res) => {
     });
     if (grantedByAdmin === null) return res.status(403).json({error: 'Access denied'});
 
-    const result = db.transaction(() => {
+    const result = immediateTransaction(db, () => {
       const existing = db.prepare(`
         SELECT cm.*,
                COALESCE(cm.category_type, 'live') AS category_type,
@@ -159,7 +160,7 @@ export const importCategories = async (req, res) => {
     let totalMerged = 0;
     let totalCategories = 0;
 
-    const result = db.transaction(() => {
+    const result = immediateTransaction(db, () => {
       let maxSort = Number(db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS max_sort FROM user_categories WHERE user_id = ?').get(targetUserId).max_sort);
       for (const cat of categories) {
         const providerCategoryId = parseProviderCategoryId(cat.id);

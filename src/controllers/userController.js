@@ -2,6 +2,7 @@ import { clearChannelsCache } from '../services/cacheService.js';
 import { invalidateUserTokens, invalidateUserCache } from '../services/authService.js';
 import streamManager from '../services/streamManager.js';
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
@@ -142,7 +143,7 @@ export const createUser = async (req, res) => {
     }
 
     // Use transaction for atomic creation + copying
-    db.transaction(() => {
+    immediateTransaction(db, () => {
         // Insert user
         const info = db.prepare('INSERT INTO users (username, password, plain_password, webui_access, provider_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             u,
@@ -558,7 +559,7 @@ export const deleteUser = async (req, res) => {
     }
     const ownedProviderUrls = db.prepare('SELECT url FROM providers WHERE user_id = ?').all(id).map(p => p.url);
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       // 1. Delete owned providers and their dependencies (optimized bulk deletes)
       db.prepare('DELETE FROM user_channels WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?))').run(id);
       db.prepare('DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (SELECT id FROM provider_channels WHERE provider_id IN (SELECT id FROM providers WHERE user_id = ?))').run(id);

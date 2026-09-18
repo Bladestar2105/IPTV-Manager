@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgService.js';
 import { decrypt } from '../utils/crypto.js';
@@ -321,7 +322,7 @@ export const playerApi = async (req, res) => {
                logo = excluded.logo,
                added = excluded.added
            `);
-           db.transaction(() => {
+           immediateTransaction(db, () => {
              for (const seasonKey in data.episodes) {
                 const episodes = data.episodes[seasonKey];
                 if (!Array.isArray(episodes)) continue;

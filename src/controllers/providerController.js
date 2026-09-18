@@ -335,7 +335,7 @@ export const updateProvider = async (req, res) => {
     let revokedAssignments = 0;
     let disabledSyncConfigs = 0;
     let retainedSyncGrants = 0;
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       db.prepare(`
         UPDATE providers
         SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?, user_agent = ?, max_connections = ?, use_mapped_epg_icon = ?, timeshift_timezone = ?
@@ -469,7 +469,7 @@ export const bulkUpdateProviderUrls = async (req, res) => {
     const matches = providers.filter(p => normalizeProviderBaseUrl(p.url) === fromBase);
     const update = db.prepare('UPDATE providers SET url = ?, epg_url = ? WHERE id = ?');
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       for (const provider of matches) {
         update.run(toBase, replaceDefaultEpgProviderUrl(provider.epg_url, fromBase, toBase), provider.id);
       }

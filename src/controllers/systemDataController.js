@@ -2,6 +2,7 @@ import fs from 'fs';
 import zlib from 'zlib';
 import crypto from 'crypto';
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { encryptWithPassword, decryptWithPassword, decrypt, encrypt } from '../utils/crypto.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { clearSettingsCache, isSafeUrl, resolveAssignmentGrant } from '../utils/helpers.js';
@@ -261,7 +262,7 @@ export const importData = async (req, res) => {
       channels_authorization_revoked: 0
     };
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       const userIdMap = new Map();
       const providerIdMap = new Map();
       const categoryIdMap = new Map();
