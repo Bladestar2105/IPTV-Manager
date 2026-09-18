@@ -2,7 +2,7 @@ import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
-import { formatDbError } from '../database/sqliteWrites.js';
+import { formatDbError, immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 import { importEpgFromUrl } from './epgImportService.js';
@@ -63,16 +63,22 @@ async function importChannelsFromProvider(providerId) {
     const sourceId = providerId;
 
     try {
-        // Clear existing data for this source
-        importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
-        importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
-
+        const deletePrograms = importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?');
+        const deleteChannels = importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?');
         const insertChannel = importDb.prepare(`
             INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
             VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
         `);
 
-        const updateTx = importDb.transaction(() => {
+        // One transaction for the clear and the refill. They used to be
+        // separate — two autocommitted deletes, then the inserts — so an insert
+        // that failed, on SQLITE_BUSY as easily as anything else, left this
+        // provider with no EPG channels at all until the next daily run
+        // succeeded. The rows come from a local query, so the whole thing is
+        // repeatable and belongs in one transaction.
+        const replaceChannels = immediateTransaction(importDb, () => {
+            deletePrograms.run(sourceType, sourceId);
+            deleteChannels.run(sourceType, sourceId);
             for (const ch of channels) {
                 insertChannel.run({
                     id: ch.epg_channel_id,
@@ -84,7 +90,7 @@ async function importChannelsFromProvider(providerId) {
                 });
             }
         });
-        updateTx();
+        replaceChannels();
 
         // Invalidate EPG logos cache after importing channels
         invalidateEpgLogosCache();
