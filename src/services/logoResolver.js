@@ -202,6 +202,7 @@ export function prePopulateProviderIconCache(providerId) {
               .all(providerId)
               .map(row => row.logo_url)
         );
+        const cachedBefore = cachedUrls.size;
 
         const allHashes = new Set();
         const pending = [];
@@ -213,8 +214,18 @@ export function prePopulateProviderIconCache(providerId) {
             pending.push(ch.logo);
         }
 
+        // Cache rows are only ever removed with the whole provider, so a catalog
+        // that churns — VOD titles rotate constantly — leaves the table holding
+        // every logo the provider ever had. The read above then grows with the
+        // provider's history instead of its current catalog. More rows than the
+        // catalog has distinct logos means stale ones are in there; entries are
+        // looked up by exact logo_url, so a URL no longer in the catalog is
+        // unreachable and safe to drop.
+        const stale = cachedBefore + pending.length > channels.length;
+
         let count = 0;
-        if (pending.length > 0) {
+        let pruned = 0;
+        if (pending.length > 0 || stale) {
             immediateTransaction(db, () => {
                 const insertStmt = db.prepare(`
                     INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
@@ -224,14 +235,23 @@ export function prePopulateProviderIconCache(providerId) {
                     insertStmt.run(providerId, logo, getLogoCacheHash(logo));
                     count++;
                 }
+                if (stale) {
+                    pruned = db.prepare(`
+                        DELETE FROM provider_icon_cache
+                        WHERE provider_id = ? AND logo_url NOT IN (
+                            SELECT logo FROM provider_channels
+                            WHERE provider_id = ? AND logo IS NOT NULL AND logo != ''
+                        )
+                    `).run(providerId, providerId).changes;
+                }
             })();
         }
 
         // Update memory cache
         providerIconMemoryCache.set(providerId, allHashes);
 
-        if (count > 0) {
-            console.log(`✅ Pre-populated ${count} new icon cache entries for provider ${providerId}`);
+        if (count > 0 || pruned > 0) {
+            console.log(`✅ Icon cache for provider ${providerId}: ${count} added, ${pruned} stale entries removed`);
         }
     } catch (e) {
         console.error('Failed to pre-populate provider icon cache:', e.message);

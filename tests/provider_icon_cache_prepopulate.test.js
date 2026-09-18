@@ -84,6 +84,38 @@ describe('prePopulateProviderIconCache', () => {
     expect(cacheRows()).toBe(52);
   });
 
+  it('drops cache rows for logos the catalog no longer carries', () => {
+    // Rows were only ever removed with the whole provider, so a churning VOD
+    // catalog left the table holding every logo the provider ever had — and the
+    // diff read above then grows with the provider's history, not its catalog.
+    for (let i = 0; i < 10; i++) insertChannel.run(1, `http://cdn.example/logo-${i}.png`);
+    prePopulateProviderIconCache(1);
+    expect(cacheRows()).toBe(10);
+
+    memDb.prepare("DELETE FROM provider_channels WHERE logo LIKE '%logo-9.png'").run();
+    insertChannel.run(1, 'http://cdn.example/fresh.png');
+    prePopulateProviderIconCache(1);
+
+    expect(cacheRows()).toBe(10);
+    expect(memDb.prepare("SELECT COUNT(*) c FROM provider_icon_cache WHERE logo_url LIKE '%logo-9.png'").get().c).toBe(0);
+    expect(memDb.prepare("SELECT COUNT(*) c FROM provider_icon_cache WHERE logo_url LIKE '%fresh.png'").get().c).toBe(1);
+  });
+
+  it('never touches another provider cache rows while pruning', () => {
+    insertChannel.run(1, 'http://cdn.example/a.png');
+    insertChannel.run(2, 'http://cdn.example/b.png');
+    prePopulateProviderIconCache(1);
+    prePopulateProviderIconCache(2);
+
+    memDb.prepare('DELETE FROM provider_channels WHERE provider_id = 1').run();
+    insertChannel.run(1, 'http://cdn.example/c.png');
+    prePopulateProviderIconCache(1);
+
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_icon_cache WHERE provider_id = 2').get().c).toBe(1);
+    expect(memDb.prepare('SELECT logo_url FROM provider_icon_cache WHERE provider_id = 1').all())
+      .toEqual([{ logo_url: 'http://cdn.example/c.png' }]);
+  });
+
   it('keeps the hash of every current logo available for lookups', () => {
     insertChannel.run(1, 'http://cdn.example/only.png');
     prePopulateProviderIconCache(1);
