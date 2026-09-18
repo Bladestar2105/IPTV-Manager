@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as dbModule from '../database/db.js';
+import { migrateProviderLockTable, sweepExpiredProviderLocks } from '../database/providerLockSchema.js';
+import { isRetryableSqliteError } from '../database/sqliteWrites.js';
 
 const db = dbModule.default;
 
@@ -64,39 +66,21 @@ function ensureTable() {
   }
 
   try {
-    // An earlier shape keyed the table by provider_id. Carry the rows over:
-    // they are leases another process may still hold, and dropping them would
-    // let this process take a lock somebody else owns.
-    if (typeof db.pragma === 'function') {
-      const columns = db.pragma('table_info(provider_locks)') || [];
-      if (columns.length > 0 && !columns.some(column => column.name === 'lock_key')) {
-        db.exec(`CREATE TABLE IF NOT EXISTS provider_locks_v2 (
-                lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
-                owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
-              INSERT OR IGNORE INTO provider_locks_v2
-                (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
-                SELECT 'provider:' || provider_id, operation, owner_pid, owner_token, acquired_at, expires_at
-                FROM provider_locks;
-              DROP TABLE provider_locks;
-              ALTER TABLE provider_locks_v2 RENAME TO provider_locks;`);
-      }
-    }
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS provider_locks (
-        lock_key TEXT PRIMARY KEY,
-        operation TEXT NOT NULL,
-        owner_pid INTEGER NOT NULL,
-        owner_token TEXT NOT NULL,
-        acquired_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
-      );
-    `);
+    migrateProviderLockTable(db);
     tableState = 'ready';
     return tableState;
   } catch (e) {
-    if (typeof e?.code === 'string' && e.code.startsWith('SQLITE_')) {
-      // A real database said no. Do not cache: the next attempt probes again.
+    if (isRetryableSqliteError(e)) {
+      // Contention. Do not cache: the next attempt probes again.
       console.warn(`Provider lock table unavailable right now: ${e.message} [${e.code}]`);
+      return 'busy';
+    }
+    if (typeof e?.code === 'string' && e.code.startsWith('SQLITE_')) {
+      // A real database refusing the DDL for a reason that will not pass on its
+      // own. Still fail closed — handing out a no-op lock would allow exactly
+      // the overlap the table prevents — but say so as an error, because
+      // "try again shortly" is not going to come true.
+      console.error(`Provider lock table cannot be created: ${e.message} [${e.code}]`);
       return 'busy';
     }
     tableState = 'unsupported';
@@ -227,11 +211,14 @@ export function isCooldownHolder(holder) {
 }
 
 /** Who currently holds the lock, for diagnostics and 409 responses. */
-export function describeLock(lockKey) {
+export function describeLock(lockKey, now = Math.floor(Date.now() / 1000)) {
   if (ensureTable() !== 'ready') return null;
   try {
-    return db.prepare('SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE lock_key = ?')
-      .get(lockKey) || null;
+    // An expired row is not a holder. Reporting it as one told the operator a
+    // sync was in progress when the process that started it was long gone.
+    return db.prepare(
+      'SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE lock_key = ? AND expires_at > ?'
+    ).get(lockKey, now) || null;
   } catch {
     return null;
   }
@@ -254,7 +241,7 @@ export function describeLockConflict(providerId, fallbackOperation = 'processed'
   return `Provider ${providerId} is already being ${what || fallbackOperation}`;
 }
 
-/** Drop every lock. Tests only; startup uses clearExpiredProviderLocks(). */
+/** Drop every lock. Tests only; startup sweeps expired leases in initDb. */
 export function clearProviderLocks() {
   if (ensureTable() !== 'ready') return 0;
   try {
@@ -265,19 +252,16 @@ export function clearProviderLocks() {
 }
 
 /**
- * Startup recovery: drop only locks whose lease has run out.
+ * Drop only locks whose lease has run out, guarded by the table probe.
  *
- * Another process may still be using the same DATA_DIR — an overlapping restart,
- * or a second instance — and the lock is explicitly cross-process, so a blanket
- * delete would hand that process's work to this one. A lock left behind by a
- * killed process disappears on its own once its lease expires
- * (DEFAULT_TTL_SECONDS); owner_pid is not usable for liveness because PIDs are
- * namespaced per container and get reused.
+ * initDb sweeps directly through the schema module; this is the same sweep for
+ * callers that already hold the service's connection. See
+ * sweepExpiredProviderLocks for why expired-only.
  */
 export function clearExpiredProviderLocks(now = Math.floor(Date.now() / 1000)) {
   if (ensureTable() !== 'ready') return 0;
   try {
-    return db.prepare('DELETE FROM provider_locks WHERE expires_at <= ?').run(now).changes;
+    return sweepExpiredProviderLocks(db, now);
   } catch (e) {
     console.warn('Could not sweep expired provider locks:', e.message);
     return 0;

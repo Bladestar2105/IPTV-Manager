@@ -207,6 +207,20 @@ describe('provider lock', () => {
     clearProviderLocks();
   });
 
+  it('does not present an expired lease as a running operation', () => {
+    // describeLockConflict answers the 409 and the scheduler warning from this.
+    // Reporting an expired row told the operator a sync was in progress when
+    // the process that started it was long gone.
+    const lock = acquireProviderLock(42, 'sync');
+    expect(describeProviderLock(42)).toMatchObject({ operation: 'sync' });
+
+    memDb.prepare('UPDATE provider_locks SET expires_at = ? WHERE lock_key = ?')
+      .run(Math.floor(Date.now() / 1000) - 1, 'provider:42');
+
+    expect(describeProviderLock(42)).toBeNull();
+    lock.release();
+  });
+
   it('keeps a lock another process still holds when the primary starts', () => {
     const now = Math.floor(Date.now() / 1000);
     const insert = memDb.prepare(`INSERT INTO provider_locks

@@ -3,6 +3,7 @@ import fs from 'fs';
 import { DATA_DIR } from '../config/constants.js';
 import { openSqliteConnection } from './sqliteConnection.js';
 import * as migrations from './migrations.js';
+import { migrateProviderLockTable, sweepExpiredProviderLocks } from './providerLockSchema.js';
 
 // Ensure Data Directory exists
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -302,31 +303,10 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
 
-            // An earlier shape keyed this table by provider_id. The rows are
-            // leases another process may still hold — the cross-process guard
-            // is the whole point of the table — so they are carried over rather
-            // than dropped. Dropping them would let this instance take a lock
-            // somebody else is holding, which is exactly the double-run the
-            // table prevents.
-            const lockColumns = db.pragma('table_info(provider_locks)') || [];
-            if (lockColumns.length > 0 && !lockColumns.some(column => column.name === 'lock_key')) {
-              db.exec(`CREATE TABLE IF NOT EXISTS provider_locks_v2 (
-                lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
-                owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
-              INSERT OR IGNORE INTO provider_locks_v2
-                (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
-                SELECT 'provider:' || provider_id, operation, owner_pid, owner_token, acquired_at, expires_at
-                FROM provider_locks;
-              DROP TABLE provider_locks;
-              ALTER TABLE provider_locks_v2 RENAME TO provider_locks;`);
-            }
+            const carriedLocks = migrateProviderLockTable(db);
+            if (carriedLocks > 0) console.log(`🔒 Carried ${carriedLocks} lease(s) into the current lock table`);
 
-            // Only expired leases. Another process may still be using the same
-            // DATA_DIR during an overlapping restart, and the lock is explicitly
-            // cross-process — a blanket delete would hand its work to this
-            // instance. A lock from a killed process expires on its own.
-            const now = Math.floor(Date.now() / 1000);
-            const staleLocks = db.prepare('DELETE FROM provider_locks WHERE expires_at <= ?').run(now).changes;
+            const staleLocks = sweepExpiredProviderLocks(db);
             if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} expired lock(s)`);
 
             console.log("✅ Database OK");
