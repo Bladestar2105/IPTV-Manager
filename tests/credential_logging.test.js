@@ -24,8 +24,11 @@ import { fileURLToPath } from 'node:url';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 const LOG_CALL = /(console\.(log|info|warn|error|debug)|process\.std(out|err)\.write)\s*\(/;
-const REDACTING_CALL = /\b(redactUrl|sanitizeErrorMessage)\s*\([^()]*\)/g;
+// One level of nesting, so `redactUrl(String(u))` is recognised as redacted
+// rather than reported — the bare identifier would otherwise satisfy URLISH.
+const REDACTING_CALL = /\b(redactUrl|sanitizeErrorMessage)\s*\((?:[^()]|\([^()]*\))*\)/g;
 const URLISH = /\b[A-Za-z_$][\w$]*[uU][rR][lL][\w$]*\b|\burl\b/;
+const REDACTED_MARKER = '__redacted__';
 
 function sourceFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
@@ -43,12 +46,18 @@ function sourceFiles(dir) {
 function unredactedArguments(line) {
   const call = line.slice(line.search(LOG_CALL));
   return call
-    .replace(REDACTING_CALL, '')
-    // A template literal keeps only its interpolations: prose like
+    // A redacted call leaves behind whatever named it — `{ url: redactUrl(u) }`
+    // would still read as a bare `url`. Take the property key with it.
+    .replace(REDACTING_CALL, REDACTED_MARKER)
+    .replace(new RegExp(`\\b[A-Za-z_$][\\w$]*\\s*:\\s*${REDACTED_MARKER}`, 'g'), '')
+    .replace(new RegExp(REDACTED_MARKER, 'g'), '')
+    // One left-to-right pass over all three quote forms, so whichever opens
+    // first wins. Stripping them one form at a time let an apostrophe inside a
+    // double-quoted string open a "literal" that swallowed the URL between two
+    // of them. A template literal keeps its interpolations: prose like
     // "Failed to parse backup_urls" is text, not a variable carrying a URL.
-    .replace(/`(?:[^`\\]|\\.)*`/g, literal => (literal.match(/\$\{[^}]*\}/g) || []).join(' '))
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+    .replace(/`(?:[^`\\]|\\.)*`|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g,
+      literal => (literal[0] === '`' ? (literal.match(/\$\{[^}]*\}/g) || []).join(' ') : ''));
 }
 
 function unredactedUrlLogs(file) {
@@ -75,6 +84,7 @@ describe('credentials in log statements', () => {
       'console.error("Segment upstream error for", targetUrl);',
       'console.log(feedUrl);',
       'process.stdout.write(`${provider.epg_url}\\n`);',
+      'console.error("Provider\'s catalog failed for " + provider.url + "; won\'t retry");',
     ];
     for (const line of offending) {
       expect(LOG_CALL.test(line) && URLISH.test(unredactedArguments(line))).toBe(true);
@@ -86,6 +96,8 @@ describe('credentials in log statements', () => {
       'console.error(`EPG update failed: ${redactUrl(url)}`, sanitizeErrorMessage(e));',
       "console.log('✅ DB Migration: backup_urls column created');",
       'console.warn(`Failed to parse backup_urls (${label}):`, e.message);',
+      'console.warn(`failed ${redactUrl(String(u))}`);',
+      'console.log({ url: redactUrl(u) });',
       'console.debug(`Episode sync for source ${sourceKey} skipped`);',
     ];
     for (const line of clean) {
