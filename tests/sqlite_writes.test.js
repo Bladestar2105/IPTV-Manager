@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -132,4 +134,32 @@ describe('immediateTransaction nesting', () => {
     immediateTransaction(double, () => 'ok')();
     expect(calls).toEqual(['ran']);
   });
+});
+
+describe('runWriteWithRetry backoff timer', () => {
+  it('keeps the process alive until the retry has settled', () => {
+    // The backoff timer was unref'd, so Node could exit with the retry still
+    // pending: the write was silently dropped and the awaited promise never
+    // settled. A test runner keeps its own event loop alive, so this has to run
+    // in a process of its own — which is also the situation that shows it.
+    const helpers = fileURLToPath(new URL('../src/database/sqliteWrites.js', import.meta.url));
+    const script = `
+      import { runWriteWithRetry } from ${JSON.stringify(helpers)};
+      let calls = 0;
+      const operation = () => {
+        calls++;
+        if (calls < 3) { const e = new Error('database is locked'); e.code = 'SQLITE_BUSY'; throw e; }
+        return 'written';
+      };
+      const result = await runWriteWithRetry(operation, { baseDelayMs: 20 });
+      console.log(JSON.stringify({ result, calls }));
+    `;
+    const run = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+      encoding: 'utf8', timeout: 20000,
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toMatch(/unsettled top-level await/);
+    expect(JSON.parse(run.stdout.trim().split('\n').pop())).toEqual({ result: 'written', calls: 3 });
+  }, 30000);
 });

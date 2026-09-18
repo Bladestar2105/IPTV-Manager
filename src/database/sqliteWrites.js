@@ -37,7 +37,14 @@ export function immediateTransaction(database, fn) {
   };
 }
 
-const delay = ms => new Promise(resolve => { setTimeout(resolve, ms).unref?.(); });
+// Deliberately NOT unref'd. This timer sits inside an operation the caller is
+// awaiting, not in a background schedule: an unref'd one lets Node exit with the
+// retry still pending, so the write is silently dropped and the awaited promise
+// never settles (`Detected unsettled top-level await`, exit code 13). That is
+// the whole failure this helper exists to prevent, arriving by another route —
+// it bites a worker finishing an in-flight write after its server closed, and
+// any one-shot script that imports these helpers.
+const delay = ms => new Promise(resolve => { setTimeout(resolve, ms); });
 
 /**
  * Run a short, repeatable write with a bounded retry.
