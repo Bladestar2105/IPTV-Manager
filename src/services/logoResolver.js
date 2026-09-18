@@ -271,23 +271,29 @@ export function prePopulateProviderIconCache(providerId) {
         //
         // At most two statements exist — the full batch and the remainder —
         // and compiling a 400-parameter IN clause per batch was 238 compiles.
-        const deleteStatements = new Map();
-        const deleteFor = size => {
-            if (!deleteStatements.has(size)) {
-                deleteStatements.set(size, db.prepare(`
+        // At most two of each — the full batch and the remainder. Compiling a
+        // 400-parameter IN clause per batch was 238 compiles, and
+        // db.transaction() compiles its own BEGIN/COMMIT/ROLLBACK every call.
+        const pruners = new Map();
+        const prunerFor = size => {
+            if (!pruners.has(size)) {
+                const deleteStmt = db.prepare(`
                     DELETE FROM provider_icon_cache
                     WHERE provider_id = ? AND logo_url IN (${new Array(size).fill('?').join(',')})
-                `));
+                `);
+                // better-sqlite3 forwards a transaction's arguments to its body,
+                // so the batch goes in as an argument rather than through a
+                // variable the closure has to see reassigned.
+                pruners.set(size, immediateTransaction(db, rows => deleteStmt.run(providerId, ...rows).changes));
             }
-            return deleteStatements.get(size);
+            return pruners.get(size);
         };
 
         let pruneStoppedBy = null;
         for (let from = 0; from < stale.length; from += ICON_CACHE_PRUNE_BATCH) {
             const batch = stale.slice(from, from + ICON_CACHE_PRUNE_BATCH);
-            const deleteStmt = deleteFor(batch.length);
             try {
-                pruned += immediateTransaction(db, () => deleteStmt.run(providerId, ...batch).changes)();
+                pruned += prunerFor(batch.length)(batch);
             } catch (e) {
                 if (!isRetryableSqliteError(e)) throw e;
                 pruneStoppedBy = e;

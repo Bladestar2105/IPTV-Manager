@@ -10,6 +10,7 @@ import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } fro
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
 import { acquireProviderLock, describeLockConflict } from './providerLockService.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
+import { resolveBusyTimeoutMs } from '../database/sqliteConnection.js';
 
 /**
  * Delete one provider channel without violating the dependent foreign keys.
@@ -283,6 +284,29 @@ function assertSyncTargetStillValid(providerId, userId, provider, authorization 
  * every minute. The log insert is guarded and its own failure is reported
  * separately, so bookkeeping problems never replace the original error.
  */
+/**
+ * Say so when applying a catalog held the write lock longer than anyone waits.
+ *
+ * The catalog has to be applied atomically — half a catalog is worse than none
+ * — so this is the longest write lock the application takes, and any other
+ * connection that wants to write during it waits out its busy_timeout and then
+ * reports "database is locked". Nothing connected the two: the operator saw the
+ * symptom in one worker and the cause in another, minutes apart, with no shared
+ * identifier and nothing naming the setting that decides how long the others
+ * are willing to wait.
+ */
+export function reportCatalogWriteDuration(providerId, applyMs) {
+  const busyTimeoutMs = resolveBusyTimeoutMs();
+  if (applyMs >= busyTimeoutMs) {
+    console.warn(`⚠️ Applying provider ${providerId}'s catalog held the write lock for ${applyMs}ms, `
+      + `longer than SQLITE_BUSY_TIMEOUT_MS (${busyTimeoutMs}ms): any other worker writing in that window `
+      + 'reports "database is locked". Raise the timeout, or sync fewer providers at once.');
+  } else if (applyMs >= busyTimeoutMs / 2) {
+    console.info(`Applying provider ${providerId}'s catalog held the write lock for ${applyMs}ms `
+      + `(SQLITE_BUSY_TIMEOUT_MS is ${busyTimeoutMs}ms)`);
+  }
+}
+
 export function finishSyncRun({
   providerId, userId, startTime, config, status, errorMessage,
   channelsAdded = 0, channelsUpdated = 0, categoriesAdded = 0,
@@ -538,6 +562,21 @@ export async function performSync(providerId, userId, options = {}) {
       INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
       VALUES (?, ?, ?, ?, ?, 1, ?)
     `);
+    // Compiled here, with the others, rather than inside the loops below. Both
+    // of these ran per category and per channel assignment *inside* the write
+    // transaction, so on a catalog with hundreds of thousands of entries the
+    // lock was held for hundreds of thousands of extra SQL compilations —
+    // lengthening exactly the transaction every other worker is waiting on.
+    const insertFirstSyncMapping = db.prepare(`
+      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (?, ?, ?, ?, NULL, 0, ?)
+    `);
+    const selectAssignment = db.prepare(`
+      SELECT id, user_category_id, provider_channel_id, mapping_id,
+             assignment_origin, granted_by_admin, authorization_revoked
+      FROM user_channels
+      WHERE user_category_id = ? AND provider_channel_id = ?
+    `);
 
     const getMappedTargets = (categoryId, categoryType) => {
       const keys = [`${categoryId}_${categoryType}`];
@@ -559,6 +598,7 @@ export async function performSync(providerId, userId, options = {}) {
     // BEGIN IMMEDIATE: the body starts with SELECTs and writes afterwards, so a
     // deferred transaction would fail with SQLITE_BUSY_SNAPSHOT as soon as any
     // other connection committed in between.
+    const applyStartedAt = Date.now();
     immediateTransaction(db, () => {
       aiSnapshot = captureSyncSnapshot(providerId);
       // Pre-calculate max sort order for optimization
@@ -608,10 +648,7 @@ export async function performSync(providerId, userId, options = {}) {
           console.debug(`  ✅ Created category: ${catName} (${catType}) (id=${newCategoryId})`);
         } else if (!mapping && isFirstSync) {
           // First sync: Create mapping without user category
-          const mappingInfo = db.prepare(`
-            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-            VALUES (?, ?, ?, ?, NULL, 0, ?)
-          `).run(providerId, userId, catId, catName, catType);
+          const mappingInfo = insertFirstSyncMapping.run(providerId, userId, catId, catName, catType);
 
           // Update lookup to prevent duplicates in current run
           mappingLookup.set(lookupKey, {
@@ -839,12 +876,7 @@ export async function performSync(providerId, userId, options = {}) {
                 const newSortOrder = currentMax + 1;
 
                 const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, mappingId, assignmentGrant);
-                const resolvedAssignment = db.prepare(`
-                  SELECT id, user_category_id, provider_channel_id, mapping_id,
-                         assignment_origin, granted_by_admin, authorization_revoked
-                  FROM user_channels
-                  WHERE user_category_id = ? AND provider_channel_id = ?
-                `).get(userCatId, provChannelId);
+                const resolvedAssignment = selectAssignment.get(userCatId, provChannelId);
                 const assignmentId = Number(resolvedAssignment?.id || 0);
                 if (!assignmentId) throw new Error('Unable to resolve synchronized user-channel assignment');
 
@@ -893,6 +925,8 @@ export async function performSync(providerId, userId, options = {}) {
         deleteProviderChannelCascade(db, providerId, stale.id);
       }
     })();
+
+    reportCatalogWriteDuration(providerId, Date.now() - applyStartedAt);
 
     // A catalog the provider could not fully deliver is never a success: an
     // empty or half-fetched catalog must not look like "nothing changed

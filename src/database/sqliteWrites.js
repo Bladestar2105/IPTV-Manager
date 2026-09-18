@@ -68,10 +68,14 @@ export function deleteInBatches(database, table, where, params = [], options = {
   const maxBatches = Number(options.maxBatches) > 0 ? Math.floor(Number(options.maxBatches)) : 2000;
   const statement = database.prepare(
     `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${where} LIMIT ?)`);
+  // Built once, not once per batch: database.transaction() compiles its own
+  // BEGIN/COMMIT/ROLLBACK every time it is called, and the whole point here is
+  // to run many batches.
+  const removeBatch = immediateTransaction(database, () => statement.run(...params, batchSize).changes);
 
   let removed = 0;
   for (let batch = 0; batch < maxBatches; batch++) {
-    const changes = immediateTransaction(database, () => statement.run(...params, batchSize).changes)();
+    const changes = removeBatch();
     removed += changes;
     if (changes < batchSize) break;
   }
