@@ -200,6 +200,10 @@ until this is exercised on a real Proxmox host.
 - `CATALOG_BODY_TIMEOUT_MS`: Budget for reading one provider catalog document
   (live/VOD/series lists and their categories). Defaults to `300000`
   (5 minutes); a large VOD catalog is hundreds of megabytes.
+- `CATALOG_BODY_MAX_BYTES`: Size cap for the same read. Defaults to
+  `536870912` (512 MB), far above a real catalog: buffering, decoding and
+  parsing one costs several times its wire size in heap at the same moment, so
+  a body that never ends has to be refused on size as well as on time.
 - `MANIFEST_BODY_TIMEOUT_MS` / `MANIFEST_MAX_BYTES`: Budget and size cap for
   reading an MPD or M3U8 manifest in the stream proxy. Default `30000` and
   `33554432`. Without them an upstream that sends manifest headers and then
@@ -229,6 +233,12 @@ until this is exercised on a real Proxmox host.
 
 - `IS_SCHEDULER`: Internal cluster flag used by the primary process when
   starting the scheduler worker.
+- `SYNC_MAX_CONCURRENT`: How many scheduled provider syncs may run at the same
+  time. Defaults to `2`, minimum `1`. Configs above the limit keep their
+  `next_sync` and are picked up by a later tick. Without it every due config
+  started at once, and `next_sync` values cluster — after a restart, or when a
+  shared upstream failed them together — so several hundred-megabyte catalogs
+  were decoded and parsed concurrently in one container.
 - `MAXMIND_LICENSE_KEY`: Optional MaxMind license key for GeoLite2 updates.
   The Web UI security settings can also provide this value. Startup checks
   MaxMind checksum files first and skips the heavy `geoip-lite` updater when
@@ -241,6 +251,11 @@ until this is exercised on a real Proxmox host.
   stops answering `get_series_info` does not recover within one run, and a queue
   can hold tens of thousands of series. Local SQLite contention does not count
   towards the limit — it says the database is busy, not that the panel is down.
+- `EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS`: How long a panel stays off limits
+  after a run gave up on it. Defaults to `1800` (30 minutes), minimum `60`.
+  Giving up says the panel is down, and a panel is commonly shared by several
+  provider rows; without the cooldown each of them takes the freed lock in turn
+  and spends its own full failure budget against the same dead host.
 - `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
   abandoned and is removed at startup. Defaults to `21600000` (6 hours). The
   effective value is never below four times `EPG_IMPORT_BODY_TIMEOUT_MS`,

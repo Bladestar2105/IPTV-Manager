@@ -64,6 +64,34 @@ describe('Sync Scheduler', () => {
     expect(syncService.performSync).toHaveBeenCalledWith(101, 201, { mode: 'scheduled' });
   });
 
+  it('starts at most SYNC_MAX_CONCURRENT catalog fetches per tick', async () => {
+    // Reading a catalog holds its bytes, the decoded string and the parsed
+    // object graph at once — several times a list that is itself hundreds of
+    // megabytes. Every due config used to start in one un-awaited loop, and
+    // next_sync values cluster after a restart or a shared upstream failure.
+    const configs = [1, 2, 3, 4, 5].map(n => ({
+      id: n, provider_id: 100 + n, user_id: 1, enabled: 1, next_sync: 0,
+    }));
+    mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue(configs) });
+    const pending = [];
+    vi.mocked(syncService.performSync).mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+
+    startSyncScheduler();
+    await vi.advanceTimersByTimeAsync(60000);
+
+    expect(syncService.performSync).toHaveBeenCalledTimes(2);
+
+    // The rest keep their next_sync, so a later tick simply picks them up.
+    pending.shift()({});
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(syncService.performSync).toHaveBeenCalledTimes(3);
+
+    // Drain: the in-flight set lives in the module, so a run left pending would
+    // keep the cap reached for every later test in this file.
+    while (pending.length) pending.shift()({});
+    await vi.advanceTimersByTimeAsync(1);
+  });
+
   it('should not schedule concurrent syncs for the same config', async () => {
     const config = { id: 2, provider_id: 102, user_id: 202, enabled: 1, next_sync: 0 };
 

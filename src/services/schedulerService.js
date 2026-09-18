@@ -4,6 +4,15 @@ import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgServic
 import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
 
+// Reading a provider catalog holds the response bytes, the decoded string and
+// the parsed object graph in the heap at the same time, several times the wire
+// size of a list that can itself be hundreds of megabytes. The scheduler used to
+// start every due config in one un-awaited loop, so configs whose next_sync
+// happens to cluster — after a restart, or after a shared upstream failed them
+// together — parsed their catalogs concurrently. Configs above the cap keep
+// their next_sync and are simply picked up by a later tick.
+const MAX_CONCURRENT_SYNCS = Math.max(1, Number(process.env.SYNC_MAX_CONCURRENT) || 2);
+
 let syncInterval = null;
 let epgInterval = null;
 const runningSyncs = new Set();
@@ -19,6 +28,7 @@ export function startSyncScheduler() {
       const configs = db.prepare('SELECT * FROM sync_configs WHERE enabled = 1 AND next_sync <= ?').all(now);
 
       for (const config of configs) {
+        if (runningSyncs.size >= MAX_CONCURRENT_SYNCS) break;
         if (runningSyncs.has(config.id)) continue;
         runningSyncs.add(config.id);
 
