@@ -236,7 +236,12 @@ class StreamManager {
       const previous = this.lastTouchAt.get(id) || 0;
       if (now - previous < STREAM_TOUCH_MIN_INTERVAL_MS) return;
     }
-    // The window opens on a write that landed, not on an attempt.
+    // Claim the window before the write, so concurrent progress events cannot
+    // pile up behind an in-flight one — the Redis path awaits two round trips
+    // here, and every caller is fire-and-forget. A write that then fails hands
+    // the window back below.
+    this.lastTouchAt.set(id, now);
+
     let written = true;
     if (this.redis) {
       try {
@@ -260,7 +265,13 @@ class StreamManager {
       }
     }
 
-    this.lastTouchAt.set(id, written ? now : now - STREAM_TOUCH_MIN_INTERVAL_MS + STREAM_TOUCH_RETRY_INTERVAL_MS);
+    // A failed write must not burn the whole window, and remove() may have
+    // dropped the entry while the write was in flight — do not resurrect it.
+    if (!written && this.lastTouchAt.has(id)) {
+      this.lastTouchAt.set(id, now - STREAM_TOUCH_MIN_INTERVAL_MS + STREAM_TOUCH_RETRY_INTERVAL_MS);
+    } else if (!written) {
+      this.lastTouchAt.delete(id);
+    }
     if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.pruneTouchTimestamps(now);
   }
 
