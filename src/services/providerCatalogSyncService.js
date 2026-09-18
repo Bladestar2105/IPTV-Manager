@@ -121,7 +121,6 @@ export async function fetchProviderCatalog(provider, xtream) {
       try {
         // Try fetching as M3U
         const m3uResp = await fetchSafe(provider.url, { timeout: CATALOG_TIMEOUT_MS }); // Use original URL
-        if (!m3uResp.ok) discardBody(m3uResp);
         if (m3uResp.ok) {
           // The playlist is parsed from the stream rather than buffered, so it
           // needs its own deadline. Without one a panel that answers and then
@@ -177,6 +176,8 @@ export async function fetchProviderCatalog(provider, xtream) {
               });
             });
           }
+        } else {
+          discardBody(m3uResp);
         }
       } catch (e) { console.error('M3U fallback error:', sanitizeErrorMessage(e)); }
       if (!liveFetchComplete && apiFetchComplete) liveFetchComplete = true;

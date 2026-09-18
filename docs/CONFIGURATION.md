@@ -246,7 +246,9 @@ until this is exercised on a real Proxmox host.
   minimum `1000`, and is clamped to at most half of the timeout, so a session
   can never time out because its refresh was throttled. Without this, every
   ffmpeg progress event became an `UPDATE current_streams`, which collided with
-  long write transactions.
+  long write transactions. With the timeout set to `0` there is nothing to stay
+  under, so the default is a quarter of `120000` rather than the `1000` floor —
+  switching the reaper off must not switch the flood back on.
 
 ## Scheduled Jobs and GeoIP
 

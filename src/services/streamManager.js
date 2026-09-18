@@ -19,9 +19,10 @@ return 0`;
 // and it means "never reap on inactivity", which a long recording needs.
 // resolveBudget refuses 0, so it is recognised before asking.
 const DISABLED = /^\s*0+\s*$/;
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000;
 const STREAM_INACTIVITY_TIMEOUT_MS = DISABLED.test(String(process.env.STREAM_INACTIVITY_TIMEOUT_MS ?? ''))
   ? 0
-  : resolveBudget(process.env.STREAM_INACTIVITY_TIMEOUT_MS, 2 * 60 * 1000, 1000,
+  : resolveBudget(process.env.STREAM_INACTIVITY_TIMEOUT_MS, DEFAULT_INACTIVITY_TIMEOUT_MS, 1000,
     Number.MAX_SAFE_INTEGER, 'STREAM_INACTIVITY_TIMEOUT_MS');
 // No such reading for the age cap: 0 would make every session with a start time
 // instantly stale, which is a typo's result rather than anybody's intent.
@@ -41,9 +42,18 @@ const STREAM_TOUCH_MAP_LIMIT = 10000;
 const STREAM_TOUCH_CEILING_MS = STREAM_INACTIVITY_TIMEOUT_MS > 0
   ? Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 2))
   : Number.MAX_SAFE_INTEGER;
+// With the sweep switched off there is no timeout to stay under — but there is
+// still one shared database, and a quarter of nothing floors to one second,
+// which is one UPDATE per ffmpeg progress event per stream: exactly the write
+// amplification the throttle exists to remove. Switching off the reaper must
+// not switch that back on, so the window the default timeout would have given
+// is the basis instead.
+const STREAM_TOUCH_BASIS_MS = STREAM_INACTIVITY_TIMEOUT_MS > 0
+  ? STREAM_INACTIVITY_TIMEOUT_MS
+  : DEFAULT_INACTIVITY_TIMEOUT_MS;
 const STREAM_TOUCH_MIN_INTERVAL_MS = resolveBudget(
   process.env.STREAM_TOUCH_MIN_INTERVAL_MS,
-  Math.min(Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 4)), STREAM_TOUCH_CEILING_MS),
+  Math.min(Math.max(1000, Math.floor(STREAM_TOUCH_BASIS_MS / 4)), STREAM_TOUCH_CEILING_MS),
   1000, STREAM_TOUCH_CEILING_MS, 'STREAM_TOUCH_MIN_INTERVAL_MS');
 // A heartbeat whose write failed must not burn the whole window. The latency
 // connection gives up on a contended lock after a few hundred milliseconds, so

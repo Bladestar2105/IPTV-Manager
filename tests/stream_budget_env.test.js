@@ -107,4 +107,30 @@ describe('stream budgets from the environment', () => {
     // The age cap still applies, and the throttle still has a floor.
     expect(manager.isStale({ ...ancient, start_time: now - 25 * 3600000 }, now)).toBe(true);
   });
+
+  it('does not turn the heartbeat flood back on when the sweep is switched off', async () => {
+    // A quarter of nothing floors to one second, and one second is one UPDATE
+    // per ffmpeg progress event per stream — the write amplification the
+    // throttle exists to remove. Switching off the reaper must not switch that
+    // back on: there is still only one database.
+    vi.useFakeTimers();
+    try {
+      const db = openDb();
+      const counts = countTouchWrites(db);
+      const manager = await loadWith({ STREAM_INACTIVITY_TIMEOUT_MS: '0' });
+      manager.init(db, null);
+
+      await manager.add('s3', user, 'Channel', '10.0.0.3', null, 1, { dedupe: false });
+      for (let i = 0; i < 5; i++) {
+        vi.advanceTimersByTime(2000);
+        await manager.touch('s3');
+      }
+
+      // 10 seconds of progress events, inside the 30 second window the default
+      // timeout would have produced.
+      expect(counts.writes).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
