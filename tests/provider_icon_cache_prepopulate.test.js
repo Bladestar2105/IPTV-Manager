@@ -155,4 +155,108 @@ describe('prePopulateProviderIconCache', () => {
     const row = memDb.prepare('SELECT cache_hash FROM provider_icon_cache WHERE provider_id = 1').get();
     expect(row.cache_hash).toBe(getLogoCacheHash('http://cdn.example/only.png'));
   });
+
+  // Splitting one write transaction into 238 also splits one chance of losing
+  // the write lock into 238, and the first loss used to escape to the outer
+  // catch: every remaining batch, the memory cache update and the summary line
+  // were dropped, and the operator was left a bare "database is locked" — less
+  // than the single transaction this replaced ever gave them.
+  describe('when the write lock is lost part-way through the prune', () => {
+    const stockCache = (provider, count) => {
+      const insert = memDb.prepare(
+        'INSERT INTO provider_icon_cache (provider_id, logo_url, cache_hash) VALUES (?, ?, ?)');
+      const write = memDb.transaction(() => {
+        for (let i = 0; i < count; i++) {
+          insert.run(provider, `http://cdn.example/stale${i}.png`, getLogoCacheHash(`http://cdn.example/stale${i}.png`));
+        }
+      });
+      write();
+    };
+
+    /** Fail the Nth DELETE execution with `error`. */
+    const failDeleteOn = (nth, error) => {
+      let seen = 0;
+      const original = memDb.prepare.bind(memDb);
+      return vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+        const statement = original(sql);
+        if (!/DELETE\s+FROM\s+provider_icon_cache/i.test(sql)) return statement;
+        const run = statement.run.bind(statement);
+        return new Proxy(statement, {
+          get(target, prop) {
+            if (prop === 'run') {
+              return (...args) => {
+                seen++;
+                if (seen === nth) throw error;
+                return run(...args);
+              };
+            }
+            const value = target[prop];
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      });
+    };
+
+    it('reports how far it got instead of reporting a failed call', () => {
+      insertChannel.run(1, 'http://cdn.example/live.png');
+      stockCache(1, 1000);
+      const errors = [];
+      const warnings = [];
+      vi.spyOn(console, 'error').mockImplementation(m => errors.push(String(m)));
+      vi.spyOn(console, 'warn').mockImplementation(m => warnings.push(String(m)));
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = failDeleteOn(2, Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }));
+
+      try {
+        expect(() => prePopulateProviderIconCache(1)).not.toThrow();
+      } finally {
+        spy.mockRestore();
+        vi.restoreAllMocks();
+      }
+
+      expect(errors).toEqual([]);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/stopped at 400\/1000 stale entries/);
+      expect(warnings[0]).toMatch(/SQLITE_BUSY/);
+      // The batch that ran is committed; the rest is offered again next sync.
+      expect(memDb.prepare('SELECT COUNT(*) c FROM provider_icon_cache WHERE provider_id = 1').get().c)
+        .toBe(601);
+    });
+
+    it('still surfaces an error that is not a lost lock', () => {
+      insertChannel.run(1, 'http://cdn.example/live.png');
+      stockCache(1, 1000);
+      const errors = [];
+      vi.spyOn(console, 'error').mockImplementation(m => errors.push(String(m)));
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = failDeleteOn(1, Object.assign(new Error('no such column: logo_url'), { code: 'SQLITE_ERROR' }));
+
+      try {
+        prePopulateProviderIconCache(1);
+      } finally {
+        spy.mockRestore();
+        vi.restoreAllMocks();
+      }
+
+      expect(errors.join(' ')).toMatch(/Failed to pre-populate provider icon cache/);
+    });
+
+    it('compiles the delete once per batch size, not once per batch', () => {
+      insertChannel.run(1, 'http://cdn.example/live.png');
+      stockCache(1, 1000);
+      const compiled = [];
+      const original = memDb.prepare.bind(memDb);
+      const spy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
+        if (/DELETE\s+FROM\s+provider_icon_cache/i.test(sql)) compiled.push(sql);
+        return original(sql);
+      });
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      try { prePopulateProviderIconCache(1); } finally { spy.mockRestore(); vi.restoreAllMocks(); }
+
+      // Three batches — 400, 400, 200 — but only two distinct statements.
+      expect(compiled).toHaveLength(2);
+      expect(memDb.prepare('SELECT COUNT(*) c FROM provider_icon_cache WHERE provider_id = 1').get().c).toBe(1);
+    });
+  });
 });
