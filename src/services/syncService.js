@@ -193,6 +193,35 @@ export function calculateRetrySync(config, providerId, userId) {
   return Math.min(intervalNext, now + backoff);
 }
 
+// A run refused by the lock never reaches finishSyncRun, so nothing moves
+// next_sync. The scheduler selects on `next_sync <= now` every 60 seconds, so
+// without this the same config is re-selected on every tick for as long as the
+// conflict lasts, silently — no sync_logs row records the attempts. Worse, a
+// lock refused because the lock table itself was contended would have every due
+// provider retrying in lockstep, feeding the contention that caused it.
+const SYNC_LOCK_RETRY_SECONDS = 300;
+
+/**
+ * Push a config's next attempt out after a refused lock.
+ *
+ * Deliberately not a failure: nothing was attempted, so last_sync stays put, no
+ * sync_logs row is written, and the exponential backoff does not count this.
+ *
+ * @returns {number} rows updated
+ */
+export function deferSyncAfterLockConflict(providerId, userId, now = Math.floor(Date.now() / 1000)) {
+  try {
+    const config = db.prepare('SELECT id, sync_interval FROM sync_configs WHERE provider_id = ? AND user_id = ?')
+      .get(providerId, userId);
+    if (!config) return 0;
+    const nextSync = Math.min(calculateNextSync(config.sync_interval), now + SYNC_LOCK_RETRY_SECONDS);
+    return db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id).changes;
+  } catch (e) {
+    console.warn(`Could not defer provider ${providerId} after a lock conflict [${e.code || 'Error'}]:`, e.message);
+    return 0;
+  }
+}
+
 /**
  * Re-read the rows the run was authorized against.
  *
@@ -316,6 +345,9 @@ export async function performSync(providerId, userId, options = {}) {
   if (!lock) {
     errorMessage = describeLockConflict(providerId);
     console.warn(`⏳ ${errorMessage}; skipping this run`);
+    // A manual run reports the conflict to its caller and is not retried by
+    // anybody, so only a scheduled one needs its next attempt moved.
+    if (options?.mode !== 'manual') deferSyncAfterLockConflict(providerId, userId);
     return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'locked' };
   }
 

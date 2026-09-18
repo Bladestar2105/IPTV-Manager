@@ -62,9 +62,12 @@ describe('sync status reporting', () => {
   let performSync;
   let calculateRetrySync;
   let finishSyncRun;
+  let acquireProviderLock;
+  let clearProviderLocks;
 
   beforeAll(async () => {
     ({ performSync, calculateRetrySync, finishSyncRun } = await import('../src/services/syncService.js'));
+    ({ acquireProviderLock, clearProviderLocks } = await import('../src/services/providerLockService.js'));
     memDb.pragma('foreign_keys = ON');
     memDb.exec(`
       CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
@@ -320,6 +323,45 @@ describe('sync status reporting', () => {
     // The old code inserted into sync_logs regardless and hit
     // SQLITE_CONSTRAINT_FOREIGNKEY twice, the second time escaping performSync.
     expect(logs()).toHaveLength(0);
+  });
+
+  it('moves next_sync when the provider lock refuses a scheduled run', async () => {
+    // A refused lock returns before finishSyncRun, so nothing used to move
+    // next_sync and the scheduler re-selected the same config on every 60s tick
+    // for as long as the conflict lasted — with no sync_logs row recording it.
+    clearProviderLocks();
+    const now = Math.floor(Date.now() / 1000);
+    const held = acquireProviderLock(7, 'delete');
+    try {
+      const result = await performSync(7, 1, { mode: 'scheduled' });
+
+      expect(result.status).toBe('locked');
+      expect(config().next_sync).toBeGreaterThan(now);
+      expect(config().next_sync).toBeLessThanOrEqual(now + 300);
+      // Nothing was attempted, so the run is neither a failure nor a data point
+      // for the backoff, and last_sync still records the last delivering run.
+      expect(logs()).toHaveLength(0);
+      expect(config().last_sync).toBe(111);
+    } finally {
+      held.release();
+      clearProviderLocks();
+    }
+  });
+
+  it('leaves the schedule alone when a manual run is refused', async () => {
+    // A manual run reports the conflict to its caller and nobody retries it, so
+    // clicking "sync now" during a delete must not push the scheduled run out.
+    clearProviderLocks();
+    const held = acquireProviderLock(7, 'delete');
+    try {
+      const result = await performSync(7, 1, { mode: 'manual' });
+
+      expect(result.status).toBe('locked');
+      expect(config().next_sync).toBe(222);
+    } finally {
+      held.release();
+      clearProviderLocks();
+    }
   });
 
   it('finishSyncRun never throws when the log target is gone', () => {
