@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { generateToken, preventTimingAttack, invalidateUserTokens, invalidateUserCache } from '../services/authService.js';
 import { isIpAllowedForUser } from '../services/geoIpService.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
@@ -283,7 +284,7 @@ export const changePassword = async (req, res) => {
        db.prepare(`UPDATE ${table} SET password = ?, force_password_change = 0, token_version = token_version + 1 WHERE id = ?`).run(newPasswordStored, userId);
     } else {
        const encryptedPlainPassword = encrypt(newPassword);
-       db.transaction(() => {
+       immediateTransaction(db, () => {
          db.prepare('UPDATE users SET password = ?, plain_password = ?, token_version = token_version + 1 WHERE id = ?')
            .run(newPasswordStored, encryptedPlainPassword, userId);
          db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);

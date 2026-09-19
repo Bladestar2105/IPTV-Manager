@@ -1,10 +1,11 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgService.js';
 import { decrypt } from '../utils/crypto.js';
 import { providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
-import { fetchSafe } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { PORT } from '../config/constants.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import {
@@ -296,9 +297,11 @@ export const playerApi = async (req, res) => {
 
       try {
         const resp = await fetchSafe(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_series_info&series_id=${remoteSeriesId}`);
-        if (!resp.ok) return res.json({});
+        if (!resp.ok) { discardBody(resp); return res.json({}); }
 
-        const data = await resp.json();
+        // Bounded: this is an end-user request, and fetchSafe covers only the
+        // wait for the headers.
+        const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 64 * 1024 * 1024 });
 
         if (data.info && channel.custom_name) {
             data.info.name = channel.custom_name;
@@ -319,7 +322,7 @@ export const playerApi = async (req, res) => {
                logo = excluded.logo,
                added = excluded.added
            `);
-           db.transaction(() => {
+           immediateTransaction(db, () => {
              for (const seasonKey in data.episodes) {
                 const episodes = data.episodes[seasonKey];
                 if (!Array.isArray(episodes)) continue;
@@ -388,9 +391,11 @@ export const playerApi = async (req, res) => {
 
       try {
         const resp = await fetchSafe(`${baseUrl}/player_api.php?username=${encodeURIComponent(channel.username)}&password=${encodeURIComponent(provPass)}&action=get_vod_info&vod_id=${remoteVodId}`);
-        if (!resp.ok) return res.json({});
+        if (!resp.ok) { discardBody(resp); return res.json({}); }
 
-        const data = await resp.json();
+        // Bounded: this is an end-user request, and fetchSafe covers only the
+        // wait for the headers.
+        const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 64 * 1024 * 1024 });
 
         // Ensure stream_id matches our user_channel_id
         if (data && data.movie_data && data.movie_data.stream_id) {

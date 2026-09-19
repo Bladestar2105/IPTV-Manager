@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateUserTokens } from '../services/authService.js';
 import { encrypt } from '../utils/crypto.js';
 import { normalizeMac } from '../utils/stalker.js';
@@ -138,7 +139,7 @@ export function updateStalkerDevice(req, res) {
   if (updates.length === 0) return res.json(publicDevice(existing));
 
   try {
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       params.push(deviceId);
       db.prepare(`UPDATE stalker_devices SET ${updates.join(', ')} WHERE id = ?`).run(...params);
       db.prepare('DELETE FROM stalker_sessions WHERE device_id = ?').run(deviceId);

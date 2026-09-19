@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { resolveAssignmentGrant } from '../utils/helpers.js';
 import {
@@ -100,7 +101,7 @@ export const restoreBackup = (req, res) => {
 
     const stats = { channels_restored: 0, channels_hidden: 0, channels_skipped: 0 };
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       // Get current category ids for user
       const currentCategories = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(userId);
       const currentCategoryIds = currentCategories.map(c => c.id);

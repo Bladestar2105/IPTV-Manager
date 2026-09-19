@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { formatDbError, immediateTransaction, isRetryableSqliteError } from '../database/sqliteWrites.js';
 import epgDb from '../database/epgDb.js';
 import crypto from 'crypto';
 
@@ -176,6 +177,10 @@ export function getProviderCachedIcons(providerId) {
     }
 }
 
+// SQLite's default parameter limit is 999 on older builds; stay well under it
+// and keep each transaction short.
+const ICON_CACHE_PRUNE_BATCH = 400;
+
 /**
  * Pre-populate icon cache entries for a provider's channels
  * Call this after syncing channels to prepare cache entries
@@ -192,29 +197,120 @@ export function prePopulateProviderIconCache(providerId) {
             WHERE provider_id = ? AND logo IS NOT NULL AND logo != ''
         `).all(providerId);
 
-        let count = 0;
-        db.transaction(() => {
-            const insertStmt = db.prepare(`
-                INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
-                VALUES (?, ?, ?)
-            `);
+        // Only the logos that are not cached yet are written. Re-running
+        // `INSERT OR IGNORE` for every logo meant a six-figure statement count
+        // and a multi-second write transaction on every sync, even when nothing
+        // had changed.
+        const cachedUrls = new Set(
+            db.prepare('SELECT logo_url FROM provider_icon_cache WHERE provider_id = ?')
+              .all(providerId)
+              .map(row => row.logo_url)
+        );
 
-            for (const ch of channels) {
-                if (ch.logo) {
-                    const hash = getLogoCacheHash(ch.logo);
-                    insertStmt.run(providerId, ch.logo, hash);
+        const allHashes = new Set();
+        const liveUrls = new Set();
+        const pending = [];
+        for (const ch of channels) {
+            if (!ch.logo) continue;
+            liveUrls.add(ch.logo);
+            allHashes.add(getLogoCacheHash(ch.logo));
+            if (cachedUrls.has(ch.logo)) continue;
+            cachedUrls.add(ch.logo);
+            pending.push(ch.logo);
+        }
+
+        // Cache rows are only ever removed with the whole provider, so a catalog
+        // that churns — VOD titles rotate constantly — leaves the table holding
+        // every logo the provider ever had, and the read above then grows with
+        // the provider's history instead of its current catalog. Entries are
+        // looked up by exact logo_url, so a URL the catalog no longer carries is
+        // unreachable and safe to drop.
+        //
+        // Which rows are stale is already known here, from two sets that are
+        // in memory anyway. Asking SQLite instead — `NOT IN (SELECT logo …)` —
+        // ran inside the write transaction, which is the one thing this branch
+        // exists to stop doing. It took 807ms on the affected deployment's own
+        // data; a rebuilt copy of the same shape plans it as a bloom-filtered
+        // list subquery and is much faster, so treat the number as that
+        // database's, not the query's. The point is where the scan happens, not
+        // how long it takes.
+        const stale = [];
+        for (const url of cachedUrls) if (!liveUrls.has(url)) stale.push(url);
+
+        let count = 0;
+        let pruned = 0;
+        if (pending.length > 0) {
+            immediateTransaction(db, () => {
+                const insertStmt = db.prepare(`
+                    INSERT OR IGNORE INTO provider_icon_cache (provider_id, logo_url, cache_hash)
+                    VALUES (?, ?, ?)
+                `);
+                for (const logo of pending) {
+                    insertStmt.run(providerId, logo, getLogoCacheHash(logo));
                     count++;
                 }
+            })();
+        }
+
+        // In batches, each its own short transaction. The first run after this
+        // shipped has a backlog to clear — 94,972 rows for the worst provider
+        // measured — and holding the write lock for all of it at once would be
+        // the very stall being removed elsewhere.
+        //
+        // Splitting one transaction into 238 also splits one chance of losing
+        // the write lock into 238. Letting that escape to the catch below threw
+        // away every remaining batch, the memory cache update and the summary
+        // line, leaving the operator a bare "database is locked" — strictly
+        // worse than the single transaction it replaced. So: the prune is
+        // housekeeping over rows nothing can reach any more, and whatever is
+        // not removed now is offered again on the next sync. A held write lock
+        // ends this pass rather than the call. Not retried in place: another
+        // worker holding the lock will still hold it for the next batch, and
+        // better-sqlite3 has already blocked for the full busy_timeout by the
+        // time this throws.
+        //
+        // At most two statements exist — the full batch and the remainder —
+        // and compiling a 400-parameter IN clause per batch was 238 compiles.
+        // At most two of each — the full batch and the remainder. Compiling a
+        // 400-parameter IN clause per batch was 238 compiles, and
+        // db.transaction() compiles its own BEGIN/COMMIT/ROLLBACK every call.
+        const pruners = new Map();
+        const prunerFor = size => {
+            if (!pruners.has(size)) {
+                const deleteStmt = db.prepare(`
+                    DELETE FROM provider_icon_cache
+                    WHERE provider_id = ? AND logo_url IN (${new Array(size).fill('?').join(',')})
+                `);
+                // better-sqlite3 forwards a transaction's arguments to its body,
+                // so the batch goes in as an argument rather than through a
+                // variable the closure has to see reassigned.
+                pruners.set(size, immediateTransaction(db, rows => deleteStmt.run(providerId, ...rows).changes));
             }
-        })();
+            return pruners.get(size);
+        };
 
-        // Update memory cache
-        providerIconMemoryCache.set(providerId, new Set(
-            channels.filter(ch => ch.logo).map(ch => getLogoCacheHash(ch.logo))
-        ));
+        let pruneStoppedBy = null;
+        for (let from = 0; from < stale.length; from += ICON_CACHE_PRUNE_BATCH) {
+            const batch = stale.slice(from, from + ICON_CACHE_PRUNE_BATCH);
+            try {
+                pruned += prunerFor(batch.length)(batch);
+            } catch (e) {
+                if (!isRetryableSqliteError(e)) throw e;
+                pruneStoppedBy = e;
+                break;
+            }
+        }
 
-        if (count > 0) {
-            console.log(`✅ Pre-populated ${count} icon cache entries for provider ${providerId}`);
+        // Describes the live catalog, which the prune above does not affect, so
+        // it is set whether or not the prune finished.
+        providerIconMemoryCache.set(providerId, allHashes);
+
+        if (count > 0 || pruned > 0) {
+            console.log(`✅ Icon cache for provider ${providerId}: ${count} added, ${pruned} stale entries removed`);
+        }
+        if (pruneStoppedBy) {
+            console.warn(`⚠️ Icon cache prune for provider ${providerId} stopped at ${pruned}/${stale.length} `
+                + `stale entries: ${formatDbError(pruneStoppedBy)}; the rest is retried on the next sync`);
         }
     } catch (e) {
         console.error('Failed to pre-populate provider icon cache:', e.message);

@@ -18,7 +18,8 @@ vi.mock('../src/config/constants.js', () => ({
   AUTH_CACHE_MAX_SIZE: 100
 }));
 
-vi.mock('../src/utils/network.js', () => ({
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
   fetchSafe: vi.fn(async () => ({ ok: false }))
 }));
 

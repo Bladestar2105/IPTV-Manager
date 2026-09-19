@@ -6,9 +6,11 @@ import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { resolveBudget } from '../utils/env.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
+
 import { formatXtreamTimeshiftStart, getEffectiveTimeshiftTimezone, isSupportedEpoch } from '../utils/timezone.js';
 
 import {
@@ -24,6 +26,18 @@ import {
   shareGuestAllowed
 } from './streamControllerHelpers.js';
 import { proxyMovie, proxySeries } from './streamMediaController.js';
+
+// A manifest is a finite document. fetchSafe bounds only the wait for the
+// headers, so an upstream that answers and then stalls would otherwise hold the
+// request and its stream session open indefinitely.
+const MANIFEST_BODY_TIMEOUT_MS = resolveBudget(
+  process.env.MANIFEST_BODY_TIMEOUT_MS, 30000, 1000, Number.MAX_SAFE_INTEGER, 'MANIFEST_BODY_TIMEOUT_MS');
+const MANIFEST_MAX_BYTES = resolveBudget(
+  process.env.MANIFEST_MAX_BYTES, 32 * 1024 * 1024, 64 * 1024, Number.MAX_SAFE_INTEGER, 'MANIFEST_MAX_BYTES');
+const readManifest = response => readBodyWithLimit(response, {
+  timeoutMs: MANIFEST_BODY_TIMEOUT_MS,
+  maxBytes: MANIFEST_MAX_BYTES,
+});
 
 export { proxyMovie, proxySeries };
 export * from './streamControllerHelpers.js';
@@ -103,7 +117,7 @@ export const proxyMpd = async (req, res) => {
     }
 
     if (relativePath.endsWith('.mpd')) {
-        const text = await upstream.text();
+        const text = await readManifest(upstream);
         const baseUrl = `${getBaseUrl(req)}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
         let newText = text.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
         res.setHeader('Content-Type', 'application/dash+xml');
@@ -265,7 +279,7 @@ export const proxyLive = async (req, res) => {
     const cookies = upstream.headers.get('set-cookie');
 
     if (reqExt === 'm3u8') {
-      const text = await upstream.text();
+      const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
@@ -451,7 +465,7 @@ export const proxySegment = async (req, res) => {
     }
 
     if (!upstream.ok) {
-       console.error(`⚠️ Segment upstream error: ${upstream.status} for ${targetUrl}`);
+       console.error(`⚠️ Segment upstream error: ${upstream.status} for ${redactUrl(targetUrl)}`);
        return res.sendStatus(upstream.status);
     }
 
@@ -597,7 +611,7 @@ export const proxyTimeshift = async (req, res) => {
     }
 
     if (reqExt === 'm3u8') {
-      const text = await upstream.text();
+      const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 

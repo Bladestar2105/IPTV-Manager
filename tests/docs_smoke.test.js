@@ -57,6 +57,7 @@ describe('documentation smoke checks', () => {
       'REDIS_URL',
       'STREAM_MAX_AGE_MS',
       'STREAM_INACTIVITY_TIMEOUT_MS',
+      'CLUSTER_WORKERS',
       'IS_SCHEDULER',
       'MAXMIND_LICENSE_KEY',
     ].forEach((envVar) => {

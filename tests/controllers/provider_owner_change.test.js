@@ -23,7 +23,8 @@ vi.mock('../../src/utils/crypto.js', () => ({
   decrypt: vi.fn((value) => String(value || '').replace(/^enc:/, '')),
 }));
 
-vi.mock('../../src/utils/network.js', () => ({ fetchSafe: vi.fn() }));
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()), fetchSafe: vi.fn() }));
 vi.mock('../../src/services/syncService.js', () => ({
   performSync: vi.fn(),
   checkProviderExpiry: vi.fn().mockResolvedValue(undefined),

@@ -55,8 +55,13 @@ describe('performSync Optimization', () => {
       if (sqlStr.includes('SELECT * FROM SYNC_CONFIGS')) {
         return { get: () => ({ id: 1, sync_interval: 'daily', auto_add_channels: 1, auto_add_categories: 1 }) };
       }
-      if (sqlStr.includes('SELECT * FROM PROVIDERS')) {
-        return { get: () => ({ id: 1, name: 'Test', url: 'http://test.com/m3u', username: '', password: '' }) };
+      if (sqlStr.includes('FROM PROVIDERS')) {
+        // Covers both the initial load and the re-validation performSync does
+        // after the catalog fetch (provider may have been deleted meanwhile).
+        return { get: () => ({ id: 1, name: 'Test', url: 'http://test.com/m3u', username: '', password: '', user_id: 1 }) };
+      }
+      if (sqlStr.includes('FROM USERS WHERE ID')) {
+        return { get: () => ({ ok: 1 }) };
       }
       if (sqlStr.includes('FROM CATEGORY_MAPPINGS CM')) {
         return { all: () => [] };

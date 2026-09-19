@@ -3,6 +3,14 @@
 This file documents runtime configuration used by the server, Docker image, and
 tests. Keep it in sync when environment variables or startup behavior changes.
 
+Every numeric setting in this document takes a **plain integer, with no unit
+suffix**. `30s`, `10m` and `512MB` are refused outright and the default is used
+— not read as 30, 10 and 512, which is what `parseInt` would do and which would
+silently turn a five minute budget into one second. A value that is a clean
+integer is honoured and only clamped when it falls outside the supported range.
+Every refusal and every clamp is logged, naming the variable: an operator should
+never have to infer a typo from the symptom.
+
 ## Core Runtime
 
 - `PORT`: HTTP port. Defaults to `3000`.
@@ -11,13 +19,50 @@ tests. Keep it in sync when environment variables or startup behavior changes.
 - `DATA_DIR`: Directory for runtime databases, secrets, uploads, and cache.
   Defaults to the repository root in local runs. Docker sets `DATA_DIR=/data`.
 - `JWT_EXPIRES_IN`: Admin JWT lifetime. Defaults to `30d`.
-- `BCRYPT_ROUNDS`: Bcrypt cost factor. Defaults to `10`.
+- `BCRYPT_ROUNDS`: Bcrypt cost factor. Defaults to `10`, minimum `4`, maximum
+  `31` — bcrypt's own bounds, which it otherwise applies silently. A value
+  below the default is honoured and weakens every password hash, so set it
+  only deliberately; anything that is not a plain integer is refused and
+  logged, because a typo here is invisible in the resulting hashes.
 - `JWT_SECRET`: Optional static JWT secret. If omitted, `jwt.secret` is created
   under `DATA_DIR`.
 - `ENCRYPTION_KEY`: Optional static encryption key. If omitted, `secret.key` is
   created under `DATA_DIR`.
 - `INITIAL_ADMIN_PASSWORD`: Optional first admin password. If omitted, a random
-  password is generated and printed on first startup.
+  password is generated and printed on first startup — it exists nowhere else,
+  so it has to be. A password supplied here is *not* printed: the operator
+  already has it, and echoing it would copy a deliberately chosen secret into
+  the container log for as long as that log is kept.
+
+## SQLite
+
+Every SQLite connection in the process is opened through
+`src/database/sqliteConnection.js` so the lock behavior is identical in the
+request path, the schedulers, and the EPG import. Both databases run in WAL
+mode.
+
+- `SQLITE_BUSY_TIMEOUT_MS`: How long a statement waits for a lock held by
+  another connection or worker. Defaults to `30000`, clamped to
+  `1000`–`300000`. It must stay above the longest write transaction the
+  application performs; a provider sync or a provider deletion can hold the
+  write lock for tens of seconds. Too low a value turns ordinary contention
+  into `database is locked`.
+- `SQLITE_LATENCY_BUSY_TIMEOUT_MS`: Lock wait for connections on latency
+  critical paths, currently the stream activity heartbeat. Defaults to `250`
+  and is never longer than `SQLITE_BUSY_TIMEOUT_MS`. better-sqlite3 is
+  synchronous and its busy handler sleeps on the main thread, so a long wait
+  blocks the whole worker — including every stream it is pumping. Losing one
+  activity update is cheaper than stalling playback.
+- `SQLITE_WAL_SIZE_LIMIT_BYTES`: Upper bound for a `-wal` file after a
+  checkpoint. Defaults to `67108864` (64 MB), minimum `1048576`. Without the
+  limit a checkpointed WAL is reused in place and never shrinks again.
+- `SQLITE_CHECKPOINT_INTERVAL_MS`: How often the primary process runs a passive
+  WAL checkpoint on both databases. It runs in the primary because a checkpoint
+  is synchronous and can copy a large WAL; the primary serves no traffic. Defaults to `300000` (5 minutes), minimum
+  `30000`. SQLite only auto-checkpoints at the end of a write transaction and a
+  checkpoint cannot reclaim frames an active reader still needs, so without this
+  the WAL of a busy instance can grow past the size of the database itself. The
+  checkpoint is `PASSIVE` and therefore never waits for a reader.
 
 ## Per-User Provider Access
 
@@ -157,6 +202,36 @@ until this is exercised on a real Proxmox host.
   per IP within `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`. Defaults to `120`.
 - `CLIENT_LOG_RATE_LIMIT_WINDOW_MS`: Client log rate limit window in
   milliseconds. Defaults to `3600000` (1 hour).
+- `HTTP_MAX_REQUEST_MS`: Upper bound for the wait for response headers of one
+  outgoing request through the SSRF-safe fetch path, across the whole redirect
+  chain. Defaults to `600000` (10 minutes), minimum `1000`. The per-call
+  `timeout` bounds each single hop, but never beyond what is left of this
+  budget — so setting this low shortens every hop too.
+  The **body is not bounded here**. Most bodies this path returns are media
+  proxied to a player, and a healthy live session legitimately outlives any
+  fixed duration — bounding them by default means one missed call site cuts a
+  viewer's stream. Callers that buffer a finite document (provider catalogs,
+  series info, EPG metadata, proxied images) bound the read themselves with
+  `readBodyWithLimit()`, which owns both the time and the size cap.
+- `CATALOG_BODY_TIMEOUT_MS`: Budget for reading one provider catalog document
+  (live/VOD/series lists and their categories). Defaults to `300000`
+  (5 minutes), minimum `1000`; a large VOD catalog is hundreds of megabytes.
+- `CATALOG_BODY_MAX_BYTES`: Size cap for the same read. Defaults to
+  `536870912` (512 MB), minimum `1048576`, far above a real catalog: buffering,
+  decoding and parsing one costs several times its wire size in heap at the same
+  moment, so a body that never ends has to be refused on size as well as on
+  time.
+- `MANIFEST_BODY_TIMEOUT_MS` / `MANIFEST_MAX_BYTES`: Budget and size cap for
+  reading an MPD or M3U8 manifest in the stream proxy. Default `30000` and
+  `33554432`, minimum `1000` and `65536`. Without them an upstream that sends
+  manifest headers and then stalls holds the request and its stream session open
+  indefinitely.
+
+- `EPG_IMPORT_BODY_TIMEOUT_MS`: Total budget for receiving and parsing one EPG
+  feed. Defaults to `1800000` (30 minutes), minimum `1000`. The EPG body is streamed into the
+  parser rather than buffered, so it needs its own deadline; without one an
+  import has no upper bound and no age can tell a live one from an abandoned
+  one.
 
 ## Stream Tracking
 
@@ -164,14 +239,53 @@ until this is exercised on a real Proxmox host.
   workers or instances. When Redis is unavailable or not configured, the
   SQLite `current_streams` table is used instead.
 - `STREAM_MAX_AGE_MS`: Hard safety cap for stale stream sessions. Defaults to
-  `86400000` (24 hours).
+  `86400000` (24 hours), minimum `1000`.
 - `STREAM_INACTIVITY_TIMEOUT_MS`: Inactivity timeout for stream sessions.
-  Defaults to `120000` (2 minutes).
+  Defaults to `120000` (2 minutes), minimum `1000`. `0` switches the inactivity
+  sweep off entirely — the age cap above still applies — which is the setting
+  for sessions that are meant to run for hours without a heartbeat.
+- `STREAM_TOUCH_MIN_INTERVAL_MS`: Smallest gap between two activity updates of
+  the same session. Defaults to a quarter of `STREAM_INACTIVITY_TIMEOUT_MS`,
+  minimum `1000`, and is clamped to at most half of the timeout, so a session
+  can never time out because its refresh was throttled. Without this, every
+  ffmpeg progress event became an `UPDATE current_streams`, which collided with
+  long write transactions. With the timeout set to `0` there is nothing to stay
+  under, so the default is a quarter of `120000` rather than the `1000` floor —
+  switching the reaper off must not switch the flood back on.
 
 ## Scheduled Jobs and GeoIP
 
+- `CLUSTER_WORKERS`: How many worker processes the primary forks. Defaults to
+  `os.availableParallelism()`, minimum `1`, maximum `64`. Every worker opens its
+  own SQLite connections and competes for the single write lock, so this is the
+  most direct control over write contention. It matters most in a container:
+  neither `availableParallelism()` nor `os.cpus()` reads a cgroup CPU quota, so
+  an image limited to a fraction of a large host still forks one worker per host
+  core, multiplying lock contention without adding throughput.
 - `IS_SCHEDULER`: Internal cluster flag used by the primary process when
   starting the scheduler worker.
+- `SYNC_MAX_CONCURRENT`: How many scheduled provider syncs may run at the same
+  time. Defaults to `2`, minimum `1`. Configs above the limit keep their
+  `next_sync` and are picked up by a later tick, longest overdue first, so no
+  provider can be starved by the order of the table. Without the cap every due
+  config started at once, and `next_sync` values cluster — after a restart, or
+  when a shared upstream failed them together — so several hundred-megabyte
+  catalogs were decoded and parsed concurrently in one container.
+
+  The scheduler starts at most this many per 60-second tick, so the sustainable
+  throughput is `SYNC_MAX_CONCURRENT` syncs per `max(sync duration, 60s)`. If
+  that is below what the configured intervals demand, the backlog grows and the
+  scheduler says so — `⏳ N due provider sync(s) waiting` — at most once every
+  15 minutes. Raise the cap, or lengthen the intervals.
+The retention sweep — client and security logs, expired blocks and shares, EPG
+programmes past the 7-day window — runs in the scheduler worker 60 seconds after
+it starts and hourly after that. The first run matters: with an hourly timer and
+nothing at startup, an instance whose scheduler worker was restarted more often
+than once an hour never swept at all. The two log tables are deleted in batches,
+because a sweep after a long gap removes whatever accumulated in it, and
+better-sqlite3 blocks that worker's event loop for as long as it holds the write
+lock.
+
 - `MAXMIND_LICENSE_KEY`: Optional MaxMind license key for GeoLite2 updates.
   The Web UI security settings can also provide this value. Startup checks
   MaxMind checksum files first and skips the heavy `geoip-lite` updater when
@@ -179,10 +293,56 @@ until this is exercised on a real Proxmox host.
 
 ## EPG Downloads
 
+- `EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES`: How many consecutive *upstream*
+  failures stop an episode sync for one provider account. Defaults to `25`,
+  minimum `5`. A panel that stops answering `get_series_info` does not recover
+  within one run, and a queue can hold tens of thousands of series. The count is
+  per account, not per panel: several provider rows commonly share one panel,
+  and an account whose subscription lapsed fails every request while the panel
+  itself is healthy. Its series are skipped for the rest of the run and the
+  other accounts continue. A local write failure never counts — it says the
+  database is the problem, not the panel.
+- `EPISODE_SYNC_GIVE_UP_COOLDOWN_SECONDS`: How long a panel stays off limits
+  after a run gave up on it — that is, after *every* provider account on that
+  panel hit the limit above. **In seconds**, unlike its neighbours here.
+  Defaults to `1800` (30 minutes), minimum `60`, maximum `21600` (6 hours): the
+  cooldown is a lease nobody renews, it survives restarts and can only be waited
+  out, so a value entered in milliseconds by habit must not cost weeks of
+  episode syncs.
+  Without the cooldown each provider row takes the freed lock in turn and spends
+  its own full failure budget against the same dead host.
+- `EPG_STAGE_SWEEP_INTERVAL_MS`: How often the primary looks for the leftovers
+  of a killed EPG import — staging tables and an `epg_sources.is_updating` flag
+  nothing will clear. Defaults to `3600000` (1 hour), minimum `60000`. Imports
+  run in a worker and the stale threshold below is hours, so a worker killed
+  mid-import is restarted long before the next cold start could reclaim
+  anything; sweeping only at startup meant, in practice, never.
+- `EPG_STAGE_STALE_MS`: Age after which a leftover EPG staging table counts as
+  abandoned, and after which the `is_updating` flag of a source with no fresher
+  table is cleared. Both are done at startup and by the periodic sweep above. Defaults to `21600000` (6 hours). The
+  effective value is never below four times `EPG_IMPORT_BODY_TIMEOUT_MS`,
+  because that is how long a live import of another process may legitimately
+  run, and the sweep must not classify it as stale during an overlapping
+  restart.
+
 EPG imports still validate URLs with the SSRF-safe fetch path, including
 redirect re-checks and DNS rebinding protection. HTTPS EPG sources may use
 self-signed certificates; this exception is scoped to EPG downloads and does
 not disable TLS certificate validation globally or for stream proxy requests.
+
+## Logging
+
+Every line carries the emitting process id (`[<timestamp>] [w<pid>] ...`). The
+cluster interleaves the output of one primary and one worker per CPU in a single
+stream, so without it two adjacent lines cannot be attributed to a run or to two
+workers competing for the same lock. SQLite failures additionally carry the
+error code (`database is locked [SQLITE_BUSY]`), because the same message is
+produced by a writer that waited out its busy timeout and by a deferred
+transaction whose read snapshot went stale.
+
+The Compose file configures `json-file` log rotation (`max-size: 20m`,
+`max-file: 5`). Without it Docker keeps one unbounded file, and a past incident
+can no longer be reconstructed once it has been truncated or lost.
 
 ## Docker Notes
 

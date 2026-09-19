@@ -16,7 +16,8 @@ vi.mock('../src/database/db.js', () => ({
     default: mockDb
 }));
 
-vi.mock('../src/utils/helpers.js', () => ({
+vi.mock('../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
     getBaseUrl: vi.fn(() => 'http://localhost:3000'),
     isUnsafeIP: vi.fn(() => false),
     isSafeUrl: vi.fn(async () => true),

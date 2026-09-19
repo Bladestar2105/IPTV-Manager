@@ -1,5 +1,6 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { isAdultCategory } from '../utils/helpers.js';
 import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 import { retargetCategoryMapping } from '../services/categoryMappingService.js';
@@ -106,7 +107,7 @@ export const bulkDeleteUserCategories = (req, res) => {
     const categoryIds = parseUniquePositiveIds(ids);
     if (!categoryIds) return res.status(400).json({error: 'Invalid ids'});
     const placeholders = Array(categoryIds.length).fill('?').join(',');
-    const result = db.transaction(() => {
+    const result = immediateTransaction(db, () => {
       const categories = db.prepare(`SELECT id, user_id FROM user_categories WHERE id IN (${placeholders})`).all(...categoryIds);
       if (categories.length !== categoryIds.length) throw bulkOperationError(400, 'Category not found');
       if (!req.user.is_admin && categories.some(category => category.user_id !== req.user.id)) {
@@ -143,7 +144,7 @@ export const reorderUserCategories = (req, res) => {
 
     const update = db.prepare('UPDATE user_categories SET sort_order = ? WHERE id = ? AND user_id = ?');
 
-    const reordered = db.transaction(() => {
+    const reordered = immediateTransaction(db, () => {
       if (categoryIds.length === 0) return true;
       const placeholders = Array(categoryIds.length).fill('?').join(',');
       const matched = db.prepare(`
@@ -279,7 +280,7 @@ export const reorderUserChannels = (req, res) => {
 
     const update = db.prepare('UPDATE user_channels SET sort_order = ? WHERE id = ? AND user_category_id = ?');
 
-    const reordered = db.transaction(() => {
+    const reordered = immediateTransaction(db, () => {
       if (channelIds.length === 0) return true;
       const placeholders = Array(channelIds.length).fill('?').join(',');
       const matched = db.prepare(`
@@ -339,7 +340,7 @@ export const bulkDeleteUserChannels = (req, res) => {
     const channelIds = parseUniquePositiveIds(ids);
     if (!channelIds) return res.status(400).json({error: 'Invalid ids'});
     const placeholders = Array(channelIds.length).fill('?').join(',');
-    const result = db.transaction(() => {
+    const result = immediateTransaction(db, () => {
       const channels = db.prepare(`
           SELECT uc.id, uc.is_hidden, cat.user_id
           FROM user_channels uc
@@ -410,7 +411,7 @@ export const updateCategoryMapping = (req, res) => {
       return res.status(400).json({error: 'Invalid user_category_id'});
     }
 
-    const result = db.transaction(() => retargetCategoryMapping(db, mapping, targetId))();
+    const result = immediateTransaction(db, () => retargetCategoryMapping(db, mapping, targetId))();
 
     if (!result) return res.status(400).json({error: 'Invalid user_category_id'});
 

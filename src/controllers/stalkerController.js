@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateUserTokens } from '../services/authService.js';
 import { isIpAllowedForUser } from '../services/geoIpService.js';
 import { getCookie } from '../utils/helpers.js';
@@ -69,7 +70,7 @@ function createSession(req, params, res) {
   const serialNumber = String(value(params, 'sn') || device.serial_number || '').trim().slice(0, 100) || null;
   const deviceUid = String(value(params, 'device_id') || value(params, 'device_id2') || device.device_uid || '').trim().slice(0, 100) || null;
 
-  db.transaction(() => {
+  immediateTransaction(db, () => {
     db.prepare('DELETE FROM stalker_sessions WHERE device_id = ? OR expires_at <= ?').run(device.id, now);
     db.prepare(`
       INSERT INTO stalker_sessions (token, device_id, user_id, created_at, expires_at, last_seen)
@@ -116,7 +117,7 @@ function getSession(req, params) {
     Number(session.device_last_seen) || 0
   );
   if (now - oldestActivity >= ACTIVITY_UPDATE_INTERVAL_SECONDS) {
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       db.prepare('UPDATE stalker_sessions SET last_seen = ? WHERE token = ?').run(now, token);
       db.prepare('UPDATE stalker_devices SET last_ip = ?, last_seen = ? WHERE id = ?').run(req.ip || null, now, session.device_id);
     })();

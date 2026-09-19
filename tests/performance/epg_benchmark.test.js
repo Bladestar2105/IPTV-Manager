@@ -14,7 +14,8 @@ vi.mock('../../src/config/constants.js', async () => {
 });
 
 // Mock network
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
   fetchSafe: vi.fn(),
   httpAgent: {},
   httpsAgent: {}
@@ -26,10 +27,13 @@ vi.mock('better-sqlite3', () => {
     default: class Database {
       constructor() {
         this.pragma = vi.fn();
+        // The EPG import creates per-source staging tables before parsing.
+        this.exec = vi.fn();
         this.prepare = vi.fn().mockReturnValue({
-          run: vi.fn(),
+          run: vi.fn().mockReturnValue({ changes: 0 }),
           all: vi.fn().mockReturnValue([]),
-          get: vi.fn(),
+          // COUNT probes and the database-issued promotion sequence.
+          get: vi.fn().mockReturnValue({ c: 0, claimed_seq: 1 }),
           iterate: vi.fn().mockReturnValue([]),
         });
         this.transaction = vi.fn().mockImplementation((fn) => fn);

@@ -52,7 +52,8 @@ vi.mock('../src/services/logoResolver.js', () => ({
 }));
 
 const { fetchSafeMock } = vi.hoisted(() => ({ fetchSafeMock: vi.fn() }));
-vi.mock('../src/utils/network.js', () => ({
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
     fetchSafe: fetchSafeMock
 }));
 
@@ -277,6 +278,57 @@ describe('Series episode sync', () => {
         SELECT title FROM provider_series_episodes
         WHERE source_key = ? AND series_remote_id = 555 AND remote_episode_id = 100
       `).get(SOURCE)).toEqual({ title: 'Account A Title' });
+    });
+
+    it('fetches a series only a sibling account carries, using that sibling credentials', async () => {
+      // Whichever provider finishes its catalog sync first wins the source lock,
+      // and that is the same one every cycle. A queue filtered to the triggering
+      // provider therefore leaves a sibling-only series unfetched indefinitely,
+      // with no error anywhere because the sibling run reports `skipped`.
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'A Show', 'series', '{"last_modified":"1000"}'),
+               (2, 777, 'B Only Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({ '1': [{ id: 100, episode_num: 1, season: 1 }] }));
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(2);
+      const requested = fetchSafeMock.mock.calls.map(([url]) => url);
+      // Each series is fetched with the credentials of a provider that carries
+      // it: another account's login is not entitled to its packages.
+      expect(requested.some(u => u.includes('series_id=555') && u.includes('username=userA'))).toBe(true);
+      expect(requested.some(u => u.includes('series_id=777') && u.includes('username=userB'))).toBe(true);
+      expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_state').get().c).toBe(2);
+    });
+
+    it('still fetches a series a sibling carries via Xtream when this row came from M3U', async () => {
+      // The M3U row has no Xtream API behind it, but the sibling's does, and
+      // episodes are stored per source. Letting the M3U row claim the id would
+      // skip the series for the whole run — and skip it again every cycle the
+      // same provider wins the lock, which is the starvation the union queue
+      // exists to remove.
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 555, 'A M3U Show', 'series', '{"original_url":"http://cdn.example/a.m3u8"}'),
+               (2, 555, 'B Xtream Show', 'series', '{"last_modified":"1000"}')`).run();
+      fetchSafeMock.mockResolvedValue(seriesInfoResponse({ '1': [{ id: 100, episode_num: 1, season: 1 }] }));
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(1);
+      // Fetched with the credentials of the account that actually carries it.
+      expect(fetchSafeMock.mock.calls[0][0]).toContain('username=userB');
+      expect(memDb.prepare('SELECT COUNT(*) as c FROM provider_series_episodes').get().c).toBe(1);
+    });
+
+    it('never queues a series that only exists as an M3U entry', async () => {
+      // get_series_info would fail on every sync for a row with no Xtream API.
+      memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
+        VALUES (1, 556, 'M3U Only', 'series', '{"original_url":"http://cdn.example/a.m3u8"}')`).run();
+
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result.synced).toBe(0);
+      expect(fetchSafeMock).not.toHaveBeenCalled();
     });
 
     it('keeps reused remote episode IDs separate across series', async () => {

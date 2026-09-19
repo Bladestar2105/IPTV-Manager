@@ -1152,11 +1152,19 @@ async function loadProviders(filterUserId = null) {
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({user_id: selectedUserId})
             });
-            showToast(t('syncSuccess', {
+            const summary = t('syncSuccess', {
               added: res.channels_added,
               updated: res.channels_updated,
               categories: res.categories_added
-            }), 'success');
+            });
+            // A partial run delivered some sections and failed others. Reporting
+            // it as a plain success is the false-success report this endpoint's
+            // new status field exists to end, so show the warning it carries.
+            if (res.status === 'partial' && res.warning) {
+              showToast(`${summary} — ${res.warning}`, 'warning');
+            } else {
+              showToast(summary, 'success');
+            }
           } catch (e) {
             showToast(e.message, 'danger');
           } finally {
@@ -2608,15 +2616,19 @@ async function showSyncLogs(providerId) {
       logs.forEach(log => {
         const tr = document.createElement('tr');
         const date = new Date(log.sync_time * 1000);
-        const statusClass = log.status === 'success' ? 'success' : 'danger';
+        const statusClass = log.status === 'success' ? 'success' : (log.status === 'partial' ? 'warning' : 'danger');
+        // Same reason as the toast: the amber badge needs dark text to be legible.
+        const statusText = statusClass === 'warning' ? ' text-dark' : '';
         
+        // error_message can carry text an upstream provider produced, so every
+        // interpolated field is escaped before it becomes markup.
         tr.innerHTML = `
-          <td>${date.toLocaleString()}</td>
-          <td><span class="badge bg-${statusClass}">${log.status}</span></td>
-          <td>${log.channels_added || 0}</td>
-          <td>${log.channels_updated || 0}</td>
-          <td>${log.categories_added || 0}</td>
-          <td>${log.error_message || '-'}</td>
+          <td>${escapeHtml(date.toLocaleString())}</td>
+          <td><span class="badge bg-${statusClass}${statusText}">${escapeHtml(log.status)}</span></td>
+          <td>${Number(log.channels_added) || 0}</td>
+          <td>${Number(log.channels_updated) || 0}</td>
+          <td>${Number(log.categories_added) || 0}</td>
+          <td>${escapeHtml(log.error_message || '-')}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -4603,7 +4615,7 @@ async function loadEpgSuggestions(channelId) {
         <div class="d-flex justify-content-between align-items-center">
           <div>
             <strong>${safeName}</strong> ${safeSource}
-            <span class="badge ${confidence > 80 ? 'bg-success' : 'bg-warning'} ms-2">${t('confidence') || 'Confidence'}: ${confidence}%</span>
+            <span class="badge ${confidence > 80 ? 'bg-success' : 'bg-warning text-dark'} ms-2">${t('confidence') || 'Confidence'}: ${confidence}%</span>
             <br>
             <small class="text-muted">${safeId}</small>
           </div>
@@ -5164,7 +5176,10 @@ function showToast(message, type = 'primary') {
     const icon = icons[type] || '';
 
     const el = document.createElement('div');
-    el.className = `toast align-items-center text-white bg-${type} border-0 shadow-lg`;
+    // bg-warning is amber: white on it is about 1.6:1, far below the 4.5:1 floor.
+    // Every other background here is dark enough for white.
+    const textClass = type === 'warning' ? 'text-dark' : 'text-white';
+    el.className = `toast align-items-center ${textClass} bg-${type} border-0 shadow-lg`;
     el.setAttribute('role', 'alert');
     el.setAttribute('aria-live', 'assertive');
     el.setAttribute('aria-atomic', 'true');
@@ -5175,7 +5190,7 @@ function showToast(message, type = 'primary') {
                 ${icon ? `<span class="fs-5">${icon}</span>` : ''}
                 <div>${escapeHtml(message)}</div>
             </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="${escapeHtml(t('close') || 'Close')}" title="${escapeHtml(t('close') || 'Close')}"></button>
+            <button type="button" class="btn-close ${type === 'warning' ? '' : 'btn-close-white'} me-2 m-auto" data-bs-dismiss="toast" aria-label="${escapeHtml(t('close') || 'Close')}" title="${escapeHtml(t('close') || 'Close')}"></button>
         </div>
     `;
 

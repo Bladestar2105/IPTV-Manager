@@ -1,4 +1,5 @@
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { clearSettingsCache } from '../utils/helpers.js';
 import {
   createClientLog,
@@ -69,7 +70,7 @@ export const updateSettings = (req, res) => {
     if (!req.user?.is_admin) return res.status(403).json({error: 'Access denied'});
     const settings = req.body;
     const insert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       for (const [key, value] of Object.entries(settings)) {
         insert.run(key, String(value));
       }

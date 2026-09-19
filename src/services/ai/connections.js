@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
 import { encrypt } from '../../utils/crypto.js';
+import { resolveBudget } from '../../utils/env.js';
 import { aiError, normalizeBaseUrl, validateJson, AI_TIMEOUT_MS } from './transport.js';
 import { adapterFor, providerOf, normalizeProvider, providerTimeout, DEFAULT_PROVIDER, MODEL_ID } from './providers/index.js';
 import { readCredentialRecord } from './codex/credentials.js';
@@ -16,9 +17,8 @@ const TEST_SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } }, r
 // nothing is waiting for any more.
 const DEFAULT_MODEL_TEST_BATCH_MS=300000;
 function modelTestBatchMs() {
-    const configured=Number(process.env.AI_MODEL_TEST_BATCH_MS);
-    if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_MODEL_TEST_BATCH_MS;
-    return Math.min(900000,Math.max(1000,Math.trunc(configured)));
+    return resolveBudget(process.env.AI_MODEL_TEST_BATCH_MS, DEFAULT_MODEL_TEST_BATCH_MS,
+        1000, 900000, 'AI_MODEL_TEST_BATCH_MS');
 }
 const MAX_MODEL_PROFILES = 100;
 const ownerKey = actor => `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;

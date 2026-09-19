@@ -8,10 +8,13 @@ import { createClient } from 'redis';
 import dotenv from 'dotenv';
 
 import app from './app.js';
-import db, { initDb } from './database/db.js';
-import { initEpgDb } from './database/epgDb.js';
+import db, { initDb, openLatencyDbConnection } from './database/db.js';
+import epgDb, { initEpgDb } from './database/epgDb.js';
+import { dropOrphanedStagingTables, resetAbandonedEpgImports, startEpgStageMaintenance } from './services/epgImportService.js';
 import streamManager from './services/streamManager.js';
 import { startSyncScheduler, startEpgScheduler, startCleanupScheduler, startGeoIpUpdater } from './services/schedulerService.js';
+import { startWalMaintenance } from './services/walMaintenanceService.js';
+import { resolveBudget } from './utils/env.js';
 import { startSSDP } from './services/ssdpService.js';
 import { createDefaultAdmin } from './services/authService.js';
 import { PORT } from './config/constants.js';
@@ -51,10 +54,35 @@ let redisClient = null;
     // Init DB and Run Migrations
     initDb(true);
     initEpgDb();
+
+    // Staging tables an abandoned EPG import left behind. Having no workers here
+    // does not mean no import is running: during an overlapping restart another
+    // process may share DATA_DIR. Only tables older than EPG_STAGE_STALE_MS are
+    // dropped, so a live import is never touched.
+    const orphanedStages = dropOrphanedStagingTables(epgDb);
+    if (orphanedStages > 0) console.info(`🧹 Removed ${orphanedStages} orphaned EPG staging table(s)`);
+
+    // The same crash strands epg_sources.is_updating at 1, and the scheduler
+    // selects on `is_updating = 0` — so without this the source silently drops
+    // out of every update path for good.
+    const revivedSources = resetAbandonedEpgImports(epgDb);
+    if (revivedSources > 0) console.info(`🧹 Re-enabled ${revivedSources} EPG source(s) whose import had died`);
+
+    // The checkpoint is synchronous and can copy a large WAL. The primary serves
+    // no HTTP and pumps no streams, so it is the only process where that stall
+    // costs nothing.
+    startWalMaintenance();
+
+    // Imports run in a worker and the stale threshold is hours, so a worker
+    // killed mid-import is restarted long before the next cold start could
+    // reclaim anything. Sweeping only at startup meant, in practice, never.
+    startEpgStageMaintenance(epgDb);
   }
 
-  // Initialize Stream Manager (Redis or SQLite)
-  streamManager.init(db, redisClient);
+  // Initialize Stream Manager (Redis or SQLite). The heartbeat gets its own
+  // connection so a contended lock cannot block this worker's event loop, and
+  // with it every stream the worker is pumping.
+  streamManager.init(db, redisClient, redisClient ? null : openLatencyDbConnection());
 
   if (cluster.isPrimary) {
     // Create default admin
@@ -73,8 +101,16 @@ let redisClient = null;
       sweepOrphans();
     } catch { /* An unavailable optional runtime never blocks startup. */ }
 
-    const numCPUs = os.cpus().length;
-    console.info(`Primary ${process.pid} is running with ${numCPUs} CPUs`);
+    // Every worker opens its own SQLite connections and competes for the single
+    // write lock, so this number is the most direct control an operator has over
+    // the contention everything else here works around. It was not a control at
+    // all: os.cpus() reports the *host's* cores, which in a container with a CPU
+    // quota is not what this process may use — twelve workers on a fraction of a
+    // CPU multiply the lock contention without adding throughput.
+    // availableParallelism() at least respects the affinity mask; neither it nor
+    // os.cpus() reads a cgroup quota, which is why the override exists.
+    const numCPUs = resolveBudget(process.env.CLUSTER_WORKERS, os.availableParallelism(), 1, 64, 'CLUSTER_WORKERS');
+    console.info(`Primary ${process.pid} is running ${numCPUs} worker(s)`);
 
     let schedulerPid = null;
     let shuttingDown = false;
@@ -86,7 +122,12 @@ let redisClient = null;
     }
 
     cluster.on('exit', async (worker, _code, _signal) => {
-      console.error(`Worker ${worker.process.pid} died. Restarting...`);
+      // Not "restarting" during a stop: the guard below does not replace it, and
+      // a dozen console.error lines saying otherwise make an orderly shutdown
+      // read as a crash cascade in the one log an operator checks afterwards.
+      if (shuttingDown) console.info(`Worker ${worker.process.pid} stopped`);
+      else console.error(`Worker ${worker.process.pid} died. Restarting...`);
+
       // Cleanup streams for this worker
       try {
         await streamManager.cleanupWorkerStreams(worker.process.pid);

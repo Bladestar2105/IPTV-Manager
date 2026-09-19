@@ -1,8 +1,10 @@
 import db from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
-import { performSync, checkProviderExpiry, deleteProviderChannelCascade } from '../services/syncService.js';
+import { performSync, checkProviderExpiry, deleteAllProviderChannels } from '../services/syncService.js';
+import { acquireProviderLock, describeLockConflict } from '../services/providerLockService.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { updateProviderEpg } from '../services/epgService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { parseTimeshiftTimezone } from '../utils/timezone.js';
@@ -34,7 +36,9 @@ const fetchProviderDetails = async (url, username, password) => {
     clearTimeout(timeout);
 
     if (resp.ok) {
-      const data = await resp.json();
+      // The AbortController above stops covering anything once the headers are
+      // in, so the body read carries its own bound.
+      const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 10000, maxBytes: 8 * 1024 * 1024 });
       if (data && data.user_info && data.user_info.max_connections) {
         const maxCon = parseInt(data.user_info.max_connections, 10);
         if (!isNaN(maxCon)) {
@@ -331,7 +335,7 @@ export const updateProvider = async (req, res) => {
     let revokedAssignments = 0;
     let disabledSyncConfigs = 0;
     let retainedSyncGrants = 0;
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       db.prepare(`
         UPDATE providers
         SET name = ?, url = ?, username = ?, password = ?, epg_url = ?, user_id = ?, epg_update_interval = ?, epg_enabled = ?, backup_urls = ?, user_agent = ?, max_connections = ?, use_mapped_epg_icon = ?, timeshift_timezone = ?
@@ -465,7 +469,7 @@ export const bulkUpdateProviderUrls = async (req, res) => {
     const matches = providers.filter(p => normalizeProviderBaseUrl(p.url) === fromBase);
     const update = db.prepare('UPDATE providers SET url = ?, epg_url = ? WHERE id = ?');
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       for (const provider of matches) {
         update.run(toBase, replaceDefaultEpgProviderUrl(provider.epg_url, fromBase, toBase), provider.id);
       }
@@ -486,18 +490,27 @@ export const bulkUpdateProviderUrls = async (req, res) => {
 };
 
 export const deleteProvider = (req, res) => {
+  // Authorize before touching the lock table. Lock acquisition is a synchronous
+  // SQLite write: letting an unauthorized request reach it would let anyone
+  // block a worker for the busy timeout and briefly hold a real deletion lock,
+  // which makes legitimate sync and delete requests answer 409.
+  if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({error: 'Invalid provider id'});
+
+  // Deleting a provider while its own sync is still running made the sync's
+  // sync_logs insert fail with SQLITE_CONSTRAINT_FOREIGNKEY. The lock is shared
+  // with performSync and spans cluster workers.
+  const lock = acquireProviderLock(id, 'delete');
+  if (!lock) {
+    return res.status(409).json({ error: `${describeLockConflict(id)}; try again once it finished` });
+  }
   try {
-    if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    const id = Number(req.params.id);
     const providerRow = db.prepare('SELECT url FROM providers WHERE id = ?').get(id);
 
-    db.transaction(() => {
-      const providerChannels = db.prepare(
-        'SELECT id FROM provider_channels WHERE provider_id = ? ORDER BY id'
-      ).all(id);
-      for (const channel of providerChannels) {
-        deleteProviderChannelCascade(db, id, channel.id);
-      }
+    immediateTransaction(db, () => {
+      deleteAllProviderChannels(db, id);
 
       db.prepare('DELETE FROM sync_configs WHERE provider_id = ?').run(id);
       db.prepare('DELETE FROM sync_logs WHERE provider_id = ?').run(id);
@@ -522,6 +535,8 @@ export const deleteProvider = (req, res) => {
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
+  } finally {
+    lock.release();
   }
 };
 
@@ -530,7 +545,8 @@ export const syncProvider = async (req, res) => {
     const id = Number(req.params.id);
     const { user_id, allow_cross_owner, restore_revoked_assignments } = req.body;
 
-    if (!user_id) {
+    const targetUserId = Number(user_id);
+    if (!user_id || !Number.isInteger(targetUserId) || targetUserId <= 0) {
       return res.status(400).json({error: 'user_id required'});
     }
 
@@ -538,21 +554,36 @@ export const syncProvider = async (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    const result = await performSync(id, user_id, {
+    // sync_logs references providers(id) and users(id). Accepting an id that no
+    // longer exists turned into a FOREIGN KEY error deep inside performSync.
+    if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(targetUserId)) {
+      return res.status(404).json({error: 'User not found'});
+    }
+    if (!db.prepare('SELECT 1 AS ok FROM providers WHERE id = ?').get(id)) {
+      return res.status(404).json({error: 'Provider not found'});
+    }
+
+    const result = await performSync(id, targetUserId, {
       mode: 'manual',
       allowCrossOwner: allow_cross_owner === true,
       restoreRevokedAssignments: restore_revoked_assignments === true
     });
 
-    // Also trigger EPG update
-    updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
-
-    if (result.errorMessage) {
-      return res.status(500).json({error: result.errorMessage});
+    if (result.status === 'locked') {
+      return res.status(409).json({error: result.errorMessage});
     }
+
+    if (result.status === 'error' || (result.errorMessage && result.status !== 'partial')) {
+      return res.status(500).json({error: result.errorMessage || 'Sync failed'});
+    }
+
+    // Only trigger EPG for a run that actually delivered something.
+    updateProviderEpg(id).catch(err => console.error(`Manual sync EPG update failed for provider ${id}:`, err.message));
 
     res.json({
       success: true,
+      status: result.status || 'success',
+      ...(result.status === 'partial' ? { warning: result.errorMessage } : {}),
       channels_added: result.channelsAdded,
       channels_updated: result.channelsUpdated,
       categories_added: result.categoriesAdded

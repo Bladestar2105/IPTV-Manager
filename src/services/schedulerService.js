@@ -3,6 +3,21 @@ import { performSync } from './syncService.js';
 import { updateEpgSource, updateProviderEpg, pruneOldEpgData } from './epgService.js';
 import { updateGeoIpDatabaseIfNeeded } from './geoIpUpdateService.js';
 import { isSafeUrl } from '../utils/helpers.js';
+import { resolveBudget } from '../utils/env.js';
+import { deleteInBatches } from '../database/sqliteWrites.js';
+
+// Reading a provider catalog holds the response bytes, the decoded string and
+// the parsed object graph in the heap at the same time, several times the wire
+// size of a list that can itself be hundreds of megabytes. The scheduler used to
+// start every due config in one un-awaited loop, so configs whose next_sync
+// happens to cluster — after a restart, or after a shared upstream failed them
+// together — parsed their catalogs concurrently. Configs above the cap keep
+// their next_sync and are simply picked up by a later tick.
+const MAX_CONCURRENT_SYNCS = resolveBudget(process.env.SYNC_MAX_CONCURRENT, 2, 1, 64, 'SYNC_MAX_CONCURRENT');
+// A backlog is normal for a tick or two. Saying so on every tick would be noise,
+// so it is reported at most this often.
+const BACKLOG_LOG_INTERVAL_MS = 900000;
+let lastBacklogLogAt = 0;
 
 let syncInterval = null;
 let epgInterval = null;
@@ -16,15 +31,34 @@ export function startSyncScheduler() {
   syncInterval = setInterval(async () => {
     try {
       const now = Math.floor(Date.now() / 1000);
-      const configs = db.prepare('SELECT * FROM sync_configs WHERE enabled = 1 AND next_sync <= ?').all(now);
+      // Longest overdue first. Without the order the scan returns rowid order,
+      // which is the same on every tick — so with the cap in place the head of
+      // the list would win every time and the tail would never run at all.
+      const configs = db.prepare(
+        'SELECT * FROM sync_configs WHERE enabled = 1 AND next_sync <= ? ORDER BY next_sync ASC, id ASC'
+      ).all(now);
 
+      let deferred = 0;
       for (const config of configs) {
+        // Already-running first: a config that is itself one of the in-flight
+        // syncs is not waiting for a slot, and counting it as waiting made the
+        // warning below blame the cap in exactly the steady state where the
+        // constraint is sync duration instead.
         if (runningSyncs.has(config.id)) continue;
+        if (runningSyncs.size >= MAX_CONCURRENT_SYNCS) { deferred++; continue; }
         runningSyncs.add(config.id);
 
         performSync(config.provider_id, config.user_id, { mode: 'scheduled' })
           .catch(e => console.error(`Scheduled sync error for provider ${config.provider_id}:`, e))
           .finally(() => runningSyncs.delete(config.id));
+      }
+
+      // A config held back by the cap keeps its next_sync and writes no log
+      // row, so without this the provider looks healthy while never syncing.
+      if (deferred > 0 && Date.now() - lastBacklogLogAt >= BACKLOG_LOG_INTERVAL_MS) {
+        lastBacklogLogAt = Date.now();
+        console.warn(`⏳ ${deferred} due provider sync(s) waiting: ${MAX_CONCURRENT_SYNCS} run at a time` +
+          ' (SYNC_MAX_CONCURRENT). Raise it, or lengthen the sync interval, if the backlog does not drain.');
       }
     } catch (e) {
       console.error('Sync Scheduler error:', e);
@@ -104,26 +138,39 @@ export function startEpgScheduler() {
   console.info('📅 EPG Scheduler started');
 }
 
+const CLEANUP_INTERVAL_MS = 3600000;
+// The sweep is hourly and has no run at startup, so on an instance whose
+// scheduler worker is restarted more often than that — a deploy loop, a worker
+// the primary keeps reviving — it never ran at all, and the tables it is
+// supposed to bound grew without limit. Long enough after boot not to compete
+// with it, short enough that no plausible restart cadence outruns it.
+const CLEANUP_FIRST_RUN_MS = 60000;
+
 export function startCleanupScheduler() {
-  // Check every hour
-  setInterval(() => {
+  const run = () => {
     try {
       const now = Math.floor(Date.now() / 1000);
-      // Clean old client logs (7 days)
       const retention = 7 * 86400;
-      db.prepare('DELETE FROM client_logs WHERE timestamp < ?').run(now - retention);
-      db.prepare('DELETE FROM security_logs WHERE timestamp < ?').run(now - retention);
+      // The two log tables grow with traffic and are swept by age, so a run
+      // after a long gap can face a very large backlog. In batches: this worker
+      // is also pumping streams, and better-sqlite3 blocks its event loop for
+      // as long as the write lock is held.
+      deleteInBatches(db, 'client_logs', 'timestamp < ?', [now - retention]);
+      deleteInBatches(db, 'security_logs', 'timestamp < ?', [now - retention]);
+      // These two are bounded by the number of blocks and shares that exist, so
+      // one statement each is the whole job.
       db.prepare('DELETE FROM blocked_ips WHERE expires_at < ?').run(now);
-      // Clean expired shares
       db.prepare('DELETE FROM shared_links WHERE end_time IS NOT NULL AND end_time < ?').run(now);
 
-      // Clean old EPG data (7 days)
       pruneOldEpgData(7);
-
     } catch (e) {
       console.error('Cleanup error:', e);
     }
-  }, 3600000); // Every hour
+  };
+
+  const first = setTimeout(run, CLEANUP_FIRST_RUN_MS);
+  first.unref?.();
+  setInterval(run, CLEANUP_INTERVAL_MS);
   console.info('🧹 Cleanup Scheduler started');
 }
 

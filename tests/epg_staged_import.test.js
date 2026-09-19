@@ -1,0 +1,501 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Readable } from 'node:stream';
+
+const { fetchSafe } = vi.hoisted(() => ({ fetchSafe: vi.fn() }));
+// Keep the real module's other exports: epgImportService derives its staging
+// stale floor from resolveMaxRequestDurationMs.
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
+  fetchSafe,
+}));
+vi.mock('../src/database/db.js', () => ({
+  default: { prepare: () => ({ run: () => ({ changes: 0 }), get: () => undefined, all: () => [] }) },
+  initDb: vi.fn(),
+}));
+vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.fn() }));
+
+const {
+  importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt,
+  stagingTableIdentity, resetAbandonedEpgImports, startEpgStageMaintenance,
+  resolveStageStaleMs, resolveImportBodyTimeoutMs, claimPromotionSequence, ensureImportStateTable,
+  EPG_STAGE_PREFIX,
+} = await import('../src/services/epgImportService.js');
+const Database = (await import('better-sqlite3')).default;
+const { initEpgDb } = await import('../src/database/epgDb.js');
+const epgDb = (await import('../src/database/epgDb.js')).default;
+
+initEpgDb();
+
+const SOURCE_TYPE = 'custom';
+const SOURCE_ID = 9991;
+
+const xml = programmes => `<?xml version="1.0" encoding="UTF-8"?><tv>
+  <channel id="ch1"><display-name>Channel One</display-name></channel>
+  ${programmes.map(p => `<programme channel="ch1" start="${p.start}" stop="${p.stop}"><title>${p.title}</title></programme>`).join('\n')}
+</tv>`;
+
+const future = offsetHours => {
+  const d = new Date(Date.now() + offsetHours * 3600000);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00 +0000`;
+};
+
+const liveCounts = () => ({
+  channels: epgDb.prepare('SELECT COUNT(*) c FROM epg_channels WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).c,
+  programs: epgDb.prepare('SELECT COUNT(*) c FROM epg_programs WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).c,
+});
+
+// Staging table names carry a per-run token, so count anything that is one.
+const stagingTableCount = () =>
+  epgDb.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name LIKE ? || '%'")
+    .get(EPG_STAGE_PREFIX).c;
+
+function seedExisting() {
+  epgDb.prepare('INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('old-ch', 'Old Channel', '', SOURCE_TYPE, SOURCE_ID, 1);
+  epgDb.prepare('INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('old-ch', SOURCE_TYPE, SOURCE_ID, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000) + 3600, 'Old Show', '', '');
+}
+
+describe('staged EPG import', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    epgDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+    epgDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+    epgDb.prepare('DELETE FROM epg_import_state WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+    dropOrphanedStagingTables(epgDb, { staleMs: 1, now: Date.now() + 86400000 });
+  });
+
+  afterAll(() => {
+    epgDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+    epgDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+  });
+
+  it('replaces the data of a source on a successful import', async () => {
+    seedExisting();
+    fetchSafe.mockResolvedValue({
+      ok: true,
+      body: Readable.from([xml([{ start: future(1), stop: future(2), title: 'New Show' }])]),
+    });
+
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID)).resolves.toMatchObject({ success: true });
+
+    expect(liveCounts()).toEqual({ channels: 1, programs: 1 });
+    expect(epgDb.prepare('SELECT id FROM epg_channels WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).id).toBe('ch1');
+    expect(stagingTableCount()).toBe(0);
+  });
+
+  it('fails fast when the body errors before any data arrives', async () => {
+    // A reset connection during the gzip sniff used to be swallowed; the import
+    // then hung until the watchdog fired half an hour later with a misleading
+    // message, holding the connection, the staging tables and is_updating.
+    seedExisting();
+    const before = liveCounts();
+    const dead = new Readable({ read() { this.destroy(new Error('ECONNRESET')); } });
+    fetchSafe.mockResolvedValue({ ok: true, body: dead });
+
+    const started = Date.now();
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .rejects.toThrow(/before any data arrived/i);
+    expect(Date.now() - started).toBeLessThan(5000);
+
+    expect(liveCounts()).toEqual(before);
+    expect(stagingTableCount()).toBe(0);
+  }, 20000);
+
+  it('keeps the previous data when the download breaks mid-stream', async () => {
+    seedExisting();
+    const before = liveCounts();
+    expect(before.channels).toBe(1);
+
+    let emitted = false;
+    const broken = new Readable({
+      read() {
+        if (emitted) return;
+        emitted = true;
+        this.push('<?xml version="1.0"?><tv><channel id="ch1"><display-name>Partial');
+        // Asynchronously, so the import has attached its error handler first —
+        // exactly how a socket hang up arrives in production.
+        setImmediate(() => this.destroy(new Error('socket hang up')));
+      },
+    });
+    fetchSafe.mockResolvedValue({ ok: true, body: broken });
+
+    // Before staging, the old rows were deleted up front and a failure like this
+    // left the source without any EPG data at all.
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+    expect(liveCounts()).toEqual(before);
+    expect(epgDb.prepare('SELECT id FROM epg_channels WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).id).toBe('old-ch');
+    expect(stagingTableCount()).toBe(0);
+  });
+
+  it('refuses to trade existing data for an empty feed', async () => {
+    seedExisting();
+    fetchSafe.mockResolvedValue({ ok: true, body: Readable.from(['<?xml version="1.0"?><tv></tv>']) });
+
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .rejects.toThrow(/no channels or programmes/i);
+    expect(liveCounts().channels).toBe(1);
+  });
+
+  it('accepts an empty feed when the source has no data yet', async () => {
+    fetchSafe.mockResolvedValue({ ok: true, body: Readable.from(['<?xml version="1.0"?><tv></tv>']) });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID)).resolves.toMatchObject({ success: true });
+    expect(liveCounts()).toEqual({ channels: 0, programs: 0 });
+  });
+
+  it('bounds the import body and keeps the stale threshold above it', () => {
+    // fetchSafe bounds only the headers, so without an import body deadline an
+    // import has no upper bound at all — and then no age can tell a live one
+    // from an abandoned one, which is what the sweep relies on.
+    const previousBody = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    const previousStale = process.env.EPG_STAGE_STALE_MS;
+    try {
+      delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      expect(resolveImportBodyTimeoutMs()).toBeGreaterThanOrEqual(60000);
+
+      process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '3600000';
+      process.env.EPG_STAGE_STALE_MS = '60000';
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
+    } finally {
+      if (previousBody === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previousBody;
+      if (previousStale === undefined) delete process.env.EPG_STAGE_STALE_MS;
+      else process.env.EPG_STAGE_STALE_MS = previousStale;
+    }
+  });
+
+  it('gives up when the feed sends headers and then nothing', async () => {
+    // The body deadline is armed only once the parse starts, so the peek that
+    // sniffs for gzip was the one unbounded wait in the import: an upstream that
+    // answers and then goes quiet held the staging tables, the is_updating flag
+    // and the scheduler's in-flight entry for the lifetime of the process.
+    process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '1000';
+    try {
+      const silent = new Readable({ read() {} });   // headers arrived, no data, never ends
+      fetchSafe.mockResolvedValue({ ok: true, status: 200, body: silent, headers: { get: () => null } });
+
+      const started = Date.now();
+      await expect(importEpgFromUrl('http://feed.example/quiet.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+      expect(Date.now() - started).toBeLessThan(15000);
+      expect(stagingTableCount()).toBe(0);
+    } finally {
+      delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    }
+  }, 30000);
+
+  it('gives up when the feed closes before sending anything', async () => {
+    // A connection dropped without an error emits neither 'end' nor 'error',
+    // only 'close' — and the peek had no other way to settle.
+    const dropped = new Readable({ read() {} });
+    fetchSafe.mockResolvedValue({ ok: true, status: 200, body: dropped, headers: { get: () => null } });
+    setTimeout(() => dropped.destroy(), 20);
+
+    const started = Date.now();
+    await expect(importEpgFromUrl('http://feed.example/dropped.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(stagingTableCount()).toBe(0);
+  }, 20000);
+
+  it('gives up at once when the feed dies part-way through the parse', async () => {
+    // pipe() ends the parser when the source ends; a source that is destroyed
+    // never ends it, so the parser emitted neither 'finish' nor 'error' and the
+    // run waited out its whole deadline — 30 minutes by default — for a feed
+    // that had already gone. The deadline is left at its default here on
+    // purpose: a pass has to come from the close handler, not from a timer.
+    const dying = new Readable({ read() {} });
+    dying.push('<?xml version="1.0"?><tv><channel id="ch1"><display-name>One');
+    fetchSafe.mockResolvedValue({ ok: true, status: 200, body: dying, headers: { get: () => null } });
+    setTimeout(() => dying.destroy(), 50);
+
+    const started = Date.now();
+    await expect(importEpgFromUrl('http://feed.example/cut.xml', SOURCE_TYPE, SOURCE_ID)).rejects.toThrow();
+
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(stagingTableCount()).toBe(0);
+  }, 20000);
+
+  it('aborts an import whose body never finishes', async () => {
+    // fetchSafe bounds only the headers. Without this watchdog a stalled feed
+    // held the import connection and the staging tables for the process lifetime.
+    const previousBody = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '1000';
+    try {
+      seedExisting();
+      const before = liveCounts();
+      // Push once, then stay open and idle. Pushing on every read() spins the
+      // event loop so hard that no timer ever gets to run.
+      let pushed = false;
+      const stalled = new Readable({
+        read() {
+          if (pushed) return;
+          pushed = true;
+          this.push('<?xml version="1.0"?><tv>');
+        },
+      });
+      fetchSafe.mockResolvedValue({ ok: true, body: stalled });
+
+      await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+        .rejects.toThrow(/exceeded/i);
+
+      expect(liveCounts()).toEqual(before);
+      expect(stagingTableCount()).toBe(0);
+    } finally {
+      if (previousBody === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previousBody;
+    }
+  }, 20000);
+
+  it('refuses an import budget with a unit suffix instead of flooring it', () => {
+    // This resolver kept parseInt plus a floor after the others were fixed, so
+    // `30m` resolved to 1000ms and killed every import a second in — while the
+    // documentation said such a value was refused.
+    const previous = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    try {
+      expect(resolveImportBodyTimeoutMs('30m')).toBe(1800000);
+      expect(resolveImportBodyTimeoutMs('1800s')).toBe(1800000);
+      expect(resolveImportBodyTimeoutMs('1e6')).toBe(1800000);
+      // Meant literally: honoured, and still floored against zero.
+      expect(resolveImportBodyTimeoutMs('600000')).toBe(600000);
+      expect(resolveImportBodyTimeoutMs('10')).toBe(1000);
+    } finally {
+      if (previous === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previous;
+    }
+  });
+
+  it('keeps the stale threshold above how long an import may run', () => {
+    // The floor derives from the import body deadline, not from a header-only
+    // budget: the sweep must never call another process's live import stale.
+    const previousBody = process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+    const previousStale = process.env.EPG_STAGE_STALE_MS;
+    try {
+      process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '600000';
+      process.env.EPG_STAGE_STALE_MS = '60000';
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(600000);
+
+      process.env.EPG_IMPORT_BODY_TIMEOUT_MS = '3600000';
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
+
+      delete process.env.EPG_STAGE_STALE_MS;
+      expect(resolveStageStaleMs()).toBeGreaterThanOrEqual(3600000);
+    } finally {
+      if (previousBody === undefined) delete process.env.EPG_IMPORT_BODY_TIMEOUT_MS;
+      else process.env.EPG_IMPORT_BODY_TIMEOUT_MS = previousBody;
+      if (previousStale === undefined) delete process.env.EPG_STAGE_STALE_MS;
+      else process.env.EPG_STAGE_STALE_MS = previousStale;
+    }
+  });
+
+  it('issues a strictly monotonic promotion sequence per source', () => {
+    // A millisecond timestamp collides when two workers start inside the same
+    // millisecond, and a clock that steps back inverts the order outright.
+    ensureImportStateTable(epgDb);
+    const seen = [];
+    for (let i = 0; i < 5; i++) seen.push(claimPromotionSequence(epgDb, SOURCE_TYPE, SOURCE_ID));
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen[0]).toBeGreaterThan(0);
+
+    // A different source has its own counter.
+    const other = claimPromotionSequence(epgDb, SOURCE_TYPE, SOURCE_ID + 1);
+    expect(other).toBe(1);
+    epgDb.prepare('DELETE FROM epg_import_state WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID + 1);
+  });
+
+  it('lifts a legacy timestamp promotion into the counter domain', async () => {
+    // A database written by the timestamp-based implementation carries a
+    // millisecond value in promoted_seq. Without rebasing, the next claim is 1,
+    // every promotion is rejected as older, and the source can never update again.
+    const legacy = Date.now();
+    ensureImportStateTable(epgDb);
+    epgDb.prepare(`INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq, claimed_seq)
+                   VALUES (?, ?, ?, ?, 0)
+                   ON CONFLICT(source_type, source_id) DO UPDATE SET promoted_seq = excluded.promoted_seq, claimed_seq = 0`)
+      .run(SOURCE_TYPE, SOURCE_ID, Math.floor(legacy / 1000), legacy);
+
+    initEpgDb();   // idempotent migration
+
+    const state = epgDb.prepare('SELECT claimed_seq, promoted_seq FROM epg_import_state WHERE source_type = ? AND source_id = ?')
+      .get(SOURCE_TYPE, SOURCE_ID);
+    expect(state.claimed_seq).toBeGreaterThanOrEqual(state.promoted_seq);
+
+    fetchSafe.mockResolvedValue({
+      ok: true,
+      body: Readable.from([xml([{ start: future(1), stop: future(2), title: 'After upgrade' }])]),
+    });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .resolves.toMatchObject({ success: true });
+
+    const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
+      .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
+    expect(titles).toEqual(['After upgrade']);
+  });
+
+  it('outruns a promotion written after the migration rebased the counter', () => {
+    // A writer from the timestamp-based build can promote after initEpgDb() has
+    // rebased the counter. Incrementing claimed_seq alone would leave every
+    // later claim below that value and the source unpromotable until a restart.
+    ensureImportStateTable(epgDb);
+    epgDb.prepare(`INSERT INTO epg_import_state (source_type, source_id, promoted_at, promoted_seq, claimed_seq)
+                   VALUES (?, ?, 0, 0, 1)
+                   ON CONFLICT(source_type, source_id) DO UPDATE SET promoted_seq = 0, claimed_seq = 1`)
+      .run(SOURCE_TYPE, SOURCE_ID);
+
+    const legacyPromotion = Date.now();
+    epgDb.prepare('UPDATE epg_import_state SET promoted_seq = ? WHERE source_type = ? AND source_id = ?')
+      .run(legacyPromotion, SOURCE_TYPE, SOURCE_ID);
+
+    expect(claimPromotionSequence(epgDb, SOURCE_TYPE, SOURCE_ID)).toBeGreaterThan(legacyPromotion);
+  });
+
+  it('numbers a run by its start, not by when its headers arrive', async () => {
+    // Import A starts first but its headers are withheld until B has finished.
+    // A must still carry the lower sequence and lose the promotion.
+    let aEntered;
+    const aHasEntered = new Promise(resolve => { aEntered = resolve; });
+    let releaseA;
+    const aMayAnswer = new Promise(resolve => { releaseA = resolve; });
+
+    let call = 0;
+    fetchSafe.mockImplementation(async () => {
+      const index = ++call;
+      if (index === 1) {
+        aEntered();
+        await aMayAnswer;
+      }
+      return { ok: true, body: Readable.from([xml([{ start: future(1), stop: future(2), title: `Run ${index}` }])]) };
+    });
+
+    const first = importEpgFromUrl('https://epg.example/a.xml', SOURCE_TYPE, SOURCE_ID);
+    await aHasEntered;
+    await expect(importEpgFromUrl('https://epg.example/b.xml', SOURCE_TYPE, SOURCE_ID))
+      .resolves.toMatchObject({ success: true });
+
+    releaseA();
+    // Losing the race is not a failure: the newer snapshot is live, the older
+    // run reports that it was superseded instead of raising an error that would
+    // back the source off for 15 minutes.
+    await expect(first).resolves.toMatchObject({ success: true, superseded: true });
+
+    const titles = epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
+      .all(SOURCE_TYPE, SOURCE_ID).map(r => r.title);
+    expect(titles).toEqual(['Run 2']);
+  });
+
+  it('rejects an unusable source identity instead of building a table name from it', () => {
+    expect(stagingTableNames('custom"; DROP TABLE epg_channels; --', 1, 'tok', 1000).channels)
+      .toBe(`${EPG_STAGE_PREFIX}channels_customdroptableepgchannels_1_${(1000).toString(36)}_tok`);
+    expect(() => stagingTableNames('custom', '1; DROP TABLE epg_channels')).toThrow(/Invalid EPG source identity/);
+    expect(() => stagingTableNames('', 1)).toThrow(/Invalid EPG source identity/);
+    // A hostile token cannot inject DDL: only [a-z0-9] survives, and an empty
+    // result is rejected.
+    const hostile = stagingTableNames('custom', 1, '"; DROP TABLE epg_channels; --');
+    expect(hostile.channels).toMatch(/^[a-z0-9_]+$/);
+    expect(hostile.programs).toMatch(/^[a-z0-9_]+$/);
+    expect(() => stagingTableNames('custom', 1, '!!!')).toThrow(/Invalid EPG source identity/);
+    expect(() => stagingTableNames('custom', 1, 'tok', 0)).toThrow(/Invalid EPG source identity/);
+  });
+
+  it('gives two runs of the same source separate staging tables', () => {
+    // A scheduled provider update and the update fired after a manual sync can
+    // overlap; shared names let one run drop the tables the other is filling.
+    const a = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
+    const b = stagingTableNames(SOURCE_TYPE, SOURCE_ID);
+    expect(a.channels).not.toBe(b.channels);
+    expect(a.programs).not.toBe(b.programs);
+    expect(a.channels.startsWith(`${EPG_STAGE_PREFIX}channels_${SOURCE_TYPE}_${SOURCE_ID}_`)).toBe(true);
+  });
+
+  it('sweeps only staging tables that are old enough to be abandoned', () => {
+    const now = Date.now();
+    const fresh = stagingTableNames(SOURCE_TYPE, SOURCE_ID, 'freshrun', now - 60000);
+    const abandoned = stagingTableNames(SOURCE_TYPE, SOURCE_ID, 'oldrun', now - 7 * 60 * 60 * 1000);
+    epgDb.exec(`CREATE TABLE ${fresh.channels} (id TEXT); CREATE TABLE ${fresh.programs} (id TEXT);`);
+    epgDb.exec(`CREATE TABLE ${abandoned.channels} (id TEXT); CREATE TABLE ${abandoned.programs} (id TEXT);`);
+    expect(stagingTableCount()).toBe(4);
+
+    // During an overlapping restart another process may still be filling its
+    // tables, so a blanket sweep would break its prepared inserts.
+    expect(dropOrphanedStagingTables(epgDb, { now })).toBe(2);
+    expect(stagingTableCount()).toBe(2);
+    expect(stagingTableStartedAt(fresh.channels)).toBe(now - 60000);
+
+    epgDb.exec(`DROP TABLE ${fresh.channels}; DROP TABLE ${fresh.programs};`);
+  });
+
+  it('reads the source identity back out of a staging table name', () => {
+    const names = stagingTableNames('custom', 42, 'token', 1700000000000);
+    expect(stagingTableIdentity(names.channels)).toEqual({ kind: 'channels', type: 'custom', id: 42 });
+    expect(stagingTableIdentity(names.programs)).toEqual({ kind: 'programs', type: 'custom', id: 42 });
+    expect(stagingTableIdentity('not_a_stage_table')).toBeNull();
+  });
+
+  describe('recovering a killed import', () => {
+    const mainDatabase = new Database(':memory:');
+    mainDatabase.exec('CREATE TABLE epg_sources (id INTEGER PRIMARY KEY, name TEXT, is_updating INTEGER DEFAULT 0);');
+    const updating = () => mainDatabase.prepare('SELECT id FROM epg_sources WHERE is_updating = 1 ORDER BY id')
+      .all().map(row => row.id);
+
+    beforeEach(() => {
+      mainDatabase.prepare('DELETE FROM epg_sources').run();
+      mainDatabase.exec("INSERT INTO epg_sources (id, name, is_updating) VALUES (1, 'a', 1), (2, 'b', 1), (3, 'c', 0)");
+    });
+
+    afterAll(() => mainDatabase.close());
+
+    it('clears the flag of a source with nothing running behind it', () => {
+      // is_updating is set before the import and cleared in its finally, so a
+      // killed process strands it at 1 — and the scheduler selects on
+      // `is_updating = 0`, which drops the source out of every update path for
+      // good, since nothing else ever resets it.
+      const now = Date.now();
+      const alive = stagingTableNames('custom', 2, 'liverun', now - 60000);
+      epgDb.exec(`CREATE TABLE ${alive.channels} (id TEXT); CREATE TABLE ${alive.programs} (id TEXT);`);
+      try {
+        expect(resetAbandonedEpgImports(epgDb, { now, mainDatabase })).toBe(1);
+        // Source 2 still has fresh staging tables, so its import is alive.
+        expect(updating()).toEqual([2]);
+      } finally {
+        epgDb.exec(`DROP TABLE ${alive.channels}; DROP TABLE ${alive.programs};`);
+      }
+    });
+
+    it('does not rescue a source whose staging tables are already stale', () => {
+      const now = Date.now();
+      const old = stagingTableNames('custom', 2, 'deadrun', now - 7 * 60 * 60 * 1000);
+      epgDb.exec(`CREATE TABLE ${old.channels} (id TEXT); CREATE TABLE ${old.programs} (id TEXT);`);
+      try {
+        expect(resetAbandonedEpgImports(epgDb, { now, mainDatabase })).toBe(2);
+        expect(updating()).toEqual([]);
+      } finally {
+        epgDb.exec(`DROP TABLE ${old.channels}; DROP TABLE ${old.programs};`);
+      }
+    });
+
+    it('sweeps periodically, not only at a cold start', () => {
+      // Imports run in a worker and the stale threshold is hours, so a worker
+      // killed mid-import is restarted long before the next cold start could
+      // reclaim anything. Sweeping only at startup meant, in practice, never.
+      const abandoned = stagingTableNames('custom', 2, 'deadrun', Date.now() - 7 * 60 * 60 * 1000);
+      epgDb.exec(`CREATE TABLE ${abandoned.channels} (id TEXT); CREATE TABLE ${abandoned.programs} (id TEXT);`);
+      expect(stagingTableCount()).toBe(2);
+
+      vi.useFakeTimers();
+      const timer = startEpgStageMaintenance(epgDb, 60000);
+      try {
+        // Nothing happens before the first tick.
+        expect(stagingTableCount()).toBe(2);
+        vi.advanceTimersByTime(60000);
+        expect(stagingTableCount()).toBe(0);
+      } finally {
+        clearInterval(timer);
+        vi.useRealTimers();
+      }
+    });
+  });
+
+});

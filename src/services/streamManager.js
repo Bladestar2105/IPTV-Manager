@@ -1,3 +1,5 @@
+import { formatDbError } from '../database/sqliteWrites.js';
+import { resolveBudget } from '../utils/env.js';
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
@@ -6,8 +8,61 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
 return 0`;
-const STREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_INACTIVITY_TIMEOUT_MS || 2 * 60 * 1000);
-const STREAM_MAX_AGE_MS = Number(process.env.STREAM_MAX_AGE_MS || 24 * 60 * 60 * 1000);
+// `Number(raw || default)` let a value with a unit — the shape operators keep
+// writing — through as NaN, and every comparison against NaN is false: the
+// inactivity sweep switched itself off, the touch throttle stopped throttling
+// and every ffmpeg progress event became an UPDATE again. That write
+// amplification is the contention this whole change set is about, so the one
+// file on the hot path must not be the one still parsing by hand.
+//
+// `0` is kept as a real setting here — it is what the guard in isStale() reads,
+// and it means "never reap on inactivity", which a long recording needs.
+// resolveBudget refuses 0, so it is recognised before asking.
+const DISABLED = /^\s*0+\s*$/;
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 2 * 60 * 1000;
+const STREAM_INACTIVITY_TIMEOUT_MS = DISABLED.test(String(process.env.STREAM_INACTIVITY_TIMEOUT_MS ?? ''))
+  ? 0
+  : resolveBudget(process.env.STREAM_INACTIVITY_TIMEOUT_MS, DEFAULT_INACTIVITY_TIMEOUT_MS, 1000,
+    Number.MAX_SAFE_INTEGER, 'STREAM_INACTIVITY_TIMEOUT_MS');
+// No such reading for the age cap: 0 would make every session with a start time
+// instantly stale, which is a typo's result rather than anybody's intent.
+const STREAM_MAX_AGE_MS = resolveBudget(
+  process.env.STREAM_MAX_AGE_MS, 24 * 60 * 60 * 1000, 1000, Number.MAX_SAFE_INTEGER, 'STREAM_MAX_AGE_MS');
+// ffmpeg emits `progress` roughly once per second per stream, and every one of
+// those used to become an UPDATE on the shared database. Only the inactivity
+// timeout depends on the value, so refreshing it far more often than that is
+// pure write amplification — and the failing updates showed up as
+// "DB Touch Error: database is locked" whenever a long write transaction ran.
+// A session removed by another worker's stale sweep leaves this worker's entry
+// behind, so the map is pruned instead of growing for the process lifetime.
+const STREAM_TOUCH_MAP_LIMIT = 10000;
+// Half the inactivity timeout, so a session can never expire because its
+// refresh was throttled. With the sweep switched off there is nothing to stay
+// under, and the derived default is floored rather than clamped to it.
+const STREAM_TOUCH_CEILING_MS = STREAM_INACTIVITY_TIMEOUT_MS > 0
+  ? Math.max(1000, Math.floor(STREAM_INACTIVITY_TIMEOUT_MS / 2))
+  : Number.MAX_SAFE_INTEGER;
+// With the sweep switched off there is no timeout to stay under — but there is
+// still one shared database, and a quarter of nothing floors to one second,
+// which is one UPDATE per ffmpeg progress event per stream: exactly the write
+// amplification the throttle exists to remove. Switching off the reaper must
+// not switch that back on, so the window the default timeout would have given
+// is the basis instead.
+const STREAM_TOUCH_BASIS_MS = STREAM_INACTIVITY_TIMEOUT_MS > 0
+  ? STREAM_INACTIVITY_TIMEOUT_MS
+  : DEFAULT_INACTIVITY_TIMEOUT_MS;
+const STREAM_TOUCH_MIN_INTERVAL_MS = resolveBudget(
+  process.env.STREAM_TOUCH_MIN_INTERVAL_MS,
+  Math.min(Math.max(1000, Math.floor(STREAM_TOUCH_BASIS_MS / 4)), STREAM_TOUCH_CEILING_MS),
+  1000, STREAM_TOUCH_CEILING_MS, 'STREAM_TOUCH_MIN_INTERVAL_MS');
+// A heartbeat whose write failed must not burn the whole window. The latency
+// connection gives up on a contended lock after a few hundred milliseconds, so
+// a long write transaction elsewhere can fail several in a row — and with a
+// full window between attempts only a handful fit inside the inactivity
+// timeout, after which another worker's sweep reaps a session that is still
+// playing. Retrying on every progress event would instead hammer the database
+// that is already contended, so a failure waits a short fraction of the window.
+const STREAM_TOUCH_RETRY_INTERVAL_MS = Math.max(1000, Math.floor(STREAM_TOUCH_MIN_INTERVAL_MS / 10));
 
 class StreamManager {
   constructor() {
@@ -15,10 +70,20 @@ class StreamManager {
     this.redis = null;
     this.pid = process.pid;
     this.localStreams = new Map();
+    this.lastTouchAt = new Map();
   }
 
-  init(db, redisClient) {
+  /**
+   * @param {object} db shared connection for stream bookkeeping
+   * @param {object|null} redisClient
+   * @param {object|null} [latencyDb] connection for the activity heartbeat. It
+   *        gives up on a contended lock quickly, because better-sqlite3 blocks
+   *        the event loop while it waits and this worker is pumping streams.
+   *        Falls back to `db` when not supplied (tests, Redis mode).
+   */
+  init(db, redisClient, latencyDb = null) {
     this.db = db;
+    this.latencyDb = latencyDb || db;
     this.redis = redisClient;
     if (this.redis) {
       console.info(`⚡ StreamManager using Redis (Worker ${this.pid})`);
@@ -37,7 +102,7 @@ class StreamManager {
           this.stmtCountUser = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, provider_id FROM current_streams WHERE user_id = ?)');
           this.stmtCountProvider = this.db.prepare('SELECT COUNT(*) as count FROM (SELECT DISTINCT channel_name, ip, user_id FROM current_streams WHERE provider_id = ?)');
           this.stmtIsActive = this.db.prepare('SELECT 1 FROM current_streams WHERE user_id = ? AND ip = ? AND channel_name = ? AND provider_id = ? LIMIT 1');
-          this.stmtTouch = this.db.prepare('UPDATE current_streams SET last_activity = ? WHERE id = ?');
+          this.stmtTouch = this.latencyDb.prepare('UPDATE current_streams SET last_activity = ? WHERE id = ?');
           this.stmtGetById = this.db.prepare('SELECT * FROM current_streams WHERE id = ?');
           this.stmtDeleteByPid = this.db.prepare('DELETE FROM current_streams WHERE worker_pid = ?');
         } catch (e) {
@@ -80,13 +145,16 @@ class StreamManager {
       try {
         this.stmtAdd.run(id, user.id, user.username, channelName, data.start_time, data.last_activity, ip, this.pid, providerId);
       } catch (e) {
-        console.error('DB Add Error:', e.message);
+        console.error('DB Add Error:', formatDbError(e));
       }
     }
 
     if (resource) {
       this.localStreams.set(id, resource);
     }
+
+    // add() already stored last_activity; start the throttle window here.
+    this.lastTouchAt.set(id, data.last_activity);
   }
 
   async cleanupSession(userId, ip, channelName, providerId = 0, excludeId = null) {
@@ -121,7 +189,7 @@ class StreamManager {
           await this.remove(row.id);
         }
       } catch (e) {
-        console.error('DB Session Cleanup Error:', e.message);
+        console.error('DB Session Cleanup Error:', formatDbError(e));
       }
     }
   }
@@ -158,6 +226,8 @@ class StreamManager {
         this.stmtRemove.run(id);
       } catch { /* ignore */ }
     }
+
+    this.lastTouchAt.delete(id);
   }
 
   async cleanupUser(userId, ip) {
@@ -179,31 +249,75 @@ class StreamManager {
           await this.remove(row.id);
         }
       } catch (e) {
-        console.error('DB Cleanup Error:', e.message);
+        console.error('DB Cleanup Error:', formatDbError(e));
       }
     }
   }
 
-  async touch(id) {
+  /**
+   * Refresh the activity timestamp of a session.
+   * @param {string} id
+   * @param {object} [options]
+   * @param {boolean} [options.force=false] write even inside the throttle window
+   */
+  async touch(id, options = {}) {
     const now = Date.now();
 
+    if (!options.force) {
+      const previous = this.lastTouchAt.get(id) || 0;
+      if (now - previous < STREAM_TOUCH_MIN_INTERVAL_MS) return;
+    }
+    // Claim the window before the write, so concurrent progress events cannot
+    // pile up behind an in-flight one — the Redis path awaits two round trips
+    // here, and every caller is fire-and-forget. A write that then fails hands
+    // the window back below.
+    this.lastTouchAt.set(id, now);
+
+    let written = true;
     if (this.redis) {
       try {
         const json = await this.redis.hGet(REDIS_KEY_STREAMS, id);
-        if (!json) return;
-        const data = JSON.parse(json);
-        data.last_activity = now;
-        await this.redis.hSet(REDIS_KEY_STREAMS, id, JSON.stringify(data));
+        // Not in the ledger: there is nothing to refresh and nothing to retry.
+        if (json) {
+          const data = JSON.parse(json);
+          data.last_activity = now;
+          await this.redis.hSet(REDIS_KEY_STREAMS, id, JSON.stringify(data));
+        }
       } catch (e) {
+        written = false;
         console.error('Redis Touch Error:', e);
       }
     } else if (this.db) {
       try {
         this.stmtTouch.run(now, id);
       } catch (e) {
-        console.error('DB Touch Error:', e.message);
+        written = false;
+        console.error('DB Touch Error:', formatDbError(e));
       }
     }
+
+    // A failed write must not burn the whole window, and remove() may have
+    // dropped the entry while the write was in flight — do not resurrect it.
+    if (!written && this.lastTouchAt.has(id)) {
+      this.lastTouchAt.set(id, now - STREAM_TOUCH_MIN_INTERVAL_MS + STREAM_TOUCH_RETRY_INTERVAL_MS);
+    } else if (!written) {
+      this.lastTouchAt.delete(id);
+    }
+    if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.pruneTouchTimestamps(now);
+  }
+
+  /**
+   * Drop throttle timestamps of sessions that can no longer be active. A
+   * session another worker's stale sweep removed never reaches remove() here,
+   * so without this the map only ever grows.
+   */
+  pruneTouchTimestamps(now = Date.now()) {
+    for (const [id, at] of this.lastTouchAt) {
+      if (now - at > STREAM_MAX_AGE_MS) this.lastTouchAt.delete(id);
+    }
+    // Still over the limit means the entries are genuinely recent; dropping
+    // them only costs one extra activity write per affected session.
+    if (this.lastTouchAt.size > STREAM_TOUCH_MAP_LIMIT) this.lastTouchAt.clear();
   }
 
   isWorkerAlive(workerPid) {

@@ -230,6 +230,41 @@ Deleting a provider removes dependent channel assignments, EPG mappings, stream
 stats, sync data, category mappings, and provider icon cache entries before the
 provider row is deleted.
 
+`POST /api/providers/:id/sync` requires an existing `user_id` in the body and
+reports the outcome of the run:
+
+- `200 {success: true, status: "success", channels_added, channels_updated,
+  categories_added}` — every catalog section was retrieved.
+- `200 {success: true, status: "partial", warning, ...}` — part of the catalog
+  arrived and was applied; `warning` names the sections that failed. Stream
+  types whose list or categories failed are not marked complete and are
+  therefore never used for stale-row cleanup.
+- `400 {error}` — the body carries no usable `user_id`.
+- `404 {error}` — no such user, or no such provider.
+- `409 {error}` — another sync or a deletion of the same provider is still
+  running. Sync and deletion of one provider are serialized through a lock in
+  the database, so the guard also holds across cluster workers. A scheduled run
+  refused this way writes no `sync_logs` row — nothing was attempted — but its
+  `next_sync` is still moved on by up to five minutes, so the scheduler does not
+  re-select the same config on every 60-second tick for as long as the conflict
+  lasts.
+- `500 {error}` — the provider delivered nothing usable, or the run failed.
+  Previously such a run answered `200 {success: true}` with `0/0/0` counters.
+
+`DELETE /api/providers/:id` answers `409` for the same reason while a sync of
+that provider is in flight, and `400` for an unusable id.
+
+`sync_logs.status` uses the same three values: `success`, `partial`, `error`.
+A run that delivered nothing leaves `sync_configs.last_sync` untouched and
+schedules the next attempt with an exponential backoff (from 15 minutes,
+never later than the configured interval).
+
+`sync_logs.error_message` is sanitized before it is stored: query strings are
+removed from embedded URLs, credential-shaped pairs are masked, markup and
+control characters are stripped and the text is bounded. The field carries
+upstream-controlled text and the SSRF-safe fetch path embeds the request URL —
+which holds the provider account — in some of its errors.
+
 Provider synchronization treats a complete empty response conservatively: one
 empty snapshot preserves an existing local catalog, while a second consecutive
 authoritative empty snapshot permits cleanup. Failed, invalid, or incomplete

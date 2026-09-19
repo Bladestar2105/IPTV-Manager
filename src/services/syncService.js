@@ -1,17 +1,24 @@
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
-import { fetchSafe } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
-import { isAdultCategory } from '../utils/helpers.js';
+import { isAdultCategory, sanitizeErrorMessage } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
-import { createXtreamClient, fetchProviderCatalog } from './providerCatalogSyncService.js';
+import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
+import { acquireProviderLock, describeLockConflict } from './providerLockService.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
+import { resolveBusyTimeoutMs } from '../database/sqliteConnection.js';
 
 /**
  * Delete one provider channel without violating the dependent foreign keys.
  * The caller owns the surrounding transaction.
+ *
+ * Nothing in the application calls this any more — both removal paths are
+ * set-based below — but it is the row-level statement of what a cascade has to
+ * do, and the equivalence tests hold both of those to it.
  */
 export function deleteProviderChannelCascade(database, providerId, providerChannelId) {
   const channel = database.prepare(`
@@ -32,6 +39,87 @@ export function deleteProviderChannelCascade(database, providerId, providerChann
     throw new Error(`Provider channel cleanup removed ${deleted} rows instead of one`);
   }
   return deleted;
+}
+
+// SQLite's default parameter limit is 999 on older builds; stay well under it.
+const CHANNEL_DELETE_BATCH = 400;
+
+/**
+ * Remove a known set of a provider's channels and their dependants.
+ *
+ * The per-channel cascade above compiles five statements and runs five per row.
+ * The catalog transaction called it once per stale row, and a VOD catalog that
+ * rotates produces tens of thousands of those on an ordinary sync — inside the
+ * one transaction every other worker is blocked on, which is the contention
+ * this module keeps trying to shorten. Set-based, in batches, it compiles at
+ * most eight statements in total: one group for a full batch and one for the
+ * remainder.
+ *
+ * Dependants are scoped through provider_channels, as in the bulk delete below,
+ * so an id that does not belong to this provider takes nothing with it.
+ *
+ * The caller owns the surrounding transaction.
+ */
+export function deleteProviderChannelsByIds(database, providerId, channelIds) {
+  const unique = [...new Set(
+    Array.from(channelIds, id => Number(id)).filter(id => Number.isInteger(id) && id > 0)
+  )];
+  if (unique.length === 0) return 0;
+
+  const groups = new Map();
+  const groupFor = size => {
+    if (!groups.has(size)) {
+      const list = new Array(size).fill('?').join(',');
+      const scope = `SELECT id FROM provider_channels WHERE provider_id = ? AND id IN (${list})`;
+      groups.set(size, {
+        owned: database.prepare(`SELECT COUNT(*) AS c FROM provider_channels WHERE provider_id = ? AND id IN (${list})`),
+        mappings: database.prepare(`DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (${scope})`),
+        stats: database.prepare(`DELETE FROM stream_stats WHERE channel_id IN (${scope})`),
+        assignments: database.prepare(`DELETE FROM user_channels WHERE provider_channel_id IN (${scope})`),
+        channels: database.prepare(`DELETE FROM provider_channels WHERE provider_id = ? AND id IN (${list})`),
+      });
+    }
+    return groups.get(size);
+  };
+
+  let removed = 0;
+  let owned = 0;
+  for (let from = 0; from < unique.length; from += CHANNEL_DELETE_BATCH) {
+    const batch = unique.slice(from, from + CHANNEL_DELETE_BATCH);
+    const group = groupFor(batch.length);
+    owned += group.owned.get(providerId, ...batch).c;
+    group.mappings.run(providerId, ...batch);
+    group.stats.run(providerId, ...batch);
+    group.assignments.run(providerId, ...batch);
+    removed += group.channels.run(providerId, ...batch).changes;
+  }
+  // The per-row cascade threw when a delete did not remove exactly its one row,
+  // which rolled the whole synchronization back. Keep that: the caller passes
+  // ids it read inside this same transaction, so removing fewer than it owns
+  // means the set and the table disagree, and continuing would write a catalog
+  // built on a stale reading of it. Ids of another provider are counted out
+  // rather than counted wrong — that case removes nothing and is not an error.
+  if (removed !== owned) {
+    throw new Error(`Provider channel cleanup removed ${removed} rows instead of ${owned}`);
+  }
+  return removed;
+}
+
+/**
+ * Remove every channel of a provider and its dependants.
+ *
+ * The per-channel cascade above issues four statements per row, which meant
+ * ~800k statements and a ~40s write transaction for a provider with 200k
+ * channels — long enough to push every other writer past its busy timeout.
+ * Set-based deletes keep the same order and the same single transaction.
+ * The caller owns the surrounding transaction.
+ */
+export function deleteAllProviderChannels(database, providerId) {
+  const scope = 'SELECT id FROM provider_channels WHERE provider_id = ?';
+  database.prepare(`DELETE FROM epg_channel_mappings WHERE provider_channel_id IN (${scope})`).run(providerId);
+  database.prepare(`DELETE FROM stream_stats WHERE channel_id IN (${scope})`).run(providerId);
+  database.prepare(`DELETE FROM user_channels WHERE provider_channel_id IN (${scope})`).run(providerId);
+  return database.prepare('DELETE FROM provider_channels WHERE provider_id = ?').run(providerId).changes;
 }
 
 export function selectStaleProviderChannels(
@@ -110,9 +198,9 @@ export async function checkProviderExpiry(providerId) {
 
     // Use fetch directly to get user_info
     const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}`, { timeout: 30000 });
-    if (!resp.ok) return null;
+    if (!resp.ok) { discardBody(resp); return null; }
 
-    const data = await resp.json();
+    const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 1024 * 1024 });
     if (data && data.user_info && data.user_info.exp_date !== undefined) {
       let expDate = data.user_info.exp_date;
       let expiry = null;
@@ -127,7 +215,7 @@ export async function checkProviderExpiry(providerId) {
       return expiry;
     }
   } catch (e) {
-    console.error(`Failed to check expiry for provider ${providerId}:`, e.message);
+    console.error(`Failed to check expiry for provider ${providerId}:`, sanitizeErrorMessage(e));
   }
   return null;
 }
@@ -144,6 +232,199 @@ export function calculateNextSync(interval) {
   }
 }
 
+// A run that fetched nothing must come back sooner than a full interval, but a
+// permanently unreachable provider must not be retried every few minutes: each
+// failed attempt costs several upstream timeouts.
+const SYNC_RETRY_BASE_SECONDS = 900;
+const SYNC_RETRY_MAX_DOUBLINGS = 5;
+const SYNC_RETRY_JITTER_SECONDS = 300;
+
+/**
+ * Next attempt after a run that produced no usable catalog: exponential backoff
+ * from the number of consecutive non-successful runs, never later than the
+ * configured interval.
+ */
+export function calculateRetrySync(config, providerId, userId) {
+  const now = Math.floor(Date.now() / 1000);
+  const intervalNext = calculateNextSync(config.sync_interval);
+  let consecutiveFailures = 0;
+  try {
+    const rows = db.prepare(
+      'SELECT status FROM sync_logs WHERE provider_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?'
+    ).all(providerId, userId, SYNC_RETRY_MAX_DOUBLINGS + 1);
+    for (const row of rows) {
+      if (row.status === 'success') break;
+      consecutiveFailures++;
+    }
+  } catch {
+    consecutiveFailures = 0;
+  }
+  const backoff = SYNC_RETRY_BASE_SECONDS * Math.pow(2, Math.min(consecutiveFailures, SYNC_RETRY_MAX_DOUBLINGS));
+  // Providers that fail together — everything behind one shared upstream —
+  // would otherwise all come due in the same tick, and a catalog parse is
+  // expensive enough that they should not. Deterministic in the provider, so a
+  // retry time stays reproducible.
+  const jitter = (Number(providerId) * 37 + Number(userId) * 11) % SYNC_RETRY_JITTER_SECONDS;
+  return Math.min(intervalNext, now + backoff + jitter);
+}
+
+// A run refused by the lock never reaches finishSyncRun, so nothing moves
+// next_sync. The scheduler selects on `next_sync <= now` every 60 seconds, so
+// without this the same config is re-selected on every tick for as long as the
+// conflict lasts, silently — no sync_logs row records the attempts. Worse, a
+// lock refused because the lock table itself was contended would have every due
+// provider retrying in lockstep, feeding the contention that caused it.
+const SYNC_LOCK_RETRY_SECONDS = 300;
+
+/**
+ * Push a config's next attempt out after a refused lock.
+ *
+ * Deliberately not a failure: nothing was attempted, so last_sync stays put, no
+ * sync_logs row is written, and the exponential backoff does not count this.
+ *
+ * @returns {number} rows updated
+ */
+export function deferSyncAfterLockConflict(providerId, userId, now = Math.floor(Date.now() / 1000)) {
+  try {
+    const config = db.prepare('SELECT id, sync_interval FROM sync_configs WHERE provider_id = ? AND user_id = ?')
+      .get(providerId, userId);
+    if (!config) return 0;
+    const nextSync = Math.min(calculateNextSync(config.sync_interval), now + SYNC_LOCK_RETRY_SECONDS);
+    return db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id).changes;
+  } catch (e) {
+    console.warn(`Could not defer provider ${providerId} after a lock conflict [${e.code || 'Error'}]:`, e.message);
+    return 0;
+  }
+}
+
+/**
+ * Re-read the rows the run was authorized against.
+ *
+ * Fetching a provider catalog takes seconds to minutes. Provider, owner, target
+ * user or the cross-owner approval can all change while that call is in flight,
+ * and the schedule/log writes at the end of the run reference them by foreign
+ * key.
+ *
+ * @param {object} [authorization] the cross-owner decision taken before the
+ *        fetch, so it can be re-checked against the current grant
+ */
+function assertSyncTargetStillValid(providerId, userId, provider, authorization = null) {
+  const current = db.prepare('SELECT id, user_id FROM providers WHERE id = ?').get(providerId);
+  if (!current) throw new Error('Provider was removed while its catalog was being fetched');
+  // providers.user_id is nullable, so normalize before comparing owners.
+  const ownerOf = row => (row?.user_id === null || row?.user_id === undefined ? null : Number(row.user_id));
+  if (ownerOf(current) !== ownerOf(provider)) {
+    throw new Error('Provider ownership changed while its catalog was being fetched');
+  }
+  try {
+    if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(userId)) {
+      throw new Error('Target user was removed while the catalog was being fetched');
+    }
+  } catch (e) {
+    // Fixture schemas without a users table must not fail the run here; a real
+    // missing user is still caught by the guarded sync_logs insert.
+    if (e.code !== 'SQLITE_ERROR') throw e;
+  }
+
+  // A run that borrows somebody else's provider does so on the strength of the
+  // persisted administrator grant read before the fetch. An administrator can
+  // revoke that grant while the fetch is in flight, and the transaction below
+  // both creates assignments with granted_by_admin = 1 and clears
+  // authorization_revoked — so a stale decision would silently re-establish
+  // exactly what was just revoked, with no later path that walks it back.
+  // Scheduling state (`enabled`) is deliberately not re-checked here: it is a
+  // preference, not an authorization.
+  if (authorization?.crossOwner && authorization.hasPersistedGrant && !authorization.hasManualGrant) {
+    const currentConfig = db.prepare(
+      'SELECT granted_by_admin FROM sync_configs WHERE provider_id = ? AND user_id = ?'
+    ).get(providerId, userId);
+    if (Number(currentConfig?.granted_by_admin) !== 1) {
+      throw new Error('Cross-owner approval was revoked while the catalog was being fetched');
+    }
+  }
+}
+
+/**
+ * Persist the outcome of a run.
+ *
+ * Order matters. sync_configs is written first so that a failing log insert can
+ * never leave next_sync in the past and make the scheduler restart the provider
+ * every minute. The log insert is guarded and its own failure is reported
+ * separately, so bookkeeping problems never replace the original error.
+ */
+/**
+ * Say so when applying a catalog held the write lock longer than anyone waits.
+ *
+ * The catalog has to be applied atomically — half a catalog is worse than none
+ * — so this is the longest write lock the application takes, and any other
+ * connection that wants to write during it waits out its busy_timeout and then
+ * reports "database is locked". Nothing connected the two: the operator saw the
+ * symptom in one worker and the cause in another, minutes apart, with no shared
+ * identifier and nothing naming the setting that decides how long the others
+ * are willing to wait.
+ */
+export function reportCatalogWriteDuration(providerId, applyMs) {
+  const busyTimeoutMs = resolveBusyTimeoutMs();
+  if (applyMs >= busyTimeoutMs) {
+    console.warn(`⚠️ Applying provider ${providerId}'s catalog held the write lock for ${applyMs}ms, `
+      + `longer than SQLITE_BUSY_TIMEOUT_MS (${busyTimeoutMs}ms): any other worker writing in that window `
+      + 'reports "database is locked". Raise the timeout, or sync fewer providers at once.');
+  } else if (applyMs >= busyTimeoutMs / 2) {
+    console.info(`Applying provider ${providerId}'s catalog held the write lock for ${applyMs}ms `
+      + `(SQLITE_BUSY_TIMEOUT_MS is ${busyTimeoutMs}ms)`);
+  }
+}
+
+export function finishSyncRun({
+  providerId, userId, startTime, config, status, errorMessage,
+  channelsAdded = 0, channelsUpdated = 0, categoriesAdded = 0,
+}) {
+  const progressed = status === 'success' || status === 'partial';
+
+  try {
+    if (config) {
+      if (progressed) {
+        const nextSync = calculateNextSync(config.sync_interval);
+        db.prepare('UPDATE sync_configs SET last_sync = ?, next_sync = ? WHERE id = ?')
+          .run(startTime, nextSync, config.id);
+      } else {
+        // last_sync stays put: it records the last run that actually delivered.
+        const nextSync = calculateRetrySync(config, providerId, userId);
+        db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id);
+      }
+    }
+  } catch (e) {
+    console.error(`Failed to update sync schedule for provider ${providerId} [${e.code || 'Error'}]:`, e.message);
+  }
+
+  let targetsExist = true;
+  try {
+    const row = db.prepare(
+      'SELECT (SELECT 1 FROM providers WHERE id = ?) AS provider_ok, (SELECT 1 FROM users WHERE id = ?) AS user_ok'
+    ).get(providerId, userId);
+    targetsExist = Boolean(row?.provider_ok) && Boolean(row?.user_ok);
+  } catch {
+    // Fixture schemas without a users table: fall through and let the insert decide.
+  }
+
+  if (!targetsExist) {
+    console.warn(`Skipping sync log for provider ${providerId} / user ${userId}: removed during the run`);
+    return;
+  }
+
+  try {
+    // Defence in depth: whatever produced the message, nothing unsafe reaches
+    // the column that the admin UI renders.
+    const safeMessage = errorMessage ? sanitizeErrorMessage(errorMessage) : null;
+    db.prepare(`
+      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, channels_added, channels_updated, categories_added, error_message)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(providerId, userId, startTime, status, channelsAdded, channelsUpdated, categoriesAdded, safeMessage);
+  } catch (e) {
+    console.error(`Failed to write sync log for provider ${providerId} [${e.code || 'Error'}]:`, e.message);
+  }
+}
+
 export async function performSync(providerId, userId, options = {}) {
   const startTime = Math.floor(Date.now() / 1000);
   let channelsAdded = 0;
@@ -152,12 +433,27 @@ export async function performSync(providerId, userId, options = {}) {
   let errorMessage = null;
   let config = null;
   let aiSnapshot = null;
+  let status = 'error';
+  let catalogFailures = [];
+
+  // One provider at a time, across every cluster worker. A manual sync used to
+  // be able to start while the scheduler was already syncing the same provider,
+  // and a provider deletion could run while its own sync was still in flight.
+  const lock = acquireProviderLock(providerId, 'sync');
+  if (!lock) {
+    errorMessage = describeLockConflict(providerId);
+    console.warn(`⏳ ${errorMessage}; skipping this run`);
+    // A manual run reports the conflict to its caller and is not retried by
+    // anybody, so only a scheduled one needs its next attempt moved.
+    if (options?.mode !== 'manual') deferSyncAfterLockConflict(providerId, userId);
+    return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'locked' };
+  }
 
   try {
     config = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
     const isManual = options?.mode === 'manual';
     if ((!config || Number(config.enabled) !== 1) && !isManual) {
-      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'skipped' };
     }
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
@@ -178,7 +474,7 @@ export async function performSync(providerId, userId, options = {}) {
       );
       console.warn(`Blocked unapproved cross-owner sync for provider ${providerId}; disabled ${disabled} config(s)`);
       errorMessage = 'Cross-owner sync requires explicit administrator approval';
-      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+      return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'error' };
     }
 
     const assignmentGrant = crossOwner ? 1 : 0;
@@ -197,8 +493,14 @@ export async function performSync(providerId, userId, options = {}) {
 
     // Fetch and normalize the provider catalog before applying local mappings.
     const xtream = createXtreamClient(provider);
-    const { allChannels, allCategories, completeStreamTypes, snapshotStates } =
+    const { allChannels, allCategories, completeStreamTypes, snapshotStates, failures } =
       await fetchProviderCatalog(provider, xtream);
+    catalogFailures = failures || [];
+
+    // The catalog fetch can take minutes. Anything the run was authorized
+    // against may have been changed or removed in the meantime, so re-read it
+    // before touching the database again.
+    assertSyncTargetStillValid(providerId, userId, provider, { crossOwner, hasPersistedGrant, hasManualGrant });
 
     // Process categories and create mappings
     // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
@@ -328,6 +630,21 @@ export async function performSync(providerId, userId, options = {}) {
       INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
       VALUES (?, ?, ?, ?, ?, 1, ?)
     `);
+    // Compiled here, with the others, rather than inside the loops below. Both
+    // of these ran per category and per channel assignment *inside* the write
+    // transaction, so on a catalog with hundreds of thousands of entries the
+    // lock was held for hundreds of thousands of extra SQL compilations —
+    // lengthening exactly the transaction every other worker is waiting on.
+    const insertFirstSyncMapping = db.prepare(`
+      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+      VALUES (?, ?, ?, ?, NULL, 0, ?)
+    `);
+    const selectAssignment = db.prepare(`
+      SELECT id, user_category_id, provider_channel_id, mapping_id,
+             assignment_origin, granted_by_admin, authorization_revoked
+      FROM user_channels
+      WHERE user_category_id = ? AND provider_channel_id = ?
+    `);
 
     const getMappedTargets = (categoryId, categoryType) => {
       const keys = [`${categoryId}_${categoryType}`];
@@ -345,8 +662,12 @@ export async function performSync(providerId, userId, options = {}) {
       if (remoteId > 0) currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
     }
 
-    // Execute all DB operations in a single transaction
-    db.transaction(() => {
+    // Execute all DB operations in a single transaction.
+    // BEGIN IMMEDIATE: the body starts with SELECTs and writes afterwards, so a
+    // deferred transaction would fail with SQLITE_BUSY_SNAPSHOT as soon as any
+    // other connection committed in between.
+    const applyStartedAt = Date.now();
+    immediateTransaction(db, () => {
       aiSnapshot = captureSyncSnapshot(providerId);
       // Pre-calculate max sort order for optimization
       const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
@@ -395,10 +716,7 @@ export async function performSync(providerId, userId, options = {}) {
           console.debug(`  ✅ Created category: ${catName} (${catType}) (id=${newCategoryId})`);
         } else if (!mapping && isFirstSync) {
           // First sync: Create mapping without user category
-          const mappingInfo = db.prepare(`
-            INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-            VALUES (?, ?, ?, ?, NULL, 0, ?)
-          `).run(providerId, userId, catId, catName, catType);
+          const mappingInfo = insertFirstSyncMapping.run(providerId, userId, catId, catName, catType);
 
           // Update lookup to prevent duplicates in current run
           mappingLookup.set(lookupKey, {
@@ -626,12 +944,7 @@ export async function performSync(providerId, userId, options = {}) {
                 const newSortOrder = currentMax + 1;
 
                 const assignmentInfo = insertUserChannel.run(userCatId, provChannelId, newSortOrder, mappingId, assignmentGrant);
-                const resolvedAssignment = db.prepare(`
-                  SELECT id, user_category_id, provider_channel_id, mapping_id,
-                         assignment_origin, granted_by_admin, authorization_revoked
-                  FROM user_channels
-                  WHERE user_category_id = ? AND provider_channel_id = ?
-                `).get(userCatId, provChannelId);
+                const resolvedAssignment = selectAssignment.get(userCatId, provChannelId);
                 const assignmentId = Number(resolvedAssignment?.id || 0);
                 if (!assignmentId) throw new Error('Unable to resolve synchronized user-channel assignment');
 
@@ -676,15 +989,20 @@ export async function performSync(providerId, userId, options = {}) {
         cleanupTypes,
         currentTypeByRemoteId
       );
-      for (const stale of staleRows) {
-        deleteProviderChannelCascade(db, providerId, stale.id);
-      }
+      deleteProviderChannelsByIds(db, providerId, staleRows.map(stale => stale.id));
     })();
 
-    // Update sync config
-    if (config) {
-      const nextSync = calculateNextSync(config.sync_interval);
-      db.prepare('UPDATE sync_configs SET last_sync = ?, next_sync = ? WHERE id = ?').run(startTime, nextSync, config.id);
+    reportCatalogWriteDuration(providerId, Date.now() - applyStartedAt);
+
+    // A catalog the provider could not fully deliver is never a success: an
+    // empty or half-fetched catalog must not look like "nothing changed
+    // upstream". `error` means the provider returned nothing usable at all,
+    // `partial` means some of it arrived.
+    if (catalogFailures.length === 0) {
+      status = 'success';
+    } else {
+      errorMessage = describeCatalogFailures(catalogFailures);
+      status = (allChannels.length === 0 && allCategories.length === 0) ? 'error' : 'partial';
     }
 
     // Invalidate cache since channels might have been added/updated
@@ -693,13 +1011,19 @@ export async function performSync(providerId, userId, options = {}) {
     // Pre-populate provider icon cache for faster logo lookups
     prePopulateProviderIconCache(providerId);
 
-    // Log success
-    db.prepare(`
-      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, channels_added, channels_updated, categories_added)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(providerId, userId, startTime, 'success', channelsAdded, channelsUpdated, categoriesAdded);
+    finishSyncRun({
+      providerId, userId, startTime, config, status, errorMessage,
+      channelsAdded, channelsUpdated, categoriesAdded
+    });
 
-    console.info(`✅ Sync completed: ${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`);
+    const summary = `${channelsAdded} added, ${channelsUpdated} updated, ${categoriesAdded} categories`;
+    if (status === 'success') {
+      console.info(`✅ Sync completed: ${summary}`);
+    } else if (status === 'partial') {
+      console.warn(`⚠️ Sync partially completed: ${summary} — ${errorMessage}`);
+    } else {
+      console.error(`❌ Sync delivered no catalog for provider ${providerId}: ${errorMessage}`);
+    }
 
     scheduleSyncFollowups(recordSyncSnapshot(providerId,aiSnapshot));
 
@@ -711,23 +1035,19 @@ export async function performSync(providerId, userId, options = {}) {
     }
 
   } catch (e) {
-    errorMessage = e.message;
-    console.error(`❌ Sync failed:`, e);
+    status = 'error';
+    errorMessage = sanitizeErrorMessage(e);
+    console.error(`❌ Sync failed for provider ${providerId} [${e.code || e.name || 'Error'}]:`, e);
 
-    // Log error
-    db.prepare(`
-      INSERT INTO sync_logs (provider_id, user_id, sync_time, status, error_message)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(providerId, userId, startTime, 'error', errorMessage);
-
-    // Update next_sync even on failure to respect interval
-    if (config) {
-      const nextSync = calculateNextSync(config.sync_interval);
-      db.prepare('UPDATE sync_configs SET next_sync = ? WHERE id = ?').run(nextSync, config.id);
-    }
+    finishSyncRun({
+      providerId, userId, startTime, config, status, errorMessage,
+      channelsAdded, channelsUpdated, categoriesAdded
+    });
+  } finally {
+    lock.release();
   }
 
-  return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage };
+  return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status };
 }
 
 import { parseSeriesInfoEpisodes, syncSeriesEpisode, syncSeriesEpisodes } from './seriesSyncService.js';

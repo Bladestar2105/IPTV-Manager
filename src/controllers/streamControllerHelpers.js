@@ -533,11 +533,9 @@ export function attachResponseCleanup(req, res, cleanup) {
 export function attachStreamHeartbeat(upstreamBody, connectionId) {
   if (!upstreamBody || typeof upstreamBody.on !== 'function') return;
 
-  let lastTouch = 0;
+  // streamManager.touch() throttles itself, so every activity signal can be
+  // forwarded without a second, differently tuned rate limit here.
   upstreamBody.on('data', () => {
-    const now = Date.now();
-    if (now - lastTouch < 30000) return;
-    lastTouch = now;
     streamManager.touch(connectionId);
   });
 }
@@ -550,6 +548,9 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
     const fetchOptions = { ...options };
     delete fetchOptions.agent;
     delete fetchOptions.redirect;
+    // fetchSafe bounds only the wait for the headers. A body this returns is
+    // either piped to a player (must not be bounded) or read as a manifest by
+    // the caller, which bounds that read with readBodyWithLimit().
 
     for (const u of urls) {
         if (!u) continue;

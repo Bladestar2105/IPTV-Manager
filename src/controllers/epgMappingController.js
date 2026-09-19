@@ -2,6 +2,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { Worker } from 'worker_threads';
 import db from '../database/db.js';
+import { immediateTransaction } from '../database/sqliteWrites.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import { loadAllEpgChannels } from '../services/epgService.js';
 import { ChannelMatcher } from '../services/channelMatcher.js';
@@ -290,7 +291,7 @@ const runAutoMapping = async ({ body, user, ip, onProgress }) => {
       ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
     `);
 
-    db.transaction(() => {
+    immediateTransaction(db, () => {
       for (const u of updates) {
         insert.run(u.pid, u.eid);
       }

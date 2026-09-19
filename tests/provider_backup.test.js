@@ -47,7 +47,8 @@ vi.mock('../src/services/authService.js', () => ({
     getXtreamUser: vi.fn(async () => ({ id: 1, username: 'testuser', is_share_guest: false }))
 }));
 
-vi.mock('../src/utils/helpers.js', () => ({
+vi.mock('../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
     redactUrl: vi.fn(url => url),
     getBaseUrl: vi.fn(() => 'http://localhost:3000'),
     isSafeUrl: vi.fn(async () => true),

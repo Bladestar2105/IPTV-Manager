@@ -1,25 +1,32 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { DATA_DIR } from '../config/constants.js';
+import { openSqliteConnection } from './sqliteConnection.js';
 import * as migrations from './migrations.js';
+import { migrateProviderLockTable, sweepExpiredProviderLocks } from './providerLockSchema.js';
 
 // Ensure Data Directory exists
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
+export const DB_PATH = path.join(DATA_DIR, 'db.sqlite');
 
-export function openDbConnection() {
-    const connection = new Database(DB_PATH, { timeout: 5000 });
-    connection.pragma('foreign_keys = ON');
-    connection.pragma('busy_timeout = 5000');
-    connection.pragma('synchronous = NORMAL');
-    return connection;
+export function openDbConnection(options = {}) {
+    // Shared settings for every connection: see src/database/sqliteConnection.js.
+    // A per-connection busy_timeout that is shorter than the longest write
+    // transaction turns normal lock contention into "database is locked".
+    return openSqliteConnection(DB_PATH, options);
+}
+
+/**
+ * Connection for bookkeeping on the streaming path. better-sqlite3 blocks the
+ * event loop while it waits for a lock, so this one gives up quickly: a lost
+ * activity update costs nothing, a stalled worker stalls every viewer it serves.
+ */
+export function openLatencyDbConnection() {
+    return openSqliteConnection(DB_PATH, { latency: true });
 }
 
 const db = openDbConnection();
-// Performance tuning
-db.pragma('journal_mode = WAL');
 
 export function initDb(isPrimary) {
     if (isPrimary) {
@@ -177,6 +184,10 @@ export function initDb(isPrimary) {
       FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
     );
 
+    -- provider_locks is created by migrateProviderLockTable below, which also
+    -- owns its migration. Two copies of the DDL is how the first migration came
+    -- to be neither atomic nor safe against a second worker.
+
     CREATE TABLE IF NOT EXISTS category_mappings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_id INTEGER NOT NULL,
@@ -283,6 +294,12 @@ export function initDb(isPrimary) {
     -- ⚡ Bolt: Add composite index for rapid rate-limiting queries to prevent full table scans during brute-force DoS attacks
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
+
+            const carriedLocks = migrateProviderLockTable(db);
+            if (carriedLocks > 0) console.log(`🔒 Carried ${carriedLocks} lease(s) into the current lock table`);
+
+            const staleLocks = sweepExpiredProviderLocks(db);
+            if (staleLocks > 0) console.log(`🔓 Cleared ${staleLocks} expired lock(s)`);
 
             console.log("✅ Database OK");
 

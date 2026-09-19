@@ -2,6 +2,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import helmet from 'helmet';
 import db from '../database/db.js';
 import { cleanIp } from '../utils/helpers.js';
+import { resolveBudget } from '../utils/env.js';
 
 const DEFAULT_RATE_LIMITS = {
   auth: {
@@ -18,16 +19,11 @@ const DEFAULT_RATE_LIMITS = {
   }
 };
 
-function positiveIntegerEnv(name, defaultValue) {
-  const value = process.env[name];
-  if (value === undefined || value === '') return defaultValue;
-
-  const parsed = Number(value);
-  if (Number.isInteger(parsed) && parsed > 0) return parsed;
-
-  console.warn(`Invalid ${name}="${value}", using default ${defaultValue}`);
-  return defaultValue;
-}
+// The sixth copy of the same parse-check-warn. It was a correct one, but it
+// accepted shapes the documented contract refuses — `1e3`, `0x10`, `5.0` — and
+// keeping a private copy is how the five before it drifted apart.
+const positiveIntegerEnv = (name, defaultValue) =>
+  resolveBudget(process.env[name], defaultValue, 1, Number.MAX_SAFE_INTEGER, name);
 
 const rateLimitConfig = {
   auth: {

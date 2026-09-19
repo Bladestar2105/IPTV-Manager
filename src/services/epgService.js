@@ -1,7 +1,8 @@
-import Database from 'better-sqlite3';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { EPG_DB_PATH } from '../config/constants.js';
+import { openSqliteConnection } from '../database/sqliteConnection.js';
+import { deleteInBatches, formatDbError, immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
 
 import { importEpgFromUrl } from './epgImportService.js';
@@ -54,22 +55,30 @@ async function importChannelsFromProvider(providerId) {
 
     if (channels.length === 0) return;
 
-    const importDb = new Database(EPG_DB_PATH);
+    // Foreign keys stay OFF for the same reason as in epgImportService:
+    // `INSERT OR REPLACE INTO epg_channels` would cascade into epg_programs.
+    const importDb = openSqliteConnection(EPG_DB_PATH, { foreignKeys: false });
     const now = Math.floor(Date.now() / 1000);
     const sourceType = 'provider';
     const sourceId = providerId;
 
     try {
-        // Clear existing data for this source
-        importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
-        importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
-
+        const deletePrograms = importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?');
+        const deleteChannels = importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?');
         const insertChannel = importDb.prepare(`
             INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
             VALUES (@id, @name, @logo, @sourceType, @sourceId, @updatedAt)
         `);
 
-        const updateTx = importDb.transaction(() => {
+        // One transaction for the clear and the refill. They used to be
+        // separate — two autocommitted deletes, then the inserts — so an insert
+        // that failed, on SQLITE_BUSY as easily as anything else, left this
+        // provider with no EPG channels at all until the next daily run
+        // succeeded. The rows come from a local query, so the whole thing is
+        // repeatable and belongs in one transaction.
+        const replaceChannels = immediateTransaction(importDb, () => {
+            deletePrograms.run(sourceType, sourceId);
+            deleteChannels.run(sourceType, sourceId);
             for (const ch of channels) {
                 insertChannel.run({
                     id: ch.epg_channel_id,
@@ -81,24 +90,36 @@ async function importChannelsFromProvider(providerId) {
                 });
             }
         });
-        updateTx();
+        replaceChannels();
 
         // Invalidate EPG logos cache after importing channels
         invalidateEpgLogosCache();
 
         console.info(`✅ Imported ${channels.length} channels from provider ${providerId} into EPG DB`);
     } catch (e) {
-        console.error(`❌ Failed to import channels from provider ${providerId}:`, e.message);
+        console.error(`❌ Failed to import channels from provider ${providerId}:`, formatDbError(e));
         throw e;
     } finally {
         importDb.close();
     }
 }
 
+/**
+ * Drop programmes whose stop time is older than the retention window.
+ *
+ * In batches: this runs after every EPG import and hourly from the scheduler
+ * worker, so normally it removes an hour or two of expired rows. But it removes
+ * whatever accumulated since it last ran, and it does not run while imports are
+ * failing — the deployment this was written for had every import dying a second
+ * in — so the first successful run after such a stretch faces a backlog of the
+ * whole retention window on a multi-gigabyte table. As one statement that is a
+ * write lock held for as long as it takes, in a worker that is pumping streams
+ * while better-sqlite3 blocks its event loop.
+ */
 export function pruneOldEpgData(days = 7) {
     const cutoff = Math.floor(Date.now() / 1000) - (days * 86400);
-    const result = db.prepare('DELETE FROM epg_programs WHERE stop < ?').run(cutoff);
-    console.info(`🧹 Pruned ${result.changes} old EPG programs`);
+    const removed = deleteInBatches(db, 'epg_programs', 'stop < ?', [cutoff]);
+    if (removed > 0) console.info(`🧹 Pruned ${removed} old EPG programs`);
 }
 
 export function deleteEpgSourceData(sourceId, sourceType) {

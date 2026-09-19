@@ -9,7 +9,8 @@ const { fetchSafe, xtreamState } = vi.hoisted(() => ({
 const memDb = new Database(':memory:');
 
 vi.mock('../src/database/db.js', () => ({ default: memDb, initDb: vi.fn() }));
-vi.mock('../src/utils/network.js', () => ({ fetchSafe }));
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()), fetchSafe }));
 vi.mock('@iptv/xtream-api', () => ({
   Xtream: class {
     getChannels() { return Promise.resolve(xtreamState.channels.map(channel => ({ ...channel }))); }

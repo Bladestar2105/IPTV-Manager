@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey, resolveAssignmentGrant } from '../src/utils/helpers.js';
+import { isAdultCategory, getSetting, clearSettingsCache, getCookie, redactUrl, getBaseUrl, providerSourceKey, resolveAssignmentGrant, sanitizeErrorMessage } from '../src/utils/helpers.js';
 
 describe('isAdultCategory', () => {
   const adultKeywords = [
@@ -207,6 +207,21 @@ describe('getCookie', () => {
 });
 
 describe('redactUrl', () => {
+  it('stops at whitespace, so it cannot swallow the rest of a message', () => {
+    // These strings are usually `request to <url> failed, reason: …`. With the
+    // credential as the last query parameter, a greedy `[^&]*` ran past the URL
+    // and took the reason with it, so ECONNREFUSED, ENOTFOUND and "certificate
+    // has expired" all collapsed into the same line.
+    const message = 'request to http://panel.example/xmltv.php?username=a&password=s3cr3t' +
+      ' failed, reason: connect ECONNREFUSED 10.0.0.1:8080';
+
+    const redacted = redactUrl(message);
+
+    expect(redacted).not.toContain('s3cr3t');
+    expect(redacted).toContain('password=********');
+    expect(redacted).toContain('connect ECONNREFUSED 10.0.0.1:8080');
+  });
+
   it('should redact Xtream path passwords', () => {
     expect(redactUrl('/live/user/pass/1.ts')).toBe('/live/user/********/1.ts');
     expect(redactUrl('/movie/user/pass/movie.mp4')).toBe('/movie/user/********/movie.mp4');
@@ -379,5 +394,63 @@ describe('providerSourceKey', () => {
     expect(providerSourceKey('')).toBe('');
     expect(providerSourceKey(null)).toBe('');
     expect(providerSourceKey(undefined)).toBe('');
+  });
+
+  it('carries no credentials out of a URL that does not parse', () => {
+    // The source key is not a private value: it is written into
+    // provider_series_episodes and provider_series_state, it is the lock key
+    // for the shared upstream panel, and eight log lines interpolate it. The
+    // parsed branch drops userinfo and the query string; the fallback used to
+    // return the raw string, so one stray space in the host was enough to put
+    // the panel password into the database and onto stdout.
+    const key = providerSourceKey('http://panel example:8080/c?username=joe&password=s3cret');
+    expect(key).not.toMatch(/s3cret/);
+    expect(key).not.toMatch(/joe/);
+    expect(key).toBe('http://panel example:8080/c');
+
+    expect(providerSourceKey('http://joe:s3cret@panel example:8080/c')).toBe('http://panel example:8080/c');
+  });
+
+  it('still tells two unparseable panels apart', () => {
+    expect(providerSourceKey('http://panel example:8080/a'))
+      .not.toBe(providerSourceKey('http://panel example:8080/b'));
+  });
+});
+
+describe('sanitizeErrorMessage', () => {
+  it('strips the query string of an embedded URL, credentials included', () => {
+    const out = sanitizeErrorMessage(
+      new Error('Unsafe URL: http://panel.example:8080/player_api.php?username=bob&password=s3cr3t&action=get_series')
+    );
+    expect(out).not.toMatch(/s3cr3t/);
+    expect(out).not.toMatch(/bob/);
+    expect(out).toContain('panel.example:8080');
+    expect(out).toContain('/player_api.php');
+  });
+
+  it('masks credential-shaped pairs outside a URL', () => {
+    const out = sanitizeErrorMessage(new Error('auth failed for username=bob password=hunter2 token=abc'));
+    expect(out).not.toMatch(/hunter2/);
+    expect(out).not.toMatch(/abc\b/);
+    expect(out).toMatch(/password=\*+/);
+  });
+
+  it('removes characters that could become markup', () => {
+    const out = sanitizeErrorMessage(new Error('bad content-type <img src=x onerror="alert(1)">'));
+    expect(out).not.toMatch(/[<>"'`]/);
+    expect(out).toContain('bad content-type');
+  });
+
+  it('collapses control characters and bounds the length', () => {
+    expect(sanitizeErrorMessage(new Error('a\nb\tc'))).toBe('a b c');
+    const long = sanitizeErrorMessage(new Error('x'.repeat(1000)));
+    expect(long.length).toBeLessThanOrEqual(300);
+  });
+
+  it('keeps ordinary messages readable', () => {
+    expect(sanitizeErrorMessage(new Error('The operation was aborted.'))).toBe('The operation was aborted.');
+    expect(sanitizeErrorMessage('HTTP 521')).toBe('HTTP 521');
+    expect(sanitizeErrorMessage(null)).toBe('unknown error');
+    expect(sanitizeErrorMessage(new Error(''))).toBe('unknown error');
   });
 });

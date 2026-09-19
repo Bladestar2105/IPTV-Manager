@@ -21,7 +21,8 @@ vi.mock('../src/services/syncService.js', () => ({
   checkProviderExpiry: vi.fn(async () => {}),
   deleteProviderChannelCascade: vi.fn()
 }));
-vi.mock('../src/utils/network.js', () => ({ fetchSafe: vi.fn(async () => ({ ok: false })) }));
+vi.mock('../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()), fetchSafe: vi.fn(async () => ({ ok: false })) }));
 vi.mock('../src/utils/crypto.js', () => ({
   encrypt: value => String(value || ''),
   decrypt: value => String(value || ''),

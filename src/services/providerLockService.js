@@ -1,0 +1,306 @@
+import { randomUUID } from 'crypto';
+import * as dbModule from '../database/db.js';
+import { migrateProviderLockTable, sweepExpiredProviderLocks } from '../database/providerLockSchema.js';
+import { formatDbError, isRetryableSqliteError } from '../database/sqliteWrites.js';
+
+const db = dbModule.default;
+
+// The renewal fires from a timer while the worker may be pumping streams, and
+// better-sqlite3 blocks the event loop while it waits for a lock. A missed
+// renewal is harmless — the lease still has most of its TTL left and the next
+// tick retries — so it uses a connection that gives up quickly instead.
+// A namespace import keeps this optional: test doubles of the db module need
+// not provide it.
+let renewalDb = null;
+function renewalConnection() {
+  if (renewalDb) return renewalDb;
+  try {
+    renewalDb = typeof dbModule.openLatencyDbConnection === 'function'
+      ? dbModule.openLatencyDbConnection()
+      : db;
+  } catch {
+    renewalDb = db;
+  }
+  return renewalDb;
+}
+
+/** Test seam: forget the cached renewal connection. */
+export function resetProviderLockConnections() {
+  renewalDb = null;
+}
+
+// A provider sync runs for minutes. The lock outlives a slow run but expires
+// soon enough that a crashed worker does not block the provider for hours; a
+// held lock is renewed while the work is still in progress.
+const DEFAULT_TTL_SECONDS = 900;
+// Marks a row that is held open on purpose after its run finished, so a
+// diagnostic message can tell a cooldown apart from work in progress.
+const COOLDOWN_SUFFIX = ':cooldown';
+const RENEW_INTERVAL_MS = 60000;
+// A release that loses the write lock used to leave the row behind with a full
+// lease and nothing renewing it: the provider stayed locked for up to the TTL
+// after a run that succeeded, and every scheduled attempt in between was
+// deferred without a word. The delete is guarded by owner_token, so repeating
+// it can only ever remove this process's own row.
+const RELEASE_RETRY_DELAYS_MS = [1000, 5000, 15000];
+
+/**
+ * Remove this process's own lock row, retrying a lost write lock.
+ *
+ * The retries are unref'd on purpose: a shutdown must not wait for them, and a
+ * release that never happens costs only the remainder of the lease.
+ */
+function deleteOwnLock(database, lockKey, token, attempt = 0) {
+  try {
+    database.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND owner_token = ?').run(lockKey, token);
+  } catch (e) {
+    if (isRetryableSqliteError(e) && attempt < RELEASE_RETRY_DELAYS_MS.length) {
+      const timer = setTimeout(() => deleteOwnLock(database, lockKey, token, attempt + 1),
+        RELEASE_RETRY_DELAYS_MS[attempt]);
+      timer.unref?.();
+      return;
+    }
+    console.warn(`Could not release lock ${lockKey}: ${formatDbError(e)}; it is held until its lease expires`);
+  }
+}
+
+// 'ready'       the table exists and locks work
+// 'unsupported' this connection is not a usable SQLite database (test doubles)
+// 'unknown'     not probed yet, or the last probe failed transiently
+let tableState = 'unknown';
+
+/**
+ * The lock table is infrastructure for this service, so it is created here as
+ * well as in initDb. Creation is idempotent.
+ *
+ * A failing probe is never silently permanent. Only a connection that cannot be
+ * a SQLite database at all — no `exec`/`prepare`, or an error without a SQLite
+ * code, i.e. a test double — is remembered as unsupported. A real database that
+ * refuses the statement (`SQLITE_BUSY` while another writer holds the lock,
+ * `SQLITE_READONLY`, …) returns 'busy' without caching, so the caller fails
+ * closed and the next call probes again.
+ *
+ * @returns {'ready'|'unsupported'|'busy'}
+ */
+function ensureTable() {
+  if (tableState === 'ready' || tableState === 'unsupported') return tableState;
+
+  if (typeof db.exec !== 'function' || typeof db.prepare !== 'function') {
+    tableState = 'unsupported';
+    console.warn('Provider locks unavailable: this database cannot hold the lock table');
+    return tableState;
+  }
+
+  try {
+    migrateProviderLockTable(db);
+    tableState = 'ready';
+    return tableState;
+  } catch (e) {
+    if (isRetryableSqliteError(e)) {
+      // Contention. Do not cache: the next attempt probes again.
+      console.warn(`Provider lock table unavailable right now: ${e.message} [${e.code}]`);
+      return 'busy';
+    }
+    if (typeof e?.code === 'string' && e.code.startsWith('SQLITE_')) {
+      // A real database refusing the DDL for a reason that will not pass on its
+      // own. Still fail closed — handing out a no-op lock would allow exactly
+      // the overlap the table prevents — but say so as an error, because
+      // "try again shortly" is not going to come true.
+      console.error(`Provider lock table cannot be created: ${e.message} [${e.code}]`);
+      return 'busy';
+    }
+    tableState = 'unsupported';
+    console.warn('Provider locks unavailable, concurrent provider operations are not serialized:', e.message);
+    return tableState;
+  }
+}
+
+/** Test seam: forget the cached probe result. */
+export function resetProviderLockState() {
+  tableState = 'unknown';
+}
+
+export const providerLockKey = providerId => `provider:${Number(providerId)}`;
+export const sourceLockKey = sourceKey => `source:${String(sourceKey)}`;
+
+/**
+ * Try to become the single owner of `lockKey` for `operation`.
+ *
+ * schedulerService kept a per-process `Set`, which cannot see work running in
+ * another cluster worker, and provider deletion had no guard at all. The lock
+ * lives in the database so it spans workers and processes.
+ *
+ * Fails closed: null means the caller must not proceed — either somebody else
+ * holds the lock, or the lock could not be taken because of contention. The only
+ * degraded result is a database that cannot hold the table at all (fixtures and
+ * test doubles), which is decided once in ensureTable().
+ *
+ * @returns {{lockKey:string, operation:string, token:string, release:Function}|null}
+ */
+export function acquireLock(lockKey, operation, options = {}) {
+  const ttlSeconds = Number(options.ttlSeconds) > 0 ? Number(options.ttlSeconds) : DEFAULT_TTL_SECONDS;
+  const state = ensureTable();
+  // A database that refused the probe is contended, not unsupported: fail closed.
+  if (state === 'busy') return null;
+  if (state === 'unsupported') return { lockKey, operation, token: null, degraded: true, release() {} };
+
+  const now = Math.floor(Date.now() / 1000);
+  const token = randomUUID();
+  try {
+    db.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND expires_at <= ?').run(lockKey, now);
+    const inserted = db.prepare(`
+      INSERT INTO provider_locks (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(lock_key) DO NOTHING
+    `).run(lockKey, operation, process.pid, token, now, now + ttlSeconds).changes;
+    if (inserted !== 1) return null;
+  } catch (e) {
+    // Fail closed. Reaching this point means ensureTable() succeeded, so the
+    // table exists and the failure is real contention — SQLITE_BUSY here is
+    // precisely the situation the lock exists for. Handing out a no-op lock
+    // would allow exactly the overlapping operation it has to prevent.
+    console.warn(`Could not acquire lock ${lockKey}/${operation}: ${e.message} [${e.code || 'Error'}]`);
+    return null;
+  }
+
+  const renew = setInterval(() => {
+    try {
+      renewalConnection()
+        .prepare('UPDATE provider_locks SET expires_at = ? WHERE lock_key = ? AND owner_token = ?')
+        .run(Math.floor(Date.now() / 1000) + ttlSeconds, lockKey, token);
+    } catch {
+      // A contended renewal is skipped, not waited out: the lease keeps most of
+      // its TTL and the next tick retries long before it expires.
+    }
+  }, RENEW_INTERVAL_MS);
+  renew.unref?.();
+
+  return {
+    lockKey,
+    operation,
+    token,
+    degraded: false,
+    /**
+     * @param {number} [cooldownSeconds] keep the key unavailable for this long
+     *        after the run finished. A run that established something about the
+     *        shared resource itself — an upstream panel that stops answering —
+     *        has learned it on behalf of every caller of this key, not just
+     *        itself. Releasing plainly lets the next caller start a fresh run
+     *        and spend its own full failure budget against the same dead host.
+     */
+    release(cooldownSeconds = 0) {
+      clearInterval(renew);
+      const hold = Number(cooldownSeconds) > 0 ? Math.floor(Number(cooldownSeconds)) : 0;
+      if (hold > 0) {
+        try {
+          // Hand the row to a holder nobody renews, so the key stays taken until
+          // the lease runs out and the next acquireLock sweeps it. Written as an
+          // UPDATE of the row this process already owns: a delete-then-insert
+          // would leave a window for another worker to take the lock.
+          const changed = db.prepare(
+            'UPDATE provider_locks SET operation = ?, owner_token = ?, expires_at = ? WHERE lock_key = ? AND owner_token = ?'
+          ).run(`${operation}${COOLDOWN_SUFFIX}`, `cooldown:${token}`, Math.floor(Date.now() / 1000) + hold, lockKey, token).changes;
+          if (changed === 1) return;
+        } catch (e) {
+          // The row keeps this process's token and whatever expires_at the last
+          // renewal wrote, and nothing renews it now — which is the cooldown
+          // that was asked for, over a different length of time. Falling
+          // through to the delete instead would hand the dead upstream straight
+          // back to the next caller.
+          console.warn(`Could not extend lock ${lockKey} into a cooldown: ${formatDbError(e)}; `
+            + 'it is held until its lease expires');
+          return;
+        }
+      }
+      deleteOwnLock(db, lockKey, token);
+    },
+  };
+}
+
+/** Serializes sync and deletion of one provider. */
+export function acquireProviderLock(providerId, operation, options = {}) {
+  return acquireLock(providerLockKey(providerId), operation, options);
+}
+
+/**
+ * Serializes work against one upstream panel.
+ *
+ * Several provider rows commonly point at the same panel — nine of eleven do on
+ * the deployment this was written for. Without a shared lock each of them runs
+ * its own episode sync, with its own request concurrency, against that single
+ * host.
+ */
+export function acquireSourceLock(sourceKey, operation, options = {}) {
+  return acquireLock(sourceLockKey(sourceKey), operation, options);
+}
+
+export function releaseProviderLock(lock, cooldownSeconds = 0) {
+  if (lock && typeof lock.release === 'function') lock.release(cooldownSeconds);
+}
+
+/** True when this lock row is a cooldown rather than a live operation. */
+export function isCooldownHolder(holder) {
+  return typeof holder?.operation === 'string' && holder.operation.endsWith(COOLDOWN_SUFFIX);
+}
+
+/** Who currently holds the lock, for diagnostics and 409 responses. */
+export function describeLock(lockKey, now = Math.floor(Date.now() / 1000)) {
+  if (ensureTable() !== 'ready') return null;
+  try {
+    // An expired row is not a holder. Reporting it as one told the operator a
+    // sync was in progress when the process that started it was long gone.
+    return db.prepare(
+      'SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE lock_key = ? AND expires_at > ?'
+    ).get(lockKey, now) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function describeProviderLock(providerId) {
+  return describeLock(providerLockKey(providerId));
+}
+
+/**
+ * Wording for a refused operation. A lock with no live holder row means the
+ * acquisition itself failed — either real contention on the lock table, or the
+ * benign race where the previous holder released between the refused insert and
+ * this read.
+ */
+export function describeLockConflict(providerId) {
+  const holder = describeProviderLock(providerId);
+  if (!holder) {
+    return `Provider ${providerId} could not be locked; another operation released it just now, or the database is busy`;
+  }
+  if (isCooldownHolder(holder)) {
+    return `Provider ${providerId} is held back until ${new Date(holder.expires_at * 1000).toISOString()} after its upstream stopped answering`;
+  }
+  return `Provider ${providerId} is already being ${holder.operation === 'delete' ? 'deleted' : 'synchronized'}`;
+}
+
+/** Drop every lock. Tests only; startup sweeps expired leases in initDb. */
+export function clearProviderLocks() {
+  if (ensureTable() !== 'ready') return 0;
+  try {
+    return db.prepare('DELETE FROM provider_locks').run().changes;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Drop only locks whose lease has run out, guarded by the table probe.
+ *
+ * initDb sweeps directly through the schema module; this is the same sweep for
+ * callers that already hold the service's connection. See
+ * sweepExpiredProviderLocks for why expired-only.
+ */
+export function clearExpiredProviderLocks(now = Math.floor(Date.now() / 1000)) {
+  if (ensureTable() !== 'ready') return 0;
+  try {
+    return sweepExpiredProviderLocks(db, now);
+  } catch (e) {
+    console.warn('Could not sweep expired provider locks:', e.message);
+    return 0;
+  }
+}

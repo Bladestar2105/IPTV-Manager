@@ -27,11 +27,13 @@ vi.mock('../../src/services/logoResolver.js', () => ({
   loadEpgLogosCache: vi.fn(),
 }));
 vi.mock('../../src/utils/crypto.js', () => ({ decrypt: vi.fn(value => value) }));
-vi.mock('../../src/utils/helpers.js', () => ({
+vi.mock('../../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   getBaseUrl: vi.fn(() => 'http://localhost'),
   providerSourceKey: vi.fn(url => `source:${url}`),
 }));
-vi.mock('../../src/utils/network.js', () => ({ fetchSafe: vi.fn() }));
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()), fetchSafe: vi.fn() }));
 vi.mock('../../src/config/constants.js', () => ({ PORT: 3000 }));
 
 import { playerApi } from '../../src/controllers/xtreamController.js';

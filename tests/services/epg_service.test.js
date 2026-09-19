@@ -18,10 +18,15 @@ vi.mock('better-sqlite3', () => ({
     default: vi.fn(function MockDatabase() {
         return {
             pragma: vi.fn(),
+            // The EPG import creates per-source staging tables, so the double
+            // needs DDL support as well.
+            exec: vi.fn(),
             prepare: vi.fn(() => ({
-                run: vi.fn(),
-                get: vi.fn(),
-                all: vi.fn(),
+                run: vi.fn(() => ({ changes: 0 })),
+                // Covers both the COUNT probes and the claimed_seq the import
+                // asks the database to issue.
+                get: vi.fn(() => ({ c: 0, claimed_seq: 1 })),
+                all: vi.fn(() => []),
                 iterate: vi.fn()
             })),
             transaction: vi.fn((fn) => (...args) => fn(...args)),
@@ -31,7 +36,8 @@ vi.mock('better-sqlite3', () => ({
 }));
 
 // Mock other dependencies if necessary
-vi.mock('../../src/utils/network.js', () => ({
+vi.mock('../../src/utils/network.js', async importOriginal => ({
+  ...(await importOriginal()),
     fetchSafe: vi.fn()
 }));
 

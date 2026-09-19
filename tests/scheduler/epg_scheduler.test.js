@@ -18,7 +18,8 @@ vi.mock('../../src/services/epgService.js', () => ({
 vi.mock('../../src/services/geoIpUpdateService.js', () => ({
   updateGeoIpDatabaseIfNeeded: vi.fn(),
 }));
-vi.mock('../../src/utils/helpers.js', () => ({
+vi.mock('../../src/utils/helpers.js', async importOriginal => ({
+  ...(await importOriginal()),
   isSafeUrl: vi.fn().mockResolvedValue(true),
 }));
 

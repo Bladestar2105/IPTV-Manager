@@ -163,7 +163,17 @@ export function providerSourceKey(url) {
     const path = parsed.pathname.replace(/\/+$/, '');
     return `${parsed.protocol}//${parsed.hostname.toLowerCase()}:${port}${path}`;
   } catch {
-    return raw.replace(/\/+$/, '').toLowerCase();
+    // The URL did not parse — a space or a stray character in the host or path
+    // is enough. Returning it raw put the panel password into the source key,
+    // and the source key is not a private value: it is written into
+    // provider_series_episodes and provider_series_state, it is the lock key
+    // for the shared upstream, and eight log lines interpolate it. So strip
+    // what the parsed branch strips anyway, by hand.
+    return raw
+      .replace(/^(https?:\/\/)[^/@]*@/i, '$1')
+      .split(/[?#]/)[0]
+      .replace(/\/+$/, '')
+      .toLowerCase();
   }
 }
 
@@ -232,12 +242,61 @@ export function redactUrl(url) {
     redacted = redacted.replace(/\/hdhr\/([^/]+)/, '/hdhr/********');
 
     // 4. Redact credentials and Stalker device metrics while preserving key casing
-    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&]*/gi, '$1$2=********');
+    // `[^&\s]*`, not `[^&]*`: a URL cannot contain a space, and stopping at one
+    // matters because these messages are usually `request to <url> failed,
+    // reason: …`. With the credential as the last parameter the greedy form ran
+    // past the URL and swallowed the reason, so ECONNREFUSED, ENOTFOUND and
+    // "certificate has expired" all collapsed into the same string.
+    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&\s]*/gi, '$1$2=********');
 
     return redacted;
   } catch {
     return '[redacted]';
   }
+}
+
+const MAX_PERSISTED_ERROR_LENGTH = 300;
+
+/**
+ * Make an error message safe to persist and to display.
+ *
+ * Upstream servers control parts of the text that reaches sync_logs, and
+ * fetchSafe embeds the request URL in some of its messages — for provider
+ * catalog calls that URL carries the account credentials. Query strings are
+ * dropped, remaining credential-shaped pairs are masked, markup characters are
+ * removed so a stored message can never become markup, and the result is
+ * bounded.
+ *
+ * @param {unknown} value an Error or any value describing a failure
+ * @returns {string} sanitized single-line message
+ */
+export function sanitizeErrorMessage(value) {
+  const raw = value instanceof Error ? value.message : String(value ?? '');
+  if (!raw) return 'unknown error';
+
+  let text = redactUrl(raw) || raw;
+
+  // Keep scheme, host and path for diagnosis; the query string never survives.
+  text = text.replace(/https?:\/\/[^\s"'`<>]+/gi, match => {
+    try {
+      const parsed = new URL(match);
+      return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+    } catch {
+      return '[url]';
+    }
+  });
+
+  // Anything credential-shaped that survived, in a query string or not.
+  text = text.replace(/\b(user(name)?|pass(word)?|token|auth|secret|key|mac)\s*[=:]\s*[^\s&,;]*/gi,
+    (match, name) => `${name}=********`);
+
+  // No markup, no control characters, single line.
+  text = text.replace(/[\u0000-\u001f\u007f<>"'`\\]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  if (!text) return 'unknown error';
+  return text.length > MAX_PERSISTED_ERROR_LENGTH
+    ? `${text.slice(0, MAX_PERSISTED_ERROR_LENGTH - 1)}\u2026`
+    : text;
 }
 
 export function resolveAssignmentGrant({
