@@ -38,6 +38,7 @@ describe('Sync Service Functional Tests', () => {
   let userId;
   let providerId;
   let userCategoryId;
+  let actor;
 
   beforeAll(() => {
     // Initialize real SQLite DB in the data directory configured by .env.test (usually /tmp/data)
@@ -62,6 +63,8 @@ describe('Sync Service Functional Tests', () => {
     // Create a user
     const userRes = db.prepare("INSERT INTO users (username, password) VALUES ('testuser', 'pass')").run();
     userId = userRes.lastInsertRowid;
+    const adminId = db.prepare("INSERT INTO admin_users (username, password) VALUES ('sync-test-admin', 'pass')").run().lastInsertRowid;
+    actor = { id: adminId, is_admin: true, token_version: 0 };
 
     // Create a user category mapped to the live category (ID 10)
     const catRes = db.prepare("INSERT INTO user_categories (user_id, name, type) VALUES (?, 'Live TV', 'live')").run(userId);
@@ -84,7 +87,7 @@ describe('Sync Service Functional Tests', () => {
 
   it('should sync the live channel and assign to user category', async () => {
     // 1. Perform first sync. The mock returns a live channel with category 10 and stream_id 1234.
-    const result = await performSync(providerId, userId, { mode: 'manual', allowCrossOwner: true });
+    const result = await performSync(providerId, userId, { mode: 'manual', actor, allowCrossOwner: true });
 
     expect(result.channelsAdded).toBe(1);
 
@@ -133,7 +136,7 @@ describe('Sync Service Functional Tests', () => {
     xtreamApi.Xtream.prototype.getChannels = vi.fn().mockResolvedValue([]);
 
     // Perform second sync
-    const result = await performSync(providerId, userId, { mode: 'manual', allowCrossOwner: true });
+    const result = await performSync(providerId, userId, { mode: 'manual', actor, allowCrossOwner: true });
 
     expect(result.channelsUpdated).toBe(1); // The channel 1234 should have been updated
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
@@ -297,51 +298,54 @@ export function deferSyncAfterLockConflict(providerId, userId, now = Math.floor(
   }
 }
 
-/**
- * Re-read the rows the run was authorized against.
- *
- * Fetching a provider catalog takes seconds to minutes. Provider, owner, target
- * user or the cross-owner approval can all change while that call is in flight,
- * and the schedule/log writes at the end of the run reference them by foreign
- * key.
- *
- * @param {object} [authorization] the cross-owner decision taken before the
- *        fetch, so it can be re-checked against the current grant
- */
-function assertSyncTargetStillValid(providerId, userId, provider, authorization = null) {
-  const current = db.prepare('SELECT id, user_id FROM providers WHERE id = ?').get(providerId);
+// Compare stored credentials, before decrypting a separate fetch copy. Runtime
+// bookkeeping (expiry/EPG timestamps) does not change the catalog configuration.
+function catalogConfigurationFingerprint(provider) {
+  return createHash('sha256').update(JSON.stringify([
+    provider.url, provider.username, provider.password, provider.user_agent, provider.backup_urls,
+  ])).digest('hex');
+}
+
+function assertManualSyncActor(options) {
+  if (options?.mode !== 'manual') return;
+  const actor = options.actor;
+  const admin = actor?.is_admin === true && db.prepare(
+    'SELECT is_active, token_version FROM admin_users WHERE id = ?'
+  ).get(actor.id);
+  if (!admin || Number(admin.is_active) !== 1 || admin.token_version !== actor.token_version) {
+    throw new Error('Administrator authorization was revoked or is missing');
+  }
+}
+
+// Call only after BEGIN IMMEDIATE has acquired the writer lock. A check before
+// it can become stale while SQLite waits for another worker to commit.
+function assertSyncTargetStillValid(providerId, userId, provider, options, initialConfig) {
+  const current = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
   if (!current) throw new Error('Provider was removed while its catalog was being fetched');
   // providers.user_id is nullable, so normalize before comparing owners.
   const ownerOf = row => (row?.user_id === null || row?.user_id === undefined ? null : Number(row.user_id));
   if (ownerOf(current) !== ownerOf(provider)) {
     throw new Error('Provider ownership changed while its catalog was being fetched');
   }
-  try {
-    if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(userId)) {
-      throw new Error('Target user was removed while the catalog was being fetched');
-    }
-  } catch (e) {
-    // Fixture schemas without a users table must not fail the run here; a real
-    // missing user is still caught by the guarded sync_logs insert.
-    if (e.code !== 'SQLITE_ERROR') throw e;
+  if (catalogConfigurationFingerprint(current) !== catalogConfigurationFingerprint(provider)) {
+    throw new Error('Provider configuration changed while its catalog was being fetched');
   }
+  if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(userId)) {
+    throw new Error('Target user was removed while the catalog was being fetched');
+  }
+  assertManualSyncActor(options);
 
-  // A run that borrows somebody else's provider does so on the strength of the
-  // persisted administrator grant read before the fetch. An administrator can
-  // revoke that grant while the fetch is in flight, and the transaction below
-  // both creates assignments with granted_by_admin = 1 and clears
-  // authorization_revoked — so a stale decision would silently re-establish
-  // exactly what was just revoked, with no later path that walks it back.
-  // Scheduling state (`enabled`) is deliberately not re-checked here: it is a
-  // preference, not an authorization.
-  if (authorization?.crossOwner && authorization.hasPersistedGrant && !authorization.hasManualGrant) {
-    const currentConfig = db.prepare(
-      'SELECT granted_by_admin FROM sync_configs WHERE provider_id = ? AND user_id = ?'
-    ).get(providerId, userId);
-    if (Number(currentConfig?.granted_by_admin) !== 1) {
-      throw new Error('Cross-owner approval was revoked while the catalog was being fetched');
+  const currentConfig = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
+  if (Number(current.user_id) !== Number(userId)) {
+    const hasPersistedGrant = Number(currentConfig?.granted_by_admin) === 1;
+    const hasManualGrant = options?.mode === 'manual' && options.allowCrossOwner === true;
+    // An explicit manual approval must not resurrect a persisted grant that was
+    // revoked after this request started. A later request can approve anew.
+    if (!hasPersistedGrant && (Number(initialConfig?.granted_by_admin) === 1 || !hasManualGrant)) {
+      throw new Error('Cross-owner approval was revoked or is missing');
     }
   }
+  return currentConfig;
 }
 
 /**
@@ -458,6 +462,7 @@ export async function performSync(providerId, userId, options = {}) {
 
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
+    assertManualSyncActor(options);
     const crossOwner = Number(provider.user_id) !== Number(userId);
     const hasPersistedGrant = Number(config?.granted_by_admin) === 1;
     const hasManualGrant = isManual && options?.allowCrossOwner === true;
@@ -477,197 +482,191 @@ export async function performSync(providerId, userId, options = {}) {
       return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'error' };
     }
 
-    const assignmentGrant = crossOwner ? 1 : 0;
-    const restoreRevokedAssignments = crossOwner && (
-      options?.restoreRevokedAssignments === true ||
-      (!isManual && hasPersistedGrant)
-    );
-
     // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
     await checkProviderExpiry(providerId);
 
     // Decrypt password for usage
-    provider.password = decrypt(provider.password);
+    const fetchProvider = { ...provider, password: decrypt(provider.password) };
 
     console.info(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
 
     // Fetch and normalize the provider catalog before applying local mappings.
-    const xtream = createXtreamClient(provider);
+    const xtream = createXtreamClient(fetchProvider);
     const { allChannels, allCategories, completeStreamTypes, snapshotStates, failures } =
-      await fetchProviderCatalog(provider, xtream);
+      await fetchProviderCatalog(fetchProvider, xtream);
     catalogFailures = failures || [];
 
-    // The catalog fetch can take minutes. Anything the run was authorized
-    // against may have been changed or removed in the meantime, so re-read it
-    // before touching the database again.
-    assertSyncTargetStillValid(providerId, userId, provider, { crossOwner, hasPersistedGrant, hasManualGrant });
-
-    // Process categories and create mappings
-    // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
-    const allMappings = db.prepare(`
-      SELECT cm.*,
-             cm.user_category_id AS mapping_user_category_id,
-             uc.user_id AS target_user_id,
-             COALESCE(uc.type, 'live') AS target_category_type
-      FROM category_mappings cm
-      LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
-      WHERE cm.provider_id = ? AND cm.user_id = ?
-    `).all(providerId, userId);
-
-    const isFirstSync = allMappings.length === 0;
-
-    // Create lookup map
-    const mappingLookup = new Map(); // Key: "catId_type"
-    for (const m of allMappings) {
-      const key = `${m.provider_category_id}_${m.category_type || 'live'}`;
-      const mappingType = m.category_type || 'live';
-      const targetId = Number(m.mapping_user_category_id) || 0;
-      const targetValid = !targetId || (
-        Number(m.target_user_id) === Number(m.user_id) &&
-        (m.target_category_type || 'live') === mappingType
-      );
-      mappingLookup.set(key, {
-        ...m,
-        user_category_id: targetValid && targetId ? targetId : null,
-        target_valid: targetValid
-      });
-    }
-    const invalidMappingCount = allMappings.filter(m => {
-      const targetId = Number(m.mapping_user_category_id) || 0;
-      return targetId > 0 && (
-        Number(m.target_user_id) !== Number(m.user_id) ||
-        (m.target_category_type || 'live') !== (m.category_type || 'live')
-      );
-    }).length;
-    if (invalidMappingCount > 0) {
-      console.warn(`Ignored ${invalidMappingCount} invalid category mapping target(s) for provider ${providerId}`);
-    }
-
-    // Prepare channel statements
-    const insertChannel = db.prepare(`
-      INSERT OR IGNORE INTO provider_channels
-      (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type, rating, rating_5based, added, plot, "cast", director, genre, releaseDate, youtube_trailer, episode_run_time)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const updateChannel = db.prepare(`
-      UPDATE provider_channels
-      SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?, rating = ?, rating_5based = ?, added = ?, plot = ?, "cast" = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
-      WHERE provider_id = ? AND remote_stream_id = ?
-    `);
-
-    // Optimized: Pre-fetch all channels to avoid N+1 query and allow change detection
-    const existingChannels = db.prepare(`
-      SELECT id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id,
-             original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type,
-             rating, rating_5based, added, plot, "cast", director, genre, releaseDate,
-             youtube_trailer, episode_run_time
-      FROM provider_channels
-      WHERE provider_id = ?
-      ORDER BY COALESCE(stream_type, 'live'), id
-    `).all(providerId);
-
-    const existingMap = new Map();
-    for (const row of existingChannels) {
-      existingMap.set(Number(row.remote_stream_id), row);
-    }
-
-    // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
-    const existingAssignmentsByChannel = new Map();
-    const maxSortMap = new Map();
-
-    // Prepare statement unconditionally to avoid potential undefined issues
-    const insertUserChannel = db.prepare(`
-      INSERT INTO user_channels
-        (user_category_id, provider_channel_id, sort_order, assignment_origin, mapping_id, granted_by_admin, authorization_revoked)
-      VALUES (?, ?, ?, 'mapping', ?, ?, 0)
-      ON CONFLICT DO NOTHING
-    `);
-    const authorizeExistingAssignment = db.prepare(`
-      UPDATE user_channels
-      SET granted_by_admin = ?, authorization_revoked = 0
-      WHERE id = ?
-    `);
-    const updateAssignmentMapping = db.prepare(`
-      UPDATE user_channels
-      SET mapping_id = ?, assignment_origin = 'mapping'
-      WHERE id = ? AND assignment_origin = 'mapping'
-    `);
-    const deleteMappedAssignment = db.prepare(`
-      DELETE FROM user_channels
-      WHERE id = ? AND mapping_id = ? AND assignment_origin = 'mapping'
-    `);
-
-    if (config && config.auto_add_channels) {
-      const existingAssignmentsRows = db.prepare(`
-        SELECT uc.id, uc.user_category_id, uc.provider_channel_id,
-               uc.mapping_id, uc.assignment_origin, uc.granted_by_admin, uc.authorization_revoked
-        FROM user_channels uc
-        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-        WHERE pc.provider_id = ?
-      `).all(providerId);
-
-      for (const r of existingAssignmentsRows) {
-        const channelId = Number(r.provider_channel_id);
-        if (!existingAssignmentsByChannel.has(channelId)) existingAssignmentsByChannel.set(channelId, new Map());
-        existingAssignmentsByChannel.get(channelId).set(Number(r.user_category_id), r);
-      }
-
-      const sortRows = db.prepare(`
-        SELECT user_category_id, MAX(sort_order) as max_sort
-        FROM user_channels
-        WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)
-        GROUP BY user_category_id
-      `).all(userId);
-
-      for (const r of sortRows) {
-        maxSortMap.set(r.user_category_id, r.max_sort);
-      }
-    }
-
-    const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
-    const insertCategoryMapping = db.prepare(`
-      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
-    `);
-    // Compiled here, with the others, rather than inside the loops below. Both
-    // of these ran per category and per channel assignment *inside* the write
-    // transaction, so on a catalog with hundreds of thousands of entries the
-    // lock was held for hundreds of thousands of extra SQL compilations —
-    // lengthening exactly the transaction every other worker is waiting on.
-    const insertFirstSyncMapping = db.prepare(`
-      INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
-      VALUES (?, ?, ?, ?, NULL, 0, ?)
-    `);
-    const selectAssignment = db.prepare(`
-      SELECT id, user_category_id, provider_channel_id, mapping_id,
-             assignment_origin, granted_by_admin, authorization_revoked
-      FROM user_channels
-      WHERE user_category_id = ? AND provider_channel_id = ?
-    `);
-
-    const getMappedTargets = (categoryId, categoryType) => {
-      const keys = [`${categoryId}_${categoryType}`];
-      if (categoryType === 'live') keys.push(`${categoryId}_radio`);
-      return keys.map(key => ({ key, mapping: mappingLookup.get(key) })).filter(({ key, mapping }) => {
-        if (!mapping?.user_category_id || !mapping.id || mapping.target_valid === false) return false;
-        const expectedType = key.endsWith('_radio') ? 'radio' : categoryType;
-        return (mapping.category_type || 'live') === expectedType;
-      }).map(({ mapping }) => mapping);
-    };
-    const seenRemoteIdsByType = new Map();
-    const currentTypeByRemoteId = new Map();
-    for (const channel of allChannels) {
-      const remoteId = Number(channel.stream_id || channel.series_id || channel.id || 0);
-      if (remoteId > 0) currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
-    }
-
-    // Execute all DB operations in a single transaction.
-    // BEGIN IMMEDIATE: the body starts with SELECTs and writes afterwards, so a
-    // deferred transaction would fail with SQLITE_BUSY_SNAPSHOT as soon as any
-    // other connection committed in between.
     const applyStartedAt = Date.now();
     immediateTransaction(db, () => {
+      config = assertSyncTargetStillValid(providerId, userId, provider, options, config);
+      const crossOwner = Number(provider.user_id) !== Number(userId);
+      const hasPersistedGrant = Number(config?.granted_by_admin) === 1;
+      const assignmentGrant = crossOwner ? 1 : 0;
+      const restoreRevokedAssignments = crossOwner && (
+        (isManual && options?.restoreRevokedAssignments === true) || (!isManual && hasPersistedGrant)
+      );
+
+      // Process categories and create mappings
+      // Performance Optimization: Pre-fetch all mappings to avoid N+1 queries
+      const allMappings = db.prepare(`
+        SELECT cm.*,
+               cm.user_category_id AS mapping_user_category_id,
+               uc.user_id AS target_user_id,
+               COALESCE(uc.type, 'live') AS target_category_type
+        FROM category_mappings cm
+        LEFT JOIN user_categories uc ON uc.id = cm.user_category_id
+        WHERE cm.provider_id = ? AND cm.user_id = ?
+      `).all(providerId, userId);
+
+      const isFirstSync = allMappings.length === 0;
+
+      // Create lookup map
+      const mappingLookup = new Map(); // Key: "catId_type"
+      for (const m of allMappings) {
+        const key = `${m.provider_category_id}_${m.category_type || 'live'}`;
+        const mappingType = m.category_type || 'live';
+        const targetId = Number(m.mapping_user_category_id) || 0;
+        const targetValid = !targetId || (
+          Number(m.target_user_id) === Number(m.user_id) &&
+          (m.target_category_type || 'live') === mappingType
+        );
+        mappingLookup.set(key, {
+          ...m,
+          user_category_id: targetValid && targetId ? targetId : null,
+          target_valid: targetValid
+        });
+      }
+      const invalidMappingCount = allMappings.filter(m => {
+        const targetId = Number(m.mapping_user_category_id) || 0;
+        return targetId > 0 && (
+          Number(m.target_user_id) !== Number(m.user_id) ||
+          (m.target_category_type || 'live') !== (m.category_type || 'live')
+        );
+      }).length;
+      if (invalidMappingCount > 0) {
+        console.warn(`Ignored ${invalidMappingCount} invalid category mapping target(s) for provider ${providerId}`);
+      }
+
+      // Prepare channel statements
+      const insertChannel = db.prepare(`
+        INSERT OR IGNORE INTO provider_channels
+        (provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type, rating, rating_5based, added, plot, "cast", director, genre, releaseDate, youtube_trailer, episode_run_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const updateChannel = db.prepare(`
+        UPDATE provider_channels
+        SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?, rating = ?, rating_5based = ?, added = ?, plot = ?, "cast" = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
+        WHERE provider_id = ? AND remote_stream_id = ?
+      `);
+
+      // Optimized: Pre-fetch all channels to avoid N+1 query and allow change detection
+      const existingChannels = db.prepare(`
+        SELECT id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id,
+               original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type,
+               rating, rating_5based, added, plot, "cast", director, genre, releaseDate,
+               youtube_trailer, episode_run_time
+        FROM provider_channels
+        WHERE provider_id = ?
+        ORDER BY COALESCE(stream_type, 'live'), id
+      `).all(providerId);
+
+      const existingMap = new Map();
+      for (const row of existingChannels) {
+        existingMap.set(Number(row.remote_stream_id), row);
+      }
+
+      // Optimization: Pre-fetch user channel assignments and sort orders to avoid N+1 queries
+      const existingAssignmentsByChannel = new Map();
+      const maxSortMap = new Map();
+
+      // Prepare statement unconditionally to avoid potential undefined issues
+      const insertUserChannel = db.prepare(`
+        INSERT INTO user_channels
+          (user_category_id, provider_channel_id, sort_order, assignment_origin, mapping_id, granted_by_admin, authorization_revoked)
+        VALUES (?, ?, ?, 'mapping', ?, ?, 0)
+        ON CONFLICT DO NOTHING
+      `);
+      const authorizeExistingAssignment = db.prepare(`
+        UPDATE user_channels
+        SET granted_by_admin = ?, authorization_revoked = 0
+        WHERE id = ?
+      `);
+      const updateAssignmentMapping = db.prepare(`
+        UPDATE user_channels
+        SET mapping_id = ?, assignment_origin = 'mapping'
+        WHERE id = ? AND assignment_origin = 'mapping'
+      `);
+      const deleteMappedAssignment = db.prepare(`
+        DELETE FROM user_channels
+        WHERE id = ? AND mapping_id = ? AND assignment_origin = 'mapping'
+      `);
+
+      if (config && config.auto_add_channels) {
+        const existingAssignmentsRows = db.prepare(`
+          SELECT uc.id, uc.user_category_id, uc.provider_channel_id,
+                 uc.mapping_id, uc.assignment_origin, uc.granted_by_admin, uc.authorization_revoked
+          FROM user_channels uc
+          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          WHERE pc.provider_id = ? AND cat.user_id = ?
+        `).all(providerId, userId);
+
+        for (const r of existingAssignmentsRows) {
+          const channelId = Number(r.provider_channel_id);
+          if (!existingAssignmentsByChannel.has(channelId)) existingAssignmentsByChannel.set(channelId, new Map());
+          existingAssignmentsByChannel.get(channelId).set(Number(r.user_category_id), r);
+        }
+
+        const sortRows = db.prepare(`
+          SELECT user_category_id, MAX(sort_order) as max_sort
+          FROM user_channels
+          WHERE user_category_id IN (SELECT id FROM user_categories WHERE user_id = ?)
+          GROUP BY user_category_id
+        `).all(userId);
+
+        for (const r of sortRows) {
+          maxSortMap.set(r.user_category_id, r.max_sort);
+        }
+      }
+
+      const insertUserCategory = db.prepare('INSERT INTO user_categories (user_id, name, is_adult, sort_order, type) VALUES (?, ?, ?, ?, ?)');
+      const insertCategoryMapping = db.prepare(`
+        INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+        VALUES (?, ?, ?, ?, ?, 1, ?)
+      `);
+      // Compiled here, with the others, rather than inside the loops below. Both
+      // of these ran per category and per channel assignment *inside* the write
+      // transaction, so on a catalog with hundreds of thousands of entries the
+      // lock was held for hundreds of thousands of extra SQL compilations —
+      // lengthening exactly the transaction every other worker is waiting on.
+      const insertFirstSyncMapping = db.prepare(`
+        INSERT INTO category_mappings (provider_id, user_id, provider_category_id, provider_category_name, user_category_id, auto_created, category_type)
+        VALUES (?, ?, ?, ?, NULL, 0, ?)
+      `);
+      const selectAssignment = db.prepare(`
+        SELECT id, user_category_id, provider_channel_id, mapping_id,
+               assignment_origin, granted_by_admin, authorization_revoked
+        FROM user_channels
+        WHERE user_category_id = ? AND provider_channel_id = ?
+      `);
+
+      const getMappedTargets = (categoryId, categoryType) => {
+        const keys = [`${categoryId}_${categoryType}`];
+        if (categoryType === 'live') keys.push(`${categoryId}_radio`);
+        return keys.map(key => ({ key, mapping: mappingLookup.get(key) })).filter(({ key, mapping }) => {
+          if (!mapping?.user_category_id || !mapping.id || mapping.target_valid === false) return false;
+          const expectedType = key.endsWith('_radio') ? 'radio' : categoryType;
+          return (mapping.category_type || 'live') === expectedType;
+        }).map(({ mapping }) => mapping);
+      };
+      const seenRemoteIdsByType = new Map();
+      const currentTypeByRemoteId = new Map();
+      for (const channel of allChannels) {
+        const remoteId = Number(channel.stream_id || channel.series_id || channel.id || 0);
+        if (remoteId > 0) currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
+      }
+
       aiSnapshot = captureSyncSnapshot(providerId);
       // Pre-calculate max sort order for optimization
       const maxSortRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM user_categories WHERE user_id = ?').get(userId);
@@ -855,7 +854,9 @@ export async function performSync(providerId, userId, options = {}) {
                 const oldKeys = [`${oldCategoryId}_${oldCategoryType}`];
                 if (oldCategoryType === 'live') oldKeys.push(`${oldCategoryId}_radio`);
                 const oldMappingIds = new Set(oldKeys
-                  .map(key => mappingLookup.get(key)?.id)
+                  .map(key => mappingLookup.get(key))
+                  .filter(mapping => mapping?.target_valid !== false)
+                  .map(mapping => mapping?.id)
                   .filter(Boolean)
                   .map(Number));
 

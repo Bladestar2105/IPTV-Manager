@@ -2,7 +2,7 @@ import { clearChannelsCache } from './cacheService.js';
 import { formatDbError, immediateTransaction, isRetryableSqliteError, runWriteWithRetry } from '../database/sqliteWrites.js';
 import { acquireSourceLock, describeLock, isCooldownHolder, sourceLockKey } from './providerLockService.js';
 import db from '../database/db.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { providerSourceKey, sanitizeErrorMessage } from '../utils/helpers.js';
@@ -109,6 +109,7 @@ function createSeriesEpisodeWriter(sourceKey) {
 async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, applySeries) {
   const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_series_info&series_id=${sid}`, { timeout: 30000 });
   if (!resp.ok) {
+    discardBody(resp);
     // A panel answering 401/429/5xx fast is exactly the case the breaker is
     // for. Returning null here made it a silent per-series skip, so a refusing
     // panel still received one request for every queued series.
@@ -261,7 +262,7 @@ export async function syncSeriesEpisodes(providerId) {
 
     const nowSec = Math.floor(Date.now() / 1000);
     const queue = [];
-    const seen = new Set();
+    const seen = new Map();
     let totalSeries = 0;
 
     // The triggering provider decides first, so a series it carries is fetched
@@ -282,7 +283,7 @@ export async function syncSeriesEpisodes(providerId) {
       `).iterate(...ids);
       for (const row of seriesRows) {
         const sid = Number(row.remote_stream_id);
-        if (!sid || seen.has(sid)) continue;
+        if (!sid || seen.get(sid) === null) continue;
         let lastModified = '';
         let fromM3u = false;
         try {
@@ -304,23 +305,22 @@ export async function syncSeriesEpisodes(providerId) {
         if (fromM3u) continue;
         const credential = credentials.get(row.provider_id);
         if (!credential) continue;
-        seen.add(sid);
-        totalSeries++;
-
-        // Not the provider that triggered the run: the row's own provider is
-        // the one whose credential was looked up above, and a sibling's series
-        // must be fetched with the sibling's account.
-        const rowProviderId = row.provider_id;
-        const state = stateMap.get(sid);
-        if (!state) {
-          queue.push({ sid, lastModified, credential, providerId: rowProviderId });
-        } else if (lastModified) {
-          if ((state.last_modified || '') !== lastModified) {
-            queue.push({ sid, lastModified, credential, providerId: rowProviderId });
-          }
-        } else if ((nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE) {
-          queue.push({ sid, lastModified, credential, providerId: rowProviderId });
+        const candidate = { credential, providerId: row.provider_id, lastModified };
+        if (seen.has(sid)) {
+          // Keep only accounts carrying this Xtream series as fallbacks. A bad
+          // first login must not hide the same series from a healthy sibling.
+          seen.get(sid)?.candidates.push(candidate);
+          continue;
         }
+
+        totalSeries++;
+        const state = stateMap.get(sid);
+        const needsSync = !state || (lastModified
+          ? (state.last_modified || '') !== lastModified
+          : (nowSec - (state.synced_at || 0)) >= EPISODE_SYNC_RETRY_AGE);
+        const item = needsSync ? { sid, candidates: [candidate] } : null;
+        seen.set(sid, item);
+        if (item) queue.push(item);
       }
     }
 
@@ -345,7 +345,10 @@ export async function syncSeriesEpisodes(providerId) {
     // every other account on it. And because a failed series never gets a state
     // row, that sibling's series are re-queued every cycle, so the panel would
     // be held back again and again on account of one dead login.
-    const queuedProviders = new Set(queue.map(item => item.providerId));
+    const queuedProviders = new Set();
+    for (const item of queue) {
+      for (const candidate of item.candidates) queuedProviders.add(candidate.providerId);
+    }
     const failuresByProvider = new Map();
     const givenUpProviders = new Set();
     const noteUpstreamFailure = providerId => {
@@ -358,40 +361,47 @@ export async function syncSeriesEpisodes(providerId) {
     const worker = async () => {
       while (cursor < queue.length) {
         const item = queue[cursor++];
-        if (givenUpProviders.has(item.providerId)) { abandoned++; continue; }
-        try {
-          const count = await fetchSeriesEpisodesOnce(sourceKey, item.sid, () =>
-            fetchSeriesEpisodes(item.credential.baseUrl, item.credential.authParams, item.sid, item.lastModified, applySeries)
-          );
-          if (count === null) {
-            // A 200 carrying neither episodes nor info is the panel refusing
-            // this account, not an empty series, so it belongs to the breaker
-            // exactly like an HTTP error does.
-            failed++;
-            noteUpstreamFailure(item.providerId);
-            continue;
+        let attempted = false;
+        let synced = false;
+        for (const candidate of item.candidates) {
+          if (givenUpProviders.has(candidate.providerId)) continue;
+          attempted = true;
+          try {
+            const count = await fetchSeriesEpisodesOnce(sourceKey, item.sid, () =>
+              fetchSeriesEpisodes(candidate.credential.baseUrl, candidate.credential.authParams, item.sid, candidate.lastModified, applySeries)
+            );
+            if (count === null) {
+              // A 200 carrying neither episodes nor info is an account failure,
+              // so try another entitled account just as for an HTTP error.
+              noteUpstreamFailure(candidate.providerId);
+              continue;
+            }
+            episodeCount += count;
+            processed++;
+            synced = true;
+            failuresByProvider.set(candidate.providerId, 0);
+            if (processed % 250 === 0) {
+              console.info(`📺 Episode sync progress (${sourceKey}): ${processed}/${queue.length} series`);
+            }
+            break;
+          } catch (e) {
+            // A local failure cannot be fixed by another account and must not
+            // count against the upstream breaker.
+            if (e?.localFailure || isRetryableSqliteError(e)) {
+              dbFailures++;
+              console.debug(`Episode write failed for series ${item.sid}: ${formatDbError(e)}`);
+              break;
+            }
+            const count = noteUpstreamFailure(candidate.providerId);
+            if (count <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
+              console.debug(`Episode fetch failed for series ${item.sid}: ${sanitizeErrorMessage(e)}`);
+            }
           }
-          episodeCount += count;
-          processed++;
-          failuresByProvider.set(item.providerId, 0);
-          if (processed % 250 === 0) {
-            console.info(`📺 Episode sync progress (${sourceKey}): ${processed}/${queue.length} series`);
-          }
-        } catch (e) {
-          failed++;
-          // Only an unanswering upstream trips the breaker. A local write
-          // failure says the database is the problem, not the panel, and
-          // aborting the queue for it would both drop the work and blame the
-          // wrong side.
-          if (e?.localFailure || isRetryableSqliteError(e)) {
-            dbFailures++;
-            console.debug(`Episode write failed for series ${item.sid}: ${formatDbError(e)}`);
-            continue;
-          }
-          const count = noteUpstreamFailure(item.providerId);
-          if (count <= EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES) {
-            console.debug(`Episode fetch failed for series ${item.sid}: ${sanitizeErrorMessage(e)}`);
-          }
+        }
+        // Outcomes are per series, even when several credentials were tried.
+        if (!synced) {
+          if (attempted) failed++;
+          else abandoned++;
         }
       }
     };

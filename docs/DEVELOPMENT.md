@@ -53,6 +53,32 @@ before `npm install`.
 Update these files when routes, environment variables, setup, Docker behavior,
 or integration behavior changes.
 
+## Provider Sync Concurrency Regressions
+
+`tests/sync_authorization_atomicity.test.js` uses the real migrated SQLite
+schema and a second connection in a worker thread. A barrier holds the writer
+lock until the catalog writer enters `BEGIN IMMEDIATE`; the other connection
+then commits a revocation or configuration change. This tests SQLite's actual
+busy wait, not just an async pause on a single connection. Manual service calls
+must pass `options.actor` from the authenticated request (admin ID, `is_admin`
+and `token_version`); callers cannot substitute request-body fields.
+
+Catalog authorization, restoration decisions and mutable mapping/assignment
+reads belong inside the final write transaction. The provider configuration
+fingerprint uses stored credentials; decrypt a separate fetch copy, and add any
+new fetch-relevant provider field to the fingerprint. Runtime expiry/EPG
+timestamps are intentionally excluded.
+
+Series episode queues retain eligible Xtream account candidates for each
+source/series ID. A failing account can fall back to another account that
+carries the series; M3U-only rows are not candidates. Outcomes are counted per
+series, and local write failures do not trigger another upstream request or a
+source cooldown. The existing source-shared episode format is unchanged.
+`tests/series_episode_sync_backoff.test.js` covers these cases, while
+`tests/series_episode_response_cleanup.test.js` verifies that real HTTP error
+responses with unfinished bodies release sockets through both sync entry
+points. Callers must consume or `discardBody` every response they abandon.
+
 ## Browser Player Audio Fix
 
 The Web Player can retry a stream with `transcode=true` when browser playback

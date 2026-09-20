@@ -33,6 +33,7 @@ import db from '../src/database/db.js';
 import fetch from 'node-fetch';
 
 describe('performSync Optimization', () => {
+  const actor = { id: 9, is_admin: true, token_version: 0 };
   let mockUpdateRun;
   let mockInsertRun;
   let existingChannels = [];
@@ -62,6 +63,9 @@ describe('performSync Optimization', () => {
       }
       if (sqlStr.includes('FROM USERS WHERE ID')) {
         return { get: () => ({ ok: 1 }) };
+      }
+      if (sqlStr.includes('FROM ADMIN_USERS WHERE ID')) {
+        return { get: () => ({ is_active: 1, token_version: 0 }) };
       }
       if (sqlStr.includes('FROM CATEGORY_MAPPINGS CM')) {
         return { all: () => [] };
@@ -101,7 +105,7 @@ http://stream.url/1.ts
 
   it('Optimization Verification: Should NOT call updateChannel if data is identical', async () => {
     // 1. First Run
-    await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
+    await performSync(1, 1, { mode: 'manual', actor, allowCrossOwner: true });
 
     expect(mockInsertRun).toHaveBeenCalled();
     const args = mockInsertRun.mock.calls[0];
@@ -140,7 +144,7 @@ http://stream.url/1.ts
     mockUpdateRun.mockClear();
 
     // 3. Second Run execution with Identical Data
-    const result = await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
+    const result = await performSync(1, 1, { mode: 'manual', actor, allowCrossOwner: true });
 
     // Check behavior (Optimized)
     expect(mockUpdateRun).not.toHaveBeenCalled();

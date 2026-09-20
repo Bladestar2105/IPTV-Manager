@@ -251,6 +251,20 @@ reports the outcome of the run:
 - `500 {error}` — the provider delivered nothing usable, or the run failed.
   Previously such a run answered `200 {success: true}` with `0/0/0` counters.
 
+Before publishing a downloaded catalog, the sync acquires the SQLite writer
+lock and rechecks provider ownership, target-user existence, the current
+provider/user sync grant and, for manual requests, the authenticated admin
+account/session. Revoking a persisted grant during a request also invalidates
+an earlier `allow_cross_owner` approval on that request. A later, explicitly
+approved request can grant access again; no persistent sync grant is created
+automatically. Mapping targets and assignment state are read under the same
+lock, including after any wait for another writer.
+
+Changes to the provider URL, username, password, user agent or backup URLs
+during download invalidate the fetched catalog. The run reports `500 {error}`
+and leaves the existing catalog and assignments intact; a subsequent run uses
+the new configuration. Expiry bookkeeping does not invalidate a catalog.
+
 `DELETE /api/providers/:id` answers `409` for the same reason while a sync of
 that provider is in flight, and `400` for an unusable id.
 
