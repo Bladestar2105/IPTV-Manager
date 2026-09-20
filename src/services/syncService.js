@@ -46,6 +46,32 @@ export function deleteProviderChannelCascade(database, providerId, providerChann
 const CHANNEL_DELETE_BATCH = 400;
 
 /**
+ * Every stored channel of one provider, for change detection against the
+ * catalog that was just fetched.
+ *
+ * Deliberately unordered. This read moved inside the write transaction so the
+ * catalog is applied to the state it was compared against, which is correct —
+ * but it also means its cost is now write-lock time, and this is the longest
+ * lock the application takes. `ORDER BY COALESCE(stream_type, 'live'), id`
+ * cannot use an index because of the COALESCE, so SQLite sorted the whole
+ * result in a temp B-tree: measured on the affected deployment, 295,327 rows
+ * took 2489ms with the sort and 1857ms without it.
+ *
+ * Nothing consumes the order. The rows go into a Map keyed by
+ * remote_stream_id, into a per-stream-type count, and into
+ * selectStaleProviderChannels, whose output is deduplicated into a Set by
+ * deleteProviderChannelsByIds before anything is deleted.
+ */
+export const EXISTING_CHANNELS_SQL = `
+  SELECT id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id,
+         original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type,
+         rating, rating_5based, added, plot, "cast", director, genre, releaseDate,
+         youtube_trailer, episode_run_time
+  FROM provider_channels
+  WHERE provider_id = ?
+`;
+
+/**
  * Remove a known set of a provider's channels and their dependants.
  *
  * The per-channel cascade above compiles five statements and runs five per row.
@@ -561,15 +587,7 @@ export async function performSync(providerId, userId, options = {}) {
       `);
 
       // Optimized: Pre-fetch all channels to avoid N+1 query and allow change detection
-      const existingChannels = db.prepare(`
-        SELECT id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id,
-               original_sort_order, tv_archive, tv_archive_duration, metadata, mime_type,
-               rating, rating_5based, added, plot, "cast", director, genre, releaseDate,
-               youtube_trailer, episode_run_time
-        FROM provider_channels
-        WHERE provider_id = ?
-        ORDER BY COALESCE(stream_type, 'live'), id
-      `).all(providerId);
+      const existingChannels = db.prepare(EXISTING_CHANNELS_SQL).all(providerId);
 
       const existingMap = new Map();
       for (const row of existingChannels) {
