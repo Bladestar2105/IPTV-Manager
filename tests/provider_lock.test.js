@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import Database from 'better-sqlite3';
 
 const memDb = new Database(':memory:');
+const actor = { id: 9, is_admin: true, token_version: 0 };
 
 vi.mock('../src/database/db.js', () => ({ default: memDb, initDb: vi.fn(), openDbConnection: () => memDb }));
 vi.mock('../src/utils/network.js', async importOriginal => ({
@@ -26,6 +27,8 @@ const { performSync } = await import('../src/services/syncService.js');
 const { deleteProvider } = await import('../src/controllers/providerController.js');
 
 memDb.exec(`
+  CREATE TABLE admin_users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER);
+  INSERT INTO admin_users VALUES (9, 1, 0);
   CREATE TABLE provider_locks (
     lock_key TEXT PRIMARY KEY, operation TEXT NOT NULL, owner_pid INTEGER NOT NULL,
     owner_token TEXT NOT NULL, acquired_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
@@ -93,7 +96,7 @@ describe('provider lock', () => {
   it('makes performSync skip a provider that is already being worked on', async () => {
     const held = acquireProviderLock(7, 'delete');
     try {
-      const result = await performSync(7, 1, { mode: 'manual' });
+      const result = await performSync(7, 1, { mode: 'manual', actor });
       expect(result.status).toBe('locked');
       expect(result.errorMessage).toMatch(/already being deleted/i);
       // Nothing must be logged for a run that never started.
@@ -130,7 +133,7 @@ describe('provider lock', () => {
     try {
       expect(acquireProviderLock(7, 'sync')).toBeNull();
 
-      const result = await performSync(7, 1, { mode: 'manual' });
+      const result = await performSync(7, 1, { mode: 'manual', actor });
       expect(result.status).toBe('locked');
       expect(memDb.prepare('SELECT COUNT(*) c FROM sync_logs').get().c).toBe(0);
 
@@ -152,7 +155,7 @@ describe('provider lock', () => {
     try {
       expect(acquireProviderLock(7, 'sync')).toBeNull();
 
-      const result = await performSync(7, 1, { mode: 'manual' });
+      const result = await performSync(7, 1, { mode: 'manual', actor });
       expect(result.status).toBe('locked');
 
       const res = resDouble();
@@ -282,7 +285,7 @@ describe('provider lock', () => {
   });
 
   it('releases the lock again after a completed run', async () => {
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
     expect(result.status).not.toBe('locked');
     expect(describeProviderLock(7)).toBeNull();
   });

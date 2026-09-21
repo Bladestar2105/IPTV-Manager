@@ -6,7 +6,8 @@ import crypto from 'crypto';
 // Cache for EPG logos: Map<epg_channel_id, logo_url>
 let epgLogosCache = null;
 let lastCacheUpdate = 0;
-const CACHE_TTL = 300000; // 5 minutes
+let lastCacheVersion = null;
+const CACHE_TTL = 300000; // Check freshness every 5 minutes; unchanged data stays cached.
 
 // In-memory cache for provider icon mappings: Map<provider_id, Set<cache_hash>>
 const providerIconMemoryCache = new Map();
@@ -21,19 +22,35 @@ export function loadEpgLogosCache() {
     }
 
     try {
+        // data_version detects commits by other connections/workers; total_changes
+        // also catches local writes, which do not advance this connection's version.
+        // Read before the rows so a racing commit cannot mark an older map current.
+        // ponytail: database-wide revision; use a logo-only revision if unrelated EPG writes make reloads costly.
+        const version = epgDb.prepare('SELECT data_version, total_changes() AS local_changes FROM pragma_data_version').get();
+        if (epgLogosCache && lastCacheVersion?.data_version === version.data_version &&
+            lastCacheVersion?.local_changes === version.local_changes) {
+            if (!epgDb.inTransaction) lastCacheUpdate = now;
+            return epgLogosCache;
+        }
+
         const channels = epgDb.prepare(`
             SELECT id, logo
             FROM epg_channels
             WHERE logo IS NOT NULL AND logo != ''
         `).all();
 
-        epgLogosCache = new Map();
+        const logos = new Map();
         for (const ch of channels) {
-            epgLogosCache.set(ch.id, ch.logo);
+            logos.set(ch.id, ch.logo);
         }
-        lastCacheUpdate = now;
-        console.log(`✅ Loaded ${epgLogosCache.size} EPG logos into cache`);
-        return epgLogosCache;
+        // Never publish an uncommitted or older transaction snapshot into the cache.
+        if (!epgDb.inTransaction) {
+            epgLogosCache = logos;
+            lastCacheVersion = version;
+            lastCacheUpdate = now;
+        }
+        console.log(`✅ Loaded ${logos.size} EPG logos into cache`);
+        return logos;
     } catch (e) {
         console.error('Failed to load EPG logos cache:', e.message);
         return epgLogosCache || new Map();
@@ -382,6 +399,7 @@ export function resolveLogosForChannels(channels, useEpgLogo = false) {
 export function invalidateEpgLogosCache() {
     epgLogosCache = null;
     lastCacheUpdate = 0;
+    lastCacheVersion = null;
     providerIconMemoryCache.clear();
     console.log('🔄 EPG logos cache invalidated');
 }

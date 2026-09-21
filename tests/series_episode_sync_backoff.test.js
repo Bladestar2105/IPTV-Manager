@@ -41,6 +41,16 @@ function seedSeries(count) {
   })();
 }
 
+function seedSharedSeries(count) {
+  seedSeries(count);
+  memDb.prepare('INSERT INTO providers (id, name, url, username, password, user_id) VALUES (2, ?, ?, ?, ?, 1)')
+    .run('sibling', `${SOURCE}/`, 'healthy', 'p2');
+  memDb.exec(`
+    INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type)
+    SELECT 2, remote_stream_id, name, stream_type FROM provider_channels WHERE provider_id = 1;
+  `);
+}
+
 const aborted = () => {
   const error = new Error('The operation was aborted.');
   error.name = 'AbortError';
@@ -197,6 +207,72 @@ describe('episode sync back-off', () => {
     // And the source is free for the next run rather than cooling down.
     expect(memDb.prepare('SELECT COUNT(*) c FROM provider_locks').get().c).toBe(0);
   }, 30000);
+
+  it.each([401, 403, 200])('retries shared series through an entitled sibling after an account returns HTTP %s', async status => {
+    seedSharedSeries(40);
+    fetchSafe.mockImplementation(async url => {
+      const params = new URL(url).searchParams;
+      if (params.get('username') === 'u') {
+        return { ok: status === 200, status, json: async () => ({ user_info: { auth: 0 } }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({ episodes: { 1: [{ id: Number(params.get('series_id')) + 1000, season: 1, episode_num: 1 }] } }),
+      };
+    });
+
+    const result = await syncSeriesEpisodes(1);
+
+    expect(result).toMatchObject({ synced: 40, failed: 0, abandoned: 0, total: 40, gaveUp: false, gaveUpProviders: 1, dbFailures: 0 });
+    const requests = fetchSafe.mock.calls.map(([url]) => new URL(url).searchParams);
+    expect(requests.filter(params => params.get('username') === 'healthy')).toHaveLength(40);
+    // Once the bad account exhausts its budget, remaining series still use B.
+    expect(requests.filter(params => params.get('username') === 'u').length).toBeLessThan(40);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_series_state').get().c).toBe(40);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_series_episodes WHERE source_key = ?').get(SOURCE).c).toBe(40);
+    expect(memDb.prepare('SELECT series_remote_id, remote_episode_id FROM provider_series_episodes ORDER BY series_remote_id DESC LIMIT 1').get())
+      .toEqual({ series_remote_id: 40, remote_episode_id: 1040 });
+    const next = acquireSourceLock(SOURCE, 'episodes');
+    expect(next).not.toBeNull();
+    next.release();
+  });
+
+  it('counts each shared series once when every eligible account fails', async () => {
+    seedSharedSeries(40);
+    fetchSafe.mockResolvedValue({ ok: false, status: 401 });
+
+    const result = await syncSeriesEpisodes(1);
+
+    expect(result).toMatchObject({ synced: 0, total: 40, gaveUp: true, gaveUpProviders: 2, dbFailures: 0 });
+    expect(result.failed).toBeGreaterThan(0);
+    expect(result.abandoned).toBeGreaterThan(0);
+    expect(result.failed + result.abandoned).toBe(40);
+    expect(fetchSafe.mock.calls.length).toBeLessThan(80);
+    expect(memDb.prepare('SELECT COUNT(*) c FROM provider_series_episodes').get().c).toBe(0);
+    expect(acquireSourceLock(SOURCE, 'episodes')).toBeNull();
+  });
+
+  it('does not try another account after a real local SQLite write failure', async () => {
+    seedSharedSeries(1);
+    memDb.prepare('INSERT INTO provider_series_episodes (source_key, series_remote_id, remote_episode_id) VALUES (?, 1, 900)')
+      .run(SOURCE);
+    memDb.exec(`CREATE TEMP TRIGGER reject_episode_write BEFORE INSERT ON provider_series_episodes
+      BEGIN SELECT RAISE(ABORT, 'episode write rejected'); END;`);
+    fetchSafe.mockResolvedValue({ ok: true, json: async () => ({ episodes: { 1: [{ id: 1001 }] } }) });
+    try {
+      const result = await syncSeriesEpisodes(1);
+
+      expect(result).toMatchObject({ synced: 0, failed: 1, abandoned: 0, total: 1, dbFailures: 1, gaveUp: false, gaveUpProviders: 0 });
+      expect(fetchSafe).toHaveBeenCalledTimes(1);
+      expect(memDb.prepare('SELECT remote_episode_id FROM provider_series_episodes').all()).toEqual([{ remote_episode_id: 900 }]);
+      expect(memDb.prepare('SELECT COUNT(*) c FROM provider_series_state').get().c).toBe(0);
+      const next = acquireSourceLock(SOURCE, 'episodes');
+      expect(next).not.toBeNull();
+      next.release();
+    } finally {
+      memDb.exec('DROP TRIGGER reject_episode_write');
+    }
+  });
 
   it('does not blame the panel for a local write failure with any SQLite code', async () => {
     // Classifying by "is this one of the three retryable codes" made a full
