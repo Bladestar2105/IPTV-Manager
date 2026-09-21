@@ -17,6 +17,16 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
 ## Pull Request Validation
 
+EPG-logo cache and checkpoint regressions can be run with
+`npm test -- tests/epg_logo_cache.test.js tests/wal_maintenance.test.js`.
+The cache tests use independent module instances with real SQLite connections,
+a 33,331-row catalog and a controlled clock; unchanged catalogs must avoid full
+rescans while committed changes still become visible. They also cover explicit
+invalidation, local writes, failed reads and transaction rollback. WAL tests
+hold a real reader open to distinguish pending frames from the `busy` flag and
+verify that maintenance remains passive. These local checks do not measure
+production playback latency or establish the cause of production WAL peaks.
+
 Pull requests to `main` and `codex/ki-integration` must pass the Node.js 24 validation job before merge.
 It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
 full test suite with an isolated temporary `DATA_DIR`, runs the build command,

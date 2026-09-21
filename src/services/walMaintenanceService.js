@@ -12,9 +12,9 @@ import { resolveBudget } from '../utils/env.js';
 //
 // A periodic PASSIVE checkpoint gives SQLite a chance to drain the log outside
 // the write path. PASSIVE never waits for a reader, so it cannot stall a worker
-// the way TRUNCATE or RESTART would. A drained log is reused in place; the
-// journal_size_limit set on every connection makes SQLite shrink the file on the
-// next commit, so the size drop follows one write later.
+// the way TRUNCATE or RESTART would. A checkpointed log can remain allocated;
+// journal_size_limit lets SQLite shrink it when a later writer can restart the
+// log after readers release their snapshots.
 const DEFAULT_INTERVAL_MS = 300000;
 const MIN_INTERVAL_MS = 30000;
 const WARN_WAL_BYTES = 512 * 1024 * 1024;
@@ -37,15 +37,26 @@ export function checkpointDatabase(connection, dbPath, label) {
   try {
     const [result] = connection.pragma('wal_checkpoint(PASSIVE)');
     const after = walSize(dbPath);
+    const log = result?.log ?? -1;
+    const checkpointed = result?.checkpointed ?? -1;
+    // SQLite reports -1 when frame counts are unavailable. busy=0 alone does
+    // not mean PASSIVE checkpointed all frames: readers or writers may remain.
+    const pending = log >= 0 && checkpointed >= 0 ? Math.max(0, log - checkpointed) : null;
+    const frames = `log=${log}, checkpointed=${checkpointed}, pending=${pending ?? 'unknown'} frames`;
     if (result?.busy) {
-      console.debug(`WAL checkpoint for ${label} could not complete (readers active); wal=${after} bytes`);
-    } else if (before !== after) {
-      console.debug(`WAL checkpoint for ${label}: ${before} -> ${after} bytes`);
+      console.debug(`WAL checkpoint for ${label} could not run (checkpoint lock busy); wal=${after} bytes; ${frames}`);
+    } else if (pending > 0 || before !== after) {
+      console.debug(`WAL checkpoint for ${label}: ${before} -> ${after} bytes; ${frames}`);
     }
     if (after >= WARN_WAL_BYTES) {
-      console.warn(`⚠️ ${label} write-ahead log is ${Math.round(after / 1048576)} MB; checkpoints are not draining it`);
+      const allocation = `${label} write-ahead log has ${Math.round(after / 1048576)} MB allocated; ${frames}`;
+      if (pending === 0) {
+        console.debug(`${allocation}; all frames checkpointed, allocation can be reused`);
+      } else {
+        console.warn(`⚠️ ${allocation}`);
+      }
     }
-    return { before, after, busy: Boolean(result?.busy) };
+    return { before, after, busy: Boolean(result?.busy), log, checkpointed, pending };
   } catch (e) {
     console.warn(`WAL checkpoint for ${label} failed: ${e.message}`);
     return { before, after: before, busy: true, error: e.message };

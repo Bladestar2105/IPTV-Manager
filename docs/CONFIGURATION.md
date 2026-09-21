@@ -54,8 +54,9 @@ mode.
   blocks the whole worker — including every stream it is pumping. Losing one
   activity update is cheaper than stalling playback.
 - `SQLITE_WAL_SIZE_LIMIT_BYTES`: Upper bound for a `-wal` file after a
-  checkpoint. Defaults to `67108864` (64 MB), minimum `1048576`. Without the
-  limit a checkpointed WAL is reused in place and never shrinks again.
+  checkpoint when a writer can restart/reuse the log. Defaults to `67108864`
+  (64 MiB), minimum `1048576`. This is not a hard cap during imports or while
+  readers retain older snapshots; the size can exceed the limit temporarily.
 - `SQLITE_CHECKPOINT_INTERVAL_MS`: How often the primary process runs a passive
   WAL checkpoint on both databases. It runs in the primary because a checkpoint
   is synchronous and can copy a large WAL; the primary serves no traffic. Defaults to `300000` (5 minutes), minimum
@@ -63,6 +64,28 @@ mode.
   checkpoint cannot reclaim frames an active reader still needs, so without this
   the WAL of a busy instance can grow past the size of the database itself. The
   checkpoint is `PASSIVE` and therefore never waits for a reader.
+
+Checkpoint diagnostics distinguish allocated WAL bytes from the `log`,
+`checkpointed` and `pending` frame counts. A passive checkpoint can leave pending
+frames even with `busy=0`; `busy` alone does not identify a long-running reader.
+A large, fully checkpointed WAL can remain allocated until it is reused. The
+maintenance task never escalates to `RESTART`, `FULL` or `TRUNCATE`, which can
+block other writers. Main database and EPG checkpoints concern separate files:
+EPG-logo reads of `epg.db` do not directly retain the `db.sqlite` WAL.
+
+## EPG Logo Cache
+
+Each worker retains its own EPG-logo map and checks SQLite change counters on
+the first lookup after five minutes. An unchanged database needs only the small
+counter query, not another full `epg_channels` scan. Commits from other workers
+and writes on the same connection are both detected; existing explicit local
+invalidation remains immediate. Other workers see changes at their next
+freshness check, preserving the previous five-minute bound.
+
+These counters cover all of `epg.db`, so unrelated EPG writes can also cause a
+reload. No shared cache service, schema migration or additional configuration is
+required. This reduces redundant EPG reads; it is not evidence that the cause of
+main-database WAL growth has been removed.
 
 ## Per-User Provider Access
 
