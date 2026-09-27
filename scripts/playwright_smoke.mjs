@@ -162,6 +162,7 @@ async function run() {
 
     await login(page, baseUrl, userUsername, userPassword);
     await assertHidden(page.locator('#user-section'), 'Regular users must not see User Management');
+    await assertHidden(page.locator('#maintenance-jobs'), 'Regular users must not see maintenance jobs');
     await assertHidden(page.locator('#provider-section'), 'Provider section must be hidden by default');
     const providerResponse = await page.evaluate(async () => {
       const token = localStorage.getItem('jwt_token');
@@ -249,6 +250,18 @@ async function run() {
 
     await login(adminPage, baseUrl, adminUsername, adminPassword);
     await assertVisible(adminPage.locator('#user-section'), 'Admins must see User Management');
+    // The ephemeral smoke server intentionally has no scheduler: acceptance is
+    // persisted and displayed as queued, without fetching the fake provider.
+    await adminPage.evaluate(async ({providerId, userId}) => {
+      await enqueueMaintenanceJob(`/api/providers/${providerId}/sync`, {user_id: userId});
+    }, {providerId, userId});
+    await assertVisible(adminPage.locator('#maintenance-jobs'), 'Accepted job must be visible');
+    await adminPage.waitForFunction(() => document.getElementById('maintenance-jobs-list').textContent.includes(t('maintenanceQueued')));
+    await adminPage.reload({waitUntil: 'domcontentloaded'});
+    await adminPage.waitForFunction(() => document.getElementById('maintenance-jobs-list').textContent.includes(t('maintenanceQueued')));
+    const queued = db.prepare("SELECT COUNT(*) AS count FROM maintenance_jobs WHERE status='queued'").get();
+    if (queued.count !== 1) throw new Error('Queued job must survive browser reload without duplication');
+
     const userRow = adminPage.locator('#user-list li').filter({hasText: userUsername});
     await userRow.waitFor({state: 'visible', timeout: 15000});
     await userRow.getByText(userUsername, {exact: false}).first().click();

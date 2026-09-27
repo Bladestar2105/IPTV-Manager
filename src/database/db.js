@@ -1,4 +1,5 @@
 import path from 'path';
+import { migrateMaintenanceQueue } from './maintenanceQueueSchema.js';
 import fs from 'fs';
 import { DATA_DIR } from '../config/constants.js';
 import { openSqliteConnection } from './sqliteConnection.js';
@@ -295,6 +296,7 @@ export function initDb(isPrimary) {
     CREATE INDEX IF NOT EXISTS idx_security_logs_ip_time ON security_logs(ip, timestamp);
   `);
 
+            migrateMaintenanceQueue(db);
             const carriedLocks = migrateProviderLockTable(db);
             if (carriedLocks > 0) console.log(`🔒 Carried ${carriedLocks} lease(s) into the current lock table`);
 

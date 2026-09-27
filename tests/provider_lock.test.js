@@ -24,7 +24,7 @@ const {
   clearExpiredProviderLocks, resetProviderLockState,
 } = await import('../src/services/providerLockService.js');
 const { performSync } = await import('../src/services/syncService.js');
-const { deleteProvider } = await import('../src/controllers/providerController.js');
+const { deleteProvider, syncProvider } = await import('../src/controllers/providerController.js');
 
 memDb.exec(`
   CREATE TABLE admin_users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER);
@@ -83,6 +83,25 @@ describe('provider lock', () => {
     expect(b).not.toBeNull();
     a.release();
     b.release();
+  });
+
+  it('rejects a manual UI sync when other providers occupy all shared slots', async () => {
+    const a = acquireProviderLock(8, 'sync');
+    const b = acquireProviderLock(9, 'sync');
+    try {
+      const res = resDouble();
+      await syncProvider({ params: { id: '7' }, body: { user_id: 1 }, user: actor }, res);
+      expect(res.statusCode).toBe(409);
+      expect(res.body.error).toMatch(/sync limit/i);
+      expect(memDb.prepare('SELECT COUNT(*) c FROM sync_logs').get().c).toBe(0);
+      expect(describeProviderLock(7)).toBeNull();
+    } finally {
+      a.release();
+      b.release();
+    }
+    const next = acquireProviderLock(7, 'sync');
+    expect(next).not.toBeNull();
+    next?.release();
   });
 
   it('takes over a lock left behind by a dead worker', () => {

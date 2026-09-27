@@ -221,6 +221,7 @@ SQLite foreign-key enforcement enabled while preventing orphaned user data.
 - `PUT /api/providers/:id`
 - `DELETE /api/providers/:id`
 - `POST /api/providers/:id/sync`
+- `GET /api/maintenance-jobs`
 - `GET /api/providers/:id/channels`
 - `GET /api/providers/:id/categories`
 - `POST /api/providers/:providerId/import-category`
@@ -229,6 +230,27 @@ SQLite foreign-key enforcement enabled while preventing orphaned user data.
 Deleting a provider removes dependent channel assignments, EPG mappings, stream
 stats, sync data, category mappings, and provider icon cache entries before the
 provider row is deleted.
+
+Manual provider sync and EPG update requests can opt into background processing
+with JSON `{"enqueue": true}`. This applies to `POST /api/providers/:id/sync`
+(include the existing `user_id` and optional ownership flags),
+`POST /api/epg-sources/:id/update` (numeric custom source ID or `provider_<id>`),
+and `POST /api/epg-sources/update-all`. Only administrators may enqueue or read
+maintenance jobs. Target IDs must be positive integers and exist. Update-all
+accepts the enabled provider and custom EPG sources as one batch; an empty batch
+returns an empty `jobs` array.
+
+Accepted requests return HTTP 202 with `{success: true, status: "queued", jobs}`.
+This acknowledges queue acceptance, not successful completion. Repeated active
+requests reuse the existing job, which may already be running. Requests without
+`enqueue: true` retain the synchronous response contract. A busy database during
+acceptance returns HTTP 503 rather than reporting that work was queued.
+
+Poll `GET /api/maintenance-jobs` for an array of job records containing `id`,
+`type` (`provider_sync`, `epg_source`, or `provider_epg`), `target_id`, optional
+`user_id`, `status`, `created_at`, `updated_at`, and optional `result`/`error`.
+Statuses are `queued`, `running`, `success`, `partial`, or `error`. Records omit
+upstream URLs and credentials; permissions are checked again before execution.
 
 `POST /api/providers/:id/sync` requires an existing `user_id` in the body and
 reports the outcome of the run:

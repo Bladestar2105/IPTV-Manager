@@ -1,3 +1,4 @@
+import { acquireLock } from './providerLockService.js';
 import db from '../database/epgDb.js';
 import mainDb from '../database/db.js';
 import { EPG_DB_PATH } from '../config/constants.js';
@@ -9,41 +10,52 @@ import { importEpgFromUrl } from './epgImportService.js';
 
 export { importEpgFromUrl };
 
-export async function updateEpgSource(sourceId, skipPrune = false) {
-    const source = mainDb.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
-    if (!source) throw new Error('EPG source not found');
+async function withEpgUpdateLock(type, id, update) {
+    const lock = acquireLock(`epg:${type}:${id}`, 'epg');
+    if (!lock) throw Object.assign(new Error('EPG update is already running or the database is busy'), {code: 'EPG_UPDATE_LOCKED'});
+    try { return await update(); }
+    finally { lock.release(); }
+}
 
-    await importEpgFromUrl(source.url, 'custom', sourceId);
-    if (!skipPrune) pruneOldEpgData();
+export async function updateEpgSource(sourceId, skipPrune = false) {
+    return withEpgUpdateLock('custom', sourceId, async () => {
+        const source = mainDb.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
+        if (!source) throw new Error('EPG source not found');
+
+        await importEpgFromUrl(source.url, 'custom', sourceId);
+        if (!skipPrune) pruneOldEpgData();
+    });
 }
 
 export async function updateProviderEpg(providerId, skipPrune = false) {
-    const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
-    if (!provider) throw new Error('Provider not found');
+    return withEpgUpdateLock('provider', providerId, async () => {
+        const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
+        if (!provider) throw new Error('Provider not found');
 
-    // Explicitly check if EPG syncing is enabled for this provider
-    if (!provider.epg_enabled) {
-        console.debug(`⚠️ Skipping EPG update for disabled provider ${providerId}`);
-        return;
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-
-    try {
-        if (provider.epg_url && provider.epg_url.trim() !== '') {
-            await importEpgFromUrl(provider.epg_url, 'provider', providerId);
-        } else {
-            await importChannelsFromProvider(providerId);
+        // Explicitly check if EPG syncing is enabled for this provider
+        if (!provider.epg_enabled) {
+            console.debug(`⚠️ Skipping EPG update for disabled provider ${providerId}`);
+            return;
         }
 
-        mainDb.prepare('UPDATE providers SET last_epg_update = ? WHERE id = ?').run(now, providerId);
-    } catch (e) {
-        // Even on error, we might want to update last_update to prevent immediate retry loop?
-        // No, let scheduler handle backoff via failedUpdates map.
-        throw e;
-    }
+        const now = Math.floor(Date.now() / 1000);
 
-    if (!skipPrune) pruneOldEpgData();
+        try {
+            if (provider.epg_url && provider.epg_url.trim() !== '') {
+                await importEpgFromUrl(provider.epg_url, 'provider', providerId);
+            } else {
+                await importChannelsFromProvider(providerId);
+            }
+
+            mainDb.prepare('UPDATE providers SET last_epg_update = ? WHERE id = ?').run(now, providerId);
+        } catch (e) {
+            // Even on error, we might want to update last_update to prevent immediate retry loop?
+            // No, let scheduler handle backoff via failedUpdates map.
+            throw e;
+        }
+
+        if (!skipPrune) pruneOldEpgData();
+    });
 }
 
 async function importChannelsFromProvider(providerId) {

@@ -17,6 +17,20 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
 ## Pull Request Validation
 
+Manual-load regressions:
+
+```bash
+npm test -- tests/provider_lock_latency.test.js tests/provider_lock.test.js tests/maintenance_queue.test.js tests/maintenance_queue_connection.test.js tests/maintenance_queue_api.test.js tests/maintenance_queue_ui.test.js
+```
+`tests/channel_cache_cluster.test.js` uses real Node cluster workers to verify
+user/guest channel invalidation and completed-import logo invalidation through
+the primary process. The lock tests hold a real SQLite writer and race four worker threads to verify
+short bookkeeping waits and the cluster-wide sync cap. Queue tests use independent
+SQLite connections for claims and verify FIFO, deduplication, revocation, restart
+recovery, bounded history and truthful acceptance. UI tests distinguish acceptance
+from completion and clear polling on logout. Production-load latency still needs
+verification with the deployment's real catalogs after updating the image.
+
 EPG-logo cache and checkpoint regressions can be run with
 `npm test -- tests/epg_logo_cache.test.js tests/wal_maintenance.test.js`.
 The cache tests use independent module instances with real SQLite connections,

@@ -158,6 +158,84 @@ function getProxiedUrl(url) {
 }
 
 let currentUser = null;
+let maintenanceJobs = new Map();
+let maintenancePoll = null;
+let maintenanceGeneration = 0;
+
+function stopMaintenancePolling() {
+  clearTimeout(maintenancePoll);
+  maintenancePoll = null;
+  maintenanceGeneration += 1;
+  maintenanceJobs.clear();
+  const panel = document.getElementById('maintenance-jobs');
+  if (panel) panel.hidden = true;
+  const list = document.getElementById('maintenance-jobs-list');
+  if (list) list.replaceChildren();
+}
+
+function renderMaintenanceJobs() {
+  const panel = document.getElementById('maintenance-jobs');
+  const list = document.getElementById('maintenance-jobs-list');
+  if (!panel || !list) return;
+  panel.hidden = !currentUser?.is_admin;
+  list.replaceChildren();
+  if (!currentUser?.is_admin) return;
+  if (!maintenanceJobs.size) list.textContent = t('maintenanceEmpty');
+  const statuses = { queued: 'maintenanceQueued', running: 'maintenanceRunning', success: 'maintenanceSuccess', partial: 'maintenancePartial', error: 'maintenanceError' };
+  const types = { provider_sync: 'maintenanceProvider', epg_source: 'maintenanceEpg', provider_epg: 'maintenanceProviderEpg' };
+  for (const job of maintenanceJobs.values()) {
+    const item = document.createElement('li');
+    item.className = 'list-group-item py-1 px-2 small';
+    let detail = job.error || job.result?.warning || '';
+    if (job.type === 'provider_sync' && ['success', 'partial'].includes(job.status) && ['channels_added', 'channels_updated', 'categories_added'].every(key => Number.isFinite(job.result?.[key]))) {
+      detail = t('syncSuccess', { added: job.result.channels_added, updated: job.result.channels_updated, categories: job.result.categories_added }) + (detail ? ` — ${detail}` : '');
+    }
+    item.textContent = `${t(types[job.type] || 'maintenanceTitle')} #${job.target_id}${job.user_id ? ` · ${t('maintenanceUser')} #${job.user_id}` : ''}: ${t(statuses[job.status] || 'maintenanceQueued')}${detail ? ` — ${detail}` : ''}`;
+    list.appendChild(item);
+  }
+}
+
+async function refreshMaintenanceJobs() {
+  clearTimeout(maintenancePoll);
+  maintenancePoll = null;
+  if (!currentUser?.is_admin) { stopMaintenancePolling(); return; }
+  const generation = ++maintenanceGeneration;
+  let retry = false;
+  try {
+    const jobs = await fetchJSON('/api/maintenance-jobs');
+    if (generation !== maintenanceGeneration || !currentUser?.is_admin) return;
+    const finished = jobs.some(job => ['queued', 'running'].includes(maintenanceJobs.get(job.id)?.status)
+      && ['success', 'partial', 'error'].includes(job.status));
+    maintenanceJobs = new Map(jobs.map(job => [job.id, job]));
+    if (finished && document.getElementById('epg-sources-list')?.getClientRects().length) void loadEpgSources();
+    renderMaintenanceJobs();
+    document.getElementById('maintenance-jobs-error').textContent = '';
+  } catch {
+    if (generation !== maintenanceGeneration || !currentUser?.is_admin) return;
+    document.getElementById('maintenance-jobs').hidden = false;
+    document.getElementById('maintenance-jobs-error').textContent = t('maintenanceUnavailable');
+    retry = true;
+  }
+  if (generation === maintenanceGeneration && currentUser?.is_admin && (retry || [...maintenanceJobs.values()].some(job => ['queued', 'running'].includes(job.status)))) {
+    maintenancePoll = setTimeout(refreshMaintenanceJobs, retry ? 5000 : 2000);
+  }
+}
+
+async function enqueueMaintenanceJob(url, body = {}) {
+  const generation = sessionGeneration;
+  let response;
+  try {
+    response = await fetchJSON(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...body, enqueue: true}) });
+  } catch (error) {
+    throw new Error(`${t('maintenanceAcceptFailed')} ${error.message}`);
+  }
+  if (generation !== sessionGeneration || !currentUser?.is_admin) return;
+  for (const job of response.jobs) maintenanceJobs.set(job.id, job);
+  renderMaintenanceJobs();
+  showToast(t(response.jobs.length ? 'maintenanceAccepted' : 'maintenanceEmpty'), 'info');
+  void refreshMaintenanceJobs();
+}
+
 let selectedUser = null;
 let selectedUserId = null;
 let selectedCategoryId = null;
@@ -1147,24 +1225,7 @@ async function loadProviders(filterUserId = null) {
           }
           setLoadingState(syncBtn, true, 'syncing');
           try {
-            const res = await fetchJSON(`/api/providers/${p.id}/sync`, {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({user_id: selectedUserId})
-            });
-            const summary = t('syncSuccess', {
-              added: res.channels_added,
-              updated: res.channels_updated,
-              categories: res.categories_added
-            });
-            // A partial run delivered some sections and failed others. Reporting
-            // it as a plain success is the false-success report this endpoint's
-            // new status field exists to end, so show the warning it carries.
-            if (res.status === 'partial' && res.warning) {
-              showToast(`${summary} — ${res.warning}`, 'warning');
-            } else {
-              showToast(summary, 'success');
-            }
+            await enqueueMaintenanceJob(`/api/providers/${p.id}/sync`, {user_id: selectedUserId});
           } catch (e) {
             showToast(e.message, 'danger');
           } finally {
@@ -1561,6 +1622,7 @@ function initCategorySortable() {
 let providerCategories = [];
 
 function clearSessionSensitiveState({preserveUserState = false} = {}) {
+  stopMaintenancePolling();
   window.aiUI?.clear();
   if (!preserveUserState) {
     sessionGeneration += 1;
@@ -2688,13 +2750,10 @@ async function loadEpgSources() {
       updateBtn.innerHTML = '<i class="bi bi-arrow-repeat" aria-hidden="true"></i>';
       updateBtn.title = t('updateNow');
       updateBtn.setAttribute('aria-label', t('updateNow'));
-      updateBtn.disabled = source.is_updating;
       updateBtn.onclick = async () => {
         setLoadingState(updateBtn, true, null, false);
         try {
-          await fetchJSON(`/api/epg-sources/${source.id}/update`, {method: 'POST'});
-          showToast(t('epgUpdateSuccess'), 'success');
-          loadEpgSources();
+          await enqueueMaintenanceJob(`/api/epg-sources/${source.id}/update`);
         } catch (e) {
           showToast(e.message, 'danger');
         } finally {
@@ -3207,11 +3266,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm(t('epgUpdateAllConfirm'))) return;
       setLoadingState(updateAllEpgBtn, true, 'updating');
       try {
-        const result = await fetchJSON('/api/epg-sources/update-all', {method: 'POST'});
-        const success = result.results.filter(r => r.success).length;
-        const failed = result.results.filter(r => !r.success).length;
-        showToast(t('epgUpdateAllSuccess', {success: success, failed: failed}), 'success');
-        loadEpgSources();
+        await enqueueMaintenanceJob('/api/epg-sources/update-all');
       } catch (e) {
         showToast(e.message, 'danger');
       } finally {
@@ -4775,6 +4830,8 @@ async function checkAuthentication() {
 }
 
 function applyPermissions({preserveUserState = false} = {}) {
+    stopMaintenancePolling();
+    if (currentUser?.is_admin) void refreshMaintenanceJobs();
     window.aiUI?.syncActor();
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
