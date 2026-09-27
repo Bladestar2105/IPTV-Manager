@@ -702,6 +702,43 @@ describe('Stalker/MAG portal flow', () => {
     expect(response.body.js.truncated).not.toBe(true);
   });
 
+  it('accepts numeric JSON POST timestamps with the same result as query strings', async () => {
+    await registerDevice();
+    const token = await handshake();
+    const now = Math.floor(Date.now() / 1000);
+    const params = { type: 'itv', action: 'get_epg_info', token,
+      channel_ids: String(authorizedChannelIds[0]), start_timestamp: now, stop_timestamp: now + 3600 };
+    const query = await request(app).get('/server/load.php').query(params);
+    const json = await request(app).post('/server/load.php').send(params);
+    expect(json.body).toEqual(query.body);
+    expect(json.body.js.data[String(authorizedChannelIds[0])].map(program => program.name))
+      .toEqual(['Current Show', 'Next Show']);
+  });
+
+  it.each([[], [1], {}, true, false, null, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid JSON POST timestamp %j', async invalid => {
+      await registerDevice();
+      const token = await handshake();
+      for (const field of ['start_timestamp', 'stop_timestamp']) {
+        const response = await request(app).post('/server/load.php').send({
+          type: 'itv', action: 'get_epg_info', token, channel_ids: String(authorizedChannelIds[0]),
+          start_timestamp: 1, stop_timestamp: 2, [field]: invalid
+        });
+        expect(response.body).toEqual({ js: { error: 'invalid_epg_request' } });
+      }
+    }
+  );
+
+  it.each([1, [1], {}, true, '01', '1.5', '1,,2'])('keeps JSON POST channel CSV strict: %j', async ids => {
+    await registerDevice();
+    const token = await handshake();
+    const response = await request(app).post('/server/load.php').send({
+      type: 'itv', action: 'get_epg_info', token, channel_ids: ids,
+      start_timestamp: 1, stop_timestamp: 2
+    });
+    expect(response.body).toEqual({ js: { error: 'invalid_epg_request' } });
+  });
+
   it('detects exact and exceeded scoped row caps, including high channel IDs', async () => {
     await registerDevice();
     const token = await handshake();

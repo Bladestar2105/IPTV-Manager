@@ -121,8 +121,11 @@ export function getShortEpg(session, params) {
 export const EPG_BULK_CAPABILITY = Object.freeze({ version: 1, max_channels: 100, max_window_hours: 48 });
 
 function getScopedEpgInfo(session, params) {
-  const positiveInteger = raw => typeof raw === 'string' && /^[1-9]\d*$/.test(raw)
-    && Number.isSafeInteger(Number(raw)) ? Number(raw) : null;
+  const positiveInteger = raw => {
+    const number = typeof raw === 'number' ? raw
+      : typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+    return Number.isSafeInteger(number) && number > 0 ? number : null;
+  };
   const rawIds = typeof params.channel_ids === 'string' ? params.channel_ids.split(',') : [];
   const ids = [...new Set(rawIds.map(positiveInteger))];
   const start = positiveInteger(params.start_timestamp);

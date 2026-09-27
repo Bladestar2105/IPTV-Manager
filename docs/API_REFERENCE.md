@@ -696,7 +696,8 @@ Clients can discover scoped bulk EPG through authenticated `get_profile`:
 `epg_bulk: { version: 1, max_channels: 100, max_window_hours: 48 }`.
 For `type=itv&action=get_epg_info`, supply all three parameters:
 `channel_ids` (CSV of positive user-channel IDs, at most 100 distinct IDs),
-`start_timestamp` and `stop_timestamp` (positive UTC epoch seconds, increasing,
+`start_timestamp` and `stop_timestamp` (positive UTC epoch seconds, accepted as
+query/form strings or JSON POST numbers, increasing,
 at most 48 hours apart). The explicit overlap window replaces archive lookback.
 Only requested, authorized live channels are returned, including the user's own
 adult channels; hidden, revoked, and other users' channels remain excluded.
