@@ -17,6 +17,7 @@ const MAX_CONCURRENT_SYNCS = resolveBudget(process.env.SYNC_MAX_CONCURRENT, 2, 1
 // A backlog is normal for a tick or two. Saying so on every tick would be noise,
 // so it is reported at most this often.
 const BACKLOG_LOG_INTERVAL_MS = 900000;
+const EPG_RETRY_DELAY_SECONDS = 900;
 let lastBacklogLogAt = 0;
 
 let syncInterval = null;
@@ -70,6 +71,7 @@ export function startSyncScheduler() {
 
 export function startEpgScheduler() {
   if (epgInterval) clearInterval(epgInterval);
+  // ponytail: worker-local cooldowns reset on restart; persist only if restart churn defeats them.
   const failedUpdates = new Map();
 
   // Check every minute
@@ -82,11 +84,15 @@ export function startEpgScheduler() {
       for (const source of sources) {
         if (source.last_update + source.update_interval <= now) {
           const updateKey = `custom:${source.id}`;
+          const lastFail = failedUpdates.get(updateKey) || 0;
+          if (lastFail && lastFail + EPG_RETRY_DELAY_SECONDS > now) continue;
           if (runningEpgUpdates.has(updateKey)) continue;
           runningEpgUpdates.add(updateKey);
           try {
             await updateEpgSource(source.id);
+            failedUpdates.delete(updateKey);
           } catch (e) {
+            failedUpdates.set(updateKey, Math.floor(Date.now() / 1000));
             console.error(`Scheduled EPG update failed for ${source.name}:`, e.message);
           } finally {
             runningEpgUpdates.delete(updateKey);
@@ -100,15 +106,15 @@ export function startEpgScheduler() {
       const providers = db.prepare("SELECT * FROM providers WHERE epg_enabled = 1").all();
       for (const provider of providers) {
         const interval = provider.epg_update_interval || 86400;
+        const updateKey = `provider:${provider.id}`;
 
         // Check if recently failed (Backoff: 15 minutes)
-        const lastFail = failedUpdates.get(provider.id) || 0;
-        if (lastFail && (lastFail + 900 > now)) continue;
+        const lastFail = failedUpdates.get(updateKey) || 0;
+        if (lastFail && (lastFail + EPG_RETRY_DELAY_SECONDS > now)) continue;
 
         const lastUpdate = provider.last_epg_update || 0;
 
         if (lastUpdate + interval <= now) {
-          const updateKey = `provider:${provider.id}`;
           if (runningEpgUpdates.has(updateKey)) continue;
           runningEpgUpdates.add(updateKey);
           try {
@@ -117,17 +123,17 @@ export function startEpgScheduler() {
             if (provider.epg_url && provider.epg_url.trim() !== '') {
               if (!(await isSafeUrl(provider.epg_url))) {
                 console.error(`Unsafe EPG URL for provider ${provider.name}`);
-                failedUpdates.set(provider.id, now);
+                failedUpdates.set(updateKey, Math.floor(Date.now() / 1000));
                 continue;
               }
             }
 
             await updateProviderEpg(provider.id);
-            failedUpdates.delete(provider.id);
+            failedUpdates.delete(updateKey);
 
           } catch (e) {
             console.error(`Scheduled EPG update failed for ${provider.name}:`, e.message);
-            failedUpdates.set(provider.id, now);
+            failedUpdates.set(updateKey, Math.floor(Date.now() / 1000));
           } finally {
             runningEpgUpdates.delete(updateKey);
           }

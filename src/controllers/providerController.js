@@ -565,6 +565,7 @@ export const syncProvider = async (req, res) => {
 
     const result = await performSync(id, targetUserId, {
       mode: 'manual',
+      actor: req.user,
       allowCrossOwner: allow_cross_owner === true,
       restoreRevokedAssignments: restore_revoked_assignments === true
     });

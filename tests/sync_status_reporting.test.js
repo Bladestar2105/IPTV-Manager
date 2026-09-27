@@ -7,6 +7,7 @@ const { fetchSafe, xtreamState, hooks } = vi.hoisted(() => ({
   hooks: { beforeSeries: null },
 }));
 const memDb = new Database(':memory:');
+const actor = { id: 9, is_admin: true, token_version: 0 };
 
 vi.mock('../src/database/db.js', () => ({ default: memDb, initDb: vi.fn(), openDbConnection: () => memDb }));
 vi.mock('../src/utils/network.js', async importOriginal => ({
@@ -70,6 +71,8 @@ describe('sync status reporting', () => {
     ({ acquireProviderLock, clearProviderLocks } = await import('../src/services/providerLockService.js'));
     memDb.pragma('foreign_keys = ON');
     memDb.exec(`
+      CREATE TABLE admin_users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER);
+      INSERT INTO admin_users VALUES (9, 1, 0);
       CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);
       CREATE TABLE providers (
         id INTEGER PRIMARY KEY, name TEXT, url TEXT, username TEXT, password TEXT,
@@ -157,7 +160,7 @@ describe('sync status reporting', () => {
 
   it('reports an unreachable provider as an error instead of a 0/0/0 success', async () => {
     routeFetch({});                                   // every catalog call aborts
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
 
     expect(result.status).toBe('error');
     expect(result.channelsAdded).toBe(0);
@@ -175,7 +178,7 @@ describe('sync status reporting', () => {
   it('retries a failed provider earlier than the configured interval', async () => {
     routeFetch({});
     const before = Math.floor(Date.now() / 1000);
-    await performSync(7, 1, { mode: 'manual' });
+    await performSync(7, 1, { mode: 'manual', actor });
 
     const next = config().next_sync;
     expect(next).toBeGreaterThan(before);
@@ -243,7 +246,7 @@ describe('sync status reporting', () => {
     xtreamState.error = new Error(reason);
     fetchSafe.mockRejectedValue(new Error(reason));
 
-    await performSync(7, 1, { mode: 'manual' });
+    await performSync(7, 1, { mode: 'manual', actor });
 
     const [log] = logs();
     expect(log.status).toBe('error');
@@ -262,7 +265,7 @@ describe('sync status reporting', () => {
     });
     xtreamState.error = new Error('Unsafe URL: http://panel.example/player_api.php?username=bob&password=s3cr3t');
 
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
 
     const stored = logs()[0].error_message || '';
     expect(stored).not.toMatch(/s3cr3t/);
@@ -278,7 +281,7 @@ describe('sync status reporting', () => {
       get_series: [{ series_id: 5, name: 'S', cover: '' }],
       // get_series_categories deliberately missing -> aborts
     });
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
 
     expect(result.status).toBe('partial');
     expect(logs()[0].status).toBe('partial');
@@ -303,7 +306,7 @@ describe('sync status reporting', () => {
       categories: [{ category_id: 1, category_name: 'News', category_type: 'live' }],
     });
 
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
 
     expect(result.status).toBe('success');
     expect(result.errorMessage).toBeNull();
@@ -321,7 +324,7 @@ describe('sync status reporting', () => {
       get_series_categories: [],
     });
     const startedAt = Math.floor(Date.now() / 1000);
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
 
     expect(result.status).toBe('success');
     expect(logs()[0].status).toBe('success');
@@ -374,7 +377,7 @@ describe('sync status reporting', () => {
       get_series_categories: [],
     });
 
-    const result = await performSync(7, 1, { mode: 'manual' });
+    const result = await performSync(7, 1, { mode: 'manual', actor });
 
     expect(result.status).toBe('error');
     expect(result.errorMessage).toMatch(/removed/i);
@@ -412,7 +415,7 @@ describe('sync status reporting', () => {
     clearProviderLocks();
     const held = acquireProviderLock(7, 'delete');
     try {
-      const result = await performSync(7, 1, { mode: 'manual' });
+      const result = await performSync(7, 1, { mode: 'manual', actor });
 
       expect(result.status).toBe('locked');
       expect(config().next_sync).toBe(222);

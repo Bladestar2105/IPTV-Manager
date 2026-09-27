@@ -17,6 +17,16 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
 ## Pull Request Validation
 
+EPG-logo cache and checkpoint regressions can be run with
+`npm test -- tests/epg_logo_cache.test.js tests/wal_maintenance.test.js`.
+The cache tests use independent module instances with real SQLite connections,
+a 33,331-row catalog and a controlled clock; unchanged catalogs must avoid full
+rescans while committed changes still become visible. They also cover explicit
+invalidation, local writes, failed reads and transaction rollback. WAL tests
+hold a real reader open to distinguish pending frames from the `busy` flag and
+verify that maintenance remains passive. These local checks do not measure
+production playback latency or establish the cause of production WAL peaks.
+
 Pull requests to `main` and `codex/ki-integration` must pass the Node.js 24 validation job before merge.
 It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
 full test suite with an isolated temporary `DATA_DIR`, runs the build command,
@@ -52,6 +62,32 @@ before `npm install`.
 
 Update these files when routes, environment variables, setup, Docker behavior,
 or integration behavior changes.
+
+## Provider Sync Concurrency Regressions
+
+`tests/sync_authorization_atomicity.test.js` uses the real migrated SQLite
+schema and a second connection in a worker thread. A barrier holds the writer
+lock until the catalog writer enters `BEGIN IMMEDIATE`; the other connection
+then commits a revocation or configuration change. This tests SQLite's actual
+busy wait, not just an async pause on a single connection. Manual service calls
+must pass `options.actor` from the authenticated request (admin ID, `is_admin`
+and `token_version`); callers cannot substitute request-body fields.
+
+Catalog authorization, restoration decisions and mutable mapping/assignment
+reads belong inside the final write transaction. The provider configuration
+fingerprint uses stored credentials; decrypt a separate fetch copy, and add any
+new fetch-relevant provider field to the fingerprint. Runtime expiry/EPG
+timestamps are intentionally excluded.
+
+Series episode queues retain eligible Xtream account candidates for each
+source/series ID. A failing account can fall back to another account that
+carries the series; M3U-only rows are not candidates. Outcomes are counted per
+series, and local write failures do not trigger another upstream request or a
+source cooldown. The existing source-shared episode format is unchanged.
+`tests/series_episode_sync_backoff.test.js` covers these cases, while
+`tests/series_episode_response_cleanup.test.js` verifies that real HTTP error
+responses with unfinished bodies release sockets through both sync entry
+points. Callers must consume or `discardBody` every response they abandon.
 
 ## Browser Player Audio Fix
 

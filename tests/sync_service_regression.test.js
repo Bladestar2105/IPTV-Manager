@@ -7,6 +7,7 @@ const { fetchSafe, xtreamState } = vi.hoisted(() => ({
   xtreamState: { channels: [] },
 }));
 const memDb = new Database(':memory:');
+const actor = { id: 9, is_admin: true, token_version: 0 };
 
 vi.mock('../src/database/db.js', () => ({ default: memDb, initDb: vi.fn() }));
 vi.mock('../src/utils/network.js', async importOriginal => ({
@@ -29,6 +30,10 @@ describe('sync authorization regression', () => {
     ({ performSync, selectStaleProviderChannels, deleteProviderChannelCascade } = await import('../src/services/syncService.js'));
     memDb.pragma('foreign_keys = ON');
     memDb.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY);
+      INSERT INTO users (id) VALUES (1), (2);
+      CREATE TABLE admin_users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER);
+      INSERT INTO admin_users VALUES (9, 1, 0);
       CREATE TABLE providers (
         id INTEGER PRIMARY KEY, name TEXT, url TEXT, username TEXT, password TEXT,
         expiry_date INTEGER, user_id INTEGER
@@ -205,7 +210,7 @@ describe('sync authorization regression', () => {
   it('allows a trusted manual operation without authorizing future schedules', async () => {
     configure({ providerOwner: 2, enabled: 0, grant: 0 });
 
-    const manual = await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
+    const manual = await performSync(1, 1, { mode: 'manual', actor, allowCrossOwner: true });
     expect(manual.errorMessage).toBe(null);
     expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels').get()).toEqual({
       granted_by_admin: 1,
@@ -276,12 +281,13 @@ describe('sync authorization regression', () => {
       VALUES (30, 10, 20, 1)
     `).run();
 
-    await performSync(1, 1, { mode: 'manual', allowCrossOwner: true });
+    await performSync(1, 1, { mode: 'manual', actor, allowCrossOwner: true });
     expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels WHERE id = 30').get())
       .toEqual({ granted_by_admin: 0, authorization_revoked: 1 });
 
     await performSync(1, 1, {
       mode: 'manual',
+      actor,
       allowCrossOwner: true,
       restoreRevokedAssignments: true,
     });
