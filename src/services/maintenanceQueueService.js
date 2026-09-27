@@ -1,3 +1,4 @@
+import { clearChannelsCache } from './cacheService.js';
 import { immediateTransaction, runWriteWithRetry } from '../database/sqliteWrites.js';
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -152,6 +153,7 @@ export function createMaintenanceQueue(database, runners) {
     } finally {
       clearInterval(heartbeat);
     }
+    if (status === 'success' || status === 'partial') clearChannelsCache(undefined, {epg: true});
     await write(() => database.prepare(`UPDATE maintenance_jobs SET status=?,result=?,error=?,updated_at=?,lease_until=NULL
       WHERE id=? AND status='running'`).run(status,result ? JSON.stringify(result) : null,error,now(),job.id));
   }

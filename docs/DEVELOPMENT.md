@@ -22,7 +22,9 @@ Manual-load regressions:
 ```bash
 npm test -- tests/provider_lock_latency.test.js tests/provider_lock.test.js tests/maintenance_queue.test.js tests/maintenance_queue_connection.test.js tests/maintenance_queue_api.test.js tests/maintenance_queue_ui.test.js
 ```
-The lock tests hold a real SQLite writer and race four worker threads to verify
+`tests/channel_cache_cluster.test.js` uses real Node cluster workers to verify
+user/guest channel invalidation and completed-import logo invalidation through
+the primary process. The lock tests hold a real SQLite writer and race four worker threads to verify
 short bookkeeping waits and the cluster-wide sync cap. Queue tests use independent
 SQLite connections for claims and verify FIFO, deduplication, revocation, restart
 recovery, bounded history and truthful acceptance. UI tests distinguish acceptance

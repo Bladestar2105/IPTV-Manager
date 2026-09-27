@@ -309,7 +309,9 @@ until this is exercised on a real Proxmox host.
 Manual UI provider syncs and EPG updates (including **Update all**) enter a
 persistent maintenance queue in `db.sqlite`. One manual job runs at a time;
 scheduled provider syncs still share `SYNC_MAX_CONCURRENT` with manual syncs.
-The UI shows queued, running and completed outcomes. Identical active requests
+The UI shows queued, running and completed outcomes. Channel-cache invalidations
+are relayed through the primary to every HTTP worker; completed queue imports
+also invalidate their EPG logo caches. Identical active requests
 from the same administrator/session are deduplicated. Queued jobs survive
 restarts and reloads; permissions and ownership are checked again on execution.
 An interrupted running job is marked failed after its 15-minute lease expires,

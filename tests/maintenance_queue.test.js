@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { clearChannelsCache } from '../src/services/cacheService.js';
+vi.mock('../src/services/cacheService.js', () => ({clearChannelsCache: vi.fn()}));
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +12,7 @@ let dir, db, second, queue, runners;
 const actor = { id: 1, is_admin: true, token_version: 0 };
 const spec = { type: 'provider_sync', target_id: 1, user_id: 1 };
 beforeEach(() => {
+  vi.clearAllMocks();
   dir = mkdtempSync(join(tmpdir(), 'maintenance-'));
   db = new Database(join(dir, 'db.sqlite'));
   db.pragma('journal_mode=WAL'); db.pragma('busy_timeout=1');
@@ -83,6 +86,7 @@ describe('durable serial maintenance queue', () => {
   it('dispatches EPG jobs with skip-prune and checks target deletion', async () => {
     await queue.enqueue(actor,[{type:'epg_source',target_id:1,skip_prune:true},{type:'provider_epg',target_id:2}]);
     await queue.drain(); expect(runners.updateEpgSource).toHaveBeenCalledWith(1,true);
+    expect(clearChannelsCache).toHaveBeenCalledWith(undefined, {epg: true});
     db.exec('DELETE FROM providers WHERE id=2'); await queue.drain();
     expect((await queue.list(actor)).find(j=>j.target_id===2).status).toBe('error');
   });

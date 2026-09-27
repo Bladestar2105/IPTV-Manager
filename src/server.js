@@ -1,3 +1,5 @@
+import { startChannelsCacheInvalidation } from './services/cacheService.js';
+import { invalidateEpgLogosCache } from './services/logoResolver.js';
 import { startMaintenanceQueue } from './services/maintenanceQueueService.js';
 import './utils/logger.js';
 import cluster from 'cluster';
@@ -84,6 +86,8 @@ let redisClient = null;
   // connection so a contended lock cannot block this worker's event loop, and
   // with it every stream the worker is pumping.
   streamManager.init(db, redisClient, redisClient ? null : openLatencyDbConnection());
+
+  startChannelsCacheInvalidation(invalidateEpgLogosCache);
 
   if (cluster.isPrimary) {
     // Create default admin
