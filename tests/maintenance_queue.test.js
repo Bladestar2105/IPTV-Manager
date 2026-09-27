@@ -111,3 +111,25 @@ describe('durable serial maintenance queue', () => {
   });
 
 });
+
+it('keeps an EPG task queued while a scheduled import owns its source lock', async () => {
+  await queue.enqueue(actor,[{type:'epg_source',target_id:1}]);
+  runners.updateEpgSource.mockRejectedValueOnce(Object.assign(new Error('held'), {code:'EPG_UPDATE_LOCKED'}));
+  await queue.drain();
+  expect((await queue.list(actor))[0].status).toBe('queued');
+  db.exec('UPDATE maintenance_jobs SET available_at=0');
+  await queue.drain();
+  expect((await queue.list(actor))[0].status).toBe('success');
+});
+
+it('queues contended follow-up EPG without repeating a completed catalog sync', async () => {
+  await queue.enqueue(actor,[spec]);
+  runners.updateProviderEpg.mockRejectedValueOnce(Object.assign(new Error('held'), {code:'EPG_UPDATE_LOCKED'}));
+  await queue.drain();
+  const jobs = await queue.list(actor);
+  expect(jobs.find(job=>job.type==='provider_sync').status).toBe('partial');
+  expect(jobs.find(job=>job.type==='provider_epg').status).toBe('queued');
+  await queue.drain();
+  expect(runners.performSync).toHaveBeenCalledTimes(1);
+  expect(runners.updateProviderEpg).toHaveBeenCalledTimes(2);
+});

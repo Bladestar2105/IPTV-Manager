@@ -106,6 +106,8 @@ export function createMaintenanceQueue(database, runners) {
       return row;
     }));
     if (!job) return;
+    const defer = () => write(() => database.prepare(`UPDATE maintenance_jobs SET status='queued',available_at=?,
+      updated_at=?,lease_until=NULL WHERE id=? AND status='running'`).run(now()+5,now(),job.id));
     const heartbeat = setInterval(() => {
       write(() => database.prepare("UPDATE maintenance_jobs SET lease_until=? WHERE id=? AND status='running'")
         .run(now()+900,job.id)).catch(() => {});
@@ -129,8 +131,7 @@ export function createMaintenanceQueue(database, runners) {
           queuedExpectation:snapshot,
         });
         if (outcome.status === 'locked') {
-          await write(() => database.prepare(`UPDATE maintenance_jobs SET status='queued',available_at=?,
-            updated_at=?,lease_until=NULL WHERE id=? AND status='running'`).run(now()+5,now(),job.id));
+          await defer();
           return;
         }
         if (!['success','partial'].includes(outcome.status)) throw fail('Provider synchronization failed');
@@ -139,13 +140,24 @@ export function createMaintenanceQueue(database, runners) {
           categories_added:Number(outcome.categoriesAdded)||0};
         if (status === 'partial') result.warning = 'Some provider catalog data could not be updated';
         try { await services.updateProviderEpg(job.target_id); }
-        catch { status = 'partial'; result.warning = 'Catalog synchronized; EPG update failed'; }
+        catch (e) {
+          status = 'partial';
+          if (e.code === 'EPG_UPDATE_LOCKED') {
+            try {
+              await enqueue(actor,[{type:'provider_epg',target_id:job.target_id}]);
+              result.warning = 'Catalog synchronized; EPG update queued';
+            } catch {
+              result.warning = 'Catalog synchronized; EPG update could not be queued';
+            }
+          } else result.warning = 'Catalog synchronized; EPG update failed';
+        }
       } else if (job.type === 'epg_source') {
         await services.updateEpgSource(job.target_id,options.skip_prune);
       } else {
         await services.updateProviderEpg(job.target_id,options.skip_prune);
       }
     } catch (e) {
+      if (e.code === 'EPG_UPDATE_LOCKED') { await defer(); return; }
       status = 'error';
       // Only locally generated errors are safe for clients; upstream errors can
       // contain credentials, query strings and response bodies.
