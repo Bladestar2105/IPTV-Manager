@@ -692,6 +692,21 @@ logged. The application has no existing global HTTP compression middleware, so
 this PR adds no isolated compression dependency; bounded database iteration and
 response limits are used instead.
 
+Clients can discover scoped bulk EPG through authenticated `get_profile`:
+`epg_bulk: { version: 1, max_channels: 100, max_window_hours: 48 }`.
+For `type=itv&action=get_epg_info`, supply all three parameters:
+`channel_ids` (CSV of positive user-channel IDs, at most 100 distinct IDs),
+`start_timestamp` and `stop_timestamp` (positive UTC epoch seconds, increasing,
+at most 48 hours apart). The explicit overlap window replaces archive lookback.
+Only requested, authorized live channels are returned, including the user's own
+adult channels; hidden, revoked, and other users' channels remain excluded.
+The response retains `{ js: { data: { channelId: [programmes] } } }` and existing
+programme fields. `truncated: true` inside `js` reports actual clipping at 500
+rows per channel or 20,000 overall; clients must not treat that as a complete
+refresh. Empty authorized channels retain an empty array. Any partial or invalid
+scope returns `{ js: { error: 'invalid_epg_request' } }` and never expands to all
+channels. Without any of these parameters, legacy bulk behavior is unchanged.
+
 Archived EPG rows are marked only when the channel has catch-up enabled and the
 programme remains inside its configured archive window. Their opaque
 `/media/<id>.mpg` commands are resolved with

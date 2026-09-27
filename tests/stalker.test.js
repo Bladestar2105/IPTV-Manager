@@ -681,6 +681,88 @@ describe('Stalker/MAG portal flow', () => {
     expect(deniedSimple.body.js.data).toEqual([]);
   });
 
+  it('advertises and serves scoped UTC EPG without legacy archive or channel expansion', async () => {
+    await registerDevice();
+    const token = await handshake();
+    const profile = await request(app).get('/server/load.php')
+      .query({ type: 'stb', action: 'get_profile', token });
+    expect(profile.body.js.epg_bulk).toEqual({ version: 1, max_channels: 100, max_window_hours: 48 });
+    const now = Math.floor(Date.now() / 1000);
+    const response = await request(app).get('/server/load.php').query({
+      type: 'itv', action: 'get_epg_info', token,
+      channel_ids: [authorizedChannelIds[0], authorizedChannelIds[252], adultChannelIds[0],
+        hiddenChannelIds[0], revokedChannelIds[0], unauthorizedChannelIds[0]].join(','),
+      start_timestamp: now, stop_timestamp: now + 3600
+    });
+    expect(Object.keys(response.body.js.data).sort()).toEqual([
+      authorizedChannelIds[0], authorizedChannelIds[252], adultChannelIds[0]
+    ].map(String).sort());
+    expect(response.body.js.data[String(authorizedChannelIds[0])].map(program => program.name))
+      .toEqual(['Current Show', 'Next Show']);
+    expect(response.body.js.truncated).not.toBe(true);
+  });
+
+  it('detects exact and exceeded scoped row caps, including high channel IDs', async () => {
+    await registerDevice();
+    const token = await handshake();
+    const now = Math.floor(Date.now() / 1000);
+    const epgId = `${stamp}_scoped_cap`;
+    const selectedIds = authorizedChannelIds.slice(-41);
+    const updateMapping = db.prepare(`UPDATE provider_channels SET epg_channel_id = ?
+      WHERE id = (SELECT provider_channel_id FROM user_channels WHERE id = ?)`);
+    const insert = epgDb.prepare(`INSERT INTO epg_programs
+      (channel_id, source_type, source_id, start, stop, title, desc, lang)
+      VALUES (?, 'custom', ?, ?, ?, 'Scoped current', '', 'en')`);
+    const fetchScope = async ids => (await request(app).get('/server/load.php').query({
+      type: 'itv', action: 'get_epg_info', token, channel_ids: ids.join(','),
+      start_timestamp: now, stop_timestamp: now + 48 * 3600
+    })).body.js;
+    epgDb.prepare(`INSERT INTO epg_channels (id, name, source_type, source_id, updated_at)
+      VALUES (?, 'Scoped cap', 'custom', ?, ?)` ).run(epgId, epgSourceId, now);
+    try {
+      selectedIds.forEach(id => updateMapping.run(epgId, id));
+      epgDb.transaction(() => {
+        for (let i = 0; i < 500; i++) insert.run(epgId, epgSourceId, now + i, now + i + 1);
+      })();
+      const single = await fetchScope([selectedIds[40], selectedIds[40]]);
+      expect(Object.keys(single.data)).toEqual([String(selectedIds[40])]);
+      expect(single.data[String(selectedIds[40])]).toHaveLength(500);
+      expect(single.truncated).not.toBe(true);
+      const exact = await fetchScope(selectedIds.slice(0, 40));
+      expect(Object.values(exact.data).flat()).toHaveLength(20_000);
+      expect(exact.truncated).not.toBe(true);
+      const exceeded = await fetchScope(selectedIds);
+      expect(Object.values(exceeded.data).flat()).toHaveLength(20_000);
+      expect(exceeded.truncated).toBe(true);
+      insert.run(epgId, epgSourceId, now + 500, now + 501);
+      const channelCap = await fetchScope([selectedIds[40]]);
+      expect(channelCap.data[String(selectedIds[40])]).toHaveLength(500);
+      expect(channelCap.truncated).toBe(true);
+    } finally {
+      selectedIds.forEach(id => updateMapping.run('', id));
+      epgDb.prepare('DELETE FROM epg_programs WHERE channel_id = ?').run(epgId);
+      epgDb.prepare('DELETE FROM epg_channels WHERE id = ?').run(epgId);
+    }
+  });
+
+  it.each([
+    { channel_ids: '' },
+    { channel_ids: '1' },
+    { start_timestamp: 1, stop_timestamp: 2 },
+    { channel_ids: '1 OR 1=1', start_timestamp: 1, stop_timestamp: 2 },
+    { channel_ids: '0', start_timestamp: 1, stop_timestamp: 2 },
+    { channel_ids: '1', start_timestamp: 2, stop_timestamp: 1 },
+    { channel_ids: '1', start_timestamp: 1, stop_timestamp: 172802 },
+    { channel_ids: '1', start_timestamp: 1.5, stop_timestamp: 2 },
+    { channel_ids: Array.from({length: 101}, (_, i) => i + 1).join(','), start_timestamp: 1, stop_timestamp: 2 }
+  ])('rejects invalid scoped EPG without falling back to all channels: %j', async (scope) => {
+    await registerDevice();
+    const token = await handshake();
+    const response = await request(app).get('/server/load.php')
+      .query({ type: 'itv', action: 'get_epg_info', token, ...scope });
+    expect(response.body).toEqual({ js: { error: 'invalid_epg_request' } });
+  });
+
   it('bounds and benchmarks bulk EPG responses', async () => {
     const benchmarkMac = '02:00:00:00:61:10';
     const benchmarkUserId = Number(db.prepare(`
