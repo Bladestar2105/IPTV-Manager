@@ -76,7 +76,7 @@ describe('EPG Scheduler', () => {
     expect(mockEpg.updateEpgSource).toHaveBeenCalledTimes(2);
   });
 
-  it('releases a source after a failed update', async () => {
+  it('backs off a failed custom source for fifteen minutes, then resumes updates', async () => {
     state.sources = [{ id: 8, last_update: 0, update_interval: 1 }];
     mockEpg.updateEpgSource
       .mockRejectedValueOnce(new Error('EPG failed'))
@@ -84,9 +84,47 @@ describe('EPG Scheduler', () => {
 
     startEpgScheduler();
     await vi.advanceTimersByTimeAsync(60000);
+    await vi.advanceTimersByTimeAsync(14 * 60000);
+    expect(mockEpg.updateEpgSource).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mockEpg.updateEpgSource).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mockEpg.updateEpgSource).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['custom', 'provider'])('starts the %s cooldown when a slow attempt fails, not when it starts', async type => {
+    const update = type === 'custom' ? mockEpg.updateEpgSource : mockEpg.updateProviderEpg;
+    if (type === 'custom') state.sources = [{ id: 8, last_update: 0, update_interval: 1 }];
+    else state.providers = [{ id: 8, last_epg_update: 0, epg_update_interval: 1 }];
+    let rejectUpdate;
+    update.mockReturnValueOnce(new Promise((resolve, reject) => { rejectUpdate = reject; }));
+    startEpgScheduler();
+    await vi.advanceTimersByTimeAsync(60000);
+    await vi.advanceTimersByTimeAsync(20 * 60000);
+    expect(update).toHaveBeenCalledTimes(1);
+
+    rejectUpdate(new Error('HTTP 429'));
     await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(14 * 60000);
+    expect(update).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['custom', 'provider'])('does not let a failed %s block another source type with the same ID', async type => {
+    state.sources = [{ id: 8, last_update: 0, update_interval: 1 }];
+    state.providers = [{ id: 8, last_epg_update: 0, epg_update_interval: 1 }];
+    const failed = type === 'custom' ? mockEpg.updateEpgSource : mockEpg.updateProviderEpg;
+    const healthy = type === 'custom' ? mockEpg.updateProviderEpg : mockEpg.updateEpgSource;
+    failed.mockRejectedValue(new Error('HTTP 403'));
+    healthy.mockResolvedValue(undefined);
+
+    startEpgScheduler();
+    await vi.advanceTimersByTimeAsync(60000);
     await vi.advanceTimersByTimeAsync(60000);
 
-    expect(mockEpg.updateEpgSource).toHaveBeenCalledTimes(2);
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(healthy).toHaveBeenCalledTimes(2);
   });
 });

@@ -316,6 +316,14 @@ lock.
 
 ## EPG Downloads
 
+Failed scheduled EPG updates wait at least 15 minutes after the failure before
+retrying, for both custom sources and providers. Their cooldowns are separate
+even when the numeric IDs match. Other sources continue normally; manual
+updates remain available. Failed imports retain the previous data and do not
+advance the last-success timestamp. Cooldowns are kept in the scheduler worker
+and reset when it restarts; upstream access errors still require fixing at the
+source.
+
 - `EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES`: How many consecutive *upstream*
   failures stop an episode sync for one provider account. Defaults to `25`,
   minimum `5`. A panel that stops answering `get_series_info` does not recover
