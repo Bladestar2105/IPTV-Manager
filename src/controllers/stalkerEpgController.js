@@ -118,7 +118,57 @@ export function getShortEpg(session, params) {
   return { data: [...getEpgPrograms(epgId, limit)].map(program => mapEpgProgram(channel, program, now)) };
 }
 
+export const EPG_BULK_CAPABILITY = Object.freeze({ version: 1, max_channels: 100, max_window_hours: 48 });
+
+function getScopedEpgInfo(session, params) {
+  const positiveInteger = raw => {
+    const number = typeof raw === 'number' ? raw
+      : typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+    return Number.isSafeInteger(number) && number > 0 ? number : null;
+  };
+  const rawIds = typeof params.channel_ids === 'string' ? params.channel_ids.split(',') : [];
+  const ids = [...new Set(rawIds.map(positiveInteger))];
+  const start = positiveInteger(params.start_timestamp);
+  const end = positiveInteger(params.stop_timestamp);
+  if (!ids.length || ids.includes(null) || ids.length > EPG_BULK_CAPABILITY.max_channels
+      || !start || !end || end <= start || end - start > EPG_BULK_CAPABILITY.max_window_hours * 3600) {
+    return { error: 'invalid_epg_request' };
+  }
+  const channels = db.prepare(`
+    SELECT uc.id, pc.tv_archive, pc.tv_archive_duration,
+           COALESCE(map.epg_channel_id, pc.epg_channel_id) AS epg_id
+    FROM authorized_user_channels uc
+    JOIN user_categories cat ON cat.id = uc.user_category_id
+    JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+    LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+    WHERE cat.user_id = ? AND cat.type = 'live' AND pc.stream_type = 'live'
+      AND uc.id IN (${ids.map(() => '?').join(',')})
+    ORDER BY uc.id
+  `).all(session.user_id, ...ids);
+  // One extra row detects truncation without falsely rejecting an exactly full result.
+  const programsById = getEpgProgramsForChannels(
+    new Set(channels.map(channel => channel.epg_id).filter(Boolean)), start, end,
+    MAX_EPG_PROGRAMS_PER_CHANNEL + 1, MAX_EPG_PROGRAMS_PER_RESPONSE + 1
+  );
+  const data = {};
+  let total = 0;
+  let truncated = [...programsById.values()].reduce((sum, rows) => sum + rows.length, 0)
+    > MAX_EPG_PROGRAMS_PER_RESPONSE;
+  const now = Math.floor(Date.now() / 1000);
+  for (const channel of channels) {
+    const available = programsById.get(channel.epg_id) || [];
+    const rows = available.slice(0, Math.min(MAX_EPG_PROGRAMS_PER_CHANNEL, MAX_EPG_PROGRAMS_PER_RESPONSE - total));
+    if (rows.length < available.length) truncated = true;
+    data[String(channel.id)] = rows.map(program => mapEpgProgram(channel, program, now));
+    total += rows.length;
+  }
+  return { data, ...(truncated ? { truncated: true } : {}) };
+}
+
 export function getEpgInfo(session, params) {
+  if (['channel_ids', 'start_timestamp', 'stop_timestamp'].some(key => Object.hasOwn(params, key))) {
+    return getScopedEpgInfo(session, params);
+  }
   const requestedPeriod = Number(value(params, 'period'));
   const period = Number.isFinite(requestedPeriod) && requestedPeriod > 0
     ? Math.min(Math.floor(requestedPeriod), MAX_EPG_PERIOD_HOURS)

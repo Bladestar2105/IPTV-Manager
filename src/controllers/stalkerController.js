@@ -12,7 +12,7 @@ import {
   STALKER_TIMEZONE
 } from '../utils/stalker.js';
 import { value, contentConfig, getCategories, getOrderedList, getSeriesSeasons } from './stalkerContentController.js';
-import { getEpgInfo, getShortEpg, getSimpleEpg } from './stalkerEpgController.js';
+import { EPG_BULK_CAPABILITY, getEpgInfo, getShortEpg, getSimpleEpg } from './stalkerEpgController.js';
 import { createLink } from './stalkerLinkController.js';
 
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
@@ -140,6 +140,7 @@ function profile(session) {
     device_id: session.device_uid || '',
     hd: 1,
     tv_quality: 'high',
+    epg_bulk: EPG_BULK_CAPABILITY,
     additional_services_on: '1',
     parent_password: /^\d{4,8}$/.test(parentalPin) ? parentalPin : '',
     settings_password: '',
