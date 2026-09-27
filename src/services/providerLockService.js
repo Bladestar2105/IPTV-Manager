@@ -1,33 +1,32 @@
 import { randomUUID } from 'crypto';
+import { resolveBudget } from '../utils/env.js';
 import * as dbModule from '../database/db.js';
 import { migrateProviderLockTable, sweepExpiredProviderLocks } from '../database/providerLockSchema.js';
 import { formatDbError, isRetryableSqliteError } from '../database/sqliteWrites.js';
 
 const db = dbModule.default;
 
-// The renewal fires from a timer while the worker may be pumping streams, and
-// better-sqlite3 blocks the event loop while it waits for a lock. A missed
-// renewal is harmless — the lease still has most of its TTL left and the next
-// tick retries — so it uses a connection that gives up quickly instead.
-// A namespace import keeps this optional: test doubles of the db module need
-// not provide it.
-let renewalDb = null;
-function renewalConnection() {
-  if (renewalDb) return renewalDb;
+// Lock bookkeeping runs on HTTP workers too. Never spend the batch writer
+// timeout rejecting a manual sync or releasing a completed operation.
+let lockDb = null;
+function lockConnection() {
+  if (lockDb) return lockDb;
+  let open;
   try {
-    renewalDb = typeof dbModule.openLatencyDbConnection === 'function'
-      ? dbModule.openLatencyDbConnection()
-      : db;
+    open = dbModule.openLatencyDbConnection;
   } catch {
-    renewalDb = db;
+    // Older test doubles omit this export.
   }
-  return renewalDb;
+  lockDb = typeof open === 'function' ? open() : db;
+  return lockDb;
 }
 
-/** Test seam: forget the cached renewal connection. */
+/** Test seam: forget the cached bookkeeping connection. */
 export function resetProviderLockConnections() {
-  renewalDb = null;
+  lockDb = null;
 }
+
+const MAX_CONCURRENT_SYNCS = resolveBudget(process.env.SYNC_MAX_CONCURRENT, 2, 1, 64, 'SYNC_MAX_CONCURRENT');
 
 // A provider sync runs for minutes. The lock outlives a slow run but expires
 // soon enough that a crashed worker does not block the provider for hours; a
@@ -91,8 +90,16 @@ function ensureTable() {
     return tableState;
   }
 
+  let database;
   try {
-    migrateProviderLockTable(db);
+    database = lockConnection();
+  } catch (e) {
+    // A failed real connection is never a fixture and must not disable locks.
+    console.warn(`Provider lock connection unavailable: ${formatDbError(e)}`);
+    return 'busy';
+  }
+  try {
+    migrateProviderLockTable(database);
     tableState = 'ready';
     return tableState;
   } catch (e) {
@@ -146,13 +153,19 @@ export function acquireLock(lockKey, operation, options = {}) {
 
   const now = Math.floor(Date.now() / 1000);
   const token = randomUUID();
+  const database = lockConnection();
   try {
-    db.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND expires_at <= ?').run(lockKey, now);
-    const inserted = db.prepare(`
+    database.prepare('DELETE FROM provider_locks WHERE lock_key = ? AND expires_at <= ?').run(lockKey, now);
+    const inserted = database.prepare(`
       INSERT INTO provider_locks (lock_key, operation, owner_pid, owner_token, acquired_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      SELECT ?, ?, ?, ?, ?, ?
+      WHERE ? = 0 OR (
+        SELECT COUNT(*) FROM provider_locks
+        WHERE lock_key GLOB 'provider:*' AND operation = 'sync' AND expires_at > ?
+      ) < ?
       ON CONFLICT(lock_key) DO NOTHING
-    `).run(lockKey, operation, process.pid, token, now, now + ttlSeconds).changes;
+    `).run(lockKey, operation, process.pid, token, now, now + ttlSeconds,
+      Number(lockKey.startsWith('provider:') && operation === 'sync'), now, MAX_CONCURRENT_SYNCS).changes;
     if (inserted !== 1) return null;
   } catch (e) {
     // Fail closed. Reaching this point means ensureTable() succeeded, so the
@@ -165,7 +178,7 @@ export function acquireLock(lockKey, operation, options = {}) {
 
   const renew = setInterval(() => {
     try {
-      renewalConnection()
+      lockConnection()
         .prepare('UPDATE provider_locks SET expires_at = ? WHERE lock_key = ? AND owner_token = ?')
         .run(Math.floor(Date.now() / 1000) + ttlSeconds, lockKey, token);
     } catch {
@@ -197,7 +210,7 @@ export function acquireLock(lockKey, operation, options = {}) {
           // the lease runs out and the next acquireLock sweeps it. Written as an
           // UPDATE of the row this process already owns: a delete-then-insert
           // would leave a window for another worker to take the lock.
-          const changed = db.prepare(
+          const changed = database.prepare(
             'UPDATE provider_locks SET operation = ?, owner_token = ?, expires_at = ? WHERE lock_key = ? AND owner_token = ?'
           ).run(`${operation}${COOLDOWN_SUFFIX}`, `cooldown:${token}`, Math.floor(Date.now() / 1000) + hold, lockKey, token).changes;
           if (changed === 1) return;
@@ -212,7 +225,7 @@ export function acquireLock(lockKey, operation, options = {}) {
           return;
         }
       }
-      deleteOwnLock(db, lockKey, token);
+      deleteOwnLock(database, lockKey, token);
     },
   };
 }
@@ -249,7 +262,7 @@ export function describeLock(lockKey, now = Math.floor(Date.now() / 1000)) {
   try {
     // An expired row is not a holder. Reporting it as one told the operator a
     // sync was in progress when the process that started it was long gone.
-    return db.prepare(
+    return lockConnection().prepare(
       'SELECT operation, owner_pid, acquired_at, expires_at FROM provider_locks WHERE lock_key = ? AND expires_at > ?'
     ).get(lockKey, now) || null;
   } catch {
@@ -270,7 +283,7 @@ export function describeProviderLock(providerId) {
 export function describeLockConflict(providerId) {
   const holder = describeProviderLock(providerId);
   if (!holder) {
-    return `Provider ${providerId} could not be locked; another operation released it just now, or the database is busy`;
+    return `Provider ${providerId} could not be locked; the sync limit may be reached, another operation released it just now, or the database is busy; retry shortly`;
   }
   if (isCooldownHolder(holder)) {
     return `Provider ${providerId} is held back until ${new Date(holder.expires_at * 1000).toISOString()} after its upstream stopped answering`;

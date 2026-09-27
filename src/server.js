@@ -1,3 +1,4 @@
+import { startMaintenanceQueue } from './services/maintenanceQueueService.js';
 import './utils/logger.js';
 import cluster from 'cluster';
 import os from 'os';
@@ -210,6 +211,7 @@ let redisClient = null;
 
     // Start Schedulers if flagged
     if (process.env.IS_SCHEDULER === 'true') {
+      startMaintenanceQueue();
       startSyncScheduler();
       startEpgScheduler();
       startCleanupScheduler();

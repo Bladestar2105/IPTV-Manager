@@ -162,6 +162,19 @@ describe('sync authorization inside the SQLite writer transaction', () => {
     expect(result.status).toBe('error');
   });
 
+  it('rejects a replacement grant after a queued sync waits for the writer', async () => {
+    const before = localState();
+    let verifyWait;
+    download.pause = async () => { verifyWait = await holdWriterUntilApply('UPDATE sync_configs SET id = 2 WHERE id = 1'); };
+    const result = await performSync(7, 1, {
+      mode: 'manual', actor, allowCrossOwner: true, restoreRevokedAssignments: true,
+      queuedExpectation: { owner: 2, grant: true, config_id: 1 },
+    });
+    await verifyWait();
+    expect(result.status).toBe('error');
+    expect(localState()).toEqual(before);
+  });
+
   it('reloads mapping targets after a writer changed their owner', async () => {
     let verifyWait;
     download.pause = async () => {

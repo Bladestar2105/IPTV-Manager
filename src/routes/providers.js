@@ -4,6 +4,7 @@ import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
+router.get('/maintenance-jobs', authenticateToken, providerController.getMaintenanceJobs);
 router.get('/providers', authenticateToken, providerController.getProviders);
 router.post('/providers', authenticateToken, providerController.createProvider);
 router.post('/providers/bulk-url', authenticateToken, providerController.bulkUpdateProviderUrls);

@@ -48,11 +48,13 @@ mode.
   write lock for tens of seconds. Too low a value turns ordinary contention
   into `database is locked`.
 - `SQLITE_LATENCY_BUSY_TIMEOUT_MS`: Lock wait for connections on latency
-  critical paths, currently the stream activity heartbeat. Defaults to `250`
+  critical paths: stream activity heartbeats and provider/source lock bookkeeping.
+  Defaults to `250`
   and is never longer than `SQLITE_BUSY_TIMEOUT_MS`. better-sqlite3 is
   synchronous and its busy handler sleeps on the main thread, so a long wait
   blocks the whole worker — including every stream it is pumping. Losing one
-  activity update is cheaper than stalling playback.
+  activity update or refusing a sync start is cheaper than stalling playback.
+  Contended lock releases retry without holding the worker in a long wait.
 - `SQLITE_WAL_SIZE_LIMIT_BYTES`: Upper bound for a `-wal` file after a
   checkpoint when a writer can restart/reuse the log. Defaults to `67108864`
   (64 MiB), minimum `1048576`. This is not a hard cap during imports or while
@@ -287,8 +289,12 @@ until this is exercised on a real Proxmox host.
   core, multiplying lock contention without adding throughput.
 - `IS_SCHEDULER`: Internal cluster flag used by the primary process when
   starting the scheduler worker.
-- `SYNC_MAX_CONCURRENT`: How many scheduled provider syncs may run at the same
-  time. Defaults to `2`, minimum `1`. Configs above the limit keep their
+- `SYNC_MAX_CONCURRENT`: How many provider syncs may run at the same time across all
+  workers, including manual UI/API starts. Defaults to `2`, range `1`–`64`.
+  The web UI queues manual provider syncs and EPG updates durably and processes
+  them one at a time. A queued sync waits for a free shared sync slot. Legacy
+  synchronous API calls without `enqueue: true` still return HTTP `409` when
+  the shared limit is reached. Configs above the limit keep their
   `next_sync` and are picked up by a later tick, longest overdue first, so no
   provider can be starved by the order of the table. Without the cap every due
   config started at once, and `next_sync` values cluster — after a restart, or
@@ -300,6 +306,18 @@ until this is exercised on a real Proxmox host.
   that is below what the configured intervals demand, the backlog grows and the
   scheduler says so — `⏳ N due provider sync(s) waiting` — at most once every
   15 minutes. Raise the cap, or lengthen the intervals.
+Manual UI provider syncs and EPG updates (including **Update all**) enter a
+persistent maintenance queue in `db.sqlite`. One manual job runs at a time;
+scheduled provider syncs still share `SYNC_MAX_CONCURRENT` with manual syncs.
+The UI shows queued, running and completed outcomes. Identical active requests
+from the same administrator/session are deduplicated. Queued jobs survive
+restarts and reloads; permissions and ownership are checked again on execution.
+An interrupted running job is marked failed after its 15-minute lease expires,
+rather than replayed automatically when its outcome is uncertain. Review its
+sync log before retrying. Completed queue history is retained for seven days;
+at most 1,000 jobs can be queued or running. Admission waits asynchronously
+through brief SQLite contention and only reports acceptance after persistence.
+
 The retention sweep — client and security logs, expired blocks and shares, EPG
 programmes past the 7-day window — runs in the scheduler worker 60 seconds after
 it starts and hourly after that. The first run matters: with an hourly timer and

@@ -2,6 +2,7 @@ import db from '../database/db.js';
 import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
+import { enqueueMaintenanceJobs, listMaintenanceJobs } from '../services/maintenanceQueueService.js';
 import { performSync, checkProviderExpiry, deleteAllProviderChannels } from '../services/syncService.js';
 import { acquireProviderLock, describeLockConflict } from '../services/providerLockService.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -544,9 +545,10 @@ export const syncProvider = async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { user_id, allow_cross_owner, restore_revoked_assignments } = req.body;
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({error: 'Invalid provider ID'});
 
     const targetUserId = Number(user_id);
-    if (!user_id || !Number.isInteger(targetUserId) || targetUserId <= 0) {
+    if (!user_id || !Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
       return res.status(400).json({error: 'user_id required'});
     }
 
@@ -561,6 +563,15 @@ export const syncProvider = async (req, res) => {
     }
     if (!db.prepare('SELECT 1 AS ok FROM providers WHERE id = ?').get(id)) {
       return res.status(404).json({error: 'Provider not found'});
+    }
+
+    if (req.body.enqueue === true) {
+      const jobs = await enqueueMaintenanceJobs(req.user, [{
+        type: 'provider_sync', target_id: id, user_id: targetUserId,
+        allow_cross_owner: allow_cross_owner === true,
+        restore_revoked_assignments: restore_revoked_assignments === true
+      }]);
+      return res.status(202).json({success: true, status: 'queued', jobs});
     }
 
     const result = await performSync(id, targetUserId, {
@@ -590,7 +601,21 @@ export const syncProvider = async (req, res) => {
       categories_added: result.categoriesAdded
     });
   } catch (e) {
+    if (req.body?.enqueue === true) {
+      const status = e.code === 'SQLITE_BUSY' ? 503 : (e.status || e.statusCode || 500);
+      return res.status(status).json({error: 'Unable to queue maintenance job'});
+    }
     console.error(e);
     res.status(500).json({error: e.message});
+  }
+};
+
+export const getMaintenanceJobs = async (req, res) => {
+  if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
+  try {
+    res.json(await listMaintenanceJobs(req.user));
+  } catch (e) {
+    const status = e.code === 'SQLITE_BUSY' ? 503 : (e.status || e.statusCode || 500);
+    res.status(status).json({error: 'Unable to load maintenance jobs'});
   }
 };

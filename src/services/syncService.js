@@ -343,6 +343,16 @@ function assertManualSyncActor(options) {
   }
 }
 
+function assertQueuedSyncExpectation(provider, config, options) {
+  const expected = options?.queuedExpectation;
+  if (!expected) return;
+  const currentOwner = provider.user_id == null ? null : Number(provider.user_id);
+  if (currentOwner !== expected.owner || (expected.grant &&
+    (Number(config?.granted_by_admin) !== 1 || config?.id !== expected.config_id))) {
+    throw new Error('Queued sync authorization changed');
+  }
+}
+
 // Call only after BEGIN IMMEDIATE has acquired the writer lock. A check before
 // it can become stale while SQLite waits for another worker to commit.
 function assertSyncTargetStillValid(providerId, userId, provider, options, initialConfig) {
@@ -362,6 +372,7 @@ function assertSyncTargetStillValid(providerId, userId, provider, options, initi
   assertManualSyncActor(options);
 
   const currentConfig = db.prepare('SELECT * FROM sync_configs WHERE provider_id = ? AND user_id = ?').get(providerId, userId);
+  assertQueuedSyncExpectation(current, currentConfig, options);
   if (Number(current.user_id) !== Number(userId)) {
     const hasPersistedGrant = Number(currentConfig?.granted_by_admin) === 1;
     const hasManualGrant = options?.mode === 'manual' && options.allowCrossOwner === true;
@@ -489,6 +500,7 @@ export async function performSync(providerId, userId, options = {}) {
     const provider = db.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
     if (!provider) throw new Error('Provider not found');
     assertManualSyncActor(options);
+    assertQueuedSyncExpectation(provider, config, options);
     const crossOwner = Number(provider.user_id) !== Number(userId);
     const hasPersistedGrant = Number(config?.granted_by_admin) === 1;
     const hasManualGrant = isManual && options?.allowCrossOwner === true;

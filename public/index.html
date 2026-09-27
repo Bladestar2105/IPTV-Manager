@@ -64,6 +64,14 @@
   </nav>
 
   <div class="container-fluid py-4 d-none" id="main-content" tabindex="-1">
+    <section id="maintenance-jobs" class="card mb-3" aria-labelledby="maintenance-jobs-title" hidden>
+      <div class="card-body py-2">
+        <h2 id="maintenance-jobs-title" class="h6 mb-1" data-i18n="maintenanceTitle">Background tasks</h2>
+        <p class="small text-muted mb-1" data-i18n="maintenanceSerial">Tasks run one at a time. You can continue working.</p>
+        <p id="maintenance-jobs-error" class="small text-warning mb-1" role="status"></p>
+        <ul id="maintenance-jobs-list" class="list-group list-group-flush overflow-auto" style="max-height: 12rem" aria-live="polite" aria-relevant="text additions"></ul>
+      </div>
+    </section>
 
     <section id="view-ai" class="d-none" aria-labelledby="nav-ai"></section>
 

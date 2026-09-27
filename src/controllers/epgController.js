@@ -1,3 +1,4 @@
+import { enqueueMaintenanceJobs } from '../services/maintenanceQueueService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import fs from 'fs';
 import path from 'path';
@@ -251,17 +252,37 @@ export const triggerUpdateEpgSource = async (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const id = req.params.id;
 
+    if (req.body?.enqueue === true) {
+      const isProvider = id.startsWith('provider_');
+      const targetId = Number(isProvider ? id.slice('provider_'.length) : id);
+      if (!Number.isSafeInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({error: 'Invalid EPG source ID'});
+      }
+      const target = isProvider
+        ? db.prepare('SELECT 1 FROM providers WHERE id = ?').get(targetId)
+        : db.prepare('SELECT 1 FROM epg_sources WHERE id = ?').get(targetId);
+      if (!target) return res.status(404).json({error: 'EPG source not found'});
+      const jobs = await enqueueMaintenanceJobs(req.user, [{
+        type: isProvider ? 'provider_epg' : 'epg_source', target_id: targetId
+      }]);
+      return res.status(202).json({success: true, status: 'queued', jobs});
+    }
+
     if (id.startsWith('provider_')) {
       const providerId = Number(id.replace('provider_', ''));
       await updateProviderEpg(providerId);
-      return clearChannelsCache(req.user.id);
-    res.json({success: true});
+      clearChannelsCache(req.user.id);
+      return res.json({success: true});
     }
 
     await updateEpgSource(Number(id));
     clearChannelsCache(req.user.id);
     res.json({success: true});
   } catch (e) {
+    if (req.body?.enqueue === true) {
+      const status = e.code === 'SQLITE_BUSY' ? 503 : (e.status || e.statusCode || 500);
+      return res.status(status).json({error: 'Unable to queue maintenance job'});
+    }
     res.status(500).json({error: e.message});
   }
 };
@@ -271,6 +292,14 @@ export const updateAllEpgSources = async (req, res) => {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
     const sources = db.prepare('SELECT id FROM epg_sources WHERE enabled = 1').all();
     const providers = db.prepare("SELECT id FROM providers WHERE epg_enabled = 1").all();
+
+    if (req.body?.enqueue === true) {
+      const jobs = await enqueueMaintenanceJobs(req.user, [
+        ...providers.map(provider => ({type: 'provider_epg', target_id: provider.id, skip_prune: true})),
+        ...sources.map(source => ({type: 'epg_source', target_id: source.id, skip_prune: true}))
+      ]);
+      return res.status(202).json({success: true, status: 'queued', jobs});
+    }
 
     const providerPromises = providers.map(async (provider) => {
       try {
@@ -294,6 +323,10 @@ export const updateAllEpgSources = async (req, res) => {
 
     res.json({success: true, results});
   } catch (e) {
+    if (req.body?.enqueue === true) {
+      const status = e.code === 'SQLITE_BUSY' ? 503 : (e.status || e.statusCode || 500);
+      return res.status(status).json({error: 'Unable to queue maintenance job'});
+    }
     res.status(500).json({error: e.message});
   }
 };
