@@ -22,6 +22,10 @@ describe('Error Handling Middleware', () => {
         next(err);
     });
 
+    app.post('/upload', multer({ storage: multer.memoryStorage() }).single('file'), (req, res) => {
+        res.sendStatus(204);
+    });
+
     app.get('/body-parser-error', (req, res, next) => {
         const err = new Error('Payload too large');
         err.type = 'entity.too.large';
@@ -49,7 +53,13 @@ describe('Error Handling Middleware', () => {
         const res = await request(app).get('/multer-other-error');
         expect(res.status).toBe(400);
         expect(res.headers['content-type']).toMatch(/json/);
-        expect(res.body).toEqual({ error: 'Unexpected file field' });
+        expect(res.body).toEqual({ error: 'Unexpected field' });
+    });
+
+    it('preserves the upload error response for an unexpected multipart file field', async () => {
+        const res = await request(app).post('/upload').attach('unexpected', Buffer.from('{}'), 'backup.json');
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ error: 'Unexpected field' });
     });
 
     it('should return 413 JSON for body parser limit errors', async () => {

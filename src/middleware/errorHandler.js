@@ -10,6 +10,9 @@ export const errorHandler = (err, req, res, next) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({ error: 'File too large' });
     }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: 'Unexpected field' });
+    }
     return res.status(400).json({ error: err.message });
   }
 

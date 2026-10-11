@@ -464,6 +464,10 @@ JWT.
 - `PUT /api/sync-configs/:id`
 - `DELETE /api/sync-configs/:id`
 
+`POST /api/import` expects the multipart file field `file`. An unexpected file
+field returns HTTP `400` with `{"error":"Unexpected field"}`; this response
+remains stable across upload-library updates.
+
 Sync configs accept an optional `sync_series_episodes` flag (default `1`).
 When enabled, each provider sync also fetches series episodes via
 `get_series_info` in the background (incremental, gated by each series'
