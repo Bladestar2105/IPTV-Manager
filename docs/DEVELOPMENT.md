@@ -103,6 +103,24 @@ fingerprint uses stored credentials; decrypt a separate fetch copy, and add any
 new fetch-relevant provider field to the fingerprint. Runtime expiry/EPG
 timestamps are intentionally excluded.
 
+The existing-assignment prefetch fixes SQLite's join order with `CROSS JOIN`:
+user categories, their assignments, then provider channel primary-key lookups.
+An unrestricted join can instead probe every category against the entire provider
+catalog while holding the write lock. The real-schema query-plan regression in
+`tests/provider_sort_order_preserved.test.js` prevents that catalog-first plan;
+the reads remain inside the transaction for authorization and mapping consistency.
+
+Assignment authorization updates run only when the stored grant or revocation
+state differs. The snapshot is updated after each write so multiple mappings in
+one sync do not repeat the update. Regression triggers count actual SQLite writes
+for unchanged same-owner and approved cross-owner assignments and verify that
+required restoration still occurs.
+
+`channels_updated` also includes provider order changes: inserting or moving an
+early catalog entry changes `original_sort_order` for subsequent rows, even when
+their metadata is unchanged. The order-preservation regression checks both a
+reordered catalog's update count and zero updates for an unchanged catalog.
+
 Series episode queues retain eligible Xtream account candidates for each
 source/series ID. A failing account can fall back to another account that
 carries the series; M3U-only rows are not candidates. Outcomes are counted per

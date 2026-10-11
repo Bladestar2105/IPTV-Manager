@@ -75,6 +75,43 @@ beforeEach(() => {
 });
 
 describe('the order the provider lists its channels in', () => {
+  it('reads existing assignments before probing the provider catalog during sync', async () => {
+    await performSync(7, 1, { mode: 'scheduled' });
+    db.exec(`
+      INSERT INTO users (id, username, password) VALUES (2, 'other', 'test');
+      INSERT INTO user_categories (id, user_id, name) VALUES (40, 1, 'Target'), (41, 2, 'Other');
+      INSERT INTO user_channels (user_category_id, provider_channel_id)
+        SELECT 40, id FROM provider_channels WHERE provider_id = 7;
+      INSERT INTO user_channels (user_category_id, provider_channel_id)
+        SELECT 41, id FROM provider_channels WHERE provider_id = 7;
+      INSERT INTO providers (id, name, url, username, password, user_id)
+        VALUES (8, 'other', 'http://other.example', 'other', 'test', 1);
+      INSERT INTO provider_channels (provider_id, remote_stream_id, name) VALUES (8, 999, 'Other');
+      INSERT INTO user_channels (user_category_id, provider_channel_id)
+        SELECT 40, id FROM provider_channels WHERE provider_id = 8;
+    `);
+    const prepare = vi.spyOn(db, 'prepare');
+    try {
+      expect((await performSync(7, 1, { mode: 'scheduled' })).status).toBe('success');
+      const sql = prepare.mock.calls.map(([query]) => query).find(query =>
+        query.includes('SELECT uc.id, uc.user_category_id, uc.provider_channel_id')
+      );
+      expect(sql).toBeDefined();
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(7, 1).map(row => row.detail);
+      // Catalog-first joins multiply every user category by the entire provider catalog.
+      expect(plan.findIndex(detail => /SEARCH cat /.test(detail)))
+        .toBeLessThan(plan.findIndex(detail => /SEARCH uc /.test(detail)));
+      expect(plan.findIndex(detail => /SEARCH uc /.test(detail)))
+        .toBeLessThan(plan.findIndex(detail => /SEARCH pc /.test(detail)));
+      expect(plan.some(detail => /SEARCH pc USING INTEGER PRIMARY KEY/.test(detail))).toBe(true);
+      const assignments = db.prepare(sql).all(7, 1);
+      expect(assignments).toHaveLength(PROVIDER_ORDER.length);
+      expect(assignments.every(row => row.user_category_id === 40)).toBe(true);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+
   it('is stored as the provider sent it, not alphabetically or by id', async () => {
     expect((await performSync(7, 1, { mode: 'scheduled' })).status).toBe('success');
 
@@ -96,8 +133,9 @@ describe('the order the provider lists its channels in', () => {
     const reordered = [PROVIDER_ORDER[3], PROVIDER_ORDER[0], PROVIDER_ORDER[2], PROVIDER_ORDER[1]];
     fetchCatalog.mockResolvedValue(catalog(reordered));
 
-    expect((await performSync(7, 1, { mode: 'scheduled' })).status).toBe('success');
-
+    const result = await performSync(7, 1, { mode: 'scheduled' });
+    expect(result.status).toBe('success');
+    expect(result.channelsUpdated).toBe(3);
     expect(asDisplayed()).toEqual([310, 900, 700, 120]);
   });
 
@@ -105,8 +143,8 @@ describe('the order the provider lists its channels in', () => {
     await performSync(7, 1, { mode: 'scheduled' });
     const before = asDisplayed();
 
-    await performSync(7, 1, { mode: 'scheduled' });
-
+    const result = await performSync(7, 1, { mode: 'scheduled' });
+    expect(result.channelsUpdated).toBe(0);
     expect(asDisplayed()).toEqual(before);
   });
 });

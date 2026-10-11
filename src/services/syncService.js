@@ -633,12 +633,13 @@ export async function performSync(providerId, userId, options = {}) {
       `);
 
       if (config && config.auto_add_channels) {
+        // Keep assignments before catalog lookups to avoid category × catalog probes under the write lock.
         const existingAssignmentsRows = db.prepare(`
           SELECT uc.id, uc.user_category_id, uc.provider_channel_id,
                  uc.mapping_id, uc.assignment_origin, uc.granted_by_admin, uc.authorization_revoked
-          FROM user_channels uc
-          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-          JOIN user_categories cat ON cat.id = uc.user_category_id
+          FROM user_categories cat
+          CROSS JOIN user_channels uc ON uc.user_category_id = cat.id
+          CROSS JOIN provider_channels pc ON pc.id = uc.provider_channel_id
           WHERE pc.provider_id = ? AND cat.user_id = ?
         `).all(providerId, userId);
 
@@ -988,10 +989,12 @@ export async function performSync(providerId, userId, options = {}) {
                   updateAssignmentMapping.run(mappingId, existingAssignment.id);
                   existingAssignment.mapping_id = mappingId;
                 }
-                if (!crossOwner) {
-                  authorizeExistingAssignment.run(0, existingAssignment.id);
-                } else if (Number(existingAssignment.granted_by_admin) === 1 || restoreRevokedAssignments) {
-                  authorizeExistingAssignment.run(1, existingAssignment.id);
+                const canAuthorize = !crossOwner || Number(existingAssignment.granted_by_admin) === 1 || restoreRevokedAssignments;
+                if (canAuthorize && (Number(existingAssignment.granted_by_admin) !== assignmentGrant ||
+                    Number(existingAssignment.authorization_revoked) !== 0)) {
+                  authorizeExistingAssignment.run(assignmentGrant, existingAssignment.id);
+                  existingAssignment.granted_by_admin = assignmentGrant;
+                  existingAssignment.authorization_revoked = 0;
                 }
               }
             }

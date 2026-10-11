@@ -162,6 +162,33 @@ describe('sync authorization regression', () => {
     expect(memDb.prepare('SELECT mime_type FROM provider_channels').get()).toEqual({ mime_type: 'ts' });
   });
 
+  it.each([1, 2])('does not rewrite unchanged assignment authorization (owner %s)', async providerOwner => {
+    configure({ providerOwner, grant: providerOwner === 2 ? 1 : 0 });
+    expect((await performSync(1, 1, { mode: 'scheduled' })).status).toBe('success');
+    memDb.exec(`
+      CREATE TEMP TABLE authorization_writes (id INTEGER);
+      CREATE TEMP TRIGGER count_authorization_writes
+      AFTER UPDATE OF granted_by_admin, authorization_revoked ON user_channels
+      BEGIN INSERT INTO authorization_writes VALUES (NEW.id); END;
+    `);
+    try {
+      expect((await performSync(1, 1, { mode: 'scheduled' })).status).toBe('success');
+      expect(memDb.prepare('SELECT COUNT(*) AS count FROM authorization_writes').get().count).toBe(0);
+      memDb.exec('UPDATE user_channels SET authorization_revoked = 1; DELETE FROM authorization_writes');
+      expect((await performSync(1, 1, { mode: 'scheduled' })).status).toBe('success');
+      expect(memDb.prepare('SELECT COUNT(*) AS count FROM authorization_writes').get().count).toBe(1);
+      expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels').get())
+        .toEqual({ granted_by_admin: providerOwner === 2 ? 1 : 0, authorization_revoked: 0 });
+      memDb.exec('UPDATE user_channels SET granted_by_admin = 1 - granted_by_admin; DELETE FROM authorization_writes');
+      expect((await performSync(1, 1, { mode: 'scheduled' })).status).toBe('success');
+      expect(memDb.prepare('SELECT COUNT(*) AS count FROM authorization_writes').get().count).toBe(1);
+      expect(memDb.prepare('SELECT granted_by_admin, authorization_revoked FROM user_channels').get())
+        .toEqual({ granted_by_admin: providerOwner === 2 ? 1 : 0, authorization_revoked: 0 });
+    } finally {
+      memDb.exec('DROP TRIGGER count_authorization_writes; DROP TABLE authorization_writes');
+    }
+  });
+
   it('disables an unapproved cross-owner config before network or writes', async () => {
     configure({ providerOwner: 2 });
     const categoriesBefore = memDb.prepare('SELECT COUNT(*) AS count FROM user_categories').get().count;
@@ -385,7 +412,7 @@ describe('sync authorization regression', () => {
     const prepare = memDb.prepare.bind(memDb);
     const prepareSpy = vi.spyOn(memDb, 'prepare').mockImplementation(sql => {
       const statement = prepare(sql);
-      if (sql.includes('FROM user_channels uc') && sql.includes('JOIN provider_channels pc')) {
+      if (sql.includes('SELECT uc.id, uc.user_category_id, uc.provider_channel_id')) {
         const all = statement.all.bind(statement);
         statement.all = (...args) => all(...args).map(row => {
           const channelId = row.provider_channel_id;
