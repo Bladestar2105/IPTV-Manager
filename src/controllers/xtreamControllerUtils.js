@@ -53,7 +53,6 @@ export const parseBatchStreamIds = (value) => {
     if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
     seen.add(id);
     ids.push(id);
-    if (ids.length >= 200) break;
   }
 
   return ids;

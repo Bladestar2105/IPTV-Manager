@@ -568,6 +568,15 @@ logs.
 - `GET /api/player/playlist`
 - `GET /api/player/channels.json`
 
+`get_epg_batch` returns all requested distinct positive stream IDs that have
+an EPG mapping and are visible to the authenticated user or share. There is no
+sender-count cutoff; large lists are split internally into SQLite queries.
+The JSON response streams bounded EPG pages with backpressure instead of
+materializing all sender programs in memory. Disconnecting stops the stream.
+Invalid and duplicate IDs are ignored. For the requested UTC date, all linked
+programs are returned by default. An explicit positive `limit` limits programs
+per channel to the client's requested count, without a server-side maximum.
+
 `xmltv.php` supports streaming HTTP gzip compression when the client sends
 `Accept-Encoding: gzip`. Custom clients can also request the IPTV-Manager
 extension `xmltv.php?gzip=1`; this is not an Xtream-specific parameter.
