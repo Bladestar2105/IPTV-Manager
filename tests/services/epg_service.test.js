@@ -41,7 +41,7 @@ vi.mock('../../src/utils/network.js', async importOriginal => ({
     fetchSafe: vi.fn()
 }));
 
-import { getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels, importEpgFromUrl } from '../../src/services/epgService.js';
+import { getEpgProgramsPage, getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels, importEpgFromUrl } from '../../src/services/epgService.js';
 import db from '../../src/database/epgDb.js';
 import mainDb from '../../src/database/db.js';
 import { fetchSafe } from '../../src/utils/network.js';
@@ -159,5 +159,16 @@ describe('epgService - getLastEpgUpdate', () => {
         expect(fetchSafe).toHaveBeenCalledWith('https://mock.url/self-signed.xml', {
             allowSelfSigned: true
         });
+    });
+});
+
+describe('epgService - paged batch response', () => {
+    it('reads a stable bounded page and releases the statement before returning', () => {
+        const rows = [{ channel_id: 'news', start: 10, stop: 20, title: 'News' }];
+        const all = vi.fn().mockReturnValue(rows);
+        db.prepare.mockReturnValue({ all });
+        expect(getEpgProgramsPage('news', 1, 100, 128, 256)).toEqual(rows);
+        expect(all).toHaveBeenCalledWith('news', 1, 100, 128, 256);
+        expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('ORDER BY start ASC, rowid ASC'));
     });
 });

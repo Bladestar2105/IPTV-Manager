@@ -1,7 +1,8 @@
 import db from '../database/db.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgService.js';
+import { getEpgPrograms } from '../services/epgService.js';
+import { streamBatchEpgResponse } from './xtreamBatchEpgResponse.js';
 import { decrypt } from '../utils/crypto.js';
 import { providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
@@ -506,43 +507,26 @@ export const playerApi = async (req, res) => {
         `).all(...chunk, user.id));
       }
 
-      const epgIds = new Set();
       const channelsByStreamId = new Map();
       for (const channel of channels) {
         const epgId = channel.manual_epg_id || channel.epg_channel_id;
         if (!epgId) continue;
         channelsByStreamId.set(Number(channel.user_channel_id), epgId);
-        epgIds.add(epgId);
       }
-
-      const response = {};
-      for (const streamId of streamIds) {
-        if (channelsByStreamId.has(streamId)) {
-          response[String(streamId)] = { epg_listings: [] };
-        }
-      }
-      if (epgIds.size === 0) return res.json(response);
 
       const { start, end } = getBatchDateRange(req.query.date);
       const requestedLimit = Number(req.query.limit);
       const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
         ? Math.max(1, Math.floor(requestedLimit))
         : Number.POSITIVE_INFINITY;
-      const programsByEpgId = getEpgProgramsForChannels(epgIds, start, end, limit);
-
-      for (const [streamId, epgId] of channelsByStreamId.entries()) {
-        const programs = programsByEpgId.get(epgId) || [];
-        response[String(streamId)] = {
-          epg_listings: programs.map((program) => formatXtreamEpgListing(program, epgId))
-        };
-      }
-
-      return res.json(response);
+      return await streamBatchEpgResponse(res, channelsByStreamId, start, end, limit);
     }
 
     res.status(400).json([]);
   } catch (e) {
+    if (res.destroyed) return;
     console.error('player_api error:', e);
+    if (res.headersSent) return res.destroy(e);
     res.status(500).json([]);
   }
 };

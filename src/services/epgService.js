@@ -246,6 +246,18 @@ export function getEpgProgramsForChannels(
     return result;
 }
 
+export function getEpgProgramsPage(channelId, start, end, limit, offset) {
+    return db.prepare(`
+        SELECT start, stop, title, desc, lang, channel_id,
+            datetime(start, 'unixepoch') as start_fmt,
+            datetime(stop, 'unixepoch') as stop_fmt
+        FROM epg_programs
+        WHERE channel_id = ? AND stop > ? AND start < ?
+        ORDER BY start ASC, rowid ASC
+        LIMIT ? OFFSET ?
+    `).all(channelId, start, end, limit, offset);
+}
+
 export function getProgramsNow() {
     const now = Math.floor(Date.now() / 1000);
     // ⚡ Bolt: Offload grouping to SQLite for faster execution and lower memory usage
