@@ -54,9 +54,9 @@ const saveMappingJob = (job) => {
 const pruneMappingJobs = () => {
   const expiresBefore = Date.now() - MAPPING_JOB_TTL_MS;
   for (const [id, job] of mappingJobs.entries()) {
-    if (job.updated_at < expiresBefore) mappingJobs.delete(id);
+    if (['completed', 'failed'].includes(job.status) && job.updated_at < expiresBefore) mappingJobs.delete(id);
   }
-  db.prepare('DELETE FROM epg_mapping_jobs WHERE updated_at < ?').run(expiresBefore);
+  db.prepare("DELETE FROM epg_mapping_jobs WHERE status IN ('completed', 'failed') AND updated_at < ?").run(expiresBefore);
 };
 
 export const manualMapping = async (req, res) => {

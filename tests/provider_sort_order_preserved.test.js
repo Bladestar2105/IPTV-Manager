@@ -174,15 +174,89 @@ describe('the order the provider lists its channels in', () => {
     }
   });
 
-  it('keeps full update behavior when multiple catalog entries share a remote ID', async () => {
+  it('writes only the final catalog entry when multiple entries share a remote ID', async () => {
     await performSync(7, 1, { mode: 'scheduled' });
     fetchCatalog.mockResolvedValue(catalog([
       { ...PROVIDER_ORDER[0], name: 'Duplicate' }, ...PROVIDER_ORDER.slice(1), PROVIDER_ORDER[0],
     ]));
     const result = await performSync(7, 1, { mode: 'scheduled' });
     expect(result.status).toBe('success');
-    expect(result.channelsUpdated).toBe(2);
+    expect(result.channelsUpdated).toBe(1);
     expect(db.prepare('SELECT name, original_sort_order FROM provider_channels WHERE provider_id = 7 AND remote_stream_id = 900').get())
       .toEqual({ name: 'Zeta', original_sort_order: 4 });
+    db.exec(`
+      CREATE TEMP TABLE duplicate_writes (id INTEGER);
+      CREATE TEMP TRIGGER count_duplicate_writes AFTER UPDATE ON provider_channels
+      BEGIN INSERT INTO duplicate_writes VALUES (NEW.id); END;
+    `);
+    try {
+      expect((await performSync(7, 1, { mode: 'scheduled' })).channelsUpdated).toBe(0);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM duplicate_writes').get().n).toBe(0);
+    } finally {
+      db.exec('DROP TRIGGER count_duplicate_writes; DROP TABLE duplicate_writes');
+    }
+  });
+
+  it('keeps channel and assignment IDs when an earlier duplicate has another category', async () => {
+    await performSync(7, 1, { mode: 'scheduled' });
+    db.exec(`
+      INSERT INTO user_categories (id, user_id, name) VALUES (40, 1, 'Final'), (41, 1, 'Earlier');
+      UPDATE category_mappings SET user_category_id=40 WHERE provider_id=7 AND provider_category_id=10;
+      INSERT INTO category_mappings (provider_id,user_id,provider_category_id,provider_category_name,user_category_id,category_type)
+        VALUES (7,1,20,'Earlier',41,'live');
+    `);
+    const incoming = catalog([{...PROVIDER_ORDER[0], name:'Earlier'}, ...PROVIDER_ORDER.slice(1), PROVIDER_ORDER[0]]);
+    incoming.allChannels[0].category_id = 20;
+    fetchCatalog.mockResolvedValue(incoming);
+    await performSync(7, 1, { mode:'scheduled' });
+    const channels = db.prepare('SELECT * FROM provider_channels ORDER BY id').all();
+    const assignments = db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+    expect(assignments.every(row=>row.user_category_id===40)).toBe(true);
+    const result = await performSync(7,1,{mode:'scheduled'});
+    expect(result.channelsUpdated).toBe(0);
+    expect(db.prepare('SELECT * FROM provider_channels ORDER BY id').all()).toEqual(channels);
+    expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(assignments);
+  });
+
+  it('inserts a new repeated ID once, using its final entry and correct assignments', async () => {
+    fetchCatalog.mockResolvedValue(catalog([
+      {...PROVIDER_ORDER[0], name:'Earlier'}, ...PROVIDER_ORDER.slice(1), PROVIDER_ORDER[0],
+    ]));
+    const result = await performSync(7,1,{mode:'scheduled'});
+    expect(result.channelsAdded).toBe(4);
+    expect(db.prepare('SELECT name,original_sort_order FROM provider_channels WHERE remote_stream_id=900').get())
+      .toEqual({name:'Zeta',original_sort_order:4});
+    expect((await performSync(7,1,{mode:'scheduled'})).channelsUpdated).toBe(0);
+  });
+
+  it.each(['live','movie','series'])('preserves an existing %s playback identity and assignment when other stream types reuse its ID', async (streamType) => {
+    const incoming=catalog(PROVIDER_ORDER);
+    incoming.allChannels[0].stream_type=streamType;
+    incoming.allChannels[0].category_type=streamType;
+    fetchCatalog.mockResolvedValue(incoming);
+    await performSync(7,1,{mode:'scheduled'});
+    const channel=db.prepare('SELECT * FROM provider_channels WHERE remote_stream_id=900').get();
+    db.prepare('INSERT INTO user_categories (id,user_id,name,type) VALUES (40,1,?,?)').run('Mine',streamType);
+    db.prepare(`INSERT INTO user_channels (id,user_category_id,provider_channel_id,custom_name,is_hidden,sort_order)
+      VALUES (70,40,?,'Personal name',1,42)`).run(channel.id);
+    const assignments=db.prepare('SELECT * FROM user_channels ORDER BY id').all();
+    incoming.allChannels.push({...incoming.allChannels[0],name:'Conflicting ID',stream_type:streamType==='live'?'movie':'live'});
+    const result=await performSync(7,1,{mode:'scheduled'});
+    expect(result.channelsUpdated).toBe(0);
+    expect(db.prepare('SELECT * FROM provider_channels WHERE remote_stream_id=900').get()).toEqual(channel);
+    expect(db.prepare('SELECT * FROM user_channels ORDER BY id').all()).toEqual(assignments);
+  });
+
+  it('does not retarget a movie ID when that catalog section is incomplete', async () => {
+    const incoming=catalog(PROVIDER_ORDER);
+    incoming.allChannels[0].stream_type='movie';
+    fetchCatalog.mockResolvedValue(incoming);
+    await performSync(7,1,{mode:'scheduled'});
+    const before=db.prepare('SELECT * FROM provider_channels WHERE remote_stream_id=900').get();
+    const partial=catalog(PROVIDER_ORDER);
+    partial.failures=[{section:'vod',message:'temporarily unavailable'}];
+    fetchCatalog.mockResolvedValue(partial);
+    expect((await performSync(7,1,{mode:'scheduled'})).status).toBe('partial');
+    expect(db.prepare('SELECT * FROM provider_channels WHERE remote_stream_id=900').get()).toEqual(before);
   });
 });

@@ -397,6 +397,11 @@ this endpoint for timeline data after rendering the channel list.
 
 `POST /api/mapping/auto` accepts `background: true` and returns a `job_id`.
 Poll `GET /api/mapping/jobs/:id` for `status`, `progress`, and `matched`.
+The web UI resumes polling an accepted job after a reload in the same browser
+tab. The job runs independently of the HTTP request; a reload does not cancel
+it. Running jobs are retained even during long matching phases; completed and
+failed job records expire after 30 minutes. This does not resume execution after
+a server restart.
 Admins may pass `all_providers: true` to auto-map or reset EPG mappings across
 all providers.
 

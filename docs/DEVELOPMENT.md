@@ -121,9 +121,22 @@ early catalog entry changes `original_sort_order` for subsequent rows, even when
 their metadata is unchanged. The order-preservation regression checks both a
 reordered catalog's update count and zero updates for an unchanged catalog.
 Pure position changes update only `original_sort_order`, avoiding metadata and
-unrelated index writes. Repeated remote IDs retain the full update path because
-another entry in the same catalog may have changed that row earlier in the run.
+unrelated index writes. Repeated remote IDs are applied once. When live, movie
+or series entries overlap, the entry matching an existing row's stream type wins;
+the last entry of that type is used. This keeps the existing channel ID and
+playback endpoint stable and avoids transient metadata and assignment rewrites.
+Without an existing matching type, the last entry wins. New IDs are inserted and
+counted once. All incoming IDs/types still participate in safe stale-row checks.
 Real SQLite triggers verify that position-only updates leave metadata untouched.
+
+The background-task panel retains completed results for one minute, continues
+polling during that interval, and hides itself when no visible jobs remain.
+Historical queue records remain available through the API. EPG auto-mapping
+records its accepted job ID in `sessionStorage`, scoped by login role and ID;
+after a reload the UI resumes polling that same server-side job. Logout or an
+identity change stops the old page's updates. Running mapping jobs are not
+removed by the completed-job retention cleanup. Reloading does not cancel the
+worker; container restarts do not resume worker execution.
 
 Series episode queues retain eligible Xtream account candidates for each
 source/series ID. A failing account can fall back to another account that

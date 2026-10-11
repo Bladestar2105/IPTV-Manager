@@ -82,6 +82,15 @@ describe('EPG Mapping Category Mode', () => {
     });
 
     describe('resetMapping', () => {
+        it('does not prune a running mapping job during a long matching phase', async () => {
+            const old=Date.now()-31*60*1000;
+            db.prepare(`INSERT INTO epg_mapping_jobs (id,status,progress,user_id,created_at,updated_at)
+                VALUES ('long-running','running',10,2,?,?)`).run(old,old);
+            const res={json:vi.fn(),status:vi.fn().mockReturnThis()};
+            epgController.getMappingJob({params:{id:'long-running'},user:{id:2,is_admin:false}},res);
+            expect(res.status).not.toHaveBeenCalled();
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({status:'running',progress:10}));
+        });
         it('should allow admin to reset by provider', async () => {
             db.prepare("INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (1, 'EPG1'), (2, 'EPG2')").run();
 

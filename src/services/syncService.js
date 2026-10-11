@@ -694,12 +694,23 @@ export async function performSync(providerId, userId, options = {}) {
       };
       const seenRemoteIdsByType = new Map();
       const currentTypeByRemoteId = new Map();
-      const duplicateRemoteIds = new Set();
-      for (const channel of allChannels) {
+      const selectedChannelIndexByRemoteId = new Map();
+      for (let i = 0; i < allChannels.length; i++) {
+        const channel = allChannels[i];
         const remoteId = Number(channel.stream_id || channel.series_id || channel.id || 0);
         if (remoteId > 0) {
-          if (currentTypeByRemoteId.has(remoteId)) duplicateRemoteIds.add(remoteId);
-          currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
+          const streamType = channel.stream_type || 'live';
+          const existingRow = existingMap.get(remoteId);
+          const existingType = existingRow?.stream_type || 'live';
+          const selectedIndex = selectedChannelIndexByRemoteId.get(remoteId);
+          const selectedType = selectedIndex === undefined ? null : (allChannels[selectedIndex].stream_type || 'live');
+          // Overlapping live/VOD IDs must not retarget an existing playback identity.
+          if (!existingRow || selectedType !== existingType || streamType === existingType) {
+            selectedChannelIndexByRemoteId.set(remoteId, i);
+            currentTypeByRemoteId.set(remoteId, streamType);
+          }
+          if (!seenRemoteIdsByType.has(streamType)) seenRemoteIdsByType.set(streamType, new Set());
+          seenRemoteIdsByType.get(streamType).add(remoteId);
         }
       }
 
@@ -774,6 +785,7 @@ export async function performSync(providerId, userId, options = {}) {
         const ch = allChannels[i];
         const sid = Number(ch.stream_id || ch.series_id || ch.id || 0);
         if (sid > 0) {
+          if (selectedChannelIndexByRemoteId.get(sid) !== i) continue;
           const existingRow = existingMap.get(sid);
           const existingId = existingRow ? existingRow.id : undefined;
           let provChannelId;
@@ -781,11 +793,11 @@ export async function performSync(providerId, userId, options = {}) {
           const tvArchive = Number(ch.tv_archive) === 1 ? 1 : 0;
           const tvArchiveDuration = Number(ch.tv_archive_duration) || 0;
           const streamType = ch.stream_type || 'live';
+          if (existingRow && (existingRow.stream_type || 'live') !== streamType &&
+              !completeStreamTypes.has(existingRow.stream_type || 'live')) continue;
           const catId = Number(ch.category_id || 0);
           const catType = ch.category_type || 'live';
           const mappingTargets = getMappedTargets(catId, catType);
-          if (!seenRemoteIdsByType.has(streamType)) seenRemoteIdsByType.set(streamType, new Set());
-          seenRemoteIdsByType.get(streamType).add(sid);
           const mimeType = normalizeContainerExtension(
             ch.container_extension,
             streamType === 'live' ? 'ts' : 'mp4'
@@ -880,8 +892,7 @@ export async function performSync(providerId, userId, options = {}) {
             const categoryChanged = existingRow.original_category_id !== newCatId || (existingRow.stream_type || 'live') !== newStreamType;
 
             const sortChanged = existingRow.original_sort_order !== newSort;
-            // Repeated IDs retain full writes because an earlier entry may have changed the same row.
-            if (hasMetadataChanges || (sortChanged && duplicateRemoteIds.has(sid))) {
+            if (hasMetadataChanges) {
               // If the provider moved this channel to a different category or stream type,
               // remove it from the old user category (if auto_add_channels is enabled).
               // The subsequent logic will add it to the new user category if applicable.

@@ -177,7 +177,7 @@ function renderMaintenanceJobs() {
   const panel = document.getElementById('maintenance-jobs');
   const list = document.getElementById('maintenance-jobs-list');
   if (!panel || !list) return;
-  panel.hidden = !currentUser?.is_admin;
+  panel.hidden = !currentUser?.is_admin || !maintenanceJobs.size;
   list.replaceChildren();
   if (!currentUser?.is_admin) return;
   if (!maintenanceJobs.size) list.textContent = t('maintenanceEmpty');
@@ -206,7 +206,8 @@ async function refreshMaintenanceJobs() {
     if (generation !== maintenanceGeneration || !currentUser?.is_admin) return;
     const finished = jobs.some(job => ['queued', 'running'].includes(maintenanceJobs.get(job.id)?.status)
       && ['success', 'partial', 'error'].includes(job.status));
-    maintenanceJobs = new Map(jobs.map(job => [job.id, job]));
+    maintenanceJobs = new Map(jobs.filter(job => ['queued', 'running'].includes(job.status)
+      || !job.updated_at || Date.now() - job.updated_at * 1000 < 60000).map(job => [job.id, job]));
     if (finished && document.getElementById('epg-sources-list')?.getClientRects().length) void loadEpgSources();
     renderMaintenanceJobs();
     document.getElementById('maintenance-jobs-error').textContent = '';
@@ -216,7 +217,7 @@ async function refreshMaintenanceJobs() {
     document.getElementById('maintenance-jobs-error').textContent = t('maintenanceUnavailable');
     retry = true;
   }
-  if (generation === maintenanceGeneration && currentUser?.is_admin && (retry || [...maintenanceJobs.values()].some(job => ['queued', 'running'].includes(job.status)))) {
+  if (generation === maintenanceGeneration && currentUser?.is_admin && (retry || maintenanceJobs.size)) {
     maintenancePoll = setTimeout(refreshMaintenanceJobs, retry ? 5000 : 2000);
   }
 }
@@ -4145,6 +4146,7 @@ let epgMappingChannels = [];
 let availableEpgChannels = [];
 let isLoadingEpgChannels = false;
 let epgMappingMode = 'provider'; // 'provider' or 'category'
+let epgMappingWatch = null;
 
 function isAllProviderMappingSelected() {
     const checkbox = document.getElementById('epg-all-providers');
@@ -4175,7 +4177,7 @@ function showAllProvidersMappingState() {
     updateMappingStats();
 
     if (autoMapBtn) {
-        autoMapBtn.disabled = false;
+        autoMapBtn.disabled = Boolean(epgMappingWatch);
         autoMapBtn.classList.remove('d-none');
     }
     if (resetMapBtn) {
@@ -4396,7 +4398,7 @@ function finishLoadingMapping() {
 
     // Enable buttons if we have a valid selection (provider or category)
     if (autoMapBtn) {
-        autoMapBtn.disabled = false;
+        autoMapBtn.disabled = Boolean(epgMappingWatch);
         autoMapBtn.classList.remove('d-none');
     }
     if (resetMapBtn) {
@@ -4494,18 +4496,61 @@ function updateMappingStats() {
   }
 }
 
-async function pollMappingJob(jobId) {
+function mappingJobStorageKey() {
+  return `epg-mapping-job:${currentUser.is_admin ? 'admin' : 'user'}:${currentUser.id}`;
+}
+
+async function resumeEpgMappingJob() {
+  if (!currentUser) return;
+  if (epgMappingWatch?.generation === sessionGeneration) return;
+  let jobId;
+  try { jobId = sessionStorage.getItem(mappingJobStorageKey()); } catch { /* Reset stale UI even without storage. */ }
+  if (jobId) await watchEpgMappingJob(jobId);
+  else {
+    epgMappingWatch = null;
+    setEpgMappingJobProgress(0, false);
+    setLoadingState(document.getElementById('auto-map-btn'), false);
+  }
+}
+
+async function watchEpgMappingJob(jobId) {
+  const generation = sessionGeneration;
+  if (epgMappingWatch?.jobId === jobId && epgMappingWatch.generation === generation) return;
+  const watch = {jobId, generation};
+  epgMappingWatch = watch;
+  const storageKey = mappingJobStorageKey();
+  const btn = document.getElementById('auto-map-btn');
+  setLoadingState(btn, true, 'autoMap');
+  try {
+    const job = await pollMappingJob(jobId, generation);
+    if (!job || generation !== sessionGeneration || !currentUser) return;
+    try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be unavailable. */ }
+    if (job.status === 'failed') throw new Error(job.error || t('mappingJobFailed'));
+    showToast(t('autoMapSuccess', {count: job.matched || 0}), 'success');
+    await loadEpgMappingChannels();
+  } catch (e) {
+    if (generation === sessionGeneration && currentUser) showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+  } finally {
+    if (epgMappingWatch === watch) {
+      epgMappingWatch = null;
+      if (generation === sessionGeneration && currentUser) setLoadingState(btn, false);
+    }
+  }
+}
+
+async function pollMappingJob(jobId, generation = sessionGeneration) {
   setEpgMappingJobProgress(1, true);
 
-  while (true) {
+  while (generation === sessionGeneration && currentUser) {
     const job = await fetchJSON(`/api/mapping/jobs/${encodeURIComponent(jobId)}`);
+    if (generation !== sessionGeneration || !currentUser) return null;
     setEpgMappingJobProgress(job.progress || 0, true);
 
-    if (job.status === 'completed') return job;
-    if (job.status === 'failed') throw new Error(job.error || t('mappingJobFailed'));
+    if (job.status === 'completed' || job.status === 'failed') return job;
 
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
+  return null;
 }
 
 async function loadAvailableEpgChannels() {
@@ -4534,6 +4579,7 @@ async function loadAvailableEpgChannels() {
 
 // === Auto Mapping ===
 async function handleAutoMap() {
+  const generation = sessionGeneration;
   let providerId, categoryId;
   const allProviders = isAllProviderMappingSelected();
   if (epgMappingMode === 'provider' && !allProviders) {
@@ -4564,13 +4610,18 @@ async function handleAutoMap() {
       })
     });
 
-    const job = res.job_id ? await pollMappingJob(res.job_id) : res;
-    showToast(t('autoMapSuccess', {count: job.matched || 0}), 'success');
-    await loadEpgMappingChannels();
+    if (generation !== sessionGeneration || !currentUser) return;
+    if (res.job_id) {
+      try { sessionStorage.setItem(mappingJobStorageKey(), res.job_id); } catch { /* Poll without reload recovery. */ }
+      await watchEpgMappingJob(res.job_id);
+    } else {
+      showToast(t('autoMapSuccess', {count: res.matched || 0}), 'success');
+      await loadEpgMappingChannels();
+    }
   } catch (e) {
-    showToast(t('errorPrefix') + ' ' + e.message, 'danger');
+    if (generation === sessionGeneration && currentUser) showToast(t('errorPrefix') + ' ' + e.message, 'danger');
   } finally {
-    setLoadingState(btn, false);
+    if (generation === sessionGeneration && currentUser) setLoadingState(btn, false);
   }
 }
 
@@ -4890,6 +4941,7 @@ function applyPermissions({preserveUserState = false} = {}) {
     if (epgCard) {
         epgCard.style.display = isAdmin ? 'block' : 'none';
     }
+    void resumeEpgMappingJob();
 }
 
 async function handleLogin(event) {

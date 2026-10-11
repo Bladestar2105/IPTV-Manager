@@ -249,6 +249,7 @@ async function run() {
     if (mappingStatuses !== 200) throw new Error(`Regular user EPG mapping failed: ${mappingStatuses}`);
 
     await login(adminPage, baseUrl, adminUsername, adminPassword);
+    await assertHidden(adminPage.locator('#maintenance-jobs'), 'Empty background tasks must stay hidden despite Bootstrap card styles');
     await assertVisible(adminPage.locator('#user-section'), 'Admins must see User Management');
     // The ephemeral smoke server intentionally has no scheduler: acceptance is
     // persisted and displayed as queued, without fetching the fake provider.
@@ -276,6 +277,27 @@ async function run() {
     await adminPage.locator('#epg-mapping-provider-select').selectOption(String(providerId));
     await adminPage.locator('#epg-mapping-tbody').getByText(liveFixture.channelName, {exact: true})
       .waitFor({state: 'visible', timeout: 15000});
+    // Reload recovers the accepted mapping job without submitting another request.
+    let mappingStatus = 'running';
+    let mappingStarts = 0;
+    await adminPage.route('**/api/mapping/auto', async route => {
+      mappingStarts++;
+      await route.fulfill({json: {job_id: 'reload-proof'}});
+    });
+    await adminPage.route('**/api/mapping/jobs/reload-proof', route => route.fulfill({json: {
+      status: mappingStatus, progress: mappingStatus === 'running' ? 42 : 100, matched: 7
+    }}));
+    adminPage.once('dialog', dialog => dialog.accept());
+    await adminPage.locator('#auto-map-btn').click();
+    await adminPage.waitForFunction(() => document.getElementById('epg-mapping-job-bar')?.textContent === '42%');
+    await adminPage.reload({waitUntil: 'networkidle'});
+    await adminPage.waitForFunction(() => document.getElementById('epg-mapping-job-bar')?.textContent === '42%');
+    if (mappingStarts !== 1) throw new Error('Reload submitted another EPG mapping request');
+    mappingStatus = 'completed';
+    await adminPage.waitForFunction(() => document.getElementById('epg-mapping-job-bar')?.textContent === '100%');
+    await adminPage.waitForFunction(() => !Object.keys(sessionStorage).some(key => key.startsWith('epg-mapping-job:')));
+    await adminPage.unroute('**/api/mapping/auto');
+    await adminPage.unroute('**/api/mapping/jobs/reload-proof');
     await adminPage.locator('[data-action="action-logout"]').click();
     await waitForLoginModal(adminPage);
     await login(adminPage, baseUrl, userUsername, userPassword, {reload: false});

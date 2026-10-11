@@ -9,7 +9,7 @@ function browser(jobs = []) {
   const context = vm.createContext({
     sessionGeneration: 0, currentUser: { is_admin: true }, maintenanceJobs: new Map(), maintenancePoll: null, maintenanceGeneration: 0,
     loadEpgSources: vi.fn(async () => {}), fetchJSON: vi.fn(async () => jobs), showToast: vi.fn(), t: (key, args) => key + (args ? JSON.stringify(args) : ''),
-    setTimeout: vi.fn(() => 1), clearTimeout: vi.fn(),
+    Date, setTimeout: vi.fn(() => 1), clearTimeout: vi.fn(),
     document: { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); }, createElement: node }
   });
   vm.runInContext(source.match(/(?:async )?function (?:renderMaintenanceJobs|stopMaintenancePolling|refreshMaintenanceJobs|enqueueMaintenanceJob)\([^\n]*\) \{[\s\S]*?\n\}/g)?.join('\n') || '', context);
@@ -45,6 +45,7 @@ test('queue displays waiting, running and escaped task errors, then stops pollin
   await context.refreshMaintenanceJobs();
   expect(nodes.get('maintenance-jobs-list').textContent).toBe('maintenanceEmpty');
   expect(context.setTimeout).not.toHaveBeenCalled();
+  expect(nodes.get('maintenance-jobs').hidden).toBe(true);
 });
 
 test('permission loss clears queue and prevents in-flight poll from restoring it', async () => {
@@ -85,7 +86,31 @@ test('repeated snapshots replace jobs by ID without completion toast storms', as
   expect(nodes.get('maintenance-jobs-list').children).toHaveLength(1);
   expect(nodes.get('maintenance-jobs-list').children[0].textContent).toContain('maintenanceSuccess');
   expect(context.showToast).not.toHaveBeenCalled();
+  expect(context.setTimeout).toHaveBeenCalledWith(context.refreshMaintenanceJobs, 2000);
+});
+
+test('completed jobs disappear after one minute and do not return after reload', async () => {
+  const job = {id:'done',type:'provider_sync',target_id:1,status:'success',updated_at:Math.floor(Date.now()/1000)-61};
+  const {context,nodes}=browser([job]);
+  await context.refreshMaintenanceJobs();
+  expect(context.maintenanceJobs.size).toBe(0);
+  expect(nodes.get('maintenance-jobs').hidden).toBe(true);
   expect(context.setTimeout).not.toHaveBeenCalled();
+});
+
+test('polling continues through completion until the result expires', async () => {
+  const timestamp=Date.now();
+  const clock=vi.spyOn(Date,'now').mockReturnValue(timestamp);
+  try {
+    const {context,nodes}=browser([{id:'done',type:'provider_sync',target_id:1,status:'success',updated_at:Math.floor(timestamp/1000)}]);
+    await context.refreshMaintenanceJobs();
+    expect(nodes.get('maintenance-jobs').hidden).toBe(false);
+    expect(context.setTimeout).toHaveBeenCalledWith(context.refreshMaintenanceJobs,2000);
+    clock.mockReturnValue(timestamp+61000);context.setTimeout.mockClear();
+    await context.refreshMaintenanceJobs();
+    expect(nodes.get('maintenance-jobs').hidden).toBe(true);
+    expect(context.setTimeout).not.toHaveBeenCalled();
+  } finally {clock.mockRestore();}
 });
 
 test('incomplete provider results never display undefined success counts', async () => {

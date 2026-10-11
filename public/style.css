@@ -639,3 +639,4 @@ select:focus-visible,
 #view-ai pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; }
 #view-ai summary { cursor: pointer; }
 #view-ai [hidden] { display: none !important; }
+#maintenance-jobs[hidden] { display: none !important; }
