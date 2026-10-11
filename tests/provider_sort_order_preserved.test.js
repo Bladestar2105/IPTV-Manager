@@ -147,4 +147,42 @@ describe('the order the provider lists its channels in', () => {
     expect(result.channelsUpdated).toBe(0);
     expect(asDisplayed()).toEqual(before);
   });
+
+  it('does not rewrite catalog metadata when only the provider order changes', async () => {
+    await performSync(7, 1, { mode: 'scheduled' });
+    db.exec(`
+      CREATE TEMP TABLE metadata_writes (id INTEGER);
+      CREATE TEMP TRIGGER count_metadata_writes AFTER UPDATE OF name, metadata ON provider_channels
+      BEGIN INSERT INTO metadata_writes VALUES (NEW.id); END;
+    `);
+    try {
+      fetchCatalog.mockResolvedValue(catalog([...PROVIDER_ORDER].reverse()));
+      const result = await performSync(7, 1, { mode: 'scheduled' });
+      expect(result.status).toBe('success');
+      expect(result.channelsUpdated).toBe(4);
+      expect(asDisplayed()).toEqual([310, 700, 120, 900]);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM metadata_writes').get().count).toBe(0);
+
+      fetchCatalog.mockResolvedValue(catalog(PROVIDER_ORDER.map(c => ({ ...c, name: `${c.name} updated` }))));
+      expect((await performSync(7, 1, { mode: 'scheduled' })).channelsUpdated).toBe(4);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM metadata_writes').get().count).toBe(4);
+      expect(asDisplayed()).toEqual([900, 120, 700, 310]);
+      expect(db.prepare('SELECT name FROM provider_channels WHERE provider_id = 7').all()
+        .every(row => row.name.endsWith(' updated'))).toBe(true);
+    } finally {
+      db.exec('DROP TRIGGER count_metadata_writes; DROP TABLE metadata_writes');
+    }
+  });
+
+  it('keeps full update behavior when multiple catalog entries share a remote ID', async () => {
+    await performSync(7, 1, { mode: 'scheduled' });
+    fetchCatalog.mockResolvedValue(catalog([
+      { ...PROVIDER_ORDER[0], name: 'Duplicate' }, ...PROVIDER_ORDER.slice(1), PROVIDER_ORDER[0],
+    ]));
+    const result = await performSync(7, 1, { mode: 'scheduled' });
+    expect(result.status).toBe('success');
+    expect(result.channelsUpdated).toBe(2);
+    expect(db.prepare('SELECT name, original_sort_order FROM provider_channels WHERE provider_id = 7 AND remote_stream_id = 900').get())
+      .toEqual({ name: 'Zeta', original_sort_order: 4 });
+  });
 });

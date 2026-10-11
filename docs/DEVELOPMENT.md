@@ -120,6 +120,10 @@ required restoration still occurs.
 early catalog entry changes `original_sort_order` for subsequent rows, even when
 their metadata is unchanged. The order-preservation regression checks both a
 reordered catalog's update count and zero updates for an unchanged catalog.
+Pure position changes update only `original_sort_order`, avoiding metadata and
+unrelated index writes. Repeated remote IDs retain the full update path because
+another entry in the same catalog may have changed that row earlier in the run.
+Real SQLite triggers verify that position-only updates leave metadata untouched.
 
 Series episode queues retain eligible Xtream account candidates for each
 source/series ID. A failing account can fall back to another account that

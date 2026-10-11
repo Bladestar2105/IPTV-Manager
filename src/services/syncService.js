@@ -597,6 +597,7 @@ export async function performSync(providerId, userId, options = {}) {
         SET name = ?, original_category_id = ?, logo = ?, epg_channel_id = ?, original_sort_order = ?, tv_archive = ?, tv_archive_duration = ?, stream_type = ?, metadata = ?, mime_type = ?, rating = ?, rating_5based = ?, added = ?, plot = ?, "cast" = ?, director = ?, genre = ?, releaseDate = ?, youtube_trailer = ?, episode_run_time = ?
         WHERE provider_id = ? AND remote_stream_id = ?
       `);
+      const updateChannelOrder = db.prepare('UPDATE provider_channels SET original_sort_order = ? WHERE id = ?');
 
       // Optimized: Pre-fetch all channels to avoid N+1 query and allow change detection
       const existingChannels = db.prepare(EXISTING_CHANNELS_SQL).all(providerId);
@@ -693,9 +694,13 @@ export async function performSync(providerId, userId, options = {}) {
       };
       const seenRemoteIdsByType = new Map();
       const currentTypeByRemoteId = new Map();
+      const duplicateRemoteIds = new Set();
       for (const channel of allChannels) {
         const remoteId = Number(channel.stream_id || channel.series_id || channel.id || 0);
-        if (remoteId > 0) currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
+        if (remoteId > 0) {
+          if (currentTypeByRemoteId.has(remoteId)) duplicateRemoteIds.add(remoteId);
+          currentTypeByRemoteId.set(remoteId, channel.stream_type || 'live');
+        }
       }
 
       aiSnapshot = captureSyncSnapshot(providerId);
@@ -851,12 +856,11 @@ export async function performSync(providerId, userId, options = {}) {
             const newTrailer = youtube_trailer;
             const newRuntime = episode_run_time;
 
-            const hasChanges =
+            const hasMetadataChanges =
               existingRow.name !== newName ||
               existingRow.original_category_id !== newCatId ||
               (existingRow.logo || '') !== newLogo ||
               (existingRow.epg_channel_id || '') !== newEpgId ||
-              existingRow.original_sort_order !== newSort ||
               existingRow.tv_archive !== newTvArchive ||
               existingRow.tv_archive_duration !== newTvArchiveDur ||
               (existingRow.stream_type || 'live') !== newStreamType ||
@@ -875,7 +879,9 @@ export async function performSync(providerId, userId, options = {}) {
 
             const categoryChanged = existingRow.original_category_id !== newCatId || (existingRow.stream_type || 'live') !== newStreamType;
 
-            if (hasChanges) {
+            const sortChanged = existingRow.original_sort_order !== newSort;
+            // Repeated IDs retain full writes because an earlier entry may have changed the same row.
+            if (hasMetadataChanges || (sortChanged && duplicateRemoteIds.has(sid))) {
               // If the provider moved this channel to a different category or stream type,
               // remove it from the old user category (if auto_add_channels is enabled).
               // The subsequent logic will add it to the new user category if applicable.
@@ -926,6 +932,9 @@ export async function performSync(providerId, userId, options = {}) {
                 providerId,
                 sid
               );
+              channelsUpdated++;
+            } else if (sortChanged) {
+              updateChannelOrder.run(newSort, existingId);
               channelsUpdated++;
             }
             provChannelId = existingId;
