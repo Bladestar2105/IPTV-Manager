@@ -49,7 +49,7 @@ describe('Error Handling Middleware', () => {
         const res = await request(app).get('/multer-other-error');
         expect(res.status).toBe(400);
         expect(res.headers['content-type']).toMatch(/json/);
-        expect(res.body).toEqual({ error: 'Unexpected field' });
+        expect(res.body).toEqual({ error: 'Unexpected file field' });
     });
 
     it('should return 413 JSON for body parser limit errors', async () => {

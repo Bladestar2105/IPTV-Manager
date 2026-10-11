@@ -17,6 +17,15 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 
 ## Pull Request Validation
 
+Dependency security regressions:
+
+```bash
+npm test -- tests/trust_proxy_dependency.test.js tests/upload_middleware.test.js tests/stalker.test.js
+```
+The proxy test makes real HTTP requests through Express: IPv6 ranges that do
+not trust the IPv4 socket peer must ignore its `X-Forwarded-For` header, while
+an explicitly trusted mapped IPv4 subnet must continue to accept it.
+
 Manual-load regressions:
 
 ```bash
@@ -44,7 +53,8 @@ production playback latency or establish the cause of production WAL peaks.
 Pull requests to `main` and `codex/ki-integration` must pass the Node.js 24 validation job before merge.
 It installs from `package-lock.json` with `npm ci`, runs ESLint, executes the
 full test suite with an isolated temporary `DATA_DIR`, runs the build command,
-and fails on high or critical production dependency vulnerabilities. The
+and fails on high or critical vulnerabilities in both the complete dependency
+tree and the production-only audit. The
 temporary test directory is removed even when a test fails. Pull-request Docker
 builds run only after validation and verify the image without logging in to the
 registry or publishing it. Tagged release archives depend on both validation
