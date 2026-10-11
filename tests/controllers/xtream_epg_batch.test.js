@@ -105,7 +105,7 @@ describe('xtreamController get_epg_batch', () => {
 
     const dayStart = Math.floor(Date.parse('2026-05-02T00:00:00.000Z') / 1000);
     expect(all).toHaveBeenCalledWith(101, 102, 7);
-    expect(getEpgProgramsForChannels).toHaveBeenCalledWith(expect.any(Set), dayStart, dayStart + 86400, 500);
+    expect(getEpgProgramsForChannels).toHaveBeenCalledWith(expect.any(Set), dayStart, dayStart + 86400, Number.POSITIVE_INFINITY);
     expect(Array.from(getEpgProgramsForChannels.mock.calls[0][0]).sort()).toEqual(['news.epg', 'sports.manual']);
 
     expect(res.json).toHaveBeenCalledWith({
@@ -127,6 +127,49 @@ describe('xtreamController get_epg_batch', () => {
         })],
       },
     });
+  });
+
+  it('serves every requested stream ID across SQLite query chunks', async () => {
+    const ids = Array.from({ length: 6001 }, (_, index) => index + 1);
+    req.query.stream_ids = [...ids, 1, 'bad', 0, -1].join(',');
+    getXtreamUser.mockResolvedValue({ id: 7, is_share_guest: false });
+    const all = vi.fn().mockImplementation((...params) => params.slice(0, -1).map((id) => ({
+      user_channel_id: id, epg_channel_id: `guide.${id}`, manual_epg_id: null,
+    })));
+    mockDb.prepare.mockReturnValue({ all });
+    const programs = Array.from({ length: 1201 }, (_, index) => ({
+      start: 1777705200 + index, stop: 1777705201 + index,
+      title: `Program ${index}`, desc: '', channel_id: 'guide.6001',
+    }));
+    getEpgProgramsForChannels.mockReturnValue(new Map([['guide.6001', programs]]));
+
+    await playerApi(req, res);
+
+    expect(all.mock.calls.flatMap((params) => params.slice(0, -1))).toEqual(ids);
+    expect(all.mock.calls.every((params) => params.length <= 901 && params.at(-1) === 7)).toBe(true);
+    const response = res.json.mock.calls[0][0];
+    expect(Object.keys(response)).toHaveLength(6001);
+    expect(response['201']).toEqual({ epg_listings: [] });
+    expect(response['6001'].epg_listings).toHaveLength(1201);
+    expect(response['6001'].epg_listings.at(-1).title).toBe(Buffer.from('Program 1200').toString('base64'));
+    expect(getEpgProgramsForChannels).toHaveBeenCalledWith(
+      expect.any(Set), expect.any(Number), expect.any(Number), Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('honors an explicit program limit without an artificial maximum', async () => {
+    req.query.limit = '2500';
+    getXtreamUser.mockResolvedValue({ id: 7, is_share_guest: false });
+    mockDb.prepare.mockReturnValue({ all: vi.fn().mockReturnValue([
+      { user_channel_id: 101, epg_channel_id: 'news.epg', manual_epg_id: null },
+    ]) });
+    getEpgProgramsForChannels.mockReturnValue(new Map());
+
+    await playerApi(req, res);
+
+    expect(getEpgProgramsForChannels).toHaveBeenCalledWith(
+      expect.any(Set), expect.any(Number), expect.any(Number), 2500,
+    );
   });
 
   it('limits batch EPG requests to share-visible stream IDs', async () => {

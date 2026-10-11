@@ -491,15 +491,20 @@ export const playerApi = async (req, res) => {
       }
       if (streamIds.length === 0) return res.json({});
 
-      const placeholders = streamIds.map(() => '?').join(',');
-      const channels = db.prepare(`
-        SELECT uc.id as user_channel_id, pc.epg_channel_id, map.epg_channel_id as manual_epg_id
-        FROM authorized_user_channels uc
-        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
-        JOIN user_categories cat ON cat.id = uc.user_category_id
-        LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
-        WHERE uc.id IN (${placeholders}) AND cat.user_id = ? AND uc.is_hidden = 0
-      `).all(...streamIds, user.id);
+      const channels = [];
+      // Keep SQLite bind counts bounded without truncating the requested sender list.
+      for (let offset = 0; offset < streamIds.length; offset += 900) {
+        const chunk = streamIds.slice(offset, offset + 900);
+        const placeholders = chunk.map(() => '?').join(',');
+        channels.push(...db.prepare(`
+          SELECT uc.id as user_channel_id, pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+          FROM authorized_user_channels uc
+          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+          WHERE uc.id IN (${placeholders}) AND cat.user_id = ? AND uc.is_hidden = 0
+        `).all(...chunk, user.id));
+      }
 
       const epgIds = new Set();
       const channelsByStreamId = new Map();
@@ -519,7 +524,10 @@ export const playerApi = async (req, res) => {
       if (epgIds.size === 0) return res.json(response);
 
       const { start, end } = getBatchDateRange(req.query.date);
-      const limit = Math.min(Math.max(Number(req.query.limit) || 500, 1), 1000);
+      const requestedLimit = Number(req.query.limit);
+      const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.max(1, Math.floor(requestedLimit))
+        : Number.POSITIVE_INFINITY;
       const programsByEpgId = getEpgProgramsForChannels(epgIds, start, end, limit);
 
       for (const [streamId, epgId] of channelsByStreamId.entries()) {
