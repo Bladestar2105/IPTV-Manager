@@ -101,15 +101,15 @@ describe('client media relay', () => {
     const r=await prepareClientMediaResponse(upstream(data,0,data.length-1,'"v1"',status),{url,mapUrl:()=>target});
     await expect(collect(r.body)).rejects.toThrow();
   });
-  it.each([[200,false],[206,false],[206,true]])('rejects external item data references through a top-level meta box for status %s (media only: %s)',async (status,mediaOnly)=>{
+  it.each([[200,false],[206,false],[206,true],[206,true,null]])('rejects external item data references through a top-level meta box for status %s (media only: %s, ETag: %s)',async (status,mediaOnly,etag='"v1"')=>{
     const location=Buffer.from('https://provider.example/private-sample?token=secret\0');
     const entry=box('url ',Buffer.concat([Buffer.alloc(4),location]));
     const dref=box('dref',Buffer.concat([Buffer.from([0,0,0,0,0,0,0,1]),entry]));
     const data=Buffer.concat([box('meta',Buffer.concat([Buffer.alloc(4),box('dinf',dref)])),box('mdat',Buffer.alloc(16))]);
-    provider(data);
+    provider(data,etag);
     const start=mediaOnly?data.length-8:status===206?data.indexOf(location):0;
     const operation=async()=>{
-      const r=await prepareClientMediaResponse(upstream(data,start,data.length-1,'"v1"',status),{url,mapUrl:()=>target});
+      const r=await prepareClientMediaResponse(upstream(data,start,data.length-1,etag,status),{url,mapUrl:()=>target});
       return collect(r.body);
     };
     await expect(operation()).rejects.toThrow(/reference/i);
@@ -129,14 +129,16 @@ describe('client media relay', () => {
     expect(await collect(r.body)).toEqual(rewriteMp4Metadata(data, () => target).subarray(start,end+1));
     expect(fetchSafe.mock.calls.every(([,o]) => new Headers(o.headers).get('authorization') === 'upstream-only')).toBe(true);
   });
-  it('falls back to a streaming full fetch for a missing validator', async () => {
+  it('rewrites unvalidated MP4 ranges using metadata probes without downloading the movie', async () => {
     const data = fixture(); provider(data, null); const start = 80, end = 230;
     const r = await prepareClientMediaResponse(upstream(data,start,end,null), { url, mapUrl: () => target, fetchOptions: { headers: { Range: `bytes=${start}-${end}`, 'If-Range': 'old' } } });
     expect(await collect(r.body)).toEqual(rewriteMp4Metadata(data, () => target).subarray(start,end+1));
-    expect(new Headers(fetchSafe.mock.calls[0][1].headers).get('range')).toBeNull();
-    expect(new Headers(fetchSafe.mock.calls[0][1].headers).get('if-range')).toBeNull();
+    expect(fetchSafe.mock.calls.every(([, options]) => {
+      const headers = new Headers(options.headers);
+      return headers.has('range') && !headers.has('if-match') && !headers.has('if-range');
+    })).toBe(true);
   });
-  it('seeks past a gigabyte mdat using only headers and bounded metadata', async () => {
+  it.each(['"v1"', null, 'W/"v1"'])('seeks past a gigabyte mdat using only headers and bounded metadata (ETag: %s)', async etag => {
     const original = fixture(); const moovSize = original.readUInt32BE(16); const moov = original.subarray(16,16+moovSize);
     const ftyp = original.subarray(0,16); const media = Buffer.alloc(8); const mediaSize = 1_000_000_008;
     media.writeUInt32BE(mediaSize); media.write('mdat',4);
@@ -147,9 +149,14 @@ describe('client media relay', () => {
       for (const p of parts) { const a=Math.max(s,p.start),b=Math.min(e+1,p.start+p.bytes.length); if(a<b) p.bytes.copy(out,a-s,a-p.start,b-p.start); }
       return out;
     };
-    const response = (s,e) => new Response(Readable.from([read(s,e)]), {status:206, headers:{etag:'"v1"','content-range':`bytes ${s}-${e}/${total}`,'content-length':String(e-s+1)}});
+    const response = (s,e) => new Response(Readable.from([read(s,e)]), {status:206, headers:{...(etag ? {etag} : {}),'content-range':`bytes ${s}-${e}/${total}`,'content-length':String(e-s+1)}});
     let received = 0;
-    fetchSafe.mockImplementation(async (_url,options) => { const [,s,e]=/^bytes=(\d+)-(\d+)$/.exec(new Headers(options.headers).get('range')); received += Number(e)-Number(s)+1; return response(Number(s),Number(e)); });
+    fetchSafe.mockImplementation(async (_url,options) => {
+      const headers = new Headers(options.headers);
+      const [,s,e]=/^bytes=(\d+)-(\d+)$/.exec(headers.get('range'));
+      expect(headers.get('if-match')).toBe(etag === '"v1"' ? etag : null);
+      received += Number(e)-Number(s)+1; return response(Number(s),Number(e));
+    });
     const r = await prepareClientMediaResponse(response(start,end), {url,mapUrl:()=>target});
     expect(await collect(r.body)).toEqual(rewriteMp4Metadata(moov,()=>target).subarray(start-movieStart,end-movieStart+1));
     expect(received).toBeLessThan(2048);
@@ -163,6 +170,17 @@ describe('client media relay', () => {
     });
     const r=await prepareClientMediaResponse(upstream(data,80,180),{url,mapUrl:()=>target});
     expect(r.headers.get('etag')).toBe('"v2"'); expect(await collect(r.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181)); expect(calls).toBe(2);
+  });
+  it.each(['different total', 'wrong interval'])('rejects an inconsistent unvalidated probe (%s) and inspects a fresh full response', async failure => {
+    const data = fixture();
+    fetchSafe.mockImplementation(async (_url, options) => {
+      if (!new Headers(options.headers).has('range')) return upstream(data,0,data.length-1,null,200);
+      return upstream(failure === 'different total' ? Buffer.concat([data,Buffer.alloc(8)]) : data,
+        failure === 'wrong interval' ? 1 : 0,7,null);
+    });
+    const result = await prepareClientMediaResponse(upstream(data,80,180,null), {url,mapUrl:()=>target});
+    expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181));
+    expect(fetchSafe).toHaveBeenCalledTimes(2);
   });
   it('rejects a fallback with a different representation length', async () => {
     const data=fixture(); fetchSafe.mockResolvedValue(upstream(Buffer.concat([data,Buffer.alloc(8)]),0,0,null,200));
@@ -183,7 +201,9 @@ describe('client media relay', () => {
   });
   it('stops the full fallback at the requested end instead of downloading media', async () => {
     const data=fixture(); const source=Readable.from((async function*(){ yield data.subarray(0,data.length-208); for(let n=0;n<1_000_000;n++) yield Buffer.alloc(1024); })());
-    fetchSafe.mockResolvedValue(new Response(source,{status:200,headers:{'content-length':String(data.length)}}));
+    fetchSafe.mockImplementation(async (_url, options) => new Headers(options.headers).has('range')
+      ? upstream(data,0,data.length-1,null,200)
+      : new Response(source,{status:200,headers:{'content-length':String(data.length)}}));
     const r=await prepareClientMediaResponse(upstream(data,80,180,null),{url,mapUrl:()=>target}); await collect(r.body);
     expect(source.destroyed).toBe(true);
   });
@@ -204,7 +224,9 @@ describe('client media relay', () => {
     vi.useFakeTimers();
     try {
       const data=fixture(); const source=new Readable({read(){}});
-      fetchSafe.mockResolvedValue(new Response(source,{status:200,headers:{'content-length':String(data.length)}}));
+      fetchSafe.mockImplementation(async (_url, options) => new Headers(options.headers).has('range')
+        ? upstream(data,0,data.length-1,null,200)
+        : new Response(source,{status:200,headers:{'content-length':String(data.length)}}));
       const r=await prepareClientMediaResponse(upstream(data,80,180,null),{url,mapUrl:()=>target});
       const reading=collect(r.body); const check=expect(reading).rejects.toThrow(/safely/);
       await vi.advanceTimersByTimeAsync(30_001); await check; expect(source.destroyed).toBe(true);

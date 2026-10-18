@@ -653,17 +653,21 @@ and reuse its destination for later range requests in the same playback. Each
 entry has its own upstream cookie context; rotating cookies within that resource
 do not change embedded license addresses. Reopening the original entry URL starts
 a separate playback. Continuous MPEG-TS responses keep their original connection.
-Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
-reads, skipping media payload boxes. Without reliable range validation, Manager
-reads from byte zero and streams only the requested interval; distant seeks can
-therefore require extra upstream traffic. Matroska (`video/audio/application/x-matroska`,
+Partial MP4 requests inspect complete metadata using bounded range reads,
+skipping media payload boxes. Strong ETags pin those reads when available.
+Without a strong validator, Manager assumes the provider file remains unchanged
+between reads, as ordinary player range requests do. Returned intervals and total
+lengths are checked, but same-length replacements without a reliable validator
+cannot be ruled out. This compatibility policy preserves MP4/PlayReady playback
+without downloading the entire movie before a late metadata request.
+Matroska (`video/audio/application/x-matroska`,
 or an effective response URL pathname ending in `.mkv`/`.mka` with an absent or
 generic binary MIME type) is streamed unchanged through Manager, including range
-requests without validators. Its embedded metadata
-is not rewritten or checked for URLs. Explicit MP4 MIME types still receive MP4
-inspection even under a `.mkv` filename. Other unclassified binary ranges also
-require inspection when the provider supplies no trustworthy representation
-validator: Manager cannot safely infer their format. A late seek in a
+requests without validators. Its embedded metadata is not rewritten or checked
+for URLs. Explicit MP4 MIME types still receive MP4
+inspection even under a `.mkv` filename. Unsupported or inconsistent range
+responses fall back to reading from byte zero, as do unclassified binary ranges
+without a trustworthy validator. In that fallback, a late seek in a
 large file may need to read all preceding bytes and fail if it cannot reach the
 requested position within the 30-second preparation budget. Cancellation stops
 upstream reads.

@@ -97,12 +97,13 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
   if (!inspectMp4 || !upstream.body || ![200, 206].includes(upstream.status)) return upstream;
   // Matroska is relayed unchanged; MP4 DRM inspection must not turn MKV seeks into full downloads.
   if (knownMatroska(upstream, url)) return upstream;
+  const isMp4 = knownMp4(upstream, upstream.url || url) || knownMp4(upstream, url);
   if (upstream.status === 200) {
     const headers = new Headers(upstream.headers);
     if (/^(?:gzip|deflate|br)$/i.test(headers.get('content-encoding') || '')) {
       headers.delete('content-encoding'); headers.delete('content-length');
     }
-    return result(upstream, privacyStream(upstream, mapUrl, fetchOptions.signal, knownMp4(upstream, url)), headers);
+    return result(upstream, privacyStream(upstream, mapUrl, fetchOptions.signal, isMp4), headers);
   }
   let range;
   try { range = contentRange(upstream); } catch (error) { discardBody(upstream); throw error; }
@@ -130,17 +131,18 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
     return response;
   };
   const probe = async (start, end) => {
-    const response = await fetchMedia(start, end, true);
+    const response = await fetchMedia(start, end, strong);
     try {
       const actual = contentRange(response);
-      if (response.status !== 206 || response.headers.get('etag') !== etag || actual.start !== start || actual.end !== end || actual.total !== range.total) throw unsafe();
+      if (response.status !== 206 || (etag && response.headers.get('etag') !== etag) || actual.start !== start || actual.end !== end || actual.total !== range.total) throw unsafe();
       const bytes = await readBodyWithLimit(response, { as: 'buffer', maxBytes: end-start+1, timeoutMs: Math.max(1, deadline-Date.now()) });
       if (bytes.length !== end-start+1) throw unsafe();
       return bytes;
     } catch (error) { discardBody(response); throw error; }
   };
   try {
-    if (strong) {
+    // Without a strong validator, MP4 range reads assume the provider file stays unchanged.
+    if (strong || isMp4) {
       try {
         const replacements = [];
         let position = 0, metadataBytes = 0, boxes = 0;
@@ -149,7 +151,7 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
           let header = await probe(position, position+7);
           const type = header.toString('latin1',4,8);
           if (position === 0 && !/^[\x20-\x7e]{4}$/.test(type)) {
-            if (knownMp4(upstream, url)) throw unsafe();
+            if (isMp4) throw unsafe();
             break;
           }
           let size = header.readUInt32BE(0), headerSize = 8;
@@ -161,7 +163,7 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
           }
           size ||= range.total-position;
           if (size < headerSize || size > range.total-position) {
-            if (position === 0 && !knownMp4(upstream, url)) break;
+            if (position === 0 && !isMp4) break;
             throw unsafe();
           }
           if (METADATA.has(type)) {
@@ -170,16 +172,16 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
           }
           position += size;
         }
-        const response = await fetchMedia(range.start, range.end, true);
+        const response = await fetchMedia(range.start, range.end, strong);
         try {
           const actual = contentRange(response);
-          if (response.status !== 206 || response.headers.get('etag') !== etag || actual.start !== range.start || actual.end !== range.end || actual.total !== range.total) throw unsafe();
+          if (response.status !== 206 || (etag && response.headers.get('etag') !== etag) || actual.start !== range.start || actual.end !== range.end || actual.total !== range.total) throw unsafe();
           for (const replacement of replacements) replacement.bytes = rewriteMp4Metadata(replacement.bytes, (url, options) => mapUrl(url, options, response));
           return result(response, overlayStream(response.body, range, replacements));
         } catch (error) { discardBody(response); throw error; }
       } catch (error) {
         if (signal.aborted) throw error;
-        // No trustworthy random access: inspect from byte zero instead.
+        // Unsupported or inconsistent random access: inspect from byte zero instead.
       }
     }
     const full = await fetchMedia();
@@ -189,7 +191,7 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
     const headers = new Headers(full.headers);
     headers.set('content-range', `bytes ${range.start}-${range.end}/${range.total}`);
     headers.set('content-length', String(range.end-range.start+1));
-    const body = sliceStream(privacyStream(full, mapUrl, signal, knownMp4(full, url)), range.start, range.end, () => clearTimeout(timer));
+    const body = sliceStream(privacyStream(full, mapUrl, signal, knownMp4(full, full.url || url) || knownMp4(full, url)), range.start, range.end, () => clearTimeout(timer));
     streamingFallback = true;
     body.once('close', () => clearTimeout(timer));
     return result(full, body, headers, 206);

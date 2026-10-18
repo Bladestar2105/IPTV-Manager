@@ -46,6 +46,11 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   requests remain proxied even on approved public domains.
 - Inspect binary MP4 PlayReady metadata as well as manifests. Preserve media
   sample bytes and offsets while replacing provider license addresses.
+- Inspect MP4 ranges using bounded box-header/metadata reads that skip media
+  payloads. Pin reads with strong ETags when available; otherwise assume the
+  provider file remains unchanged between reads, as explicitly approved for
+  playback compatibility. Validate returned byte ranges and total lengths;
+  same-length changes without a reliable validator cannot be ruled out.
 - Relay Matroska (MKV/MKA) media unchanged through Manager, including ranges
   without validators. Its embedded metadata is not inspected for URLs; do not
   apply the MP4 full-file inspection fallback to Matroska playback.
