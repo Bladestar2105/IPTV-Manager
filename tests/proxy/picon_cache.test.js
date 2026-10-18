@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { Readable } from 'node:stream';
@@ -24,9 +24,10 @@ const user = { id: 1, is_active: 1, token_version: 0, webui_access: 0 };
 let activeUser;
 let providerPool;
 const channel = { user_channel_id: 5, provider_id: 3, provider_url: 'https://provider.example', provider_max_connections: 1 };
-const app = express();
-app.use('/api/proxy/resource', express.raw({ type: () => true, limit: '1mb' }));
-app.use('/api/proxy', router);
+const routeApp = express();
+routeApp.use('/api/proxy/resource', express.raw({ type: () => true, limit: '1mb' }));
+routeApp.use('/api/proxy', router);
+const app = http.createServer(routeApp);
 const reqForUrl = { protocol: 'http', get: () => '127.0.0.1', app: { get: () => false }, params: {}, query: {} };
 const localPath = url => new URL(url).pathname + new URL(url).search;
 const grant = (kind = 'image') => localPath(createClientResourceUrl(reqForUrl, user, 'https://provider.example/image.png', { kind }));
@@ -46,6 +47,23 @@ const trackedMedia = Buffer.concat([
 ]);
 
 describe('client resource and image proxy', () => {
+  beforeAll(async () => {
+    await new Promise((resolve, reject) => {
+      app.once('error', reject);
+      app.listen(0, '127.0.0.1', () => {
+        app.off('error', reject);
+        resolve();
+      });
+    });
+  });
+  afterAll(async () => {
+    if (app.listening) {
+      await new Promise((resolve, reject) => {
+        app.close(error => error ? reject(error) : resolve());
+        app.closeAllConnections();
+      });
+    }
+  });
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.manager.localStreams.clear();
@@ -273,12 +291,12 @@ describe('client resource and image proxy', () => {
     child.headers.set('set-cookie', 'host=; Max-Age=0; Path=/');
     mocks.fetchSafe.mockResolvedValueOnce(child);
     const childResult = await request(app).get(localPath(urls[0]));
-    expect(childResult.status, childResult.text).toBe(200);
+    expect(childResult.status, JSON.stringify({ body: childResult.text, headers: childResult.headers })).toBe(200);
     const nested = childResult.text.split('\n').filter(line => line.startsWith('http'));
     for (const url of [...nested, urls[1], urls[2]]) {
       mocks.fetchSafe.mockResolvedValueOnce(response('segment', 'video/mp2t'));
       const segment = await request(app).get(localPath(url));
-      expect(segment.status, segment.text).toBe(200);
+      expect(segment.status, JSON.stringify({ body: segment.text, headers: segment.headers })).toBe(200);
     }
     const sent = mocks.fetchSafe.mock.calls.map(([, options]) => new Headers(options.headers));
     expect(sent[0].get('cookie')).toBe('initial=secret');
@@ -328,7 +346,7 @@ describe('client resource and image proxy', () => {
     expect(metadata.body.poster).toContain('/api/proxy/resource/');
     mocks.fetchSafe.mockResolvedValueOnce(response('WEBVTT', 'text/vtt'));
     const subtitle = await request(app).get(localPath(metadata.body.subtitle));
-    expect(subtitle.status, subtitle.text).toBe(200);
+    expect(subtitle.status, JSON.stringify({ body: subtitle.text, headers: subtitle.headers })).toBe(200);
     expect(mocks.fetchSafe.mock.calls[1][0]).toBe('https://cdn.example/metadata/captions/en.vtt');
   });
   it('rejects POST with an image grant', async () => {
