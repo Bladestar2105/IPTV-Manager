@@ -111,7 +111,7 @@ it('rechecks a previously authorized channel after it is hidden and a share afte
   db.prepare("INSERT INTO user_channels (id, user_category_id, provider_channel_id, assignment_origin) VALUES (?, ?, ?, 'manual')").run(user.id, user.id, user.id);
   try {
     const source = req(); source.query.token = 'share-token';
-    const url = issue({ channelId: user.id }, source);
+    const url = issue({ channelId: user.id, providerId: user.id }, source);
     getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, allowed_channels: [user.id] });
     expect(await resolve(url)).not.toBeNull();
     getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, allowed_channels: [] });

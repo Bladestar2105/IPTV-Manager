@@ -55,19 +55,19 @@ describe('EPG Controller', () => {
             expect(rows.map(row => row.id)).toEqual(['duplicate', 'duplicate']);
             expect(rows[0]).not.toHaveProperty('source_id');
             expect(rows[1]).not.toHaveProperty('source_id');
-            expect(await decryptClientGrant(rows[0].logo)).toMatchObject({ kind: 'image', url: 'https://custom.test/feed/icons/custom.png' });
-            expect(await decryptClientGrant(rows[1].logo)).toMatchObject({ kind: 'image', url: 'http://cdn.provider.test/icon.png' });
+            expect(await decryptClientGrant(rows[0].logo)).toMatchObject({ kind: 'image', epgChannelId: 'duplicate', epgSourceType: 'custom', epgSourceId: sourceId });
+            expect(await decryptClientGrant(rows[1].logo)).toMatchObject({ kind: 'image', epgChannelId: 'duplicate', epgSourceType: 'provider', epgSourceId: providerId });
             epgService.loadAllEpgChannels.mockResolvedValue([
                 { id: 'duplicate', name: 'Provider', logo: '//cdn.provider.test/icon.png', source_type: 'provider', source_id: providerId },
                 ...Array.from({ length: 1000 }, (_, i) => ({ id: `other-${i}`, name: `Other ${i}`, logo: 'icons/other.png', source_type: 'custom', source_id: sourceId }))
             ]);
-            const resourceFactory = vi.spyOn(clientResources, 'createClientResourceUrl');
+            const resourceFactory = vi.spyOn(clientResources, 'createEpgIconUrl');
             const suggestions = { json: vi.fn(), status: vi.fn().mockReturnThis() };
             await epgController.suggestMapping({ ...req, body: { channel_name: 'Provider', epg_id: 'duplicate', limit: 1 } }, suggestions);
             expect(resourceFactory).toHaveBeenCalledTimes(1);
             const suggested = suggestions.json.mock.calls[0][0].suggestions[0].epgChannel;
             expect(suggested).not.toHaveProperty('source_id');
-            expect(await decryptClientGrant(suggested.logo)).toMatchObject({ kind: 'image', url: 'http://cdn.provider.test/icon.png' });
+            expect(await decryptClientGrant(suggested.logo)).toMatchObject({ kind: 'image', epgChannelId: 'duplicate', epgSourceType: 'provider', epgSourceId: providerId });
         } finally { db.prepare('DELETE FROM providers WHERE id = ?').run(providerId); }
     });
 

@@ -1,11 +1,12 @@
 import db from '../database/db.js';
+import epgDb from '../database/epgDb.js';
 import crypto from 'node:crypto';
 import { decrypt, encrypt, ENCRYPTION_KEY } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
 import { expiryEpoch } from '../utils/stalker.js';
 import { getXtreamUser } from './authService.js';
 import { isIpAllowedForUser } from './geoIpService.js';
-import { getEpgLogo } from './logoResolver.js';
+import { getEpgLogo, resolveEpgLogoUrl } from './logoResolver.js';
 import { createUpstreamContext } from '../utils/clientCookies.js';
 import { directMetadataUrl } from '../utils/clientResourcePolicy.js';
 import { normalizeInlineClearKey } from '../utils/clientClearKey.js';
@@ -178,10 +179,18 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   return resourceUrl(req, payload, kind === 'image' ? 'image.png' : kind === 'license' ? 'license' : 'resource');
 }
 
-export function createChannelIconUrl(req, user, userChannelId) {
+export function createChannelIconUrl(req, user, userChannelId, { providerId = null } = {}) {
   const channelId = Number(userChannelId);
   if (!Number.isSafeInteger(channelId) || channelId <= 0) return '';
-  return resourceUrl(req, { ...context(req, user), kind: 'image', channelId, currentIcon: true }, 'image.png');
+  return resourceUrl(req, { ...context(req, user), kind: 'image', channelId, providerId, currentIcon: true }, 'image.png');
+}
+
+export function createEpgIconUrl(req, user, channel, { requireMappedChannel = false } = {}) {
+  if (!['provider', 'custom'].includes(channel.source_type) || !Number.isSafeInteger(Number(channel.source_id)) || Number(channel.source_id) <= 0 || !channel.id) return '';
+  return resourceUrl(req, {
+    ...context(req, user), kind: 'image', epgChannelId: String(channel.id),
+    epgSourceType: channel.source_type, epgSourceId: Number(channel.source_id), requireMappedChannel,
+  }, 'image.png');
 }
 
 function shareAllowed(user, channelId) {
@@ -209,6 +218,7 @@ export async function resolveClientResource(req) {
   try {
     const payload = readGrant(req.params.data);
     if (!payload) return null;
+    if (payload.channelId && !payload.providerId && !payload.currentIcon && !payload.epgChannelId) return null;
 
     const user = db.prepare(`SELECT * FROM ${payload.admin ? 'admin_users' : 'users'} WHERE id = ?`).get(payload.uid);
     const expires = expiryEpoch(user?.expiry_date);
@@ -245,6 +255,25 @@ export async function resolveClientResource(req) {
       }
     }
     let url = payload.url;
+    if (payload.epgChannelId) {
+      if (payload.kind !== 'image' || !['provider', 'custom'].includes(payload.epgSourceType)) return null;
+      const sourceTable = payload.epgSourceType === 'provider' ? 'providers' : 'epg_sources';
+      if (!db.prepare(`SELECT 1 FROM ${sourceTable} WHERE id = ?`).get(payload.epgSourceId)) return null;
+      const epgChannel = epgDb.prepare('SELECT logo FROM epg_channels WHERE id = ? AND source_type = ? AND source_id = ?')
+        .get(payload.epgChannelId, payload.epgSourceType, payload.epgSourceId);
+      if (!epgChannel) return null;
+      if (payload.requireMappedChannel) {
+        const assignments = db.prepare(`
+          SELECT uc.id FROM authorized_user_channels uc
+          JOIN user_categories cat ON cat.id = uc.user_category_id
+          JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+          LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+          WHERE cat.user_id = ? AND COALESCE(map.epg_channel_id, pc.epg_channel_id) = ?
+        `).all(user.id, payload.epgChannelId);
+        if (!assignments.some(assignment => shareAllowed(authorizedUser, assignment.id))) return null;
+      }
+      url = resolveEpgLogoUrl(epgChannel.logo, payload.epgSourceType, payload.epgSourceId);
+    }
     if (payload.currentIcon) {
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
       url = (channel.use_mapped_epg_icon && epgId && getEpgLogo(epgId, { absolute: true })) || channel.logo;

@@ -48,6 +48,15 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   sample bytes and offsets while replacing provider license addresses.
 - Revalidate provider-only grants against current ownership/admin access, and
   channel-bound grants against current channel and provider-pool authorization.
+- Every fixed provider URL grant must carry its selected `providerId`. Category
+  resources for normal users also carry `user_channel_id`, including users with
+  `provider_access`, so explicit admin channel grants keep working.
+- Shared EPG catalog artwork uses current source/channel identity rather than a
+  frozen upstream URL. Recheck source existence and the current EPG row; XMLTV
+  artwork also rechecks the user's current mapping and share scope. Preserve
+  shared EPG catalog visibility independently of provider management access.
+- Review every grant issuer when changing provenance or revocation rules,
+  including category, EPG, XMLTV, Stalker and metadata response paths.
 
 ## Package and Build Rules
 

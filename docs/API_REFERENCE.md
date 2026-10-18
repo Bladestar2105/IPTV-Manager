@@ -639,6 +639,14 @@ after seven days. Every request rechecks current user and channel access.
 Provider-only grants also require current provider ownership (or an active admin)
 and stop working after provider deletion or transfer. Channel-bound grants use
 current playback-pool authorization, including explicit admin channel grants.
+Fixed-URL channel grants without a selected provider are rejected; dynamic
+channel icons instead resolve artwork from the currently authorized assignment.
+Shared EPG catalog artwork grants identify an exact EPG channel and source,
+then read its current logo at request time. They stop working when that EPG row
+or provider/custom source is deleted. Shared catalog browsing and mapping remain
+available without provider-management access. XMLTV artwork also rechecks that
+the EPG channel is still mapped to an authorized channel within the current
+user or share scope.
 Raw MP4 entry requests and initial binary range responses return HTTP `307` to a
 fresh, opaque Manager resource URL. Clients must follow this standard redirect
 and reuse its destination for later range requests in the same playback. Each

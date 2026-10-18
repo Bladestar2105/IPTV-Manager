@@ -1,5 +1,4 @@
-import { createClientResourceUrl } from '../services/clientResourceService.js';
-import { resolveEpgLogoUrl } from '../services/logoResolver.js';
+import { createEpgIconUrl } from '../services/clientResourceService.js';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { Worker } from 'worker_threads';
@@ -401,8 +400,7 @@ export const suggestMapping = async (req, res) => {
         ...suggestion,
         epgChannel: {
           ...channel,
-          logo: req.user.is_admin ? channel.logo : createClientResourceUrl(req, req.user,
-            resolveEpgLogoUrl(channel.logo, channel.source_type, source_id), { kind: 'image' })
+          logo: req.user.is_admin ? channel.logo : createEpgIconUrl(req, req.user, { ...channel, source_id })
         }
       };
     });

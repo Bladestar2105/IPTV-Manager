@@ -310,7 +310,7 @@ describe('client resource and image proxy', () => {
     expect(sent[5].get('authorization')).toBeNull();
   });
   it.each(['assignment', 'share'])('revokes channel-bound licenses after removing the %s permission', async permission => {
-    const url = localPath(createClientResourceUrl(reqForUrl, { ...user, resource_token: 'shared-token' }, 'https://drm.example/license', { kind: 'license', channelId: 5 }));
+    const url = localPath(createClientResourceUrl(reqForUrl, { ...user, resource_token: 'shared-token' }, 'https://drm.example/license', { kind: 'license', channelId: 5, providerId: 3 }));
     mocks.getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, allowed_channels: [5] });
     mocks.fetchSafe.mockResolvedValue(response('license', 'application/octet-stream'));
     expect((await request(app).post(url).send('challenge')).status).toBe(200);
@@ -326,7 +326,7 @@ describe('client resource and image proxy', () => {
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
   });
   it('retains channel scope through nested JSON license metadata', async () => {
-    const url = localPath(createClientResourceUrl(reqForUrl, user, 'https://provider.example/metadata', { kind: 'resource', channelId: 5 }));
+    const url = localPath(createClientResourceUrl(reqForUrl, user, 'https://provider.example/metadata', { kind: 'resource', channelId: 5, providerId: 3 }));
     mocks.fetchSafe.mockResolvedValue(response(JSON.stringify({ license_key: 'https://drm.example/license' }), 'application/json'));
     const metadata = await request(app).get(url);
     expect(metadata.status).toBe(200);

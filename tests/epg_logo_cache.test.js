@@ -141,7 +141,7 @@ describe('EPG logo cache freshness', () => {
     expect(service.getEpgLogo('news', { absolute: true })).toBe('https://epg.test/feed/icons/news.png');
     base = 'http://changed-epg.test/other/guide.xml';
     expect(service.getEpgLogo('news', { absolute: true })).toBe('http://changed-epg.test/other/icons/news.png');
-    expect(scans()).toBe(1);
+    expect(scans()).toBe(3); // One cached catalog scan and two fresh client-artwork lookups.
     writer.exec("UPDATE epg_channels SET logo = '//cdn.test/icon.png'");
     service.invalidateEpgLogosCache();
     expect(service.getEpgLogo('news', { absolute: true })).toBe('http://cdn.test/icon.png');
@@ -182,6 +182,8 @@ describe('EPG logo cache freshness', () => {
     expect(service.getEpgLogo('news', { absolute: true })).toBeNull();
     writer.exec("UPDATE epg_channels SET logo = 'https://cdn.test/icon.png'");
     service.invalidateEpgLogosCache();
+    expect(service.getEpgLogo('news', { absolute: true })).toBeNull();
+    mainDb.prepare.mockReturnValue({ get: () => ({ url: 'https://source.test/guide.xml' }) });
     expect(service.getEpgLogo('news', { absolute: true })).toBe('https://cdn.test/icon.png');
   });
 

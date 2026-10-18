@@ -5,7 +5,6 @@ import crypto from 'crypto';
 
 // Cache for EPG logos: Map<epg_channel_id, logo_url>
 let epgLogosCache = null;
-const epgLogoSources = new WeakMap();
 let lastCacheUpdate = 0;
 let lastCacheVersion = null;
 const CACHE_TTL = 300000; // Check freshness every 5 minutes; unchanged data stays cached.
@@ -32,18 +31,16 @@ export function loadEpgLogosCache() {
         }
 
         const channels = epgDb.prepare(`
-            SELECT id, logo, source_type, source_id
+            SELECT id, logo
             FROM epg_channels
             WHERE logo IS NOT NULL AND logo != ''
+            ORDER BY rowid
         `).all();
 
         const logos = new Map();
-        const sources = new Map();
         for (const ch of channels) {
             logos.set(ch.id, ch.logo);
-            sources.set(ch.id, { type: ch.source_type, id: ch.source_id });
         }
-        epgLogoSources.set(logos, sources);
         // Never publish an uncommitted or older transaction snapshot into the cache.
         if (!epgDb.inTransaction) {
             epgLogosCache = logos;
@@ -87,28 +84,29 @@ export function resolveChannelLogo({ providerLogo, epgChannelId, useEpgLogo = fa
 export function getEpgLogo(epgChannelId, { absolute = false } = {}) {
     if (!epgChannelId) return null;
 
-    const epgLogos = loadEpgLogosCache();
-    const logo = epgLogos.get(epgChannelId) || null;
-    if (!absolute || !logo) return logo;
-    const source = epgLogoSources.get(epgLogos)?.get(epgChannelId);
-    return resolveEpgLogoUrl(logo, source?.type, source?.id);
+    if (!absolute) return loadEpgLogosCache().get(epgChannelId) || null;
+    // Client grants must not keep using deleted or changed EPG artwork for the cache TTL.
+    try {
+        const channel = epgDb.prepare(`
+            SELECT logo, source_type, source_id FROM epg_channels
+            WHERE id = ? AND logo IS NOT NULL AND logo != ''
+            ORDER BY rowid DESC LIMIT 1
+        `).get(epgChannelId);
+        return channel ? resolveEpgLogoUrl(channel.logo, channel.source_type, channel.source_id) : null;
+    } catch { return null; }
 }
 
 export function resolveEpgLogoUrl(logo, sourceType, sourceId) {
     if (!logo) return null;
     try {
-        let parsed;
-        try { parsed = new URL(logo); }
-        catch {
-            let base;
-            if (sourceType === 'custom') {
-                base = db.prepare('SELECT url FROM epg_sources WHERE id = ?').get(sourceId)?.url;
-            } else if (sourceType === 'provider') {
-                base = db.prepare("SELECT COALESCE(NULLIF(TRIM(epg_url), ''), url) AS url FROM providers WHERE id = ?").get(sourceId)?.url;
-            }
-            if (!base) return null;
-            parsed = new URL(logo, base);
+        let source;
+        if (sourceType === 'custom') {
+            source = db.prepare('SELECT url FROM epg_sources WHERE id = ?').get(sourceId);
+        } else if (sourceType === 'provider') {
+            source = db.prepare("SELECT COALESCE(NULLIF(TRIM(epg_url), ''), url) AS url FROM providers WHERE id = ?").get(sourceId);
         }
+        if (!source) return null;
+        const parsed = new URL(logo, source.url || undefined);
         return /^https?:$/.test(parsed.protocol) ? parsed.href : null;
     } catch { return null; }
 }

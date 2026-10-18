@@ -1,5 +1,4 @@
-import { resolveEpgLogoUrl } from '../services/logoResolver.js';
-import { createChannelIconUrl, createClientResourceUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
+import { createChannelIconUrl, createClientResourceUrl, createEpgIconUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
 import zlib from 'zlib';
 import db, { openDbConnection } from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -273,8 +272,7 @@ export const xmltv = async (req, res) => {
     output.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
     // Use the generator to stream content
-    for await (const chunk of getEpgXmlForChannels(allowedIds, (logo, channel) => createClientResourceUrl(req, user,
-      resolveEpgLogoUrl(logo, channel.source_type, channel.source_id), { kind: 'image' }))) {
+    for await (const chunk of getEpgXmlForChannels(allowedIds, (_logo, channel) => createEpgIconUrl(req, user, channel, { requireMappedChannel: true }))) {
         output.write(chunk);
     }
 

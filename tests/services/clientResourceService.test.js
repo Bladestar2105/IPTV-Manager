@@ -84,6 +84,14 @@ describe('scoped client resource URLs', () => {
     db.prepare.mockImplementation(sql => ({ get: () => sql.includes('FROM users') ? user : { logo: 'https://provider.example/a.png' } }));
     expect(await resolveClientResource(resourceRequest(url))).toBeNull();
   });
+  it('rejects fixed channel resources without selected-provider provenance', async () => {
+    db.prepare.mockImplementation(sql => ({ get: () => sql.includes('FROM users') ? user : { logo: 'https://provider.example/icon.png', provider_id: 8 } }));
+    for (const kind of ['image', 'resource', 'license']) {
+      const url = createClientResourceUrl(request(), user, 'https://provider.example/private', { kind, channelId: 51 });
+      expect(await resolveClientResource(resourceRequest(url))).toBeNull();
+    }
+    expect(await resolveClientResource(resourceRequest(createChannelIconUrl(request(), user, 51)))).not.toBeNull();
+  });
   it.each([
     ['//cdn.example/logo.png', 'https://cdn.example/logo.png'],
     ['/icons/logo.png', 'https://provider.example/icons/logo.png'],

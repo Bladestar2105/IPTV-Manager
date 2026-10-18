@@ -214,7 +214,7 @@ describe('xtreamController share compatibility', () => {
     ['custom', 3, 'icons/news.png', 'https://custom.test/feed/guide.xml', 'https://custom.test/feed/icons/news.png'],
     ['provider', 9, '//cdn.test/news.png', 'http://provider.test/guide.xml', 'http://cdn.test/news.png'],
     ['custom', 4, 'icons/news.png', null, null],
-  ])('resolves XMLTV icons against the selected row source (%s %s)', async (type, id, logo, base, expected) => {
+  ])('binds XMLTV icons to the selected row source (%s %s)', async (type, id, logo, base) => {
     getXtreamUser.mockResolvedValue({ id: 1 });
     mockDb.prepare.mockImplementation(sql => sql.includes('FROM authorized_user_channels')
       ? { iterate: () => [{ epg_id: 'duplicate.epg' }] }
@@ -225,8 +225,8 @@ describe('xtreamController share compatibility', () => {
     });
     await xmltv(req, res);
     const value = res.write.mock.calls[1][0];
-    if (expected) expect(await decryptClientGrant(value)).toMatchObject({ url: expected, kind: 'image' });
-    else expect(value).toBe('');
+    expect(await decryptClientGrant(value)).toMatchObject({ epgChannelId: 'duplicate.epg', epgSourceType: type, epgSourceId: id, kind: 'image', requireMappedChannel: true });
+    expect(await decryptClientGrant(value)).not.toHaveProperty('url');
   });
 
   it('serves XMLTV as streamed gzip when explicitly requested', async () => {

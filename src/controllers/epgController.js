@@ -1,5 +1,4 @@
-import { createClientResourceUrl } from '../services/clientResourceService.js';
-import { resolveEpgLogoUrl } from '../services/logoResolver.js';
+import { createEpgIconUrl } from '../services/clientResourceService.js';
 import { enqueueMaintenanceJobs } from '../services/maintenanceQueueService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import fs from 'fs';
@@ -361,8 +360,7 @@ export const getEpgChannels = async (req, res) => {
     const channels = await loadAllEpgChannels({ includeSourceId: true });
     res.json(channels.map(({ source_id, ...channel }) => ({
       ...channel,
-      logo: req.user.is_admin ? channel.logo : createClientResourceUrl(req, req.user,
-        resolveEpgLogoUrl(channel.logo, channel.source_type, source_id), { kind: 'image' })
+      logo: req.user.is_admin ? channel.logo : createEpgIconUrl(req, req.user, { ...channel, source_id })
     })));
   } catch (e) {
     res.status(500).json({error: e.message});

@@ -9,6 +9,7 @@ const { dataDir, db } = vi.hoisted(() => ({
 }));
 vi.mock('../../src/config/constants.js', () => ({ DATA_DIR: dataDir }));
 vi.mock('../../src/database/db.js', () => ({ default: db }));
+vi.mock('../../src/database/epgDb.js', () => ({ default: { prepare: vi.fn() } }));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: vi.fn() }));
 vi.mock('../../src/services/geoIpService.js', () => ({ isIpAllowedForUser: () => true }));
 vi.mock('../../src/services/logoResolver.js', () => ({ getEpgLogo: vi.fn() }));
