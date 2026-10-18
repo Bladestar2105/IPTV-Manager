@@ -6,7 +6,10 @@ import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 
 const mocks = vi.hoisted(() => ({ fetchSafe: vi.fn(), cacheDir: '' }));
-vi.mock('../../src/config/constants.js', () => ({ get CACHE_DIR() { return mocks.cacheDir; } }));
+vi.mock('../../src/config/constants.js', () => ({
+    get CACHE_DIR() { return mocks.cacheDir; },
+    DEFAULT_USER_AGENT: 'Mozilla/5.0 image-cache-test-browser',
+}));
 vi.mock('../../src/services/logoResolver.js', () => ({ getLogoCacheHash: url => crypto.createHash('md5').update(url).digest('hex') }));
 vi.mock('../../src/utils/network.js', async original => ({ ...(await original()), fetchSafe: mocks.fetchSafe }));
 const { getCachedImage, clearImageCache } = await import('../../src/services/imageCacheService.js');
@@ -22,6 +25,41 @@ beforeEach(async () => {
 afterAll(() => fs.rm(root, { recursive: true, force: true }));
 
 describe('image disk cache', () => {
+    it('fetches from CDNs requiring the browser user agent and image Accept defaults', async () => {
+        mocks.fetchSafe.mockImplementation(async (_url, { headers }) => {
+            const requestHeaders = new Headers(headers);
+            if (requestHeaders.get('user-agent') !== 'Mozilla/5.0 image-cache-test-browser' ||
+                requestHeaders.get('accept') !== 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8') {
+                return response('Forbidden', { 'content-type': 'text/html' }, 403);
+            }
+            return response(png, { etag: '"cdn-icon"' });
+        });
+        expect(await getCachedImage(url)).toMatchObject({ body: png, cacheStatus: 'MISS' });
+        mocks.fetchSafe.mockResolvedValueOnce(response('', {}, 304));
+        expect(await getCachedImage(url)).toMatchObject({ body: png, cacheStatus: 'HIT' });
+        const revalidationHeaders = new Headers(mocks.fetchSafe.mock.calls[1][1].headers);
+        expect(revalidationHeaders.get('user-agent')).toBe('Mozilla/5.0 image-cache-test-browser');
+        expect(revalidationHeaders.get('accept')).toBe('image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8');
+        expect(revalidationHeaders.get('if-none-match')).toBe('"cdn-icon"');
+        const hash = crypto.createHash('md5').update(url).digest('hex');
+        expect(await fs.readFile(path.join(mocks.cacheDir, 'picons', `${hash}.png`))).toEqual(png);
+    });
+
+    it.each([
+        { 'User-Agent': 'provider-agent', Accept: 'image/png' },
+        { 'user-agent': 'provider-agent', accept: 'image/png' },
+        { 'UsEr-AgEnT': 'provider-agent', aCcEpT: 'image/png' },
+    ])('preserves explicit image request headers regardless of casing: %j', async headers => {
+        mocks.fetchSafe.mockImplementation(async (_url, options) => {
+            const requestHeaders = new Headers(options.headers);
+            if (requestHeaders.get('user-agent') !== 'provider-agent' || requestHeaders.get('accept') !== 'image/png') {
+                return response('Forbidden', { 'content-type': 'text/html' }, 403);
+            }
+            return response();
+        });
+        expect(await getCachedImage(url, { headers })).toMatchObject({ body: png, cacheStatus: 'MISS' });
+    });
+
     it('revalidates unchanged images and updates changed bytes at the same URL', async () => {
         mocks.fetchSafe.mockResolvedValueOnce(response(png, { etag: '"one"', 'last-modified': 'Mon, 01 Jan 2024 00:00:00 GMT' }))
             .mockResolvedValueOnce(response('', {}, 304)).mockResolvedValueOnce(response(changed, { etag: '"two"' }));

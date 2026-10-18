@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { CACHE_DIR } from '../config/constants.js';
+import { CACHE_DIR, DEFAULT_USER_AGENT } from '../config/constants.js';
 import { getLogoCacheHash } from './logoResolver.js';
 import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 
@@ -87,7 +87,11 @@ async function refreshImage(url, headers, key) {
     const metadataFile = path.join(directory, `${key}.json`);
     const cached = await readCached(file, metadataFile);
     try {
-        const conditional = { ...headers };
+        const conditional = {
+            'user-agent': DEFAULT_USER_AGENT,
+            accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            ...headers,
+        };
         for (const [field, header] of [['etag', 'If-None-Match'], ['lastModified', 'If-Modified-Since']]) {
             const value = cached?.metadata?.[field];
             if (typeof value === 'string' && value.length <= 4096 && !/[\r\n]/.test(value)) conditional[header] = value;

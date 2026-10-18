@@ -9,6 +9,7 @@ import { getCachedImage, clearImageCache } from '../services/imageCacheService.j
 import { createClientResourceUrl, resolveClientResource, rewriteClientMetadata } from '../services/clientResourceService.js';
 import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
 import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { reserveGrantedResourceSession } from '../controllers/streamControllerHelpers.js';
 
 const router = express.Router();
 const MANIFEST_LIMIT = 32 * 1024 * 1024;
@@ -65,10 +66,23 @@ router.all('/resource/:data/:filename', async (req, res) => {
   }
   let upstream;
   let cleanup = () => {};
+  let heartbeat;
   const controller = new AbortController();
   res.once('close', () => { controller.abort(); discardBody(upstream); cleanup(); });
   try {
     if (resource.kind === 'image') return await sendImage(res, resource.url, resource.headers, resource.providerId);
+
+    if (resource.channelName && resource.providerId && resource.kind === 'resource') {
+      const { default: manager } = await import('../services/streamManager.js');
+      const id = crypto.randomUUID();
+      let registered = false;
+      cleanup = () => { if (registered) { registered = false; manager.localStreams.delete(id); manager.remove(id); } };
+      if (!await reserveGrantedResourceSession(id, resource.user, resource.channelId, resource.providerId, req, res, resource.channelName)) return;
+      registered = true;
+      if (controller.signal.aborted) { cleanup(); return; }
+      manager.localStreams.set(id, { destroy: () => { controller.abort(); discardBody(upstream); res.destroy(); cleanup(); } });
+      heartbeat = () => manager.touch(id);
+    }
 
     const headers = { ...resource.headers };
     for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
@@ -124,15 +138,6 @@ router.all('/resource/:data/:filename', async (req, res) => {
       res.setHeader('Content-Type', type);
       return res.send(body);
     }
-    if (resource.channelName && resource.providerId && resource.kind === 'resource') {
-      const { default: manager } = await import('../services/streamManager.js');
-      const id = crypto.randomUUID();
-      let removed = false;
-      cleanup = () => { if (!removed) { removed = true; manager.localStreams.delete(id); manager.remove(id); } };
-      await manager.add(id, resource.user, resource.channelName, req.ip, res, resource.providerId, { dedupe: false });
-      manager.localStreams.set(id, { destroy: () => { discardBody(upstream); res.destroy(); cleanup(); } });
-      upstream.body.on('data', () => manager.touch(id));
-    }
     res.status(upstream.status);
     res.setHeader('Content-Type', type);
     for (const name of ['content-length', 'content-range', 'accept-ranges']) {
@@ -142,6 +147,7 @@ router.all('/resource/:data/:filename', async (req, res) => {
       if (value) res.setHeader(name, value);
     }
     if (req.method === 'HEAD') { discardBody(upstream); return res.end(); }
+    if (heartbeat) upstream.body.on('data', heartbeat);
     upstream.body.once('error', () => { cleanup(); res.destroy(); });
     upstream.body.once('end', cleanup);
     return upstream.body.pipe(res);

@@ -559,6 +559,12 @@ checked against the active account, token version, expiry, region lock and any
 originating share/session token. Channel grants also check the current channel
 assignment and share scope. Treat opaque resource URLs as bearer credentials.
 
+Granted media requests reserve a session before contacting the upstream and
+enforce the current user limit and the bound provider account's capacity.
+Parallel segments from the same active session reuse its connection slot.
+Provider-account pooling happens when issuing the manifest; an existing grant
+cannot switch accounts without changing its encrypted upstream URL/headers.
+
 Channel icon grants resolve the current catalog/EPG icon on each request, so a
 provider-sync URL change also takes effect for clients keeping an older icon
 URL. Image files are revalidated on every request using upstream `ETag` and
@@ -566,6 +572,8 @@ URL. Image files are revalidated on every request using upstream `ETag` and
 use `Cache-Control: private, no-cache, must-revalidate`; `X-Cache` is `MISS`,
 `HIT` (upstream 304), `REVALIDATED` (replacement), or `STALE` (last good image
 after an upstream failure). Parallel requests within a worker share one refresh.
+Image requests retain the browser-like user agent and image Accept defaults;
+explicit upstream headers override those defaults case-insensitively.
 
 HLS and DASH resources, including nested manifests, keys, initialization data,
 subtitles and HTTP DRM license URLs, stay behind the Manager. License POST

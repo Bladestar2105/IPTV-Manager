@@ -4,7 +4,8 @@ import request from 'supertest';
 import { Readable } from 'node:stream';
 
 const mocks = vi.hoisted(() => ({ db: { prepare: vi.fn(), exec: vi.fn() }, getXtreamUser: vi.fn(), getCachedImage: vi.fn(), clearImageCache: vi.fn(), fetchSafe: vi.fn(),
-  manager: { add: vi.fn(async () => undefined), remove: vi.fn(), touch: vi.fn(), localStreams: new Map() } }));
+  manager: { add: vi.fn(async () => undefined), remove: vi.fn(), touch: vi.fn(), localStreams: new Map(),
+    isSessionActive: vi.fn(), getUserConnectionCount: vi.fn(), getProviderConnectionCount: vi.fn() } }));
 vi.mock('../../src/services/streamManager.js', () => ({ default: mocks.manager }));
 vi.mock('../../src/database/db.js', () => ({ default: mocks.db }));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: mocks.getXtreamUser }));
@@ -18,6 +19,9 @@ import router from '../../src/routes/proxy.js';
 import { createClientResourceUrl } from '../../src/services/clientResourceService.js';
 
 const user = { id: 1, is_active: 1, token_version: 0, webui_access: 0 };
+let activeUser;
+let providerPool;
+const channel = { user_channel_id: 5, provider_id: 3, provider_url: 'https://provider.example', provider_max_connections: 1 };
 const app = express();
 app.use('/api/proxy/resource', express.raw({ type: () => true, limit: '1mb' }));
 app.use('/api/proxy', router);
@@ -32,7 +36,17 @@ function response(body, contentType, status = 200) {
 describe('client resource and image proxy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.db.prepare.mockReturnValue({ get: () => user });
+    activeUser = { ...user };
+    providerPool = [{ id: 3, url: channel.provider_url, max_connections: 1 }];
+    mocks.db.prepare.mockImplementation(sql => {
+      if (sql.includes('FROM users')) return { get: () => activeUser };
+      if (sql.includes('uc.granted_by_admin')) return { get: () => channel };
+      if (sql.includes('url LIKE')) return { all: () => providerPool };
+      return { get: () => ({ provider_id: 3 }) };
+    });
+    mocks.manager.isSessionActive.mockResolvedValue(false);
+    mocks.manager.getUserConnectionCount.mockResolvedValue(0);
+    mocks.manager.getProviderConnectionCount.mockResolvedValue(0);
     mocks.getXtreamUser.mockResolvedValue(user);
     mocks.getCachedImage.mockResolvedValue({ body: Buffer.from('cached-image'), contentType: 'image/png', cacheStatus: 'HIT' });
   });
@@ -127,6 +141,46 @@ describe('client resource and image proxy', () => {
     expect(mocks.manager.touch).toHaveBeenCalled();
     expect(mocks.manager.remove).toHaveBeenCalledOnce();
     expect(mocks.manager.localStreams.size).toBe(0);
+  });
+  const mediaGrant = (providerId = 3) => localPath(createClientResourceUrl(reqForUrl, user, 'https://provider.example/segment.m4s', {
+    kind: 'resource', channelId: 5, channelName: 'Channel', providerId
+  }));
+  it('denies a second channel when the user connection limit is reached before fetching', async () => {
+    activeUser.max_connections = 1;
+    mocks.manager.getUserConnectionCount.mockResolvedValue(1);
+    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    expect((await request(app).get(mediaGrant())).status).toBe(403);
+    expect(mocks.fetchSafe).not.toHaveBeenCalled();
+    expect(mocks.manager.add).not.toHaveBeenCalled();
+  });
+  it('denies a full bound provider instead of silently switching the grant to a sibling account', async () => {
+    providerPool.push({ id: 4, url: channel.provider_url, max_connections: 10 });
+    mocks.manager.getProviderConnectionCount.mockImplementation(async id => id === 3 ? 1 : 0);
+    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    expect((await request(app).get(mediaGrant())).status).toBe(403);
+    expect(mocks.fetchSafe).not.toHaveBeenCalled();
+    expect(mocks.manager.add).not.toHaveBeenCalled();
+  });
+  it('reuses the same active session at both limits for parallel segments', async () => {
+    activeUser.max_connections = 1;
+    mocks.manager.isSessionActive.mockResolvedValue(true);
+    mocks.manager.getUserConnectionCount.mockResolvedValue(1);
+    mocks.manager.getProviderConnectionCount.mockResolvedValue(1);
+    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    expect((await request(app).get(mediaGrant())).status).toBe(200);
+    expect(mocks.manager.getProviderConnectionCount).not.toHaveBeenCalled();
+  });
+  it('accounts for the sibling provider encoded in the grant rather than the catalog provider', async () => {
+    providerPool.push({ id: 4, url: channel.provider_url, max_connections: 2 });
+    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    expect((await request(app).get(mediaGrant(4))).status).toBe(200);
+    expect(mocks.manager.add.mock.calls[0][5]).toBe(4);
+    expect(mocks.manager.getProviderConnectionCount).toHaveBeenCalledWith(4);
+  });
+  it('rejects a grant if its provider account is no longer an authorized candidate', async () => {
+    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    expect((await request(app).get(mediaGrant(99))).status).toBe(403);
+    expect(mocks.fetchSafe).not.toHaveBeenCalled();
   });
   it('prunes only for administrators', async () => {
     mocks.clearImageCache.mockResolvedValue(3);

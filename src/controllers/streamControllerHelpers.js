@@ -263,6 +263,29 @@ export async function ensureUserConnectionAvailable(user, reqIp, sessionName, pr
   return active < user.max_connections;
 }
 
+export async function reserveGrantedResourceSession(connectionId, user, channelId, providerId, req, res, sessionName) {
+  const channel = getChannel(channelId, user.id);
+  const provider = channel && getProviderCandidates(user.id, channel).find(candidate => Number(candidate.id) === Number(providerId));
+  if (!provider || !shareGuestAllowed(user, channel)) {
+    res.status(403).send('Resource provider is no longer authorized');
+    return false;
+  }
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, provider.id)) {
+    res.status(403).send('Max connections reached');
+    return false;
+  }
+  // A grant already contains this account's upstream URL and headers. Switching
+  // accounts here would charge a different provider than the one being used.
+  if (!await streamManager.isSessionActive(user.id, req.ip, sessionName, provider.id) && provider.max_connections > 0 &&
+      await streamManager.getProviderConnectionCount(provider.id) >= provider.max_connections) {
+    res.status(403).send('Provider max connections reached');
+    return false;
+  }
+  if (res.destroyed) return false;
+  await streamManager.add(connectionId, user, sessionName, req.ip, res, provider.id, { dedupe: false });
+  return true;
+}
+
 export function applyProviderToChannel(channel, provider) {
   channel.provider_id = provider.id;
   channel.provider_url = provider.url;

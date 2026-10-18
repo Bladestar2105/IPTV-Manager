@@ -122,7 +122,11 @@ export async function resolveClientResource(req) {
     }
     const parsed = httpUrl(url);
     if (!parsed) return null;
-    return { ...payload, url: parsed.href, user: authorizedUser, providerId: channel?.provider_id || payload.providerId };
+    return {
+      ...payload, url: parsed.href,
+      user: { ...authorizedUser, max_connections: user.max_connections },
+      providerId: payload.currentIcon ? channel?.provider_id : payload.providerId,
+    };
   } catch { return null; }
 }
 
