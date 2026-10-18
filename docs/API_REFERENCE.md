@@ -590,6 +590,9 @@ to the client. Manifest cookies retain Domain, Path, Secure and expiry rules in
 an encrypted cookie jar and are selected separately for every dependency and
 redirect. Authorization and custom provider headers are limited to their
 originating HTTP origin; only standard playback/negotiation headers cross origins.
+Explicitly configured Cookie headers cover all paths on their upstream host;
+cookies received through Set-Cookie retain their declared path scope. License
+POST redirects use GET after 301/302/303, while 307/308 retain the POST body.
 The cookie jar uses `tough-cookie` for standard scope and public-suffix handling.
 Optional content steering is removed; unsupported external
 protocols fail closed. DASH's resolve-to-zero XLink sentinel is preserved without

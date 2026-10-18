@@ -155,6 +155,34 @@ describe('fetchSafe', () => {
     }
   });
 
+  it.each([
+    [301, 'POST', 'GET'], [302, 'POST', 'GET'], [303, 'POST', 'GET'], [303, 'PUT', 'GET'], [303, 'DELETE', 'GET'],
+    [307, 'POST', 'POST'], [308, 'POST', 'POST'], [301, 'PUT', 'PUT'], [302, 'PUT', 'PUT'],
+    [303, 'GET', 'GET'], [303, 'HEAD', 'HEAD'],
+  ])('applies fetch method and body semantics for %i redirect of %s to %s', async (status, method, expectedMethod) => {
+    helpers.isSafeUrl.mockResolvedValue(true);
+    fetch.mockResolvedValueOnce({ status, headers: { get: name => name === 'location' ? '/redirected' : null }, body: { destroy: vi.fn() } })
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
+    const bodyHeaders = {
+      'Content-Type': 'application/octet-stream', 'content-LENGTH': '3', 'Content-Encoding': 'gzip',
+      'Content-Language': 'en', 'Content-Location': '/original', 'Transfer-Encoding': 'chunked',
+    };
+    const options = { method, headers: { ...bodyHeaders, Accept: 'application/octet-stream', Authorization: 'Bearer secret' },
+      ...(!['GET', 'HEAD'].includes(method) ? { body: Buffer.from([0, 1, 255]) } : {}),
+    };
+    await fetchSafe('https://panel.example.com/original', options);
+    const redirected = fetch.mock.calls[1][1];
+    expect(redirected.method).toBe(expectedMethod);
+    const headers = new Headers(redirected.headers);
+    expect(headers.get('accept')).toBe('application/octet-stream');
+    expect(headers.get('authorization')).toBe('Bearer secret');
+    const converted = method !== expectedMethod;
+    if (converted) expect(redirected).not.toHaveProperty('body');
+    else expect(redirected.body).toEqual(options.body);
+    for (const [name, value] of Object.entries(bodyHeaders)) expect(headers.get(name)).toBe(converted ? null : value);
+    expect(options.headers).toMatchObject(bodyHeaders);
+  });
+
   it('should handle relative redirects', async () => {
     const initialUrl = 'http://example.com/path';
     const relativeRedirect = '/new-path';

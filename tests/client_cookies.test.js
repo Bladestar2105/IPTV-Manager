@@ -38,13 +38,24 @@ describe('scoped upstream cookie propagation', () => {
   it('binds explicit Cookie and authorization to their original upstream scope', () => {
     const context = cookies.createUpstreamContext({ cOoKiE: 'session=initial', Authorization: 'Bearer secret', 'Proxy-Authorization': 'Basic secret' }, 'https://panel.example.com/live/main.m3u8');
     expect(header(context, 'https://panel.example.com/live/child.m3u8')).toBe('session=initial');
-    expect(header(context, 'https://panel.example.com/other/key')).toBeNull();
+    expect(header(context, 'https://panel.example.com/segments/chunk.ts')).toBe('session=initial');
+    expect(header(context, 'https://panel.example.com/keys/key')).toBe('session=initial');
     expect(header(context, 'http://panel.example.com/live/chunk.ts')).toBeNull();
     const foreign = new Headers(cookies.upstreamRequestHeaders(context, 'https://cdn.example.com/live/chunk.ts'));
     expect(foreign.get('cookie')).toBeNull();
     expect(foreign.get('authorization')).toBeNull();
     expect(foreign.get('proxy-authorization')).toBeNull();
     expect(new Headers(cookies.upstreamRequestHeaders(context, 'https://panel.example.com/live/chunk.ts')).get('authorization')).toBe('Bearer secret');
+  });
+
+  it('retains declared response-cookie paths while explicit Cookie headers work on sibling paths', () => {
+    const source = 'https://panel.example.com/live/main.m3u8';
+    const context = cookies.withUpstreamCookies({ Cookie: 'explicit=credential' }, response(source, ['restricted=one; Path=/live; Secure']), source);
+    expect(header(context, 'https://panel.example.com/live/child.m3u8')).toContain('restricted=one');
+    expect(header(context, 'https://panel.example.com/segments/chunk.ts')).toBe('explicit=credential');
+    expect(header(context, 'https://panel.example.com/keys/key')).toBe('explicit=credential');
+    expect(header(context, 'http://panel.example.com/keys/key')).toBeNull();
+    expect(header(context, 'https://cdn.example.com/keys/key')).toBeNull();
   });
 
   it('forwards only safe playback headers across origins while preserving custom credentials on their origin', () => {

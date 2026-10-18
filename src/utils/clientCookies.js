@@ -15,9 +15,8 @@ export function createUpstreamContext(headers, sourceUrl, cookieJar = null, head
     if (name.toLowerCase() !== 'cookie') { next[name] = value; continue; }
     if (!seedCookies) continue;
     const source = new URL(sourceUrl);
-    const cookiePath = source.pathname.slice(0, source.pathname.lastIndexOf('/') + 1) || '/';
     for (const pair of String(value).split(';')) {
-      jar.setCookieSync(`${pair.trim()}; Path=${cookiePath}${source.protocol === 'https:' ? '; Secure' : ''}`, source.href, { ignoreError: true });
+      jar.setCookieSync(`${pair.trim()}; Path=/${source.protocol === 'https:' ? '; Secure' : ''}`, source.href, { ignoreError: true });
     }
   }
   return { headers: next, cookieJar: jar.serializeSync(), headerOrigin };

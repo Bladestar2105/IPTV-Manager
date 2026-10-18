@@ -155,7 +155,16 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
       }
       disarm();
       const nextContext = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin);
-      return await fetchSafe(nextUrl, { ...options, ...nextContext }, redirectCount + 1, effectiveDeadline);
+      const nextOptions = { ...options, ...nextContext };
+      const method = String(options.method || 'GET').toUpperCase();
+      if (([301, 302].includes(response.status) && method === 'POST') ||
+          (response.status === 303 && !['GET', 'HEAD'].includes(method))) {
+        nextOptions.method = 'GET';
+        delete nextOptions.body;
+        nextOptions.headers = Object.fromEntries(Object.entries(nextOptions.headers).filter(([name]) =>
+          !/^(?:content-(?:length|type|encoding|language|location)|transfer-encoding)$/i.test(name)));
+      }
+      return await fetchSafe(nextUrl, nextOptions, redirectCount + 1, effectiveDeadline);
     }
 
     response.upstreamCookieJar = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin).cookieJar;
