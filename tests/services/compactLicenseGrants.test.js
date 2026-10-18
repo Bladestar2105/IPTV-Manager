@@ -49,7 +49,7 @@ it('persists opaque encrypted grants, deduplicates repeat PSSH, and survives fre
   const script = `import { resolveCompactLicenseResource } from './src/services/clientResourceService.js';
     const resource = await resolveCompactLicenseResource({ params: { id: ${JSON.stringify(new URL(url).pathname.split('/').pop())} }, ip: '203.0.113.1', headers: {} });
     console.log(JSON.stringify({ kind: resource?.kind, url: resource?.url }));`;
-  const output = execFileSync('rtk', ['proxy', 'node', '--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, DATA_DIR: path.dirname(DB_PATH) } });
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, DATA_DIR: path.dirname(DB_PATH) } });
   expect(JSON.parse(output.trim().split('\n').pop())).toEqual({ kind: 'license', url: 'https://provider.test/license?secret=private' });
 }, 20000);
 
