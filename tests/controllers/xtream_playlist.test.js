@@ -33,7 +33,8 @@ vi.mock('../../src/services/logoResolver.js', () => ({
   loadEpgLogosCache: vi.fn(),
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val), // Simple pass-through for test
 }));
 
@@ -86,6 +87,8 @@ describe('xtreamController - playerPlaylist', () => {
       stream_type: 'movie',
       mime_type: 'mp4',
       category_name: 'Action',
+      drm_license_type: 'com.widevine.alpha',
+      drm_license_key: 'https://provider.test/license|Content-Type=application%2Fjson&Authorization=private-token|R{SSM}|JBlicense',
       metadata: '{}',
       plot: 'Line 1\nLine 2', // Newline
       cast: 'Actor A',
@@ -108,5 +111,23 @@ describe('xtreamController - playerPlaylist', () => {
     expect(output).toContain('rating="8.5"'); // Numeric cast to string
     expect(output).toContain('duration="120"'); // Numeric cast to string
     expect(output).toContain('cast="Actor A"');
+    expect(output).toContain('#KODIPROP:inputstream.adaptive.license_key=http://localhost/');
+    expect(output).not.toContain('https://provider.test');
+    expect(output).not.toContain('private-token');
+    expect(output).toContain('||R{SSM}|JBlicense');
   });
+  it.each(['https://provider.test/extra', 'https%3A%2F%2Fprovider.test%2Fextra', '//provider.test/extra'])(
+    'rejects a license transform that embeds an external resource: %s', async suffix => {
+      getXtreamUser.mockResolvedValue({ id: 1 });
+      mockDb.prepare.mockReturnValue({ iterate: () => [{
+        user_channel_id: 100, name: 'Movie', stream_type: 'movie', mime_type: 'mp4',
+        drm_license_key: `https://provider.test/license||${suffix}`,
+      }] });
+      await playerPlaylist(req, res);
+      const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
+      expect(output).toContain('#KODIPROP:inputstream.adaptive.license_key=\n');
+      expect(output).not.toContain('provider.test');
+    }
+  );
+
 });

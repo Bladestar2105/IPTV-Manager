@@ -65,7 +65,8 @@ vi.mock('../src/config/constants.js', () => ({
     DEFAULT_USER_AGENT: 'TestAgent',
     BCRYPT_ROUNDS: 1,
     DATA_DIR: '/tmp',
-    EPG_CACHE_DIR: '/tmp/epg'
+    EPG_CACHE_DIR: '/tmp/epg',
+    EPG_DB_PATH: ':memory:'
 }));
 
 // Mock fluent-ffmpeg module

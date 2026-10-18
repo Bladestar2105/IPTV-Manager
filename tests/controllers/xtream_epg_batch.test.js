@@ -34,7 +34,8 @@ vi.mock('../../src/services/streamManager.js', () => ({
   },
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val),
 }));
 

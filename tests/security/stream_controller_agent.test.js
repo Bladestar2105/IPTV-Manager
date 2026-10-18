@@ -191,7 +191,7 @@ describe('Stream Controller Security', () => {
 
     it('proxySegment should use an agent with safeLookup for fetch', async () => {
          const req = {
-            query: { data: '{"u": "http://example.com/seg.ts"}' }, // Mock decrypt just echoes this
+            query: { data: '{"u": "http://example.com/seg.ts", "i": 1}' }, // Mock decrypt just echoes this
             on: vi.fn()
         };
         const res = {

@@ -234,6 +234,7 @@ export function redactUrl(url) {
 
     // 2. Redact share-management tokens while preserving any query string.
     redacted = redacted.replace(/(\/api\/shares\/)[^/?#]+/gi, '$1********');
+    redacted = redacted.replace(/(\/api\/proxy\/resource\/)[^/?#]+/gi, '$1********');
 
     // Public share slugs are bearer credentials too.
     redacted = redacted.replace(/^((?:https?:\/\/[^/?#]+)?\/share\/)[^/?#]+/i, '$1********');
@@ -247,7 +248,7 @@ export function redactUrl(url) {
     // reason: …`. With the credential as the last parameter the greedy form ran
     // past the URL and swallowed the reason, so ECONNREFUSED, ENOTFOUND and
     // "certificate has expired" all collapsed into the same string.
-    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics)=[^&\s]*/gi, '$1$2=********');
+    redacted = redacted.replace(/([?&])(password|token|access_token|mac|metrics|data|base)=[^&\s]*/gi, '$1$2=********');
 
     return redacted;
   } catch {

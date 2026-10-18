@@ -5,10 +5,13 @@ import https from 'https';
 import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
+import { isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
 import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { resolveBudget } from '../utils/env.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
+import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { rewriteHlsManifest, rewriteDashManifest, isClientManifest } from '../utils/clientManifests.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
 import { formatXtreamTimeshiftStart, getEffectiveTimeshiftTimezone, isSupportedEpoch } from '../utils/timezone.js';
@@ -116,11 +119,15 @@ export const proxyMpd = async (req, res) => {
         return res.sendStatus(502);
     }
 
-    if (relativePath.endsWith('.mpd')) {
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || upstreamUrl) || ((!relativePath || relativePath.endsWith('.mpd')) ? 'dash' : null);
+    if (manifestKind) {
         const text = await readManifest(upstream);
-        const baseUrl = `${getBaseUrl(req)}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
-        let newText = text.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
-        res.setHeader('Content-Type', 'application/dash+xml');
+        const headersToForward = withUpstreamCookies(headers, upstream);
+        const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+        const newText = rewrite(text, upstream.url || upstreamUrl, (url, options) => createClientResourceUrl(req, user, url, {
+          kind: 'resource', headers: headersToForward, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+        }));
+        res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
         res.send(newText);
         streamManager.remove(connectionId);
         return;
@@ -276,48 +283,32 @@ export const proxyLive = async (req, res) => {
         return res.sendStatus(502);
     }
 
-    const cookies = upstream.headers.get('set-cookie');
-
-    if (reqExt === 'm3u8') {
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || successfulUrl) || (reqExt === 'm3u8' ? 'hls' : null);
+    if (manifestKind) {
       const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
-      const headersToForward = { ...fetchHeaders };
-      if (cookies) headersToForward['Cookie'] = cookies;
+      const headersToForward = withUpstreamCookies(fetchHeaders, upstream);
 
       // Optimization: Encrypt headers and safe-check once
       const basePayload = { h: headersToForward, s: isProviderSafe };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
-      const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
-        const line = match.trim();
-        if (!line) return match;
-        try {
-          const absoluteUrl = new URL(line, baseUrl).toString();
-          // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
-          const encrypted = encrypt(JSON.stringify(payload));
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
-        } catch {
-          return match;
-        }
-      }).replace(/URI="([^"]+)"/g, (match, p1) => {
-        try {
-          const absoluteUrl = new URL(p1, baseUrl).toString();
-          // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
-          const encrypted = encrypt(JSON.stringify(payload));
-          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
-        } catch {
-          return match;
-        }
+      const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+      const newText = rewrite(text, baseUrl, (absoluteUrl, options) => {
+        if (manifestKind === 'dash') return createClientResourceUrl(req, user, absoluteUrl, {
+          kind: 'resource', headers: headersToForward, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+        });
+        const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, i: channel.user_channel_id || channel.id, v: options?.hlsVariables };
+        const encrypted = encrypt(JSON.stringify(payload));
+        return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
       });
 
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
@@ -379,6 +370,8 @@ export const proxySegment = async (req, res) => {
   const connectionId = crypto.randomUUID();
   let channelName = null;
   let providerId = 0;
+  let channelId = null;
+  let hlsVariables = {};
 
   try {
     const user = await getXtreamUser(req);
@@ -398,6 +391,7 @@ export const proxySegment = async (req, res) => {
     };
 
     let isOriginSafe = true;
+    if (req.headers?.range) headers.Range = req.headers.range;
 
     // Handle 'base' param for optimized static headers/settings
     if (req.query.base) {
@@ -420,6 +414,8 @@ export const proxySegment = async (req, res) => {
             if (payload.u) targetUrl = payload.u;
             if (payload.c) channelName = payload.c;
             if (payload.p) providerId = payload.p;
+            if (payload.i) channelId = payload.i;
+            if (payload.v) hlsVariables = payload.v;
             // Merge per-segment overrides (if any, legacy support)
             if (payload.h) Object.assign(headers, payload.h);
             if (payload.s !== undefined) {
@@ -431,6 +427,14 @@ export const proxySegment = async (req, res) => {
     }
 
     if (!targetUrl) return res.sendStatus(400);
+    if (channelId) {
+      const channel = getChannel(Number(channelId), user.id);
+      if (!channel || !shareGuestAllowed(user, channel)) return res.sendStatus(403);
+    } else {
+      // Old grants cannot prove channel ownership; clients must reload the playlist.
+
+      return res.sendStatus(403);
+    }
 
     if (isOriginSafe) {
         if (!(await isSafeUrl(targetUrl))) {
@@ -469,6 +473,24 @@ export const proxySegment = async (req, res) => {
        return res.sendStatus(upstream.status);
     }
 
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || targetUrl);
+    if (manifestKind) {
+      const text = await readManifest(upstream);
+      const nextHeaders = withUpstreamCookies(headers, upstream);
+      const baseEncoded = encodeURIComponent(encrypt(JSON.stringify({ h: nextHeaders, s: isOriginSafe })));
+      const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+      const mapUrl = (url, options) => {
+        if (manifestKind === 'dash') return createClientResourceUrl(req, user, url, { kind: 'resource', headers: nextHeaders, channelName, providerId, channelId, ...options });
+        const data = encodeURIComponent(encrypt(JSON.stringify({ u: url, c: channelName, p: providerId, i: channelId, v: options?.hlsVariables })));
+        return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${data}&base=${baseEncoded}${tokenParam}`;
+      };
+      const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+      res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(rewrite(text, upstream.url || targetUrl, mapUrl, hlsVariables));
+      return;
+    }
+
     if (channelName && providerId) {
         // Technically segment proxy is mostly stateless and shouldn't hit limits,
         // but it registers as a stream. It's better not to change providerId mid-stream,
@@ -478,6 +500,12 @@ export const proxySegment = async (req, res) => {
         await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId, { dedupe: false });
     }
 
+    res.status(upstream.status);
+    for (const [name, header] of [['content-range', 'Content-Range'], ['accept-ranges', 'Accept-Ranges']]) {
+      const value = upstream.headers.get(name);
+      if (value) res.setHeader(header, value);
+    }
+
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
 
@@ -485,6 +513,7 @@ export const proxySegment = async (req, res) => {
     if (contentLength) res.setHeader('Content-Length', contentLength);
 
     upstream.body.pipe(res);
+    if (channelName && providerId) attachStreamHeartbeat(upstream.body, connectionId);
 
     upstream.body.on('error', (err) => {
       if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
@@ -610,37 +639,32 @@ export const proxyTimeshift = async (req, res) => {
         return res.sendStatus(502);
     }
 
-    if (reqExt === 'm3u8') {
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || successfulUrl) || (reqExt === 'm3u8' ? 'hls' : null);
+    if (manifestKind) {
       const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
 
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
-      const headersToForward = { ...headers };
-      const cookies = upstream.headers.get('set-cookie');
-      if (cookies) headersToForward['Cookie'] = cookies;
+      const headersToForward = withUpstreamCookies(headers, upstream);
 
       // Optimization: Encrypt headers and safe-check once
       const basePayload = { h: headersToForward, s: isProviderSafe };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
-      const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
-        const line = match.trim();
-        if (!line) return match;
-        try {
-          const absoluteUrl = new URL(line, baseUrl).toString();
-          // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
-          const encrypted = encrypt(JSON.stringify(payload));
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
-        } catch {
-          return match;
-        }
+      const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+      const newText = rewrite(text, baseUrl, (absoluteUrl, options) => {
+        if (manifestKind === 'dash') return createClientResourceUrl(req, user, absoluteUrl, {
+          kind: 'resource', headers: headersToForward, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+        });
+        const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, i: channel.user_channel_id || channel.id, v: options?.hlsVariables };
+        const encrypted = encrypt(JSON.stringify(payload));
+        return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
       });
 
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');

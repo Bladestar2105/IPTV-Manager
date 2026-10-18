@@ -1,4 +1,9 @@
 import crypto from 'crypto';
+import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
+import { readBodyWithLimit } from '../utils/network.js';
+import { resolveBudget } from '../utils/env.js';
 import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -24,6 +29,25 @@ import {
   sendTrackInfo,
   shareGuestAllowed
 } from './streamControllerHelpers.js';
+
+const MANIFEST_BODY_TIMEOUT_MS = resolveBudget(process.env.MANIFEST_BODY_TIMEOUT_MS, 30000, 1000, Number.MAX_SAFE_INTEGER, 'MANIFEST_BODY_TIMEOUT_MS');
+const MANIFEST_MAX_BYTES = resolveBudget(process.env.MANIFEST_MAX_BYTES, 32 * 1024 * 1024, 64 * 1024, Number.MAX_SAFE_INTEGER, 'MANIFEST_MAX_BYTES');
+
+async function sendVodManifest(req, res, upstream, sourceUrl, user, headers, session) {
+  const kind = isClientManifest(upstream.headers.get('content-type'), upstream.url || sourceUrl);
+  if (!kind) return false;
+  const text = await readBodyWithLimit(upstream, { timeoutMs: MANIFEST_BODY_TIMEOUT_MS, maxBytes: MANIFEST_MAX_BYTES });
+  const nextHeaders = withUpstreamCookies(headers, upstream);
+  delete nextHeaders.Range;
+  const rewrite = kind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+  const output = rewrite(text, upstream.url || sourceUrl, (url, options) => createClientResourceUrl(req, user, url, {
+    kind: 'resource', headers: nextHeaders, ...session, ...options
+  }));
+  res.setHeader('Content-Type', kind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(output);
+  return true;
+}
 
 export const proxyMovie = async (req, res) => {
   const connectionId = crypto.randomUUID();
@@ -140,6 +164,12 @@ export const proxyMovie = async (req, res) => {
             redirect: 'follow'
         });
         const upstream = result.response;
+        if (await sendVodManifest(req, res, upstream, result.successfulUrl || remoteUrl, user, headers, {
+          channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id,
+        })) {
+          cleanup();
+          return;
+        }
 
         res.status(upstream.status);
 
@@ -315,6 +345,12 @@ export const proxySeries = async (req, res) => {
             redirect: 'follow'
         });
         const upstream = result.response;
+        if (await sendVodManifest(req, res, upstream, result.successfulUrl || remoteUrl, user, headers, {
+          channelName: sessionName, providerId: availableProvider.id, channelId: seriesEpisode.user_channel_id,
+        })) {
+          cleanup();
+          return;
+        }
 
         res.status(upstream.status);
 

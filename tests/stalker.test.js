@@ -448,6 +448,8 @@ describe('Stalker/MAG portal flow', () => {
         cur_page: 1
       });
       expect(response.body.js.data.map(channel => channel.id)).toEqual(firstPageIds);
+      expect(response.body.js.data[0].logo).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
+      expect(response.body.js.data[0].logo).not.toContain('provider');
     }
 
     const listedIds = new Set();

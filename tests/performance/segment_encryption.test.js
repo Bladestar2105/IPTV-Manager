@@ -6,6 +6,13 @@ import db, { initDb } from '../../src/database/db.js';
 import { encrypt } from '../../src/utils/crypto.js';
 import fetch from 'node-fetch';
 
+// The grant still uses the real encryption and HTTP route; channel scope is
+// covered separately by streamController_perf's ownership/revocation checks.
+vi.mock('../../src/controllers/streamControllerHelpers.js', async importOriginal => ({
+    ...(await importOriginal()),
+    getChannel: vi.fn(id => Number(id) === 1 ? { user_channel_id: 1 } : null),
+}));
+
 // Mock isSafeUrl
 vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
     const actual = await importOriginal();
@@ -82,6 +89,7 @@ describe('Segment Encryption Format', () => {
         const targetUrl = 'http://example.com/legacy.ts';
         const payload = {
             u: targetUrl,
+            i: 1,
             h: { 'X-Custom-Header': 'LegacyHeader' },
             s: true
         };
@@ -108,7 +116,8 @@ describe('Segment Encryption Format', () => {
         const baseEncrypted = encrypt(JSON.stringify(basePayload));
 
         const dataPayload = {
-            u: targetUrl
+            u: targetUrl,
+            i: 1
         };
         const dataEncrypted = encrypt(JSON.stringify(dataPayload));
 

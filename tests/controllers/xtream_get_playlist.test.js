@@ -45,7 +45,8 @@ vi.mock('../../src/services/logoResolver.js', () => ({
   loadEpgLogosCache: vi.fn(),
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val),
 }));
 
@@ -107,7 +108,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
   };
 
   const episodes = [
-    { remote_episode_id: 123, season: 1, episode_num: 1, container_extension: 'mkv', logo: 'ep1.png' },
+    { remote_episode_id: 123, season: 1, episode_num: 1, container_extension: 'mkv', logo: 'https://provider.test/ep1.png' },
     { remote_episode_id: 124, season: 1, episode_num: 2, container_extension: 'mkv', logo: '' },
   ];
 
@@ -186,8 +187,9 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).not.toContain('/series/u/p/42.');
 
     // Episode logo used when present, series logo as fallback
-    expect(output).toContain('tvg-logo="ep1.png"');
-    expect(output.match(/tvg-logo="series\.png"/g).length).toBeGreaterThanOrEqual(1);
+    expect(output).not.toContain('https://provider.test');
+    expect(output).toContain('tvg-logo="http://localhost/');
+    expect(output).not.toContain('tvg-logo="series.png"');
 
     // Category preserved on episode entries
     expect(output).toContain(`group-title="${playableSeries.categoryTitle}",${playableSeries.name} S01 E01`);

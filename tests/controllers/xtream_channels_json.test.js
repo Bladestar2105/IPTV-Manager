@@ -39,7 +39,8 @@ vi.mock('../../src/services/epgService.js', () => ({
   getEpgXmlForChannels: vi.fn(),
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val), // Simple pass-through for test
 }));
 
@@ -94,6 +95,8 @@ describe('xtreamController - playerChannelsJson', () => {
       stream_type: 'movie',
       mime_type: 'mp4',
       category_name: 'Action',
+      drm_license_type: 'com.widevine.alpha',
+      drm_license_key: 'https://provider.test/license|Content-Type=application%2Fjson&Authorization=secret-token|R{SSM}|JBlicense',
       metadata: '{}',
       plot: 'Line 1\nLine 2', // Newline
       cast: 'Actor A',
@@ -119,6 +122,10 @@ describe('xtreamController - playerChannelsJson', () => {
     expect(output[0].cast).toBe('Actor A');
     expect(output[0].type).toBe('movie');
     expect(output[0].url).toContain('/movie/token/auth/100.mp4');
+    expect(output[0].drm.license_key).toMatch(/^http:\/\/localhost\//);
+    expect(outputStr).not.toContain('https://provider.test');
+    expect(outputStr).not.toContain('secret-token');
+    expect(output[0].drm.license_key).toContain('||R{SSM}|JBlicense');
   });
 
   it('should expose DASH live streams as MPD manifest URLs', async () => {

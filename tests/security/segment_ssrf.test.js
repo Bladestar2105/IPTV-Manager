@@ -1,10 +1,17 @@
 
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
 import app from '../../src/app.js';
 import db, { initDb } from '../../src/database/db.js';
 import { encrypt } from '../../src/utils/crypto.js';
 import * as helpers from '../../src/utils/helpers.js';
+import fetch from 'node-fetch';
+
+// Keep requests authorized so these checks exercise network protection.
+vi.mock('../../src/controllers/streamControllerHelpers.js', async importOriginal => ({
+    ...(await importOriginal()),
+    getChannel: vi.fn(id => Number(id) === 1 ? { user_channel_id: 1 } : null),
+}));
 
 // Mock isSafeUrl to return true for public IPs and false for private
 vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
@@ -53,6 +60,8 @@ describe('SSRF Protection in proxySegment', () => {
     let userId;
     const username = 'ssrf_test_user';
 
+    beforeEach(() => vi.clearAllMocks());
+
     beforeAll(async () => {
         initDb(true);
 
@@ -85,6 +94,7 @@ describe('SSRF Protection in proxySegment', () => {
         const targetUrl = 'http://127.0.0.1:8080/private-data';
         const payload = {
             u: targetUrl,
+            i: 1,
             h: {},
             s: true // Simulating public origin or default
         };
@@ -95,12 +105,15 @@ describe('SSRF Protection in proxySegment', () => {
             .query({ token: userToken, data: encrypted });
 
         expect(res.status).toBe(403);
+        expect(helpers.isSafeUrl).toHaveBeenCalledWith(targetUrl);
+        expect(fetch).not.toHaveBeenCalled();
     });
 
     it('should ALLOW access to public IP', async () => {
         const targetUrl = 'http://example.com/video.ts';
         const payload = {
             u: targetUrl,
+            i: 1,
             h: {},
             s: true
         };
@@ -111,6 +124,7 @@ describe('SSRF Protection in proxySegment', () => {
             .query({ token: userToken, data: encrypted });
 
         expect(res.status).toBe(200);
+        expect(fetch).toHaveBeenCalledWith(targetUrl, expect.any(Object));
     });
 
     it('should ALLOW access to private IP if origin is marked as unsafe (s: false)', async () => {
@@ -118,6 +132,7 @@ describe('SSRF Protection in proxySegment', () => {
         const targetUrl = 'http://127.0.0.1:8080/private-stream.ts';
         const payload = {
             u: targetUrl,
+            i: 1,
             h: {},
             s: false // Origin is unsafe/private
         };
@@ -128,5 +143,6 @@ describe('SSRF Protection in proxySegment', () => {
             .query({ token: userToken, data: encrypted });
 
         expect(res.status).toBe(200);
+        expect(fetch).toHaveBeenCalledWith(targetUrl, expect.any(Object));
     });
 });

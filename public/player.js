@@ -123,17 +123,16 @@ function escapeHtml(unsafe) {
 }
 
   function getProxiedUrl(url) {
-    if (!url) return '';
-
-    // Check if URL is already relative (local)
-    if (url.startsWith('/')) return url;
-
-    // Always proxy external URLs (HTTP/HTTPS) to leverage caching and avoid mixed content
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      var authParams = getAuthParams();
-      return '/api/proxy/image?url=' + encodeURIComponent(url) + '&' + authParams;
-    }
-    return url;
+    if (typeof url !== 'string' || !url.trim()) return '';
+    url = url.trim();
+    if (/^data:image\/(?:png|gif|jpe?g|webp|avif|bmp|x-icon);base64,[a-z0-9+/=\s]+$/i.test(url)) return url;
+    try {
+      const parsed = new URL(url, window.location.href);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+      if (parsed.origin === window.location.origin) return url;
+      if (!token && !(username && password)) return '';
+      return '/api/proxy/image?url=' + encodeURIComponent(parsed.href) + '&' + getAuthParams();
+    } catch { return ''; }
   }
 
   // ─── Cast Integration ───

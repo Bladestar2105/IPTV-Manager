@@ -547,7 +547,39 @@ logs.
 ## Proxy
 
 - `GET /api/proxy/image?url=<url>&provider_id=<id>` (`provider_id` optional)
+- `GET|HEAD /api/proxy/resource/:data/:filename`
+- `POST /api/proxy/resource/:data/:filename` (license grants only; raw body up to 1 MiB)
 - `DELETE /api/proxy/picons`
+
+Client-facing artwork URLs in Xtream, M3U, player JSON, XMLTV and Stalker/MAG
+responses use absolute Manager URLs. Resource grants encrypt the upstream URL
+and required upstream headers; they authorize only that resource. Clients use
+these ordinary HTTP URLs without custom headers or a WebUI login. Grants are
+checked against the active account, token version, expiry, region lock and any
+originating share/session token. Channel grants also check the current channel
+assignment and share scope. Treat opaque resource URLs as bearer credentials.
+
+Channel icon grants resolve the current catalog/EPG icon on each request, so a
+provider-sync URL change also takes effect for clients keeping an older icon
+URL. Image files are revalidated on every request using upstream `ETag` and
+`Last-Modified`, or downloaded again when validators are unavailable. Responses
+use `Cache-Control: private, no-cache, must-revalidate`; `X-Cache` is `MISS`,
+`HIT` (upstream 304), `REVALIDATED` (replacement), or `STALE` (last good image
+after an upstream failure). Parallel requests within a worker share one refresh.
+
+HLS and DASH resources, including nested manifests, keys, initialization data,
+subtitles and HTTP DRM license URLs, stay behind the Manager. License POST
+challenges and responses are relayed as bytes; upstream credentials remain
+inside the grant. Kodi challenge/response transform suffixes remain available
+to the client. Optional content steering is removed; unsupported external
+protocols fail closed. Existing HLS playlists issued before channel-scoped
+grants must be reloaded once after upgrading.
+Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
+through with dependencies that clients could load directly.
+
+The legacy image route remains authenticated for WebUI/player compatibility.
+Cache pruning requires an administrator. Provider configuration and authorized
+administrative import/export remain management data, not client playback URLs.
 
 ## Xtream and Player Compatibility
 

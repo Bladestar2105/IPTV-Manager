@@ -1,3 +1,4 @@
+import { createClientResourceUrl } from '../services/clientResourceService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -240,7 +241,11 @@ export const getCategoryChannels = (req, res) => {
         const epgLogo = getEpgLogo(epgId);
         if (epgLogo) logo = epgLogo;
       }
-      return { ...ch, logo };
+      const item = { ...ch, logo: createClientResourceUrl(req, req.user, logo, { kind: 'image' }) };
+      if (!req.user.is_admin && Number(req.user.provider_access) !== 1) {
+        for (const key of ['metadata', 'stream_url', 'direct_source', 'original_url', 'http_headers', 'drm']) delete item[key];
+      }
+      return item;
     });
 
     res.json(rowsWithLogos);

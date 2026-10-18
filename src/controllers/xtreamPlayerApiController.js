@@ -1,3 +1,4 @@
+import { createChannelIconUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
 import db from '../database/db.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -152,7 +153,7 @@ export const playerApi = async (req, res) => {
 
       const nowStr = now.toString();
       return streamJsonResponse(res, stmt, params, (ch, i) => {
-        let iconUrl = ch.logo || '';
+        const iconUrl = createChannelIconUrl(req, user, ch.user_channel_id);
         const displayName = ch.custom_name ? ch.custom_name : ch.name;
         return {
           num: i + 1,
@@ -205,7 +206,7 @@ export const playerApi = async (req, res) => {
           name: displayName,
           stream_type: 'movie',
           stream_id: Number(ch.user_channel_id),
-          stream_icon: ch.logo || '',
+          stream_icon: createChannelIconUrl(req, user, ch.user_channel_id),
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
           added: ch.added || nowStr,
@@ -259,7 +260,7 @@ export const playerApi = async (req, res) => {
           num: i + 1,
           name: displayName,
           series_id: Number(ch.user_channel_id),
-          cover: ch.logo || '',
+          cover: createChannelIconUrl(req, user, ch.user_channel_id),
           plot: ch.plot || '',
           cast: ch.cast || '',
           director: ch.director || '',
@@ -268,8 +269,8 @@ export const playerApi = async (req, res) => {
           last_modified: ch.added || nowStr,
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
-          backdrop_path: backdrop_path,
-          youtube_trailer: ch.youtube_trailer || '',
+          backdrop_path: rewriteClientMetadata(req, user, { backdrop_path }).backdrop_path,
+          youtube_trailer: rewriteClientMetadata(req, user, ch.youtube_trailer || ''),
           episode_run_time: ch.episode_run_time || '',
           category_id: String(ch.user_category_id)
         };
@@ -362,7 +363,12 @@ export const playerApi = async (req, res) => {
            })();
         }
 
-        return res.json(data);
+        if (data?.info) {
+          for (const key of ['cover', 'movie_image', 'stream_icon']) {
+            if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
+          }
+        }
+        return res.json(rewriteClientMetadata(req, user, data));
 
       } catch(e) {
          console.error('get_series_info error:', e);
@@ -410,7 +416,12 @@ export const playerApi = async (req, res) => {
             data.info.name = channel.custom_name;
         }
 
-        return res.json(data);
+        if (data?.info) {
+          for (const key of ['cover', 'movie_image', 'stream_icon']) {
+            if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
+          }
+        }
+        return res.json(rewriteClientMetadata(req, user, data));
 
       } catch(e) {
          console.error('get_vod_info error:', e);

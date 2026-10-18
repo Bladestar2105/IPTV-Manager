@@ -207,6 +207,12 @@ describe('getCookie', () => {
 });
 
 describe('redactUrl', () => {
+  it('redacts opaque image and manifest bearer grants', () => {
+    expect(redactUrl('https://manager.example/api/proxy/resource/encrypted-grant/image.png?tpl0=42'))
+      .toBe('https://manager.example/api/proxy/resource/********/image.png?tpl0=42');
+    expect(redactUrl('/live/segment/user/pass/seg.ts?data=encrypted-url&base=encrypted-headers'))
+      .toBe('/live/segment/user/********/seg.ts?data=********&base=********');
+  });
   it('stops at whitespace, so it cannot swallow the rest of a message', () => {
     // These strings are usually `request to <url> failed, reason: …`. With the
     // credential as the last query parameter, a greedy `[^&]*` ran past the URL

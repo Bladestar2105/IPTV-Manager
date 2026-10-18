@@ -208,6 +208,25 @@ until this is exercised on a real Proxmox host.
 
 ## Network and Proxy
 
+IPTV clients receive Manager URLs for artwork and dependent playback resources.
+No client-specific proxy setting is required. Configure the public Manager host
+and `TRUST_PROXY` correctly so generated absolute URLs are reachable by clients.
+The bundled browser UI restricts images, media and network requests to its own
+origin (plus inline images/blob media); external provider resources must use the
+Manager proxy.
+
+The image cache under `DATA_DIR/cache/picons` checks the provider on every
+request. It uses conditional requests where supported, atomically replaces
+changed images, and serves the last good file during upstream failures. A
+provider changing its icon URL is discovered by the normal catalog sync;
+changing image bytes at the same URL is discovered on the next image request.
+There is no permanent-file-hit mode or additional cache freshness setting.
+Upstream failure fallback can be identified through `X-Cache: STALE`.
+Images are limited to 5 MiB and a 30-second body-read budget. SVG is limited to
+self-contained static drawing elements; active SVG/external references and
+HTML responses are rejected. A client's independent image cache may still
+require a list refresh if it ignores HTTP cache directives.
+
 - `TRUST_PROXY`: Express trust proxy setting. Use this behind a reverse proxy
   that terminates HTTPS or forwards client IPs.
 - `ALLOWED_ORIGINS`: Comma-separated CORS allowlist. By default cross-origin

@@ -42,6 +42,15 @@ verification with the deployment's real catalogs after updating the image.
 
 EPG-logo cache and checkpoint regressions can be run with
 `npm test -- tests/epg_logo_cache.test.js tests/wal_maintenance.test.js`.
+
+Client resource proxy regressions cover opaque grants and revocation, live
+catalog icon resolution, disk-cache revalidation/fallback, nested HLS/DASH,
+license relaying and frontend same-origin image handling:
+
+```bash
+npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js
+```
+
 The cache tests use independent module instances with real SQLite connections,
 a 33,331-row catalog and a controlled clock; unchanged catalogs must avoid full
 rescans while committed changes still become visible. They also cover explicit

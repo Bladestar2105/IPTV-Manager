@@ -26,7 +26,8 @@ vi.mock('../../src/services/logoResolver.js', () => ({
   getEpgLogo: vi.fn(),
   loadEpgLogosCache: vi.fn(),
 }));
-vi.mock('../../src/utils/crypto.js', () => ({ decrypt: vi.fn(value => value) }));
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()), decrypt: vi.fn(value => value) }));
 vi.mock('../../src/utils/helpers.js', async importOriginal => ({
   ...(await importOriginal()),
   getBaseUrl: vi.fn(() => 'http://localhost'),
@@ -34,7 +35,7 @@ vi.mock('../../src/utils/helpers.js', async importOriginal => ({
 }));
 vi.mock('../../src/utils/network.js', async importOriginal => ({
   ...(await importOriginal()), fetchSafe: vi.fn() }));
-vi.mock('../../src/config/constants.js', () => ({ PORT: 3000 }));
+vi.mock('../../src/config/constants.js', () => ({ PORT: 3000, DATA_DIR: '/tmp' }));
 
 import { playerApi } from '../../src/controllers/xtreamController.js';
 import { getXtreamUser } from '../../src/services/authService.js';
@@ -77,10 +78,10 @@ describe('Xtream get_series_info episode authorization', () => {
     fetchSafe.mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
-        info: { name: 'Provider Series' },
+        info: { name: 'Provider Series', cover: 'https://provider.test/private.jpg', backdrop_path: ['https://provider.test/backdrop.jpg'] },
         episodes: {
           1: [
-            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10' },
+            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'https://provider.test/episode.jpg' } },
             { id: 'invalid', title: 'Invalid' },
           ],
         },
@@ -93,12 +94,14 @@ describe('Xtream get_series_info episode authorization', () => {
 
     const payload = res.json.mock.calls[0][0];
     expect(payload.info.name).toBe('Custom Series');
+    expect(JSON.stringify(payload)).not.toContain('https://provider.test');
+    expect(payload.episodes[1][0].direct_source).toBe('');
     expect(payload.episodes[1]).toHaveLength(1);
     expect(payload.episodes[1][0].id).toBe('900000321');
     expect(Number(payload.episodes[1][0].id)).toBeLessThan(2 ** 31);
     expect(insertAlias.run).toHaveBeenCalledWith(42, 'source:http://panel.test', 555, 123);
     expect(upsertEpisode.run).toHaveBeenCalledWith(
-      'source:http://panel.test', 555, 123, 1, 1, 'Pilot', 'mkv', '', '10'
+      'source:http://panel.test', 555, 123, 1, 1, 'Pilot', 'mkv', 'https://provider.test/episode.jpg', '10'
     );
     expect(mockDb.prepare.mock.calls.find(([sql]) => sql.includes('INSERT INTO provider_series_episodes'))[0])
       .toContain('ON CONFLICT(source_key, series_remote_id, remote_episode_id)');

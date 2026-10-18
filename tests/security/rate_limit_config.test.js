@@ -81,5 +81,9 @@ describe('rate limit configuration', () => {
     expect(csp).toContain("script-src 'self'");
     expect(csp).toContain("script-src-attr 'none'");
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).toContain("img-src 'self' data:");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("media-src 'self' blob:");
+    expect(csp).not.toMatch(/(?:img-src|connect-src|media-src)[^;]*https?:/);
   });
 });

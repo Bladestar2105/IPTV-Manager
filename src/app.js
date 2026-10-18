@@ -48,6 +48,9 @@ if (process.env.TRUST_PROXY) {
 app.use(securityHeaders);
 
 // Middleware
+// DRM requests contain opaque bytes, including JSON challenges whose exact
+// representation must reach the upstream server unchanged.
+app.use('/api/proxy/resource', express.raw({ type: () => true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : false,

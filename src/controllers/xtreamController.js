@@ -1,3 +1,4 @@
+import { createChannelIconUrl, createClientResourceUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
 import zlib from 'zlib';
 import db, { openDbConnection } from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -5,7 +6,6 @@ import { getEpgXmlForChannels } from '../services/epgService.js';
 import { channelsJsonCache } from '../services/cacheService.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
-import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 import {
   getOrCreateSeriesEpisodeAlias,
   prepareSeriesEpisodeAliases
@@ -21,6 +21,19 @@ import {
 } from './xtreamControllerUtils.js';
 export * from './xtreamControllerUtils.js';
 export { playerApi } from './xtreamPlayerApiController.js';
+
+function clientLicenseKey(req, user, value) {
+  if (!/^(?:https?:)?\/\//i.test(value)) return value;
+  const [url, headerQuery = '', ...transforms] = value.split('|');
+  const suffix = transforms.join('|');
+  let decodedSuffix;
+  try { decodedSuffix = decodeURIComponent(suffix); } catch { return ''; }
+  if (/(?:https?|ftp|rtsp|rtmp):|\/\//i.test(decodedSuffix) || /[\r\n\u0000]/.test(decodedSuffix)) return '';
+  const managerUrl = createClientResourceUrl(req, user, url, {
+    kind: 'license', headers: Object.fromEntries(new URLSearchParams(headerQuery))
+  });
+  return managerUrl && (transforms.length ? `${managerUrl}||${suffix}` : managerUrl);
+}
 
 export const getPlaylist = async (req, res) => {
   try {
@@ -106,7 +119,7 @@ export const getPlaylist = async (req, res) => {
     try {
     for (const ch of stmt.iterate(...params)) {
       const epgId = sanitizeM3uTag(ch.manual_epg_id || ch.epg_channel_id || '');
-      const logo = ch.logo || '';
+      const logo = createChannelIconUrl(req, user, ch.user_channel_id);
       const group = ch.category_name || '';
       const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
       const streamId = ch.user_channel_id;
@@ -138,7 +151,7 @@ export const getPlaylist = async (req, res) => {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
-            const epLogo = ep.logo ? sanitizeM3uTag(ep.logo) : safeLogo;
+            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image' })) : safeLogo;
             const episodeId = getOrCreateSeriesEpisodeAlias(
               episodeAliases,
               ch.user_channel_id,
@@ -250,7 +263,7 @@ export const xmltv = async (req, res) => {
     output.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
     // Use the generator to stream content
-    for await (const chunk of getEpgXmlForChannels(allowedIds)) {
+    for await (const chunk of getEpgXmlForChannels(allowedIds, logo => createClientResourceUrl(req, user, logo, { kind: 'image' }))) {
         output.write(chunk);
     }
 
@@ -271,15 +284,12 @@ export const playerChannelsJson = async (req, res) => {
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
     const host = getBaseUrl(req);
     // Cache key incorporates whether it's a guest, the user ID, the host string, and token
-    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${host}_${tokenParam}`;
+    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${user.token_version || 0}_${host}_${tokenParam}`;
 
     if (channelsJsonCache.has(cacheKey)) {
       res.setHeader('Content-Type', 'application/json');
       return res.send(channelsJsonCache.get(cacheKey));
     }
-
-    // Load EPG logos cache for logo resolution
-    loadEpgLogosCache();
 
     const stmt = db.prepare(`
       SELECT
@@ -342,11 +352,12 @@ export const playerChannelsJson = async (req, res) => {
       if (ch.drm_license_type || ch.drm_license_key) {
         item.drm = {};
         if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-        if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
+        if (ch.drm_license_key) item.drm.license_key = clientLicenseKey(req, user, ch.drm_license_key);
       }
 
       if (!isFirst) jsonOutput += ',';
-      jsonOutput += JSON.stringify(item);
+      const { url, ...metadata } = item;
+      jsonOutput += JSON.stringify({ ...rewriteClientMetadata(req, user, metadata), url });
       isFirst = false;
     };
 
@@ -372,11 +383,7 @@ export const playerChannelsJson = async (req, res) => {
 
           const group = ch.category_name || 'Uncategorized';
           const epgId = ch.manual_epg_id || ch.epg_channel_id;
-          let logo = ch.logo || '';
-          if (ch.use_mapped_epg_icon && epgId) {
-            const epgLogo = getEpgLogo(epgId);
-            if (epgLogo) logo = epgLogo;
-          }
+          const logo = createChannelIconUrl(req, user, ch.user_channel_id);
           let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
           if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
               name = name.replace(/[\r\n]+/g, ' ');
@@ -420,7 +427,7 @@ export const playerChannelsJson = async (req, res) => {
                appendItem({
                  name: `${name} ${episodeCode}`,
                  group,
-                 logo: ep.logo || logo,
+                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image' }) : logo,
                  epg_id: epgId,
                  url: seriesPrefix + episodeId + '.' + extension + tokenParam,
                  type: 'series',
@@ -538,7 +545,7 @@ export const playerPlaylist = async (req, res) => {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
-      const logo = ch.logo || '';
+      const logo = createChannelIconUrl(req, user, ch.user_channel_id);
       const name = ch.name || 'Unknown';
 
       let streamUrl;
@@ -585,7 +592,7 @@ export const playerPlaylist = async (req, res) => {
 
       if (ch.drm_license_type || ch.drm_license_key) {
           if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${String(ch.drm_license_type).replace(/[\r\n]+/g, ' ')}\n`;
-          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(ch.drm_license_key).replace(/[\r\n]+/g, ' ')}\n`;
+          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(clientLicenseKey(req, user, ch.drm_license_key)).replace(/[\r\n]+/g, ' ')}\n`;
       }
 
       buffer += streamUrl + '\n';
