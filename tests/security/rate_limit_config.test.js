@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { once } from 'node:events';
+
+const servers = [];
 
 async function loadSecurityMiddleware(env = {}) {
   vi.resetModules();
@@ -32,21 +35,27 @@ async function loadSecurityMiddleware(env = {}) {
   }
 }
 
-function appWith(middleware) {
+async function appWith(middleware) {
   const app = express();
   app.use(middleware);
   app.get('/limited', (req, res) => res.json({ ok: true }));
-  return app;
+  const server = app.listen(0, '127.0.0.1');
+  servers.push(server);
+  await once(server, 'listening');
+  return server;
 }
 
 describe('rate limit configuration', () => {
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map(server => new Promise((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve());
+    })));
     vi.resetModules();
   });
 
   it('allows IPTV API bursts above the previous 100 request default', async () => {
     const { apiLimiter } = await loadSecurityMiddleware();
-    const app = appWith(apiLimiter);
+    const app = await appWith(apiLimiter);
 
     for (let i = 0; i < 101; i += 1) {
       const response = await request(app).get('/limited');
@@ -59,7 +68,7 @@ describe('rate limit configuration', () => {
       API_RATE_LIMIT_MAX: '2',
       API_RATE_LIMIT_WINDOW_MS: '60000'
     });
-    const app = appWith(apiLimiter);
+    const app = await appWith(apiLimiter);
 
     expect((await request(app).get('/limited')).status).toBe(200);
     expect((await request(app).get('/limited')).status).toBe(200);
@@ -72,7 +81,7 @@ describe('rate limit configuration', () => {
 
   it('keeps script CSP strict while allowing the existing inline-style UI', async () => {
     const { securityHeaders } = await loadSecurityMiddleware();
-    const app = appWith(securityHeaders);
+    const app = await appWith(securityHeaders);
 
     const response = await request(app).get('/limited');
     const csp = response.headers['content-security-policy'];
