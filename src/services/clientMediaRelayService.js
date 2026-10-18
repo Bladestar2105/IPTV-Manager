@@ -10,8 +10,10 @@ function knownMp4(response, url) {
 }
 function knownMatroska(response, url) {
   const type = response.headers.get('content-type') || '';
-  return /^(?:video|audio|application)\/x-matroska(?:;|$)/i.test(type) ||
-    ((!type || /^application\/octet-stream(?:;|$)/i.test(type)) && /\.(?:mkv|mka)(?:[?#]|$)/i.test(url || ''));
+  if (/^(?:video|audio|application)\/x-matroska(?:;|$)/i.test(type)) return true;
+  if (type && !/^application\/octet-stream(?:;|$)/i.test(type)) return false;
+  try { return /\.(?:mkv|mka)$/i.test(new URL(response.url || url).pathname); }
+  catch { return false; }
 }
 const METADATA = new Set(['moov', 'moof', 'pssh', 'meta', 'dref', 'stsd', 'hdlr', 'rmra', 'rmda', 'rdrf', 'cmov']);
 const unsafe = () => new Error('Unable to inspect upstream media range safely');

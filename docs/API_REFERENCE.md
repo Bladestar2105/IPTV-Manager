@@ -657,8 +657,9 @@ Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
 reads, skipping media payload boxes. Without reliable range validation, Manager
 reads from byte zero and streams only the requested interval; distant seeks can
 therefore require extra upstream traffic. Matroska (`video/audio/application/x-matroska`,
-or `.mkv`/`.mka` with an absent or generic binary MIME type) is streamed unchanged
-through Manager, including range requests without validators. Its embedded metadata
+or an effective response URL pathname ending in `.mkv`/`.mka` with an absent or
+generic binary MIME type) is streamed unchanged through Manager, including range
+requests without validators. Its embedded metadata
 is not rewritten or checked for URLs. Explicit MP4 MIME types still receive MP4
 inspection even under a `.mkv` filename. Other unclassified binary ranges also
 require inspection when the provider supplies no trustworthy representation
