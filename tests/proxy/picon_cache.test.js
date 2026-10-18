@@ -34,10 +34,22 @@ function response(body, contentType, status = 200) {
   return { ok: status < 400, status, url: 'https://upstream.example/path/resource',
     headers: new Headers({ 'content-type': contentType, 'content-length': String(Buffer.byteLength(body)) }), body: Readable.from([Buffer.from(body)]) };
 }
+function mp4Box(type, payload = Buffer.alloc(0)) {
+  const result = Buffer.alloc(8 + payload.length);
+  result.writeUInt32BE(result.length); result.write(type, 4); payload.copy(result, 8);
+  return result;
+}
+const trackedMedia = Buffer.concat([
+  mp4Box('ftyp', Buffer.from('isom\0\0\0\0isom')),
+  mp4Box('moov'),
+  mp4Box('mdat', Buffer.from('transport')),
+]);
 
 describe('client resource and image proxy', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    mocks.manager.localStreams.clear();
+    mocks.manager.add.mockResolvedValue(undefined);
     activeUser = { ...user };
     providerPool = [{ id: 3, url: channel.provider_url, max_connections: 1 }];
     mocks.db.prepare.mockImplementation(sql => {
@@ -261,10 +273,12 @@ describe('client resource and image proxy', () => {
     child.headers.set('set-cookie', 'host=; Max-Age=0; Path=/');
     mocks.fetchSafe.mockResolvedValueOnce(child);
     const childResult = await request(app).get(localPath(urls[0]));
+    expect(childResult.status, childResult.text).toBe(200);
     const nested = childResult.text.split('\n').filter(line => line.startsWith('http'));
     for (const url of [...nested, urls[1], urls[2]]) {
       mocks.fetchSafe.mockResolvedValueOnce(response('segment', 'video/mp2t'));
-      expect((await request(app).get(localPath(url))).status).toBe(200);
+      const segment = await request(app).get(localPath(url));
+      expect(segment.status, segment.text).toBe(200);
     }
     const sent = mocks.fetchSafe.mock.calls.map(([, options]) => new Headers(options.headers));
     expect(sent[0].get('cookie')).toBe('initial=secret');
@@ -313,7 +327,8 @@ describe('client resource and image proxy', () => {
     expect(metadata.body.title).toBe('Unchanged title');
     expect(metadata.body.poster).toContain('/api/proxy/resource/');
     mocks.fetchSafe.mockResolvedValueOnce(response('WEBVTT', 'text/vtt'));
-    expect((await request(app).get(localPath(metadata.body.subtitle))).status).toBe(200);
+    const subtitle = await request(app).get(localPath(metadata.body.subtitle));
+    expect(subtitle.status, subtitle.text).toBe(200);
     expect(mocks.fetchSafe.mock.calls[1][0]).toBe('https://cdn.example/metadata/captions/en.vtt');
   });
   it('rejects POST with an image grant', async () => {
@@ -324,10 +339,10 @@ describe('client resource and image proxy', () => {
     const url = createClientResourceUrl(reqForUrl, user, 'https://provider.example/segment.m4s', {
       kind: 'resource', channelId: 5, channelName: 'Channel', providerId: 3
     });
-    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     const res = await request(app).get(localPath(url));
     expect(res.status).toBe(200);
-    expect(res.body.toString()).toBe('transport');
+    expect(res.body).toEqual(trackedMedia);
     expect(mocks.manager.add).toHaveBeenCalledOnce();
     expect(mocks.manager.touch).toHaveBeenCalled();
     expect(mocks.manager.remove).toHaveBeenCalledOnce();
@@ -339,7 +354,7 @@ describe('client resource and image proxy', () => {
   it('denies a second channel when the user connection limit is reached before fetching', async () => {
     activeUser.max_connections = 1;
     mocks.manager.getUserConnectionCount.mockResolvedValue(1);
-    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant())).status).toBe(403);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
     expect(mocks.manager.add).not.toHaveBeenCalled();
@@ -347,7 +362,7 @@ describe('client resource and image proxy', () => {
   it('denies a full bound provider instead of silently switching the grant to a sibling account', async () => {
     providerPool.push({ id: 4, url: channel.provider_url, max_connections: 10 });
     mocks.manager.getProviderConnectionCount.mockImplementation(async id => id === 3 ? 1 : 0);
-    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant())).status).toBe(403);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
     expect(mocks.manager.add).not.toHaveBeenCalled();
@@ -357,19 +372,19 @@ describe('client resource and image proxy', () => {
     mocks.manager.isSessionActive.mockResolvedValue(true);
     mocks.manager.getUserConnectionCount.mockResolvedValue(1);
     mocks.manager.getProviderConnectionCount.mockResolvedValue(1);
-    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant())).status).toBe(200);
     expect(mocks.manager.getProviderConnectionCount).not.toHaveBeenCalled();
   });
   it('accounts for the sibling provider encoded in the grant rather than the catalog provider', async () => {
     providerPool.push({ id: 4, url: channel.provider_url, max_connections: 2 });
-    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant(4))).status).toBe(200);
     expect(mocks.manager.add.mock.calls[0][5]).toBe(4);
     expect(mocks.manager.getProviderConnectionCount).toHaveBeenCalledWith(4);
   });
   it('rejects a grant if its provider account is no longer an authorized candidate', async () => {
-    mocks.fetchSafe.mockResolvedValue(response('transport', 'video/mp4'));
+    mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant(99))).status).toBe(403);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
   });

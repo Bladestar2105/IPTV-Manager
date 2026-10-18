@@ -66,7 +66,8 @@ describe('SSRF protection after legacy segment grant upgrade', () => {
         fetch.mockImplementationOnce(async () => ({ status: 302, ok: false,
             headers: new Headers({ location: 'http://127.0.0.1:8080/private-data' }), body: Readable.from([]),
         }));
-        expect((await legacyRequest({ u: target }).redirects(1)).status).toBe(502);
+        const blocked = await legacyRequest({ u: target }).redirects(1);
+        expect(blocked.status, `${blocked.text}; fetch URLs: ${fetch.mock.calls.map(([url]) => url).join(', ')}`).toBe(502);
         expect(fetch).toHaveBeenCalledTimes(1);
         expect(helpers.isSafeUrl).toHaveBeenCalledWith('http://127.0.0.1:8080/private-data');
     });
