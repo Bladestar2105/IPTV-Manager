@@ -4,10 +4,10 @@ import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { providerSourceKey, redactUrl } from '../utils/helpers.js';
 import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
+import { isMp4Prefix, isTransportStreamPrefix, TRANSPORT_PREFIX_BYTES } from '../utils/clientMp4.js';
 import { validateClientTtml } from '../utils/clientTtml.js';
-import { prepareClientMediaResponse } from '../services/clientMediaRelayService.js';
-import { createClientResourceUrl, createMediaLicenseIdentity } from '../services/clientResourceService.js';
-import { createUpstreamContext, withUpstreamCookies } from '../utils/clientCookies.js';
+import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { withUpstreamCookies } from '../utils/clientCookies.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 import {
   decodeSeriesEpisodeId,
@@ -333,33 +333,77 @@ export async function sendPlaybackDocument(res, upstream) {
   return true;
 }
 
-export async function preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl, channelId, providerId }) {
+// Inspect the first box header, extending only ambiguous TS prefixes to three
+// packet headers. Restore all bytes so continuous TS keeps its original socket.
+async function playbackMediaPrefix(req, res, upstream) {
+  const body = upstream.body;
+  if (!body?.read || !body.once) return Buffer.alloc(0);
+  return new Promise((resolve, reject) => {
+    let timer;
+    let needed = 8;
+    const finish = (error, prefix = Buffer.alloc(0)) => {
+      clearTimeout(timer);
+      for (const [target, event, listener] of listeners) target?.off?.(event, listener);
+      if (error) { discardBody(upstream); reject(error); }
+      else resolve(prefix);
+    };
+    const read = () => {
+      try {
+        const prefix = body.read(needed);
+        if (prefix !== null) {
+          body.unshift(prefix);
+          if (needed === 8 && prefix.length >= 8 && prefix[0] === 0x47 && isMp4Prefix(prefix)) {
+            needed = TRANSPORT_PREFIX_BYTES;
+            read();
+          } else finish(null, prefix);
+        }
+        else if (body.readableEnded) finish();
+      } catch (error) { finish(error); }
+    };
+    const aborted = () => finish(new Error('Media client disconnected'));
+    const closed = () => finish(new Error('Upstream media closed before classification'));
+    const ended = () => finish();
+    const listeners = [[body, 'readable', read], [body, 'end', ended], [body, 'error', finish], [body, 'close', closed], [req, 'aborted', aborted], [res, 'close', aborted]];
+    for (const [target, event, listener] of listeners) target?.on?.(event, listener);
+    timer = setTimeout(() => finish(new Error('Media classification timed out')), 30000);
+    timer.unref?.();
+    read();
+  });
+}
+
+export async function preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl, channelId, providerId, channelName, connectionId, releaseSession }) {
   if (req.aborted || res.destroyed) {
     discardBody(upstream);
     throw new Error('Media client disconnected');
   }
+  const type = upstream.headers.get('content-type') || '';
+  const mp4 = /^(?:video|audio|application)\/mp4(?:;|$)/i.test(type) ||
+    ((!type || /^application\/octet-stream(?:;|$)/i.test(type)) && /\.(?:mp4|m4s|m4a|m4v|cmfv|cmfa)(?:[?#]|$)/i.test(sourceUrl || ''));
+  if (!mp4 && upstream.status !== 206) {
+    const prefix = await playbackMediaPrefix(req, res, upstream);
+    if (isTransportStreamPrefix(prefix) || !isMp4Prefix(prefix)) return upstream;
+  }
   const context = withUpstreamCookies(headers, upstream, sourceUrl);
-  const compactIdentity = createMediaLicenseIdentity(JSON.stringify([sourceUrl, req.ip, req.headers?.['user-agent']]), createUpstreamContext(headers, sourceUrl));
-  const controller = new AbortController();
-  res.once?.('close', () => controller.abort());
-  req.once?.('aborted', () => controller.abort());
-  const response = await prepareClientMediaResponse(upstream, {
-    url: sourceUrl,
-    fetchOptions: { ...context, signal: controller.signal },
-    mapUrl: (url, options, response) => {
-      const licenseContext = withUpstreamCookies(context.headers, response || upstream, sourceUrl, context.cookieJar, context.headerOrigin);
-      licenseContext.headers = Object.fromEntries(Object.entries(licenseContext.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
-      return createClientResourceUrl(req, user, url, {
-        ...licenseContext, ...options, kind: 'license', compact: true, compactIdentity, channelId, providerId,
-      });
-    },
-  });
-  response.body.once?.('error', () => {
-    controller.abort();
-    if (!res.headersSent && res.sendStatus) res.sendStatus(502);
-    else res.destroy?.();
-  });
-  return response;
+  // Each entry starts its own opaque playback. Subsequent ranges reuse that
+  // immutable grant, so rotating response cookies cannot change embedded IDs.
+  context.headers = Object.fromEntries(Object.entries(context.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
+  try {
+    const location = createClientResourceUrl(req, user, sourceUrl, {
+      ...context, kind: 'resource', channelId, providerId, channelName,
+    });
+    if (!location) throw new Error('Invalid playback resource');
+    discardBody(upstream);
+    // The provisional registration owns this response. Detach it before
+    // removing accounting, which would otherwise destroy the redirect socket.
+    streamManager.localStreams.delete(connectionId);
+    await releaseSession?.();
+    if (req.aborted || res.destroyed) throw new Error('Media client disconnected');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.redirect(307, location);
+    return null;
+  } finally {
+    discardBody(upstream);
+  }
 }
 
 export async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
@@ -605,7 +649,7 @@ export function createSafeCleanup(connectionId) {
   return () => {
     if (cleanedUp) return;
     cleanedUp = true;
-    streamManager.remove(connectionId);
+    return streamManager.remove(connectionId);
   };
 }
 

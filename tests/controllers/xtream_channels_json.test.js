@@ -84,6 +84,58 @@ describe('xtreamController - playerChannelsJson', () => {
     };
   });
 
+
+  it.each([
+    ['license', 'https://selected.test/panel/license'],
+    ['/widevine/license', 'https://selected.test/widevine/license'],
+    ['//licenses.test/license', 'https://licenses.test/license'],
+  ])('protects relative license %s and Kodi headers for live and movie channels', async (key, expectedUrl) => {
+    getXtreamUser.mockResolvedValue({ id: 1 });
+    for (const stream_type of ['live', 'movie']) {
+      vi.clearAllMocks();
+      channelsJsonCache.clear();
+      getXtreamUser.mockResolvedValue({ id: 1 });
+      mockDb.prepare.mockReturnValue({ iterate: () => [{
+        user_channel_id: 100, name: 'Channel', stream_type, mime_type: 'mp4',
+        provider_url: 'https://selected.test/panel/', provider_id: 7,
+        drm_license_key: `${key}|Authorization=Bearer%20secret-token|R{SSM}|JBlicense`,
+      }] });
+      await playerChannelsJson(req, res);
+      const license = JSON.parse(res.send.mock.calls[0][0])[0].drm.license_key;
+      expect(license).toMatch(/^http:\/\/localhost\/api\/proxy\/resource\//);
+      expect(license).not.toContain('secret-token');
+      expect(license).toContain('||R{SSM}|JBlicense');
+      expect(await decryptClientGrant(license)).toMatchObject({
+        url: expectedUrl, channelId: 100, providerId: 7, kind: 'license',
+        headers: { Authorization: 'Bearer secret-token' },
+      });
+    }
+  });
+
+
+  it.each([
+    '{"keys":[{"kty":"oct","kid":"AAAAAAAAAAAAAAAAAAAAAA","k":"BBBBBBBBBBBBBBBBBBBBBA"}],"type":"temporary"}',
+    '00112233445566778899aabbccddeeff:ffeeddccbbaa99887766554433221100',
+  ])('preserves validated inline ClearKey material: %s', async key => {
+    getXtreamUser.mockResolvedValue({ id: 1 });
+    mockDb.prepare.mockReturnValue({ iterate: () => [{
+      user_channel_id: 100, name: 'Channel', stream_type: 'live',
+      provider_url: 'https://selected.test/panel', drm_license_type: 'org.w3.clearkey', drm_license_key: key,
+    }] });
+    await playerChannelsJson(req, res);
+    expect(JSON.parse(res.send.mock.calls[0][0])[0].drm.license_key).toBe(key);
+  });
+
+  it.each(['{"keys":[{"kty":"oct","kid":"https://secret-token","k":"BBBBBBBBBBBBBBBBBBBBBA"}]}', '|Authorization=secret-token', 'javascript:secret-token', 'data:text/plain,secret-token', 'https://[invalid|Authorization=secret-token', '/license||%ZZ', '/license||https%3A%2F%2Fsecret-token'])('fails closed for invalid license %s', async key => {
+    getXtreamUser.mockResolvedValue({ id: 1 });
+    mockDb.prepare.mockReturnValue({ iterate: () => [{
+      user_channel_id: 100, name: 'Channel', stream_type: 'live',
+      provider_url: 'https://selected.test/panel', drm_license_key: key,
+    }] });
+    await playerChannelsJson(req, res);
+    expect(JSON.parse(res.send.mock.calls[0][0])[0].drm.license_key).toBe('');
+  });
+
   it('should generate JSON with metadata', async () => {
     const user = { id: 1, is_share_guest: false };
     getXtreamUser.mockResolvedValue(user);
@@ -168,6 +220,7 @@ describe('xtreamController - playerChannelsJson', () => {
         provider_id: 7,
         provider_url: 'http://panel.test',
         name: 'Synced',
+        drm_license_key: '/series-license|Authorization=Bearer%20secret-token|R{SSM}|JBlicense',
         stream_type: 'series',
         category_name: 'Series',
       },
@@ -205,7 +258,10 @@ describe('xtreamController - playerChannelsJson', () => {
       container_extension: 'mkv',
       url: 'http://localhost/series/token/auth/900000009.mkv',
     });
-    expect(await decryptClientGrant(output[0].logo)).toMatchObject({ url: 'http://panel.test/logo.png', channelId: 42, kind: 'image' });
+    expect(await decryptClientGrant(output[0].logo)).toMatchObject({ url: 'http://panel.test/logo.png', channelId: 42, providerId: 7, kind: 'image' });
+    expect(await decryptClientGrant(output[0].drm.license_key)).toMatchObject({ url: 'http://panel.test/series-license', channelId: 42, providerId: 7, kind: 'license', headers: { Authorization: 'Bearer secret-token' } });
+    expect(output[0].drm.license_key).toContain('||R{SSM}|JBlicense');
+    expect(JSON.stringify(output)).not.toContain('secret-token');
     expect(JSON.stringify(output)).not.toContain('/42.');
     expect(JSON.stringify(output)).not.toContain('/43.');
   });

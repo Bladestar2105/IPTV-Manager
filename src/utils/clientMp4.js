@@ -8,6 +8,23 @@ const metadataTypes = new Set(['moov', 'moof', 'pssh', 'meta', 'dref', 'stsd', '
 const containerTypes = new Set(['moov', 'moof', 'trak', 'mdia', 'minf', 'dinf', 'traf', 'meta', 'udta', 'stbl', 'sinf']);
 const unsafeSampleTypes = new Set(['stpp', 'rtsp', 'sdp ', 'moov', 'enct', 'encs']);
 const initialTypes = new Set(['ftyp', 'styp', ...metadataTypes, 'mdat', 'sidx', 'ssix', 'free', 'skip', 'wide', 'pdin', 'uuid', 'emsg', 'prft']);
+// Include unknown ISO-BMFF boxes: providers may prepend them before PSSH.
+export function isMp4Prefix(buffer) {
+  if (buffer.length < 8) return false;
+  const type = buffer.toString('latin1', 4, 8);
+  const size = buffer.readUInt32BE(0);
+  return initialTypes.has(type) || (/^[\x20-\x7e]{4}$/.test(type) && (size === 0 || size === 1 || size >= 8));
+}
+// Three valid packet headers avoid mistaking printable TS payload for a
+// multi-gigabyte unknown ISO-BMFF box. Explicit MP4 parsing stays strict.
+export const TRANSPORT_PREFIX_BYTES = 380;
+export function isTransportStreamPrefix(buffer) {
+  if (buffer.length < TRANSPORT_PREFIX_BYTES) return false;
+  return [0, 188, 376].every(offset => {
+    const control = (buffer[offset + 3] >> 4) & 3;
+    return buffer[offset] === 0x47 && !(buffer[offset + 1] & 0x80) && control !== 0;
+  });
+}
 const invalid = message => { throw new Error(`Unsupported MP4 metadata: ${message}`); };
 const validateLimit = limit => {
   if (!Number.isSafeInteger(limit) || limit < 16 || limit > MAX_METADATA) invalid('invalid buffer limit');
@@ -137,6 +154,7 @@ export function createMp4PrivacyTransform(mapUrl, { maxMetadataBytes = MAX_METAD
   let pending = Buffer.alloc(0);
   // An authoritative MP4 response must never fall back to raw passthrough.
   let mode = isMp4 ? 'header' : 'sniff';
+  let transportChecked = false;
   let current = null;
   let remaining = 0;
   let storage = null;
@@ -159,70 +177,84 @@ export function createMp4PrivacyTransform(mapUrl, { maxMetadataBytes = MAX_METAD
     transform.push(storage.subarray(0, buffered));
     storage = null; buffered = 0; current = null; mode = 'header';
   };
+  const consume = function(chunk) {
+    let input = chunk;
+    while (input.length) {
+      if (mode === 'transport') {
+        const take = Math.min(TRANSPORT_PREFIX_BYTES - pending.length, input.length);
+        pending = Buffer.concat([pending, input.subarray(0, take)]);
+        input = input.subarray(take);
+        if (pending.length < TRANSPORT_PREFIX_BYTES) continue;
+        transportChecked = true;
+        mode = isTransportStreamPrefix(pending) ? 'pass' : 'sniff';
+        input = Buffer.concat([pending, input]); pending = Buffer.alloc(0);
+        continue;
+      }
+      if (mode === 'pass') { this.push(input); break; }
+      if (mode === 'sniff' || mode === 'header') {
+        const needed = pending.length >= 8 && pending.readUInt32BE(0) === 1 ? 16 : 8;
+        const take = Math.min(needed - pending.length, input.length);
+        pending = Buffer.concat([pending, input.subarray(0, take)]);
+        input = input.subarray(take);
+        if (pending.length < 8) continue;
+        if (mode === 'sniff') {
+          const type = pending.toString('latin1', 4, 8);
+          // ISO-BMFF permits unknown boxes before movie fragments. Their
+          // payload can pass unchanged, but later boxes still need inspection.
+          if (!isMp4Prefix(pending)) {
+            this.push(pending); pending = Buffer.alloc(0); mode = 'pass'; continue;
+          }
+          if (!transportChecked && pending[0] === 0x47) { mode = 'transport'; continue; }
+          if (initialTypes.has(type)) mode = 'header';
+        }
+        try { current = readHeader(pending); } catch (error) {
+          if (mode !== 'sniff') throw error;
+          this.push(pending); pending = Buffer.alloc(0); mode = 'pass'; continue;
+        }
+        if (!current) continue;
+        remaining = current.size ? current.size - current.headerSize : Infinity;
+        if (mode === 'sniff') {
+          // Unknown four-character types also occur in raw AES keys. Commit
+          // to box parsing only once the entire first box has arrived.
+          storage = Buffer.allocUnsafe(Math.min(current.size || 65536, 65536, maxMetadataBytes));
+          appendMetadata(pending); mode = 'unknown';
+        } else if (metadataTypes.has(current.type)) {
+          if (current.size > maxMetadataBytes) invalid('metadata exceeds buffer limit');
+          storage = Buffer.allocUnsafe(current.size || Math.min(65536, maxMetadataBytes));
+          appendMetadata(pending); mode = 'metadata';
+        } else { this.push(pending); mode = 'payload'; }
+        pending = Buffer.alloc(0);
+        if (!remaining) {
+          if (mode === 'metadata') finishMetadata(this);
+          else if (mode === 'unknown') finishUnknown(this);
+          else mode = 'header';
+        }
+        continue;
+      }
+      const take = Math.min(remaining, input.length);
+      const part = input.subarray(0, take);
+      input = input.subarray(take); remaining -= take;
+      if (mode === 'metadata' || mode === 'unknown') {
+        appendMetadata(part);
+      } else this.push(part);
+      if (!remaining) {
+        if (mode === 'metadata') finishMetadata(this);
+        else if (mode === 'unknown') finishUnknown(this);
+        else mode = 'header';
+      }
+    }
+  };
   return new Transform({
     transform(chunk, _encoding, callback) {
-      try {
-        let input = chunk;
-        while (input.length) {
-          if (mode === 'pass') { this.push(input); break; }
-          if (mode === 'sniff' || mode === 'header') {
-            const needed = pending.length >= 8 && pending.readUInt32BE(0) === 1 ? 16 : 8;
-            const take = Math.min(needed - pending.length, input.length);
-            pending = Buffer.concat([pending, input.subarray(0, take)]);
-            input = input.subarray(take);
-            if (pending.length < 8) continue;
-            if (mode === 'sniff') {
-              const type = pending.toString('latin1', 4, 8);
-              const size = pending.readUInt32BE(0);
-              // ISO-BMFF permits unknown boxes before movie fragments. Their
-              // payload can pass unchanged, but later boxes still need inspection.
-              const plausibleBox = /^[\x20-\x7e]{4}$/.test(type) && (size === 0 || size === 1 || size >= 8);
-              if (!initialTypes.has(type) && !plausibleBox) {
-                this.push(pending); pending = Buffer.alloc(0); mode = 'pass'; continue;
-              }
-              if (initialTypes.has(type)) mode = 'header';
-            }
-            try { current = readHeader(pending); } catch (error) {
-              if (mode !== 'sniff') throw error;
-              this.push(pending); pending = Buffer.alloc(0); mode = 'pass'; continue;
-            }
-            if (!current) continue;
-            remaining = current.size ? current.size - current.headerSize : Infinity;
-            if (mode === 'sniff') {
-              // Unknown four-character types also occur in raw AES keys. Commit
-              // to box parsing only once the entire first box has arrived.
-              storage = Buffer.allocUnsafe(Math.min(current.size || 65536, 65536, maxMetadataBytes));
-              appendMetadata(pending); mode = 'unknown';
-            } else if (metadataTypes.has(current.type)) {
-              if (current.size > maxMetadataBytes) invalid('metadata exceeds buffer limit');
-              storage = Buffer.allocUnsafe(current.size || Math.min(65536, maxMetadataBytes));
-              appendMetadata(pending); mode = 'metadata';
-            } else { this.push(pending); mode = 'payload'; }
-            pending = Buffer.alloc(0);
-            if (!remaining) {
-              if (mode === 'metadata') finishMetadata(this);
-              else if (mode === 'unknown') finishUnknown(this);
-              else mode = 'header';
-            }
-            continue;
-          }
-          const take = Math.min(remaining, input.length);
-          const part = input.subarray(0, take);
-          input = input.subarray(take); remaining -= take;
-          if (mode === 'metadata' || mode === 'unknown') {
-            appendMetadata(part);
-          } else this.push(part);
-          if (!remaining) {
-            if (mode === 'metadata') finishMetadata(this);
-            else if (mode === 'unknown') finishUnknown(this);
-            else mode = 'header';
-          }
-        }
-        callback();
-      } catch (error) { callback(error); }
+      try { consume.call(this, chunk); callback(); }
+      catch (error) { callback(error); }
     },
     flush(callback) {
       try {
+        if (mode === 'transport') {
+          const prefix = pending; pending = Buffer.alloc(0);
+          transportChecked = true; mode = 'sniff'; consume.call(this, prefix);
+        }
         if (mode === 'sniff') this.push(pending);
         else if (mode === 'unknown') finishUnknown(this);
         else if (mode === 'metadata' && remaining === Infinity) finishMetadata(this);

@@ -8,6 +8,9 @@ import { isIpAllowedForUser } from './geoIpService.js';
 import { getEpgLogo } from './logoResolver.js';
 import { createUpstreamContext } from '../utils/clientCookies.js';
 import { directMetadataUrl } from '../utils/clientResourcePolicy.js';
+import { normalizeInlineClearKey } from '../utils/clientClearKey.js';
+import { createClientPlaybackId, currentPlaybackCookieJar } from './clientPlaybackContextService.js';
+export { createClientPlaybackId } from './clientPlaybackContextService.js';
 
 const PURPOSE = 'client-resource-v1';
 const LICENSE_TTL = 7 * 86400;
@@ -53,7 +56,8 @@ function httpUrl(value, base) {
 function resourceUrl(req, payload, extension) {
   const query = [];
   if (payload.url) {
-    payload.templates = [...payload.url.matchAll(TEMPLATE)].map(match => ({ token: match[0], type: match[1] }));
+    payload.templates = [...new Map([payload.url, ...(payload.alternatives || [])].flatMap(url =>
+      [...url.matchAll(TEMPLATE)].map(match => [match[0], { token: match[0], type: match[1] }]))).values()];
     payload.templates.forEach((item, index) => query.push(`tpl${index}=${item.token}`));
   }
   return `${getBaseUrl(req)}/api/proxy/resource/${opaque(payload)}/${extension}${query.length ? `?${query.join('&')}` : ''}`;
@@ -136,6 +140,7 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   if (!options.baseUrl && /^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
   const kind = options.kind || 'image';
   if (!['image', 'resource', 'license'].includes(kind)) return '';
+  if (options.alternatives && (!Array.isArray(options.alternatives) || options.alternatives.length > 63)) throw new Error('Too many resource alternatives');
   const upstreamContext = createUpstreamContext(options.headers || {}, options.headerOrigin || parsed.href, options.cookieJar, options.headerOrigin || parsed.href, true);
   if (kind !== 'license' && (kind === 'image' || options.allowDirectMetadata)) {
     const direct = directMetadataUrl(parsed.href, undefined, upstreamContext);
@@ -143,13 +148,29 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   }
   const payload = {
     ...context(req, user), kind, url: parsed.href,
+    ...(kind === 'resource' || options.playbackId ? { playbackId: options.playbackId || createClientPlaybackId() } : {}),
     ...upstreamContext,
     channelId: options.channelId || null,
     channelName: options.channelName || null,
     providerId: options.providerId || null,
     hlsVariables: options.hlsVariables || {},
     manifestKind: options.manifestKind || null,
+    ...(options.alternatives?.length ? { alternatives: [...new Set(options.alternatives.map(value => {
+      const candidate = httpUrl(value, options.baseUrl || base);
+      if (!candidate) throw new Error('Invalid resource alternative');
+      return candidate.href;
+    }))].filter(value => value !== parsed.href) } : {}),
   };
+  const explicitLicenseCookie = kind === 'license' && options.playbackId && new Headers(options.headers || {}).get('cookie');
+  if (explicitLicenseCookie) {
+    // Explicit license credentials must not overwrite the media session's cookie.
+    payload.playbackId = crypto.createHmac('sha256', Buffer.from(ENCRYPTION_KEY, 'hex'))
+      .update(JSON.stringify(['license-cookie-v1', options.playbackId, parsed.href, explicitLicenseCookie])).digest('base64url').slice(0, 22);
+  }
+  if (kind === 'license' && !payload.playbackId) {
+    payload.playbackId = crypto.createHmac('sha256', Buffer.from(ENCRYPTION_KEY, 'hex'))
+      .update(normalizedGrant(payload)).digest('base64url').slice(0, 22);
+  }
   if (kind === 'license' && options.compact && typeof options.compactIdentity === 'string' && options.compactIdentity && payload.providerId && payload.channelId) {
     payload.compactIdentity = options.compactIdentity;
   }
@@ -228,18 +249,23 @@ export async function resolveClientResource(req) {
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
       url = (channel.use_mapped_epg_icon && epgId && getEpgLogo(epgId, { absolute: true })) || channel.logo;
     }
+    let alternatives = payload.alternatives || [];
+    const originalAlternatives = alternatives;
     for (const [index, item] of (payload.templates || []).entries()) {
       const value = req.query[`tpl${index}`];
       const component = item.type === 'RepresentationID' ? representationComponent(value)
         : typeof value === 'string' && /^\d{1,32}$/.test(value) ? value : null;
       if (component === null) return null;
-      url = url.replace(item.token, () => component);
+      url = url.replaceAll(item.token, () => component);
+      alternatives = alternatives.map(value => value.replaceAll(item.token, () => component));
     }
     const parsed = httpUrl(url, payload.currentIcon ? channel.provider_url || getBaseUrl(req) : undefined);
     if (!parsed) return null;
     if (payload.templates?.length && parsed.origin !== httpUrl(payload.url)?.origin) return null;
+    if (alternatives.some((value, index) => !httpUrl(value) || httpUrl(value).origin !== httpUrl(originalAlternatives[index])?.origin)) return null;
+    if (payload.playbackId) payload.cookieJar = currentPlaybackCookieJar(payload);
     return {
-      ...payload, url: parsed.href,
+      ...payload, url: parsed.href, ...(alternatives.length ? { alternatives } : {}),
       user: { ...authorizedUser, max_connections: user.max_connections },
       providerId: payload.currentIcon ? channel?.provider_id : payload.providerId,
     };
@@ -254,6 +280,10 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
       .map(([field, item]) => [field, sourceFields.test(field) ? '' : rewriteClientMetadata(req, user, item, field, options)]));
   }
   if (typeof value !== 'string') return value;
+  if (/^license_key$/i.test(key)) {
+    const inline = normalizeInlineClearKey(value);
+    if (inline !== undefined) return inline;
+  }
   const relative = options.baseUrl && value.trim() && !/^(?:[a-z][a-z\d+.-]*:|#)/i.test(value.trim()) &&
     (!/trailer/i.test(key) || /[./\\?#]/.test(value)) &&
     (imageFields.test(key) || resourceFields.test(key) || /^license_key$/i.test(key));

@@ -112,6 +112,13 @@ export function initDb(isPrimary) {
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
+    CREATE TABLE IF NOT EXISTS client_playback_contexts (
+      id TEXT PRIMARY KEY,
+      envelope TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_client_playback_contexts_expiry ON client_playback_contexts(expires_at);
+
     CREATE TABLE IF NOT EXISTS client_license_grants (
       id TEXT PRIMARY KEY,
       fingerprint TEXT NOT NULL UNIQUE,

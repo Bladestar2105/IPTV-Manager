@@ -22,16 +22,24 @@ import {
 } from './xtreamControllerUtils.js';
 export * from './xtreamControllerUtils.js';
 export { playerApi } from './xtreamPlayerApiController.js';
+import { normalizeInlineClearKey } from '../utils/clientClearKey.js';
 
-function clientLicenseKey(req, user, value, channelId) {
-  if (!/^(?:https?:)?\/\//i.test(value)) return value;
+function clientLicenseKey(req, user, value, channelId, providerId, baseUrl) {
+  if (typeof value !== 'string' || !value.trim() || /[\r\n\u0000]/.test(value)) return '';
+  // Kodi also accepts inline ClearKey JWK sets and hexadecimal KID:key pairs.
+  const inline = normalizeInlineClearKey(value);
+  if (inline !== undefined) return inline;
   const [url, headerQuery = '', ...transforms] = value.split('|');
+  if (!url.trim()) return '';
+  let licenseUrl;
+  try { licenseUrl = new URL(url, baseUrl); } catch { return ''; }
+  if (!['http:', 'https:'].includes(licenseUrl.protocol)) return '';
   const suffix = transforms.join('|');
   let decodedSuffix;
   try { decodedSuffix = decodeURIComponent(suffix); } catch { return ''; }
   if (/(?:https?|ftp|rtsp|rtmp):|\/\//i.test(decodedSuffix) || /[\r\n\u0000]/.test(decodedSuffix)) return '';
-  const managerUrl = createClientResourceUrl(req, user, url, {
-    kind: 'license', channelId, headers: Object.fromEntries(new URLSearchParams(headerQuery))
+  const managerUrl = createClientResourceUrl(req, user, licenseUrl.href, {
+    kind: 'license', channelId, providerId, headers: Object.fromEntries(new URLSearchParams(headerQuery))
   });
   return managerUrl && (transforms.length ? `${managerUrl}||${suffix}` : managerUrl);
 }
@@ -153,7 +161,7 @@ export const getPlaylist = async (req, res) => {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
-            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, baseUrl: providerSource?.baseUrl })) : safeLogo;
+            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, providerId: ch.provider_id, baseUrl: providerSource?.baseUrl })) : safeLogo;
             const episodeId = getOrCreateSeriesEpisodeAlias(
               episodeAliases,
               ch.user_channel_id,
@@ -355,12 +363,12 @@ export const playerChannelsJson = async (req, res) => {
       if (ch.drm_license_type || ch.drm_license_key) {
         item.drm = {};
         if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-        if (ch.drm_license_key) item.drm.license_key = clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id);
+        if (ch.drm_license_key) item.drm.license_key = clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id, ch.provider_id, ch.provider_url ? `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` : undefined);
       }
 
       if (!isFirst) jsonOutput += ',';
       const { url, ...metadata } = item;
-      jsonOutput += JSON.stringify({ ...rewriteClientMetadata(req, user, metadata, '', { channelId: ch.user_channel_id }), url });
+      jsonOutput += JSON.stringify({ ...rewriteClientMetadata(req, user, metadata, '', { channelId: ch.user_channel_id, providerId: ch.provider_id }), url });
       isFirst = false;
     };
 
@@ -430,7 +438,7 @@ export const playerChannelsJson = async (req, res) => {
                appendItem({
                  name: `${name} ${episodeCode}`,
                  group,
-                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, baseUrl: `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` }) : logo,
+                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, providerId: ch.provider_id, baseUrl: `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` }) : logo,
                  epg_id: epgId,
                  url: seriesPrefix + episodeId + '.' + extension + tokenParam,
                  type: 'series',
@@ -492,6 +500,7 @@ export const playerPlaylist = async (req, res) => {
         pc.logo,
         pc.epg_channel_id,
         pc.remote_stream_id,
+        pc.provider_id,
         pc.stream_type,
         pc.tv_archive,
         pc.tv_archive_duration,
@@ -500,11 +509,13 @@ export const playerPlaylist = async (req, res) => {
         json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
-        map.epg_channel_id as manual_epg_id
+        map.epg_channel_id as manual_epg_id,
+        p.url as provider_url
       FROM user_categories cat
       JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN providers p ON p.id = pc.provider_id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -595,7 +606,7 @@ export const playerPlaylist = async (req, res) => {
 
       if (ch.drm_license_type || ch.drm_license_key) {
           if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${String(ch.drm_license_type).replace(/[\r\n]+/g, ' ')}\n`;
-          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id)).replace(/[\r\n]+/g, ' ')}\n`;
+          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id, ch.provider_id, ch.provider_url ? `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` : undefined)).replace(/[\r\n]+/g, ' ')}\n`;
       }
 
       buffer += streamUrl + '\n';

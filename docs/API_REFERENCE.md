@@ -623,19 +623,54 @@ External MP4 data references, compressed/reference QuickTime movies and
 network-bearing movie/streaming/text sample formats are rejected so players
 cannot fetch provider media outside the relay. Normal CENC audio/video sample
 entries remain supported.
+Playback cookie rotations are shared across sibling manifests, media ranges,
+images (including cache revalidation), and license requests using an opaque
+playback context. Context jars are encrypted in SQLite and shared across workers;
+independent playback roots retain independent contexts. Rows are created or
+updated only when cookie values/scope/expiry change, with bounded cleanup and a
+seven-day lifetime since the last change. Every grant request rechecks current
+authorization before loading its matching user/channel/provider/session context.
+Standalone licenses use a keyed context identity derived from their initial
+credentials so repeated compact grants retain their identity. Explicit license
+Cookie overrides use a separate context seeded with the other parent cookies;
+license renewals retain their own rotations without changing the media session.
 Compact license grants are encrypted in SQLite, survive restarts and expire
 after seven days. Every request rechecks current user and channel access.
 Provider-only grants also require current provider ownership (or an active admin)
 and stop working after provider deletion or transfer. Channel-bound grants use
 current playback-pool authorization, including explicit admin channel grants.
+Raw MP4 entry requests and initial binary range responses return HTTP `307` to a
+fresh, opaque Manager resource URL. Clients must follow this standard redirect
+and reuse its destination for later range requests in the same playback. Each
+entry has its own upstream cookie context; rotating cookies within that resource
+do not change embedded license addresses. Reopening the original entry URL starts
+a separate playback. Continuous MPEG-TS responses keep their original connection.
 Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
 reads, skipping media payload boxes. Without reliable range validation, Manager
 reads from byte zero and streams only the requested interval; distant seeks can
-therefore require extra upstream traffic. Preparation is bounded to 30 seconds
-and cancellation stops upstream reads.
+therefore require extra upstream traffic. This also applies to non-MP4 binary
+ranges when the provider supplies no trustworthy representation validator:
+Manager cannot safely infer the format of a partial response. A late seek in a
+large file may need to read all preceding bytes and fail if it cannot reach the
+requested position within the 30-second preparation budget. Cancellation stops
+upstream reads.
 HLS child playlists retain their manifest role even without an extension or a
 correct upstream MIME type. Inline AES keys and supported DRM PSSH keys remain
 supported; embedded data manifests and unsupported data dependencies fail closed.
+Nonsemantic HLS/XML comments, inline SESSION-DATA values and URL-bearing
+EXTINF titles are removed. Apple interstitial DATERANGE asset playlists and
+asset-list JSON stay behind Manager grants, including nested asset URIs. Unknown
+DATERANGE X-attributes containing HTTP URLs are removed; semantic IDs and
+non-URL attributes remain available.
+DASH sibling BaseURL choices and inherited segment descriptors retain their CDN
+fallback paths inside encrypted Manager grants, including nested manifests and
+template substitutions. Manager tries candidates in manifest order after network
+or non-success HTTP responses, before sending response bytes. Each attempt keeps
+Range headers and reselects origin-scoped credentials/cookies, including valid
+Set-Cookie updates from failed candidates; SSRF and access
+checks apply as usual. At most 64 distinct resolved candidates are accepted per
+resource; larger BaseURL combinations fail closed. Failures after body streaming
+starts are handled by the player retrying its Manager URL.
 DASH bitstream-switching and DVB font URLs are relayed. XML stylesheets,
 optional telemetry, URL-query extensions and automatic event callbacks are
 removed; required URL-query extensions fail closed rather than exposing their

@@ -189,6 +189,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    streamManager.add.mockReset();
+    streamManager.remove.mockReset();
+    streamManager.localStreams.set.mockReset();
     streamDbState.channelOverrides = {};
     streamDbState.providerPool = [{
       id: 100,
@@ -412,6 +415,21 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(new Headers(upstreamRequestHeaders(context, 'https://license.example/key')).get('cookie')).toBeNull();
   });
 
+  it('shares one playback cookie context among manifest children and separates new root requests', async () => {
+    fetch.mockImplementation(async () => ({ ok: true, status: 200, url: 'https://cdn.example/master.m3u8',
+      headers: new Headers({ 'content-type': 'application/vnd.apple.mpegurl' }),
+      body: new PassThrough().end('#EXTM3U\nfirst.ts\nsecond.ts\n') }));
+    await streamController.proxyLive(req, res);
+    const children = res.send.mock.calls[0][0].split('\n').filter(line => line.startsWith('http'));
+    const first = await decryptClientGrant(children[0]);
+    const second = await decryptClientGrant(children[1]);
+    expect(first.playbackId).toMatch(/^[\w-]{22}$/);
+    expect(second.playbackId).toBe(first.playbackId);
+    await streamController.proxyLive(req, res);
+    const refreshed = res.send.mock.calls[1][0].split('\n').find(line => line.startsWith('http'));
+    expect((await decryptClientGrant(refreshed)).playbackId).not.toBe(first.playbackId);
+  });
+
   it('should NOT call streamManager.add/cleanupUser/remove for standard .m3u8 requests', async () => {
     vi.useFakeTimers(); // Intercept setTimeout
 
@@ -516,12 +534,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
     };
     res.headersSent = false;
 
-    res = Object.assign(new PassThrough(), { setHeader: res.setHeader, status: res.status, sendStatus: res.sendStatus, headersSent: false });
+    res = Object.assign(new PassThrough(), { setHeader: res.setHeader, status: res.status, sendStatus: res.sendStatus, redirect: res.redirect, headersSent: false });
     mockMatroskaRangeSource('http://upstream.com/movie/puser/ppass/remote1.mkv');
-    const finished = once(res, 'finish');
-
     await streamController.proxyMovie(req, res);
-    await finished;
 
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining('/movie/puser/ppass/remote1.mkv'),
@@ -529,10 +544,10 @@ describe('Stream Controller Performance (proxyLive)', () => {
         headers: expect.objectContaining({ Range: 'bytes=100-200' }),
       })
     );
-    expect(res.status).toHaveBeenCalledWith(206);
-    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 100-200/1000');
-    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
-    expect(res.read()).toEqual(Buffer.alloc(101));
+    expect(res.redirect).toHaveBeenCalledWith(307, expect.any(String));
+    const grant = await decryptClientGrant(res.redirect.mock.calls[0][1]);
+    expect(grant.url).toBe('http://upstream.com/movie/puser/ppass/remote1.mkv');
+    expect(new Headers(grant.headers).has('range')).toBe(false);
     res.destroy();
   });
 
@@ -674,12 +689,9 @@ describe('Stream Controller Performance (proxyLive)', () => {
     };
     res.headersSent = false;
 
-    res = Object.assign(new PassThrough(), { setHeader: res.setHeader, status: res.status, sendStatus: res.sendStatus, headersSent: false });
+    res = Object.assign(new PassThrough(), { setHeader: res.setHeader, status: res.status, sendStatus: res.sendStatus, redirect: res.redirect, headersSent: false });
     mockMatroskaRangeSource('http://upstream.com/series/puser/ppass/1.mkv');
-    const finished = once(res, 'finish');
-
     await streamController.proxySeries(req, res);
-    await finished;
 
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM series_episode_aliases a'));
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM provider_series_episodes'));
@@ -689,10 +701,10 @@ describe('Stream Controller Performance (proxyLive)', () => {
         headers: expect.objectContaining({ Range: 'bytes=300-400' }),
       })
     );
-    expect(res.status).toHaveBeenCalledWith(206);
-    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 300-400/1000');
-    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
-    expect(res.read()).toEqual(Buffer.alloc(101));
+    expect(res.redirect).toHaveBeenCalledWith(307, expect.any(String));
+    const grant = await decryptClientGrant(res.redirect.mock.calls[0][1]);
+    expect(grant.url).toBe('http://upstream.com/series/puser/ppass/1.mkv');
+    expect(new Headers(grant.headers).has('range')).toBe(false);
     res.destroy();
   });
 

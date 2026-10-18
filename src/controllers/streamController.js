@@ -119,9 +119,10 @@ export const proxyMpd = async (req, res) => {
     if (manifestKind) {
         const text = await readManifest(upstream);
         const nextContext = withUpstreamCookies(headers, upstream, selectedUrl || upstreamUrl);
+        const playbackId = crypto.randomBytes(16).toString('base64url');
         const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
         const newText = rewrite(text, upstream.url || upstreamUrl, (url, options) => createClientResourceUrl(req, user, url, {
-          kind: 'resource', ...nextContext, channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+          kind: 'resource', ...nextContext, playbackId, channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
         }));
         res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
         res.send(newText);
@@ -133,7 +134,8 @@ export const proxyMpd = async (req, res) => {
       streamManager.remove(connectionId);
       return;
     }
-    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || upstreamUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || upstreamUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: sessionName, connectionId, releaseSession: () => streamManager.remove(connectionId) });
+    if (!upstream) return;
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
     const contentLength = upstream.headers.get('content-length');
@@ -192,7 +194,7 @@ export const proxyLive = async (req, res) => {
     if (reqExt !== 'm3u8' || wantsTranscode) {
         if (!await reserveChannelSession(connectionId, user, channel, req, res, channel.name, {
           cleanupUser: true,
-          dedupe: wantsTranscode || reqExt === 'mp4',
+          dedupe: wantsTranscode,
           delayMs: 100
         })) return;
     }
@@ -296,9 +298,10 @@ export const proxyLive = async (req, res) => {
       const baseUrl = upstream.url || successfulUrl;
       const nextContext = withUpstreamCookies(fetchHeaders, upstream, selectedUrl || remoteUrl);
 
+      const playbackId = crypto.randomBytes(16).toString('base64url');
       const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
       const newText = rewrite(text, baseUrl, (absoluteUrl, options) => createClientResourceUrl(req, user, absoluteUrl, {
-        kind: 'resource', ...nextContext, channelName: channel.name, providerId: channel.provider_id,
+        kind: 'resource', ...nextContext, playbackId, channelName: channel.name, providerId: channel.provider_id,
         channelId: channel.user_channel_id || channel.id, ...options,
       }));
 
@@ -313,7 +316,8 @@ export const proxyLive = async (req, res) => {
     }
 
     if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
-    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers: fetchHeaders, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers: fetchHeaders, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: channel.name, connectionId, releaseSession: cleanup });
+    if (!upstream) return;
     await streamManager.cleanupSession(user.id, req.ip, channel.name, channel.provider_id, connectionId);
     res.setHeader(
       'Content-Type',
@@ -513,9 +517,10 @@ export const proxyTimeshift = async (req, res) => {
       const baseUrl = upstream.url || successfulUrl;
       const nextContext = withUpstreamCookies(headers, upstream, selectedUrl || remoteUrl);
 
+      const playbackId = crypto.randomBytes(16).toString('base64url');
       const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
       const newText = rewrite(text, baseUrl, (absoluteUrl, options) => createClientResourceUrl(req, user, absoluteUrl, {
-        kind: 'resource', ...nextContext, channelName: sessionName, providerId: channel.provider_id,
+        kind: 'resource', ...nextContext, playbackId, channelName: sessionName, providerId: channel.provider_id,
         channelId: channel.user_channel_id || channel.id, ...options,
       }));
 
@@ -530,7 +535,8 @@ export const proxyTimeshift = async (req, res) => {
     }
 
     if (await sendPlaybackDocument(res, upstream)) { streamManager.remove(connectionId); return; }
-    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: sessionName, connectionId, releaseSession: () => streamManager.remove(connectionId) });
+    if (!upstream) return;
     await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Connection', 'keep-alive');

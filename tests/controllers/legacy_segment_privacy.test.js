@@ -216,6 +216,39 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
     }
   });
 
+  it.each([
+    ['/mpd/1/chunk.bin', 'Channel (DASH)'],
+    ['/timeshift/60/2026-10-18:10-00/1', 'Channel (Timeshift)'],
+    ['/live/1.ts', 'Channel'], ['/movie/1.mp4', 'Channel (VOD)'],
+  ])('releases the initial %s MP4 reservation while preserving an active playback', async (url, name) => {
+    const { default: manager } = await vi.importActual('../../src/services/streamManager.js');
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE current_streams (id TEXT PRIMARY KEY,user_id INTEGER,username TEXT,channel_name TEXT,start_time INTEGER,last_activity INTEGER,ip TEXT,worker_pid INTEGER,provider_id INTEGER)');
+    manager.init(db, null);
+    const destroyed = vi.fn();
+    try {
+      user.max_connections = 1;
+      await manager.add('active-playback', user, name, '::ffff:127.0.0.1', { destroy: destroyed }, 3, { dedupe: false });
+      for (const method of ['add', 'remove', 'cleanupUser', 'cleanupSession', 'isSessionActive', 'getUserConnectionCount', 'getProviderConnectionCount']) {
+        mocks.manager[method].mockImplementation((...args) => manager[method](...args));
+      }
+      // Both the accounting implementation and its resource map must be real.
+      mocks.manager.localStreams = manager.localStreams;
+      const upstream = response(Buffer.alloc(20), 'video/mp4');
+      mocks.fetchSafe.mockResolvedValue(upstream);
+      const redirected = await request(app).get(url);
+      expect(redirected.status).toBe(307);
+      expect(destroyed).not.toHaveBeenCalled();
+      expect(upstream.body.destroyed).toBe(true);
+      expect(db.prepare('SELECT id FROM current_streams').all()).toEqual([{ id: 'active-playback' }]);
+    } finally {
+      for (const id of [...manager.localStreams.keys()]) await manager.remove(id);
+      manager.db = null;
+      mocks.manager.localStreams = new Map();
+      db.close();
+    }
+  });
+
   it('registers a series manifest alongside its existing child session without destroying it', async () => {
     const { default: manager } = await vi.importActual('../../src/services/streamManager.js');
     const db = new Database(':memory:');

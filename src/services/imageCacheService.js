@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { CACHE_DIR, DEFAULT_USER_AGENT } from '../config/constants.js';
 import { getLogoCacheHash } from './logoResolver.js';
 import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { withUpstreamCookies } from '../utils/clientCookies.js';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const pending = new Map();
@@ -94,6 +95,7 @@ async function refreshImage(url, headers, key, suppliedResponse, cookieJar, head
     const file = path.join(directory, `${key}.png`);
     const metadataFile = path.join(directory, `${key}.json`);
     const cached = await readCached(file, metadataFile);
+    let upstreamCookieJar = cookieJar;
     try {
         const conditional = imageRequestHeaders(headers);
         for (const [field, header] of [['etag', 'If-None-Match'], ['lastModified', 'If-Modified-Since']]) {
@@ -101,10 +103,11 @@ async function refreshImage(url, headers, key, suppliedResponse, cookieJar, head
             if (typeof value === 'string' && value.length <= 4096 && !/[\r\n]/.test(value)) conditional[header] = value;
         }
         const response = suppliedResponse || await fetchSafe(url, { headers: conditional, cookieJar, headerOrigin, stripConditionalOnRedirect: true, timeout: 30000 });
+        upstreamCookieJar = withUpstreamCookies({}, response, url, cookieJar, headerOrigin).cookieJar;
         if (response.status === 304) {
             discardBody(response);
             if (!cached) throw new Error('Invalid revalidation');
-            return { body: cached.body, contentType: cached.contentType, cacheStatus: 'HIT' };
+            return { body: cached.body, contentType: cached.contentType, cacheStatus: 'HIT', upstreamCookieJar };
         }
         if (response.status !== 200) {
             discardBody(response);
@@ -121,10 +124,12 @@ async function refreshImage(url, headers, key, suppliedResponse, cookieJar, head
         await fs.mkdir(directory, { recursive: true });
         await atomicWrite(file, body);
         await atomicWrite(metadataFile, JSON.stringify(metadata));
-        return { body, contentType, cacheStatus: cached ? 'REVALIDATED' : 'MISS' };
+        return { body, contentType, cacheStatus: cached ? 'REVALIDATED' : 'MISS', upstreamCookieJar };
     } catch {
-        if (cached) return { body: cached.body, contentType: cached.contentType, cacheStatus: 'STALE' };
-        throw new Error('Image unavailable');
+        if (cached) return { body: cached.body, contentType: cached.contentType, cacheStatus: 'STALE', upstreamCookieJar };
+        const error = new Error('Image unavailable');
+        error.upstreamCookieJar = upstreamCookieJar;
+        throw error;
     }
 }
 

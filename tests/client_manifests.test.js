@@ -2,6 +2,49 @@ import { describe, it, expect } from 'vitest';
 import { rewriteHlsManifest, rewriteDashManifest } from '../src/utils/clientManifests.js';
 
 describe('client manifest resources', () => {
+  it('retains sibling DASH CDN choices through nested bases and templates', () => {
+    const targets = [];
+    const output = rewriteDashManifest('<MPD><BaseURL>https://a.example/</BaseURL><BaseURL>https://b.example/</BaseURL><Period><BaseURL>video/</BaseURL><SegmentTemplate media="seg-$Number$.m4s"/><Period xlink:href="child"/></Period></MPD>', 'https://origin/master', (url, options) => { targets.push([url, options]); return 'https://manager/resource'; });
+    expect(targets).toContainEqual(['https://a.example/video/seg-$Number$.m4s', { template: true, alternatives: ['https://b.example/video/seg-$Number$.m4s'] }]);
+    expect(targets).toContainEqual(['https://a.example/video/child', { template: false, alternatives: ['https://b.example/video/child'], manifestKind: 'dash' }]);
+    expect(output).not.toMatch(/[ab]\.example/);
+  });
+  it('resolves inherited segment templates at each representation base while merging overrides', () => {
+    const targets = [];
+    const output = rewriteDashManifest('<MPD><BaseURL>https://a.example/</BaseURL><BaseURL>https://b.example/</BaseURL><Period><SegmentTemplate timescale="10" initialization="init-$RepresentationID$.mp4" media="seg-$Number$.m4s"><SegmentTimeline><S t="0" d="20"/></SegmentTimeline></SegmentTemplate><AdaptationSet><Representation id="video"><BaseURL>video/</BaseURL><SegmentTemplate startNumber="8"/></Representation></AdaptationSet></Period></MPD>', 'https://origin/master', (url, options) => { targets.push([url, options]); return 'https://manager/resource'; });
+    expect(targets).toContainEqual(['https://a.example/video/seg-$Number$.m4s', { template: true, alternatives: ['https://b.example/video/seg-$Number$.m4s'] }]);
+    expect(targets).toContainEqual(['https://a.example/video/init-$RepresentationID$.mp4', { template: true, alternatives: ['https://b.example/video/init-$RepresentationID$.mp4'] }]);
+    expect(output).toContain('timescale="10"');
+    expect(output).toContain('startNumber="8"');
+    expect(output).toContain('<SegmentTimeline>');
+  });
+  it('strips DASH XML comments without treating CDATA contents as comments', () => {
+    const output = rewriteDashManifest('<MPD><!-- source=https://user:pass@provider.example/master --><EventStream schemeIdUri="urn:scte:scte35:2013:xml"><Event><![CDATA[<!-- cue -->]]></Event></EventStream><SegmentTemplate media="seg.m4s"/></MPD>', 'https://provider.example/master', () => 'https://manager/resource');
+    expect(output).not.toMatch(/provider\.example|user:pass|source=/);
+    expect(output).toContain('<![CDATA[<!-- cue -->]]>');
+    expect(output).toContain('https://manager/resource');
+  });
+  it('rejects excessive DASH CDN combinations instead of truncating fallbacks', () => {
+    const bases = Array.from({ length: 65 }, (_, index) => `<BaseURL>https://cdn${index}.example/</BaseURL>`).join('');
+    expect(() => rewriteDashManifest(`<MPD>${bases}<SegmentTemplate media="seg.m4s"/></MPD>`, 'https://origin/master', () => 'https://manager/resource')).toThrow('Too many DASH resource alternatives');
+  });
+  it('omits URL-valued session metadata and proxies interstitial assets without leaking custom URL metadata', () => {
+    const targets = [];
+    const output = rewriteHlsManifest('#EXTM3U\n#EXT-X-SESSION-DATA:DATA-ID="provider.source",VALUE="https://provider.example/user/pass"\n#EXT-X-DATERANGE:ID="ad-1",CLASS="com.apple.hls.interstitial",START-DATE="2026-10-18T12:00:00Z",X-ASSET-LIST="https://cdn.example/ads.json?username=u&password=p",X-ASSET-URI="https://cdn.example/ad.m3u8",X-PRIVATE="https://provider.example/user/pass",X-CUSTOM-ID="urn:uuid:123"\nseg.ts', 'https://provider.example/master', (url, options) => { targets.push([url, options]); return `https://manager/resource${targets.length}`; });
+    expect(output).not.toMatch(/provider\.example|cdn\.example|username=|password=|SESSION-DATA|X-PRIVATE/);
+    expect(targets.map(([url]) => url)).toContain('https://cdn.example/ads.json?username=u&password=p');
+    expect(targets.map(([url]) => url)).toContain('https://cdn.example/ad.m3u8');
+    expect(output).toContain('ID="ad-1"');
+    expect(output).toContain('CLASS="com.apple.hls.interstitial"');
+    expect(output).toContain('X-CUSTOM-ID="urn:uuid:123"');
+  });
+  it('strips HLS source comments and private titles while preserving playback tags', () => {
+    const output = rewriteHlsManifest('#EXTM3U\n# source=https://user:pass@provider.example/master\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,https://user:pass@provider.example/master\nseg.ts\n#EXT-X-ENDLIST', 'https://provider.example/master', () => 'https://manager/resource');
+    expect(output).not.toMatch(/provider\.example|user:pass|# source/);
+    expect(output).toContain('#EXTINF:6,');
+    expect(output).toContain('#EXT-X-TARGETDURATION:6');
+    expect(output).toContain('#EXT-X-ENDLIST');
+  });
   it('maps HLS playlists, keys, maps, subtitles, session data and preload resources', () => {
     const urls = [];
     const manifest = '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="../key"\n#EXT-X-MAP:URI="init.mp4"\n#EXT-X-MEDIA:TYPE=SUBTITLES,URI="//cdn.example/subs.m3u8"\n#EXT-X-SESSION-DATA:DATA-ID="x",URI="meta.json"\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part.m4s"\nchild.m3u8\n';

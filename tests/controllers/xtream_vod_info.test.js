@@ -102,7 +102,7 @@ describe('xtreamController - get_vod_info', () => {
     mockDb.prepare.mockReturnValue({ get: mockGet });
 
     const upstreamResponse = {
-      info: { title: 'Test Movie', subtitle: 'captions/en.vtt', movie_image: 'https://provider.test/poster.jpg', website: 'https://provider.test/page', drm: { license_key: 'https://provider.test/license' } },
+      info: { title: 'Test Movie', subtitle: 'captions/en.vtt', movie_image: 'https://provider.test/poster.jpg', website: 'https://provider.test/page', youtube_trailer: 'https://www.youtube.com/watch?v=public-trailer', drm: { license_key: '../license|Authorization=Bearer%20secret-token|R{SSM}|JBlicense' } },
       movie_data: {
         direct_source: 'https://provider.test/private-stream',
         stream_id: remoteVodId, // Should be replaced
@@ -133,7 +133,10 @@ describe('xtreamController - get_vod_info', () => {
     expect(payload.info.title).toBe('Test Movie');
     expect(await decryptClientGrant(payload.info.subtitle)).toMatchObject({ channelId: vodId, url: 'https://cdn.example/details/captions/en.vtt' });
     expect(await decryptClientGrant(payload.info.website)).toMatchObject({ channelId: vodId, kind: 'resource' });
-    expect(await decryptClientGrant(payload.info.drm.license_key)).toMatchObject({ channelId: vodId, kind: 'license' });
+    expect(await decryptClientGrant(payload.info.drm.license_key)).toMatchObject({ channelId: vodId, providerId: 10, kind: 'license', url: 'https://cdn.example/license', headers: { Authorization: 'Bearer secret-token' } });
+    expect(payload.info.drm.license_key).toContain('||R{SSM}|JBlicense');
+    expect(payload.info.youtube_trailer).toBe('https://www.youtube.com/watch?v=public-trailer');
+    expect(JSON.stringify(payload)).not.toContain('secret-token');
     expect(JSON.stringify(payload)).not.toContain('https://provider.test');
 
   });

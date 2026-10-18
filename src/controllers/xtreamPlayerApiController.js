@@ -221,7 +221,7 @@ export const playerApi = async (req, res) => {
     if (action === 'get_series') {
       const categoryId = req.query.category_id ? String(req.query.category_id).trim() : null;
       let query = `
-        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.provider_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
                cat.is_adult as category_is_adult
         FROM user_categories cat
@@ -269,8 +269,8 @@ export const playerApi = async (req, res) => {
           last_modified: ch.added || nowStr,
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
-          backdrop_path: rewriteClientMetadata(req, user, { backdrop_path }, '', { channelId: ch.user_channel_id }).backdrop_path,
-          youtube_trailer: rewriteClientMetadata(req, user, ch.youtube_trailer || '', 'youtube_trailer', { channelId: ch.user_channel_id }),
+          backdrop_path: rewriteClientMetadata(req, user, { backdrop_path }, '', { channelId: ch.user_channel_id, providerId: ch.provider_id }).backdrop_path,
+          youtube_trailer: rewriteClientMetadata(req, user, ch.youtube_trailer || '', 'youtube_trailer', { channelId: ch.user_channel_id, providerId: ch.provider_id }),
           episode_run_time: ch.episode_run_time || '',
           category_id: String(ch.user_category_id)
         };
@@ -376,7 +376,7 @@ export const playerApi = async (req, res) => {
             if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
           }
         }
-        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id, baseUrl: resp.url || `${baseUrl}/player_api.php` }));
+        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id, providerId: channel.provider_id, baseUrl: resp.url || `${baseUrl}/player_api.php` }));
 
       } catch(e) {
          console.error('get_series_info error:', e);
@@ -429,7 +429,7 @@ export const playerApi = async (req, res) => {
             if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
           }
         }
-        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id, baseUrl: resp.url || `${baseUrl}/player_api.php` }));
+        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id, providerId: channel.provider_id, baseUrl: resp.url || `${baseUrl}/player_api.php` }));
 
       } catch(e) {
          console.error('get_vod_info error:', e);

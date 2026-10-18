@@ -12,6 +12,7 @@ import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } fr
 import { reserveGrantedResourceSession } from '../controllers/streamControllerHelpers.js';
 import { validateClientTtml } from '../utils/clientTtml.js';
 import { prepareClientMediaResponse } from '../services/clientMediaRelayService.js';
+import { persistPlaybackCookies } from '../services/clientPlaybackContextService.js';
 
 const router = express.Router();
 const MANIFEST_LIMIT = 32 * 1024 * 1024;
@@ -39,8 +40,15 @@ function protectResource(res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
-async function sendImage(res, url, headers, providerId, response, cookieContext = {}) {
-  const image = await getCachedImage(url, { headers, response, cookieJar: cookieContext.cookieJar, headerOrigin: cookieContext.headerOrigin });
+async function sendImage(res, url, headers, providerId, response, cookieContext = {}, resource) {
+  let image;
+  try {
+    image = await getCachedImage(url, { headers, response, cookieJar: cookieContext.cookieJar, headerOrigin: cookieContext.headerOrigin });
+  } catch (error) {
+    if (resource && error.upstreamCookieJar) persistPlaybackCookies(resource, cookieContext.cookieJar, error.upstreamCookieJar);
+    throw error;
+  }
+  if (resource && image.upstreamCookieJar) persistPlaybackCookies(resource, cookieContext.cookieJar, image.upstreamCookieJar);
   protectResource(res);
   res.setHeader('Content-Type', image.contentType);
   res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
@@ -72,9 +80,10 @@ async function relayClientResource(req, res) {
   const controller = new AbortController();
   res.once('close', () => { controller.abort(); discardBody(upstream); cleanup(); });
   try {
-    const cookieContext = createUpstreamContext(resource.headers, resource.headerOrigin || resource.url, resource.cookieJar, resource.headerOrigin || resource.url);
+    let cookieContext = createUpstreamContext(resource.headers, resource.headerOrigin || resource.url, resource.cookieJar, resource.headerOrigin || resource.url);
+    const compactIdentity = createMediaLicenseIdentity(resource.playbackId || req.params.data || resource.url, { ...cookieContext, cookieJar: undefined });
     const scopedHeaders = upstreamRequestHeaders(cookieContext, resource.url);
-    if (resource.kind === 'image') return await sendImage(res, resource.url, scopedHeaders, resource.providerId, undefined, cookieContext);
+    if (resource.kind === 'image') return await sendImage(res, resource.url, scopedHeaders, resource.providerId, undefined, cookieContext, resource);
 
     if (resource.channelName && resource.providerId && resource.kind === 'resource') {
       const { default: manager } = await import('../services/streamManager.js');
@@ -88,27 +97,41 @@ async function relayClientResource(req, res) {
       heartbeat = () => manager.touch(id);
     }
 
-    const headers = resource.kind === 'resource' ? imageRequestHeaders(scopedHeaders) : { ...scopedHeaders };
-    for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
-    if (resource.kind === 'license' && req.method === 'POST') {
-      // CDMs generate these challenge headers after the encrypted grant is issued.
-      for (const name of ['content-type', 'soapaction']) {
-        if (!req.headers[name]) continue;
-        for (const existing of Object.keys(headers)) if (existing.toLowerCase() === name) delete headers[existing];
-        headers[name] = req.headers[name];
+    const candidates = [resource.url, ...(resource.alternatives || [])];
+    let headers;
+    for (const [index, url] of candidates.entries()) {
+      const candidateHeaders = upstreamRequestHeaders(cookieContext, url);
+      headers = resource.kind === 'resource' ? imageRequestHeaders(candidateHeaders) : { ...candidateHeaders };
+      for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
+      if (resource.kind === 'license' && req.method === 'POST') {
+        // CDMs generate these challenge headers after the encrypted grant is issued.
+        for (const name of ['content-type', 'soapaction']) {
+          if (!req.headers[name]) continue;
+          for (const existing of Object.keys(headers)) if (existing.toLowerCase() === name) delete headers[existing];
+          headers[name] = req.headers[name];
+        }
       }
-    }
-    upstream = await fetchSafe(resource.url, {
-      method: req.method === 'HEAD' ? 'GET' : req.method,
-      headers,
-      cookieJar: cookieContext.cookieJar,
-      headerOrigin: cookieContext.headerOrigin,
-      signal: controller.signal,
-      ...(req.method === 'POST' ? { body: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0) } : {}),
-    });
-    if (!upstream.ok || (upstream.status >= 300 && upstream.status < 400)) {
-      discardBody(upstream);
-      return res.sendStatus(502);
+      try {
+        upstream = await fetchSafe(url, {
+          method: req.method === 'HEAD' ? 'GET' : req.method,
+          headers,
+          cookieJar: cookieContext.cookieJar,
+          headerOrigin: cookieContext.headerOrigin,
+          signal: controller.signal,
+          ...(req.method === 'POST' ? { body: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0) } : {}),
+        });
+        const responseContext = withUpstreamCookies(cookieContext.headers, upstream, url, cookieContext.cookieJar, cookieContext.headerOrigin);
+        responseContext.cookieJar = persistPlaybackCookies(resource, cookieContext.cookieJar, responseContext.cookieJar);
+        cookieContext = responseContext;
+        if (upstream.ok && !(upstream.status >= 300 && upstream.status < 400)) {
+          resource.url = url;
+          break;
+        }
+        discardBody(upstream);
+      } catch (error) {
+        if (controller.signal.aborted || index === candidates.length - 1) throw error;
+      }
+      if (index === candidates.length - 1) return res.sendStatus(502);
     }
     protectResource(res);
     res.setHeader('Cache-Control', 'private, no-store');
@@ -120,12 +143,11 @@ async function relayClientResource(req, res) {
     }
     const baseUrl = upstream.url || resource.url;
     const manifest = resource.kind === 'license' ? null : resource.manifestKind || isClientManifest(type, baseUrl);
-    const nextContext = withUpstreamCookies(cookieContext.headers, upstream, resource.url, cookieContext.cookieJar, cookieContext.headerOrigin);
-    const compactIdentity = createMediaLicenseIdentity(req.params.data || resource.url, cookieContext);
+    const nextContext = { ...cookieContext, headers: { ...cookieContext.headers } };
     delete nextContext.headers.Range;
     delete nextContext.headers.range;
     const map = (url, options = {}) => createClientResourceUrl(req, resource.user, url, {
-      kind: 'resource', ...nextContext, channelId: resource.channelId,
+      kind: 'resource', ...nextContext, playbackId: resource.playbackId, channelId: resource.channelId,
       channelName: resource.channelName, providerId: resource.providerId, ...options,
     });
     // Descendants retain the original share/session constraint, not merely the owner ID.
@@ -134,12 +156,12 @@ async function relayClientResource(req, res) {
       const text = await readBodyWithLimit(upstream, { maxBytes: MANIFEST_LIMIT, timeoutMs: 30000 });
       const rewritten = manifest === 'hls'
         ? rewriteHlsManifest(text, baseUrl, map, resource.hlsVariables)
-        : rewriteDashManifest(text, baseUrl, map);
+        : rewriteDashManifest(text, baseUrl, map, candidates.filter(url => url !== resource.url));
       res.setHeader('Content-Type', manifest === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
       return res.send(rewritten);
     }
     if (resource.kind !== 'license' && /^image\//i.test(type)) {
-      return await sendImage(res, resource.url, scopedHeaders, resource.providerId, upstream, cookieContext);
+      return await sendImage(res, resource.url, upstreamRequestHeaders(cookieContext, resource.url), resource.providerId, upstream, cookieContext, resource);
     }
     // Unknown active document formats could contain dependencies we cannot
     // rewrite safely. Never delegate their network access to the client.
@@ -152,7 +174,7 @@ async function relayClientResource(req, res) {
       return res.json(rewriteClientMetadata(req, resource.user, data, '', {
         baseUrl,
         channelId: resource.channelId, channelName: resource.channelName,
-        providerId: resource.providerId, ...nextContext,
+        providerId: resource.providerId, playbackId: resource.playbackId, ...nextContext,
       }));
     }
     if (resource.kind === 'license') {
@@ -165,10 +187,14 @@ async function relayClientResource(req, res) {
       fetchOptions: { headers, cookieJar: nextContext.cookieJar, headerOrigin: cookieContext.headerOrigin, signal: controller.signal },
       mapUrl: (url, options, response) => {
         const licenseContext = withUpstreamCookies(cookieContext.headers, response || upstream, resource.url, nextContext.cookieJar, cookieContext.headerOrigin);
+        licenseContext.cookieJar = persistPlaybackCookies(resource, nextContext.cookieJar, licenseContext.cookieJar);
+        nextContext.cookieJar = licenseContext.cookieJar;
         licenseContext.headers = Object.fromEntries(Object.entries(licenseContext.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
         return map(url, { ...licenseContext, ...options, compact: true, compactIdentity });
       },
     });
+    const preparedContext = withUpstreamCookies(cookieContext.headers, upstream, resource.url, nextContext.cookieJar, cookieContext.headerOrigin);
+    nextContext.cookieJar = persistPlaybackCookies(resource, nextContext.cookieJar, preparedContext.cookieJar);
     res.status(upstream.status);
     res.setHeader('Content-Type', type);
     for (const name of ['content-length', 'content-range', 'accept-ranges']) {

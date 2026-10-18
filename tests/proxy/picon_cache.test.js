@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import http from 'node:http';
 import * as helpers from '../../src/utils/helpers.js';
 
-const mocks = vi.hoisted(() => ({ db: { prepare: vi.fn(), exec: vi.fn() }, getXtreamUser: vi.fn(), getCachedImage: vi.fn(), clearImageCache: vi.fn(), fetchSafe: vi.fn(),
+const mocks = vi.hoisted(() => ({ db: { prepare: vi.fn(), exec: vi.fn(), transaction: callback => ({ immediate: callback }) }, getXtreamUser: vi.fn(), getCachedImage: vi.fn(), clearImageCache: vi.fn(), fetchSafe: vi.fn(),
   manager: { add: vi.fn(async () => undefined), remove: vi.fn(), touch: vi.fn(), localStreams: new Map(),
     isSessionActive: vi.fn(), getUserConnectionCount: vi.fn(), getProviderConnectionCount: vi.fn() } }));
 vi.mock('../../src/services/streamManager.js', () => ({ default: mocks.manager }));
@@ -74,7 +74,7 @@ describe('client resource and image proxy', () => {
       if (sql.includes('FROM users')) return { get: () => activeUser };
       if (sql.includes('uc.granted_by_admin')) return { get: () => channel };
       if (sql.includes('url LIKE')) return { all: () => providerPool };
-      return { get: () => ({ provider_id: 3 }) };
+      return { get: () => ({ provider_id: 3 }), run: () => ({}) };
     });
     mocks.manager.isSessionActive.mockResolvedValue(false);
     mocks.manager.getUserConnectionCount.mockResolvedValue(0);

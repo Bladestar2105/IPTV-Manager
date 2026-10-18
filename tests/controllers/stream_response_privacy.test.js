@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { Readable } from 'node:stream';
-import { playreadyMp4, providerLicense } from '../fixtures/playreadyMp4.js';
+import { Readable, PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
+import { preparePlaybackMedia } from '../../src/controllers/streamControllerHelpers.js';
+import { playreadyMp4 } from '../fixtures/playreadyMp4.js';
 
 const state = vi.hoisted(() => ({ fetchSafe: vi.fn(), createClientResourceUrl: vi.fn() }));
 vi.mock('../../src/database/db.js', () => ({ default: { prepare: () => ({ get: () => null, all: () => [], run: () => ({}) }) } }));
@@ -34,18 +36,44 @@ const response = (body, type, status = 200) => ({ url: 'https://provider.example
 beforeEach(() => { state.fetchSafe.mockReset(); state.createClientResourceUrl.mockReset().mockReturnValue('http://manager.example/r/abcdefghijklmnopqrstuv'); });
 
 describe.each(paths)('initial stream privacy for %s', url => {
-  it.each(['moov', 'moof'])('rewrites binary PlayReady %s metadata without moving media', async container => {
-    const original = playreadyMp4(container);
-    state.fetchSafe.mockResolvedValue(response(original, 'video/mp4'));
+  it.each(['moov', 'moof'])('starts an isolated protected playback for binary PlayReady %s metadata', async container => {
+    const upstream = response(playreadyMp4(container), 'video/mp4');
+    upstream.headers.set('set-cookie', 'session=initial; Path=/');
+    state.fetchSafe.mockResolvedValue(upstream);
+    const result = await request(app).get(url);
+    expect(result.status).toBe(307);
+    expect(result.headers.location).toBe('http://manager.example/r/abcdefghijklmnopqrstuv');
+    expect(result.headers['cache-control']).toContain('no-store');
+    expect(upstream.body.destroyed).toBe(true);
+    expect(state.createClientResourceUrl).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 1 }), expect.stringContaining('https://provider.example/'),
+      expect.objectContaining({ kind: 'resource', channelId: 1, providerId: 3, channelName: expect.any(String) }));
+  });
+  it.each(['moov', 'unknown'])('recognizes mislabeled MP4 with a %s first box', async kind => {
+    const prefix = Buffer.from([0, 0, 0, 8, 0x7a, 0x7a, 0x7a, 0x7a]);
+    const bytes = kind === 'unknown' ? Buffer.concat([prefix, playreadyMp4()]) : playreadyMp4();
+    const upstream = response(bytes, 'video/mp2t');
+    state.fetchSafe.mockResolvedValue(upstream);
+    expect((await request(app).get(url)).status).toBe(307);
+    expect(upstream.body.destroyed).toBe(true);
+  });
+
+  it('keeps a transport stream with a printable ambiguous payload on its original connection', async () => {
+    const packet = Buffer.alloc(188, 0xff);
+    Buffer.from([0x47, 0x01, 0, 0x10, 0x41, 0x42, 0x43, 0x44]).copy(packet);
+    const bytes = Buffer.concat([packet, packet, packet]);
+    state.fetchSafe.mockResolvedValue(response(bytes, 'video/mp2t'));
     const result = await request(app).get(url);
     expect(result.status).toBe(200);
-    expect(result.body.length).toBe(original.length);
-    expect(result.body.includes(Buffer.from(providerLicense, 'utf16le'))).toBe(false);
-    expect(result.body.includes(Buffer.from('http://manager.example/r/abcdefghijklmnopqrstuv', 'utf16le'))).toBe(true);
-    expect(result.body.indexOf(Buffer.from('sample-bytes'))).toBe(original.indexOf(Buffer.from('sample-bytes')));
-    expect(state.createClientResourceUrl).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 1 }), providerLicense,
-      expect.objectContaining({ kind: 'license', compact: true, compactIdentity: expect.any(String), channelId: 1, providerId: 3 }));
+    expect(result.body).toEqual(bytes);
   });
+
+  it.each([Buffer.from([0x47, 0x40, 0, 0x10, 0, 0, 0, 0, 0xff]), Buffer.from([0x47, 0, 0])])('preserves transport bytes after inspecting their prefix', async bytes => {
+    state.fetchSafe.mockResolvedValue(response(bytes, 'video/mp2t'));
+    const result = await request(app).get(url);
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual(bytes);
+  });
+
   it.each(['text/html', 'application/xml', 'text/css', 'application/json', 'image/svg+xml', 'application/javascript'])('rejects provider error documents returned as %s', async type => {
     const body = type === 'application/json' ? JSON.stringify({ error: 'https://provider.example/private?password=secret' }) : '<document href="https://provider.example/private?password=secret">login</document>';
     const upstream = response(body, type);
@@ -73,19 +101,48 @@ describe.each(paths)('initial stream privacy for %s', url => {
     expect(result.text || '').not.toMatch(/provider\.example|password|secret/);
   });
 
-  it('preserves binary media and range responses', async () => {
-    const status = url.startsWith('/movie/') || url.startsWith('/series/') ? 206 : 200;
-    state.fetchSafe.mockImplementation((_target, options) => {
-      const ranged = status === 206 && new Headers(options.headers).has('range');
-      const body = status === 200 || ranged ? Buffer.from('media-bytes') : Buffer.concat([Buffer.alloc(10), Buffer.from('media-bytes'), Buffer.alloc(79)]);
-      const upstream = response(body, 'video/mp4', ranged ? 206 : 200);
-      upstream.headers.set('content-length', String(body.length));
-      if (ranged) upstream.headers.set('content-range', 'bytes 10-20/100');
-      return upstream;
-    });
+  it('redirects initial range requests without caching request-specific range headers', async () => {
+    const upstream = response(playreadyMp4(), 'video/mp4', 206);
+    upstream.headers.set('content-range', 'bytes 10-20/100');
+    state.fetchSafe.mockResolvedValue(upstream);
     const result = await request(app).get(url).set('Range', 'bytes=10-20');
-    expect(result.status).toBe(status);
-    expect(result.body.toString()).toBe('media-bytes');
-    if (url.startsWith('/movie/') || url.startsWith('/series/')) expect(result.headers['content-range']).toBe('bytes 10-20/100');
+    expect(result.status).toBe(307);
+    expect(upstream.body.destroyed).toBe(true);
+    const options = state.createClientResourceUrl.mock.calls[0][3];
+    expect(new Headers(options.headers).has('range')).toBe(false);
   });
+});
+
+it.each(['abort', 'timeout', 'error'])('releases a stalled upstream during media classification on %s', async reason => {
+  vi.useFakeTimers();
+  const req = Object.assign(new EventEmitter(), { headers: {}, ip: '127.0.0.1' });
+  const res = new EventEmitter();
+  const body = new PassThrough();
+  body.write(Buffer.from([0x47, 0x01, 0, 0x10, 0x41, 0x42, 0x43, 0x44]));
+  const upstream = { status: 200, headers: new Headers({ 'content-type': 'video/mp2t' }), body };
+  try {
+    const pending = preparePlaybackMedia(req, res, { id: 1 }, upstream, { headers: {}, sourceUrl: 'https://provider.example/live.ts' });
+    const rejected = expect(pending).rejects.toThrow(reason === 'abort' ? 'disconnected' : reason === 'timeout' ? 'timed out' : 'provider failed');
+    if (reason === 'abort') req.emit('aborted');
+    else if (reason === 'error') body.destroy(new Error('provider failed'));
+    else await vi.advanceTimersByTimeAsync(30000);
+    await rejected;
+    expect(body.destroyed).toBe(true);
+    expect(req.listenerCount('aborted')).toBe(0);
+    expect(res.listenerCount('close')).toBe(0);
+  } finally { body.destroy(); vi.useRealTimers(); }
+});
+
+it('releases the initial provider reservation before publishing the playback redirect', async () => {
+  const upstream = response(playreadyMp4(), 'video/mp4');
+  const req = new EventEmitter();
+  const res = Object.assign(new EventEmitter(), { setHeader: vi.fn(), redirect: vi.fn() });
+  let release;
+  const released = new Promise(resolve => { release = resolve; });
+  const pending = preparePlaybackMedia(req, res, { id: 1 }, upstream, { headers: {}, sourceUrl: 'https://provider.example/movie.mp4', releaseSession: () => released });
+  expect(res.redirect).not.toHaveBeenCalled();
+  expect(upstream.body.destroyed).toBe(true);
+  release();
+  await pending;
+  expect(res.redirect).toHaveBeenCalledWith(307, expect.any(String));
 });

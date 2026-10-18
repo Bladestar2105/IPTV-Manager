@@ -84,5 +84,6 @@ export function validateClientTtml(text) {
     if (!open[3]) stack.push({ name: open[1], bindings });
   }
   if (stack.length || roots !== 1) invalid();
-  return text;
+  // Keep caption CDATA intact; comments may expose upstream URLs or credentials.
+  return text.replace(/<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->/g, token => token.startsWith('<!--') ? '' : token);
 }

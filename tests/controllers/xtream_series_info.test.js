@@ -47,6 +47,7 @@ describe('Xtream get_series_info episode authorization', () => {
     user_channel_id: 42,
     custom_name: 'Custom Series',
     remote_stream_id: 555,
+    provider_id: 7,
     url: 'http://panel.test',
     username: 'provider-user',
     password: 'provider-pass',
@@ -83,7 +84,7 @@ describe('Xtream get_series_info episode authorization', () => {
         info: { name: 'Provider Series', subtitle: '../subs/en.vtt', cover: 'https://provider.test/private.jpg', backdrop_path: ['https://provider.test/backdrop.jpg'] },
         episodes: {
           1: [
-            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'logo.png', drm: { license_key: 'https://provider.test/episode-license' } } },
+            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'logo.png', youtube_trailer: 'https://youtu.be/public-trailer', drm: { license_key: '/episode-license|Authorization=Bearer%20secret-token|R{SSM}|JBlicense' } } },
             { id: 'invalid', title: 'Invalid' },
           ],
         },
@@ -99,7 +100,10 @@ describe('Xtream get_series_info episode authorization', () => {
     expect(await decryptClientGrant(payload.info.subtitle)).toMatchObject({ channelId: 42, url: 'https://cdn.example/subs/en.vtt' });
     expect(await decryptClientGrant(payload.info.backdrop_path[0])).toMatchObject({ channelId: 42, kind: 'image' });
     expect(await decryptClientGrant(payload.episodes[1][0].info.movie_image)).toMatchObject({ channelId: 42, kind: 'image', url: 'https://cdn.example/details/logo.png' });
-    expect(await decryptClientGrant(payload.episodes[1][0].info.drm.license_key)).toMatchObject({ channelId: 42, kind: 'license' });
+    expect(await decryptClientGrant(payload.episodes[1][0].info.drm.license_key)).toMatchObject({ channelId: 42, providerId: 7, kind: 'license', url: 'https://cdn.example/episode-license', headers: { Authorization: 'Bearer secret-token' } });
+    expect(payload.episodes[1][0].info.drm.license_key).toContain('||R{SSM}|JBlicense');
+    expect(payload.episodes[1][0].info.youtube_trailer).toBe('https://youtu.be/public-trailer');
+    expect(JSON.stringify(payload)).not.toContain('secret-token');
     expect(JSON.stringify(payload)).not.toContain('https://provider.test');
     expect(payload.episodes[1][0].direct_source).toBe('');
     expect(payload.episodes[1]).toHaveLength(1);

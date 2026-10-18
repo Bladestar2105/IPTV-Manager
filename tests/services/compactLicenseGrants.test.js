@@ -15,6 +15,7 @@ import db, { initDb, DB_PATH } from '../../src/database/db.js';
 import path from 'node:path';
 import { createClientResourceUrl, resolveClientResource, resolveCompactLicenseResource } from '../../src/services/clientResourceService.js';
 import resourceRouter, { shortLicenseRouter } from '../../src/routes/proxy.js';
+import { preparePlaybackMedia } from '../../src/controllers/streamControllerHelpers.js';
 import { upstreamRequestHeaders } from '../../src/utils/clientCookies.js';
 
 const user = { id: 919191, token_version: 0, is_active: 1 };
@@ -236,6 +237,70 @@ it('rewrites a real MP4 through a grant and relays the resulting compact license
     expect(fetchSafe).toHaveBeenLastCalledWith(providerLicense,expect.objectContaining({headers:expect.objectContaining({Cookie:'session=rotated'})}));
     const samePlayback=await request(app).get(new URL(resource).pathname).set('Host','manager.test');
     expect(samePlayback.body.toString('utf16le').match(/<LA_URL>([^<]+)<\/LA_URL>/)?.[1]).toBe(license);
+  } finally {
+    for (const table of ['user_channels', 'user_categories', 'provider_channels', 'providers']) db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(user.id);
+  }
+});
+
+
+it('isolates same-client raw playbacks while retaining license IDs across one opaque playback range', async () => {
+  db.prepare('INSERT INTO providers (id, name, url, username, password, user_id) VALUES (?, ?, ?, ?, ?, ?)').run(user.id, 'compact', 'https://provider.example', 'u', 'p', user.id);
+  db.prepare('INSERT INTO provider_channels (id, provider_id, remote_stream_id, name) VALUES (?, ?, ?, ?)').run(user.id, user.id, 1, 'compact');
+  db.prepare('INSERT INTO user_categories (id, user_id, name) VALUES (?, ?, ?)').run(user.id, user.id, 'compact');
+  db.prepare("INSERT INTO user_channels (id, user_category_id, provider_channel_id, assignment_origin) VALUES (?, ?, ?, 'manual')").run(user.id, user.id, user.id);
+  try {
+    const original = playreadyMp4();
+    let cookie = 'A';
+    const source = 'https://provider.example/init.mp4';
+    const app = express();
+    app.use(express.raw({ type: () => true, limit: '1mb' }));
+    app.get('/raw', async (req, res) => {
+      const upstream = { status: 200, ok: true, url: source, headers: new Headers({ 'content-type': 'video/mp4', 'set-cookie': `session=${cookie}; Path=/` }), body: Readable.from([original]) };
+      const prepared = await preparePlaybackMedia(req, res, user, upstream, { sourceUrl: source, headers: { Authorization: 'Bearer upstream-secret' }, channelId: user.id, providerId: user.id, channelName: 'compact' });
+      if (prepared) prepared.body.pipe(res);
+    });
+    app.use('/api/proxy', resourceRouter); app.use('/r', shortLicenseRouter);
+    fetchSafe.mockImplementation(async (url, options) => {
+      if (url === providerLicense) return { status: 200, ok: true, url, headers: new Headers({ 'content-type': 'application/octet-stream' }), body: Readable.from([Buffer.from('license')]) };
+      const upstream = { status: 200, ok: true, url, headers: new Headers({ 'content-type': 'video/mp4', 'content-length': String(original.length), 'set-cookie': `session=${cookie}; Path=/` }), body: Readable.from([original]) };
+      if (new Headers(options.headers).has('range')) {
+        upstream.status = 206;
+        upstream.headers.set('content-range', `bytes 0-${original.length - 1}/${original.length}`);
+      }
+      return upstream;
+    });
+    const start = async () => request(app).get('/raw').set('Host', 'manager.test').set('User-Agent', 'same-player');
+    const first = await start();
+    expect(first.status).toBe(307);
+    const identicalStart = await start();
+    expect(identicalStart.status).toBe(307);
+    expect(identicalStart.headers.location).not.toBe(first.headers.location);
+    const getMedia = location => request(app).get(new URL(location).pathname).set('Host', 'manager.test').set('User-Agent', 'same-player');
+    const mediaA = await getMedia(first.headers.location);
+    const licenseA = mediaA.body.toString('utf16le').match(/<LA_URL>([^<]+)<\/LA_URL>/)?.[1];
+    expect(licenseA).toMatch(/^http:\/\/manager\.test\/r\/[\w-]{22}$/);
+    cookie = 'B';
+    const second = await start();
+    expect(second.status).toBe(307);
+    expect(second.headers.location).not.toBe(first.headers.location);
+    const mediaB = await getMedia(second.headers.location);
+    const licenseB = mediaB.body.toString('utf16le').match(/<LA_URL>([^<]+)<\/LA_URL>/)?.[1];
+    expect(licenseB).not.toBe(licenseA);
+    const challenge = Buffer.from([0, 255, 13, 10]);
+    const post = license => request(app).post(new URL(license).pathname).set('Content-Type', 'application/octet-stream').set('SOAPAction', 'playready-action').send(challenge);
+    await post(licenseA);
+    expect(fetchSafe).toHaveBeenLastCalledWith(providerLicense, expect.objectContaining({ method: 'POST', body: challenge, headers: expect.objectContaining({ Authorization: 'Bearer upstream-secret', Cookie: 'session=A', soapaction: 'playready-action' }) }));
+    await post(licenseB);
+    expect(fetchSafe).toHaveBeenLastCalledWith(providerLicense, expect.objectContaining({ method: 'POST', body: challenge, headers: expect.objectContaining({ Cookie: 'session=B' }) }));
+    cookie = 'A-rotated';
+    const range = await getMedia(first.headers.location).set('Range', `bytes=0-${original.length - 1}`);
+    expect(range.status).toBe(206);
+    expect(range.body.toString('utf16le').match(/<LA_URL>([^<]+)<\/LA_URL>/)?.[1]).toBe(licenseA);
+    expect(range.body.length).toBe(original.length);
+    await post(licenseA);
+    expect(fetchSafe).toHaveBeenLastCalledWith(providerLicense, expect.objectContaining({ body: challenge, headers: expect.objectContaining({ Cookie: 'session=A-rotated' }) }));
+    await post(licenseB);
+    expect(fetchSafe).toHaveBeenLastCalledWith(providerLicense, expect.objectContaining({ body: challenge, headers: expect.objectContaining({ Cookie: 'session=B' }) }));
   } finally {
     for (const table of ['user_channels', 'user_categories', 'provider_channels', 'providers']) db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(user.id);
   }

@@ -58,6 +58,21 @@ export function rewriteHlsManifest(text, baseUrl, mapUrl, inheritedVariables = {
       variant = false;
       return result;
     }
+    if (!/^#EXT(?:M3U|INF|-[A-Z0-9-]+)(?::|$)/.test(line)) return '';
+    if (line.startsWith('#EXT-X-SESSION-DATA:') && /(?:^|,)VALUE\s*=/.test(line.slice(line.indexOf(':') + 1))) return '';
+    if (line.startsWith('#EXT-X-DATERANGE:')) {
+      const attributes = line.slice(line.indexOf(':') + 1).match(/(?:[^,"']|"[^"]*"|'[^']*')+/g) || [];
+      return '#EXT-X-DATERANGE:' + attributes.flatMap(attribute => {
+        const match = attribute.match(/^\s*([A-Z0-9-]+)\s*=\s*(["'])(.*?)\2\s*$/);
+        if (match && ['X-ASSET-LIST', 'X-ASSET-URI'].includes(match[1])) {
+          const options = match[1] === 'X-ASSET-URI' ? { manifestKind: 'hls' } : {};
+          return [`${match[1]}=${match[2]}${rewrite(match[3], options)}${match[2]}`];
+        }
+        if (/^\s*X-/i.test(attribute) && /(?:https?:)?\/\//i.test(attribute)) return [];
+        return [attribute];
+      }).join(',');
+    }
+    if (/^#EXTINF:/.test(line) && /(?:https?:)?\/\//i.test(line)) return line.slice(0, line.indexOf(',') + 1);
     if (line.startsWith('#EXT-X-STREAM-INF:')) variant = true;
     const playlist = /^#EXT-X-(?:MEDIA|I-FRAME-STREAM-INF|IMAGE-STREAM-INF|RENDITION-REPORT):/.test(line);
     const key = /^#EXT-X-(?:SESSION-)?KEY:/.test(line) && !/\bMETHOD=NONE(?:,|$)/.test(line);
@@ -73,7 +88,15 @@ const decodeXml = value => value.replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, '$1').re
 const encodeXml = value => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&apos;').replace(/</g, '&lt;');
 const localName = name => name.split(':').pop();
 
-export function rewriteDashManifest(text, baseUrl, mapUrl) {
+export function rewriteDashManifest(text, baseUrl, mapUrl, alternativeBases = []) {
+  const resolveChoices = (values, bases) => {
+    const urls = new Set();
+    for (const value of values) for (const base of bases) {
+      urls.add(resolveResource(decodeXml(value.trim()), base));
+      if (urls.size > 64) throw new Error('Too many DASH resource alternatives');
+    }
+    return [...urls];
+  };
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error('Unsupported DASH XML declaration');
   text = text.replace(/<\?xml-stylesheet\b[\s\S]*?\?>/gi, '');
   if (/<\?(?!xml\s)[\s\S]*?\?>/i.test(text)) throw new Error('Unsupported DASH processing instruction');
@@ -81,6 +104,7 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
   const stack = [root];
   const tokens = text.match(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<(?:(?:"[^"]*"|'[^']*'|[^'">])*)>|[^<]+/g) || [];
   for (const token of tokens) {
+    if (token.startsWith('<!--')) continue;
     if (/^<\//.test(token)) {
       if (stack.length < 2) throw new Error('Invalid DASH XML');
       stack.pop().close = token;
@@ -92,9 +116,44 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
     } else stack.at(-1).children.push(token);
   }
   if (stack.length !== 1) throw new Error('Invalid DASH XML');
+  // Absolute grants must use each representation's effective BaseURL, including
+  // descriptors inherited from Period/AdaptationSet and partial overrides.
+  const segmentNames = new Set(['SegmentTemplate', 'SegmentList', 'SegmentBase']);
+  const hasRepresentations = node => typeof node !== 'string' &&
+    (localName(node.name || '') === 'Representation' || node.children.some(hasRepresentations));
+  const inheritSegments = (node, inherited) => {
+    if (typeof node === 'string') return;
+    const descriptors = node.children.filter(child => typeof child !== 'string' && segmentNames.has(localName(child.name)));
+    if (descriptors.length > 1) {
+      for (const child of node.children) inheritSegments(child);
+      return;
+    }
+    const own = descriptors[0];
+    let effective = own ? structuredClone(own) : inherited;
+    if (own && inherited && localName(own.name) === localName(inherited.name)) {
+      const attributes = value => [...value.matchAll(/([\w:.-]+)\s*=\s*(["'])(.*?)\2/g)].map(match => [match[1], `${match[1]}=${match[2]}${match[3]}${match[2]}`]);
+      const merged = new Map([...attributes(inherited.open), ...attributes(own.open)]);
+      effective.open = `<${own.name} ${[...merged.values()].join(' ')}>`;
+      effective.close = `</${own.name}>`;
+      const ownNames = new Set(own.children.filter(child => typeof child !== 'string').map(child => localName(child.name)));
+      effective.children = [...structuredClone(inherited.children).filter(child => typeof child !== 'string' && !ownNames.has(localName(child.name))), ...effective.children];
+    }
+    if (localName(node.name || '') === 'Representation' && effective) {
+      node.children = node.children.filter(child => typeof child === 'string' || !segmentNames.has(localName(child.name)));
+      node.children.push(structuredClone(effective));
+      if (/\/\s*>$/.test(node.open)) {
+        node.open = node.open.replace(/\/\s*>$/, '>');
+        node.close = `</${node.name}>`;
+      }
+    } else if (hasRepresentations(node)) {
+      node.children = node.children.filter(child => typeof child === 'string' || !segmentNames.has(localName(child.name)));
+    }
+    for (const child of node.children) inheritSegments(child, effective);
+  };
+  inheritSegments(root);
   const rewrite = (value, base, options = {}) => {
-    const url = resolveResource(decodeXml(value.trim()), base);
-    return mapUrl(url, { template: /\$(?:RepresentationID|Number|Bandwidth|Time|SubNumber)(?:%0?\d+d)?\$/.test(url), ...options });
+    const [url, ...alternatives] = resolveChoices([value], base);
+    return mapUrl(url, { ...(alternatives.length ? { alternatives } : {}), template: /\$(?:RepresentationID|Number|Bandwidth|Time|SubNumber)(?:%0?\d+d)?\$/.test(url), ...options });
   };
   const render = (node, inheritedBase) => {
     if (typeof node === 'string') return node;
@@ -116,10 +175,10 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
     }
     if (['UrlQueryInfo', 'ExtUrlQueryInfo'].includes(name)) throw new Error('Unsupported DASH URL query extension');
     const xmlBase = node.open?.match(/\bxml:base\s*=\s*(["'])(.*?)\1/);
-    const nodeBase = xmlBase ? resolveResource(decodeXml(xmlBase[2]), inheritedBase) : inheritedBase;
-    const baseNode = node.children.find(child => typeof child !== 'string' && localName(child.name) === 'BaseURL');
-    const baseText = baseNode?.children.filter(child => typeof child === 'string').join('');
-    const base = baseText ? resolveResource(decodeXml(baseText.trim()), nodeBase) : nodeBase;
+    const nodeBase = xmlBase ? resolveChoices([xmlBase[2]], inheritedBase) : inheritedBase;
+    const baseTexts = node.children.filter(child => typeof child !== 'string' && localName(child.name) === 'BaseURL')
+      .map(child => child.children.filter(value => typeof value === 'string').join('')).filter(value => value.trim());
+    const base = baseTexts.length ? resolveChoices(baseTexts, nodeBase) : nodeBase;
     node.open = node.open?.replace(/([\w:.-]+)\s*=\s*(["'])(.*?)\2/g, (match, attr, quote, value) => {
       if (attr === 'xml:base') return '';
       // DASH uses this XLink value to remove an element without a network fetch.
@@ -147,7 +206,7 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
     if (name === 'AdaptationSet' && representations.length && !representations.some(Boolean)) return '';
     return (node.open || '') + children.join('') + (node.close || '');
   };
-  return render(root, baseUrl);
+  return render(root, [baseUrl, ...alternativeBases]);
 }
 
 export function isClientManifest(contentType = '', url = '') {

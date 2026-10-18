@@ -116,6 +116,13 @@ describe('length-preserving binary PlayReady privacy', () => {
   it('passes ordinary non-MP4 data without buffering it', async () => {
     const value = Buffer.from('#EXTM3U\nnot mp4'); expect(await stream(value)).toEqual(value);
   });
+  it('streams valid MPEG-TS packets whose printable payload resembles an unknown MP4 box', async () => {
+    const packet = Buffer.alloc(188, 0xff);
+    Buffer.from([0x47, 0x01, 0, 0x10, 0x41, 0x42, 0x43, 0x44]).copy(packet);
+    const input = Buffer.concat([packet, packet, packet, packet]);
+    expect(await stream(input, { maxMetadataBytes: 512 })).toEqual(input);
+    await expect(stream(input, { isMp4: true, maxMetadataBytes: 512 })).rejects.toThrow();
+  });
   it('preserves printable AES-128 keys that resemble an incomplete unknown box', async () => {
     const key = Buffer.from('0123abcd45678901');
     expect(await stream(key)).toEqual(key);

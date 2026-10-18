@@ -11,9 +11,14 @@ describe('static TTML captions', () => {
     const xml = '<tt:tt xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" ttp:profile="http://www.w3.org/ns/ttml/profile/imsc1/text"><tt:body><tt:div><tt:p begin="1s" dur="2s">Caption</tt:p></tt:div></tt:body></tt:tt>';
     expect(validateClientTtml(xml)).toBe(xml);
   });
-  it('preserves inert comments, CDATA caption text and title metadata', () => {
+  it('removes comments while preserving CDATA caption text and title metadata', () => {
     const xml = '<tt xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><head><metadata><ttm:title>Captions</ttm:title></metadata></head><body><!-- generated --><div><p><![CDATA[<Caption & text>]]></p></div></body></tt>';
-    expect(validateClientTtml(xml)).toBe(xml);
+    expect(validateClientTtml(xml)).toBe(xml.replace('<!-- generated -->', ''));
+  });
+  it('removes provider credentials in comments without changing the declaration or CDATA', () => {
+    const comment = '<!-- https://user:secret@provider.example/captions -->';
+    const xml = document(`${comment}<body><div><p><![CDATA[<!-- spoken text -->]]></p></div></body>`);
+    expect(validateClientTtml(xml)).toBe(xml.replace(comment, ''));
   });
   it.each([
     '<!DOCTYPE tt [<!ENTITY source SYSTEM "https://upstream/secret">]><tt>&source;</tt>',

@@ -41,9 +41,10 @@ async function sendVodManifest(req, res, upstream, sourceUrl, user, headers, ses
   const text = await readBodyWithLimit(upstream, { timeoutMs: MANIFEST_BODY_TIMEOUT_MS, maxBytes: MANIFEST_MAX_BYTES });
   const nextContext = withUpstreamCookies(headers, upstream, sourceUrl);
   delete nextContext.headers.Range;
+  const playbackId = crypto.randomBytes(16).toString('base64url');
   const rewrite = kind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
   const output = rewrite(text, upstream.url || sourceUrl, (url, options) => createClientResourceUrl(req, user, url, {
-    kind: 'resource', ...nextContext, ...session, ...options
+    kind: 'resource', ...nextContext, playbackId, ...session, ...options
   }));
   res.setHeader('Content-Type', kind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
   res.setHeader('Cache-Control', 'no-store');
@@ -173,7 +174,8 @@ export const proxyMovie = async (req, res) => {
         }
 
         if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
-        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
+        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: sessionName, connectionId, releaseSession: cleanup });
+        if (!upstream) return;
         await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
         res.status(upstream.status);
 
@@ -356,7 +358,8 @@ export const proxySeries = async (req, res) => {
         }
 
         if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
-        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: seriesEpisode.user_channel_id, providerId: availableProvider.id });
+        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: seriesEpisode.user_channel_id, providerId: availableProvider.id, channelName: sessionName, connectionId, releaseSession: cleanup });
+        if (!upstream) return;
         await streamManager.cleanupSession(user.id, req.ip, sessionName, availableProvider.id, connectionId);
         res.status(upstream.status);
 

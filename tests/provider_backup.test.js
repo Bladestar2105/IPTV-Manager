@@ -39,6 +39,7 @@ vi.mock('../src/services/streamManager.js', () => ({
         getProviderConnectionCount: vi.fn().mockResolvedValue(0),
         add: vi.fn(),
         remove: vi.fn(),
+        touch: vi.fn(),
         cleanupUser: vi.fn(),
         cleanupSession: vi.fn().mockResolvedValue(undefined),
         localStreams: new Map()
@@ -81,6 +82,7 @@ describe('Stream Controller - Backup Failover', () => {
     let sources;
     const successBody = () => {
         const body = new PassThrough();
+        body.write(Buffer.from([0x47, 0x40, 0, 0x10, 0, 0, 0, 0]));
         sources.push(body);
         return body;
     };

@@ -94,6 +94,19 @@ describe('scoped client resource URLs', () => {
     expect(await resolveClientResource(resourceRequest(url))).toMatchObject({ url: expected });
   });
 
+  it('substitutes tokens that appear only in a DASH fallback path', async () => {
+    const url = createClientResourceUrl(request(), user, 'https://a.example/seg', { kind: 'resource', alternatives: ['https://b.example/seg-$Number$.m4s'] });
+    const req = resourceRequest(url); req.query.tpl0 = '17';
+    expect(await resolveClientResource(req)).toMatchObject({ alternatives: ['https://b.example/seg-17.m4s'] });
+  });
+  it('substitutes validated DASH tokens in every encrypted CDN alternative', async () => {
+    const url = createClientResourceUrl(request(), user, 'https://a.example/$RepresentationID$/seg-$Number$.m4s', { kind: 'resource', alternatives: ['https://b.example/$RepresentationID$/seg-$Number$.m4s'] });
+    expect(url).not.toMatch(/[ab]\.example/);
+    const req = resourceRequest(url); req.query.tpl0 = 'main'; req.query.tpl1 = '17';
+    expect(await resolveClientResource(req)).toMatchObject({ url: 'https://a.example/main/seg-17.m4s', alternatives: ['https://b.example/main/seg-17.m4s'] });
+    req.query.tpl0 = '../secret';
+    expect(await resolveClientResource(req)).toBeNull();
+  });
   it('keeps DASH substitution tokens visible while validating substituted values', async () => {
     const url = createClientResourceUrl(request(), user, 'https://cdn.example/$RepresentationID$/seg-$Number%05d$.m4s', { kind: 'resource', template: true });
     expect(url).toContain('$RepresentationID$');
@@ -221,6 +234,14 @@ describe('scoped client resource URLs', () => {
     expect(rewritten.drm.license_key).toContain('/api/proxy/resource/');
     expect(JSON.stringify(rewritten)).not.toContain('upstream-secret');
     expect(JSON.stringify(rewritten)).not.toContain('provider-secret');
+  });
+  it('preserves validated inline ClearKey material even with a provider base URL', () => {
+    const license_key = JSON.stringify({ keys: [{ kty: 'oct', kid: 'AQEBAQEBAQEBAQEBAQEBAQ', k: 'AgICAgICAgICAgICAgICAg' }], type: 'temporary' });
+    const options = { baseUrl: 'https://provider.example/player_api.php' };
+    expect(rewriteClientMetadata(request(), user, { license_key }, '', options)).toEqual({ license_key });
+    const pair = '01'.repeat(16) + ':' + '02'.repeat(16);
+    expect(rewriteClientMetadata(request(), user, { license_key: pair }, '', options)).toEqual({ license_key: pair });
+    expect(rewriteClientMetadata(request(), user, { license_key: '{"keys":[],"url":"https://provider.example/secret"}' }, '', options)).toEqual({ license_key: '' });
   });
   it('does not preserve added credentials on otherwise valid Manager resource URLs', () => {
     const req = request();
