@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestStableRelease, planRetention } from '../scripts/container-release-retention.mjs';
+import { latestStableRelease, planRetention, validateReleaseRef } from '../scripts/container-release-retention.mjs';
 
 const sha = 'a'.repeat(40);
 const other = 'b'.repeat(40);
@@ -10,6 +10,16 @@ const version = (id, revision, children = [], tags = []) => ({
 const release = { tag: 'Stable-26.10.18', commit: sha, publishedAt: '2026-10-18T10:00:00Z', prerelease: false };
 
 describe('container release retention', () => {
+    it.each(['refs/tags/Stable-26.10.18', 'refs/tags/Stable-26.10.18-hotfix.2',
+        'refs/heads/main', 'refs/pull/10/merge', 'refs/tags/v1.2.3'])(
+        'allows supported release and non-release ref %s', ref => {
+            expect(() => validateReleaseRef(ref)).not.toThrow();
+        });
+    it.each(['refs/tags/Stable-test', 'refs/tags/Stable-Latest', 'refs/tags/Stable-26.10.18-extra',
+        'refs/tags/Stable-26.10.18-hotfix.2-extra'])(
+        'blocks malformed Stable release ref %s before publication', ref => {
+            expect(() => validateReleaseRef(ref)).toThrow(/Stable/);
+        });
     it('keeps release roots, latest, and recursive platform/attestation dependencies', () => {
         const versions = [version(1, sha, [2, 3]), version(2, sha),
             version(3, null, [4]), version(4, null), version(5, other, [], ['latest']),

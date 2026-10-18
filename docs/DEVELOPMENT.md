@@ -101,6 +101,8 @@ before `npm install`.
 ### Releases and GHCR retention
 
 The Docker workflow accepts `v*` and `Stable-YY.MM.DD[-hotfix.N]` tags.
+Its validation job rejects other `Stable-*` names before dependency installation
+or publication, including `Stable-Latest`, which is reserved for the image alias.
 Stable releases receive the exact release tag as a Docker tag; existing semver
 tags remain supported. Only builds from `main` update `latest`. Both release
 archives and image publication remain gated by validation and container runtime
