@@ -557,7 +557,11 @@ and required upstream headers; they authorize only that resource. Clients use
 these ordinary HTTP URLs without custom headers or a WebUI login. Grants are
 checked against the active account, token version, expiry, region lock and any
 originating share/session token. Channel grants also check the current channel
-assignment and share scope. Treat opaque resource URLs as bearer credentials.
+assignment and share scope, including DRM licenses and nested JSON resources.
+Source-token permissions are read fresh for each resource request, so removing
+a shared channel or deleting a share revokes its grants immediately. Treat
+opaque resource URLs as bearer credentials. Upstream URLs on the same origin
+are still encrypted; only authenticated Manager grants can be reused unchanged.
 
 Granted media requests reserve a session before contacting the upstream and
 enforce the current user limit and the bound provider account's capacity.

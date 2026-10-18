@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
@@ -126,6 +127,7 @@ describe('xtreamController - playerChannelsJson', () => {
     expect(outputStr).not.toContain('https://provider.test');
     expect(outputStr).not.toContain('secret-token');
     expect(output[0].drm.license_key).toContain('||R{SSM}|JBlicense');
+    expect(await decryptClientGrant(output[0].drm.license_key)).toMatchObject({ channelId: 100, kind: 'license' });
   });
 
   it('should expose DASH live streams as MPD manifest URLs', async () => {

@@ -130,7 +130,10 @@ router.all('/resource/:data/:filename', async (req, res) => {
     }
     if (resource.kind !== 'license' && /application\/(?:[^;]+\+)?json/i.test(type)) {
       const data = await readBodyWithLimit(upstream, { as: 'json', maxBytes: MANIFEST_LIMIT, timeoutMs: 30000 });
-      return res.json(rewriteClientMetadata(req, resource.user, data));
+      return res.json(rewriteClientMetadata(req, resource.user, data, '', {
+        channelId: resource.channelId, channelName: resource.channelName,
+        providerId: resource.providerId, headers: nextHeaders,
+      }));
     }
     if (resource.kind === 'license') {
       const body = await readBodyWithLimit(upstream, { as: 'buffer', maxBytes: 8 * 1024 * 1024, timeoutMs: 30000 });

@@ -16,6 +16,15 @@ function opaque(payload) {
   return encrypt(JSON.stringify(payload)).split(':').map(part => Buffer.from(part, 'hex').toString('base64url')).join('.');
 }
 
+function readGrant(encoded) {
+  if (typeof encoded !== 'string' || encoded.length > 65536 || !/^[\w-]+\.[\w-]+\.[\w-]+$/.test(encoded)) return null;
+  try {
+    const raw = encoded.split('.').map(part => Buffer.from(part, 'base64url').toString('hex')).join(':');
+    const payload = JSON.parse(decrypt(raw));
+    return payload?.purpose === PURPOSE && Number.isSafeInteger(payload.uid) && ['image', 'resource', 'license'].includes(payload.kind) ? payload : null;
+  } catch { return null; }
+}
+
 function context(req, user) {
   return {
     purpose: PURPOSE,
@@ -49,7 +58,17 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   const base = getBaseUrl(req);
   const parsed = httpUrl(url, base);
   if (!parsed) return '';
-  if (parsed.origin === new URL(base).origin) return parsed.href;
+  // Host/forwarded-host are request-controlled and cannot prove that an URL is
+  // Manager-owned. Preserve only an authenticated grant with its exact envelope.
+  const match = parsed.pathname.match(/^\/api\/proxy\/resource\/([^/]+)\/([^/]+)$/);
+  const existing = match && readGrant(match[1]);
+  if (existing && existing.uid === Number(user.id) && existing.admin === !!user.is_admin && existing.version === (Number(user.token_version) || 0)) {
+    const filename = existing.kind === 'image' ? 'image.png' : existing.kind === 'license' ? 'license' : 'resource';
+    const parameters = (existing.templates || []).map((item, index) => `tpl${index}=${item.token}`).join('&');
+    const search = parameters ? `?${parameters}` : '';
+    if (match[2] === filename && parsed.search === search) return `${base}${parsed.pathname}${search}`;
+  }
+  if (/^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
   const kind = options.kind || 'image';
   if (!['image', 'resource', 'license'].includes(kind)) return '';
   return resourceUrl(req, {
@@ -78,11 +97,8 @@ function shareAllowed(user, channelId) {
 
 export async function resolveClientResource(req) {
   try {
-    const encoded = req.params.data;
-    if (typeof encoded !== 'string' || encoded.length > 65536 || !/^[\w-]+\.[\w-]+\.[\w-]+$/.test(encoded)) return null;
-    const raw = encoded.split('.').map(part => Buffer.from(part, 'base64url').toString('hex')).join(':');
-    const payload = JSON.parse(decrypt(raw));
-    if (payload?.purpose !== PURPOSE || !Number.isSafeInteger(payload.uid) || !['image', 'resource', 'license'].includes(payload.kind)) return null;
+    const payload = readGrant(req.params.data);
+    if (!payload) return null;
 
     const user = db.prepare(`SELECT * FROM ${payload.admin ? 'admin_users' : 'users'} WHERE id = ?`).get(payload.uid);
     const expires = expiryEpoch(user?.expiry_date);
@@ -90,7 +106,7 @@ export async function resolveClientResource(req) {
         (expires && expires <= Date.now() / 1000) || !isIpAllowedForUser(req.ip, user)) return null;
     let authorizedUser = user;
     if (payload.sourceToken) {
-      authorizedUser = await getXtreamUser({ params: {}, query: { token: payload.sourceToken }, ip: req.ip, headers: req.headers });
+      authorizedUser = await getXtreamUser({ params: {}, query: { token: payload.sourceToken }, ip: req.ip, headers: req.headers }, { fresh: true });
       if (!authorizedUser || Number(authorizedUser.id) !== payload.uid) return null;
     }
     if (!shareAllowed(authorizedUser, payload.channelId)) return null;
@@ -130,12 +146,12 @@ export async function resolveClientResource(req) {
   } catch { return null; }
 }
 
-export function rewriteClientMetadata(req, user, value, key = '') {
-  if (Array.isArray(value)) return value.map(item => rewriteClientMetadata(req, user, item, key));
+export function rewriteClientMetadata(req, user, value, key = '', options = {}) {
+  if (Array.isArray(value)) return value.map(item => rewriteClientMetadata(req, user, item, key, options));
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value)
       .filter(([field]) => !secretFields.test(field))
-      .map(([field, item]) => [field, sourceFields.test(field) ? '' : rewriteClientMetadata(req, user, item, field)]));
+      .map(([field, item]) => [field, sourceFields.test(field) ? '' : rewriteClientMetadata(req, user, item, field, options)]));
   }
   if (typeof value !== 'string') return value;
   if (/^license_key$/i.test(key) && /^(?:https?:)?\/\//i.test(value)) {
@@ -144,11 +160,11 @@ export function rewriteClientMetadata(req, user, value, key = '') {
     try { decoded = decodeURIComponent(transforms.join('|')); } catch { return ''; }
     if (/(?:https?|ftp|rtsp|rtmp):|\/\/|[\r\n\u0000]/i.test(decoded)) return '';
     const headers = Object.fromEntries(new URLSearchParams(encodedHeaders || ''));
-    const local = createClientResourceUrl(req, user, url, { kind: 'license', headers });
+    const local = createClientResourceUrl(req, user, url, { ...options, kind: 'license', headers });
     return transforms.length ? `${local}||${transforms.join('|')}` : local;
   }
   if (/^(?:https?:)?\/\//i.test(value.trim())) {
-    return createClientResourceUrl(req, user, value.trim(), { kind: imageFields.test(key) ? 'image' : 'resource' });
+    return createClientResourceUrl(req, user, value.trim(), { ...options, kind: imageFields.test(key) ? 'image' : 'resource' });
   }
   if (/^(?:javascript|file|ftp|rtsp|rtmp):/i.test(value.trim())) return '';
   return value;

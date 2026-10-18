@@ -108,9 +108,31 @@ describe('scoped client resource URLs', () => {
 
   it('does not wrap Manager URLs again and blocks unsafe schemes and protocol-relative bypasses', () => {
     const req = request();
-    expect(createClientResourceUrl(req, user, 'https://manager.example/api/proxy/resource/opaque/image.png')).toBe('https://manager.example/api/proxy/resource/opaque/image.png');
+    const existing = createClientResourceUrl(req, user, 'https://provider.example/image.png');
+    expect(createClientResourceUrl(req, user, existing)).toBe(existing);
+    const forged = 'https://manager.example/api/proxy/resource/opaque/image.png?password=secret';
+    expect(createClientResourceUrl(req, user, forged)).not.toContain('password=secret');
     expect(createClientResourceUrl(req, user, 'javascript:alert(1)')).toBe('');
     expect(createClientResourceUrl(req, user, 'file:///tmp/secrets')).toBe('');
     expect(createClientResourceUrl(req, user, '//provider.example/a.png')).toMatch(/^https:\/\/manager.example\//);
+  });
+  it.each([false, true])('does not trust a matching request origin to identify Manager-owned URLs (forwarded=%s)', forwarded => {
+    const req = request();
+    req.get = name => name === 'x-forwarded-host' && forwarded ? 'provider.example' : name === 'host' ? (forwarded ? 'manager.example' : 'provider.example') : undefined;
+    req.app.get = () => forwarded;
+    const rewritten = rewriteClientMetadata(req, user, {
+      backdrop_path: ['https://provider.example/cover.jpg?password=upstream-secret'],
+      drm: { license_key: 'https://provider.example/license?token=provider-secret' }
+    });
+    expect(rewritten.backdrop_path[0]).toContain('/api/proxy/resource/');
+    expect(rewritten.drm.license_key).toContain('/api/proxy/resource/');
+    expect(JSON.stringify(rewritten)).not.toContain('upstream-secret');
+    expect(JSON.stringify(rewritten)).not.toContain('provider-secret');
+  });
+  it('does not preserve added credentials on otherwise valid Manager resource URLs', () => {
+    const req = request();
+    const original = createClientResourceUrl(req, user, 'https://provider.example/image.png');
+    const malicious = original + '?password=upstream-secret';
+    expect(createClientResourceUrl(req, user, malicious)).not.toContain('upstream-secret');
   });
 });

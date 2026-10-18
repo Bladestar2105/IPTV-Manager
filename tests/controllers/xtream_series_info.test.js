@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockDb, upsertEpisode, insertAlias, selectAlias } = vi.hoisted(() => ({
@@ -81,7 +82,7 @@ describe('Xtream get_series_info episode authorization', () => {
         info: { name: 'Provider Series', cover: 'https://provider.test/private.jpg', backdrop_path: ['https://provider.test/backdrop.jpg'] },
         episodes: {
           1: [
-            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'https://provider.test/episode.jpg' } },
+            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'https://provider.test/episode.jpg', drm: { license_key: 'https://provider.test/episode-license' } } },
             { id: 'invalid', title: 'Invalid' },
           ],
         },
@@ -94,6 +95,9 @@ describe('Xtream get_series_info episode authorization', () => {
 
     const payload = res.json.mock.calls[0][0];
     expect(payload.info.name).toBe('Custom Series');
+    expect(await decryptClientGrant(payload.info.backdrop_path[0])).toMatchObject({ channelId: 42, kind: 'image' });
+    expect(await decryptClientGrant(payload.episodes[1][0].info.movie_image)).toMatchObject({ channelId: 42, kind: 'image' });
+    expect(await decryptClientGrant(payload.episodes[1][0].info.drm.license_key)).toMatchObject({ channelId: 42, kind: 'license' });
     expect(JSON.stringify(payload)).not.toContain('https://provider.test');
     expect(payload.episodes[1][0].direct_source).toBe('');
     expect(payload.episodes[1]).toHaveLength(1);

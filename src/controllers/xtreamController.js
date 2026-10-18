@@ -22,7 +22,7 @@ import {
 export * from './xtreamControllerUtils.js';
 export { playerApi } from './xtreamPlayerApiController.js';
 
-function clientLicenseKey(req, user, value) {
+function clientLicenseKey(req, user, value, channelId) {
   if (!/^(?:https?:)?\/\//i.test(value)) return value;
   const [url, headerQuery = '', ...transforms] = value.split('|');
   const suffix = transforms.join('|');
@@ -30,7 +30,7 @@ function clientLicenseKey(req, user, value) {
   try { decodedSuffix = decodeURIComponent(suffix); } catch { return ''; }
   if (/(?:https?|ftp|rtsp|rtmp):|\/\//i.test(decodedSuffix) || /[\r\n\u0000]/.test(decodedSuffix)) return '';
   const managerUrl = createClientResourceUrl(req, user, url, {
-    kind: 'license', headers: Object.fromEntries(new URLSearchParams(headerQuery))
+    kind: 'license', channelId, headers: Object.fromEntries(new URLSearchParams(headerQuery))
   });
   return managerUrl && (transforms.length ? `${managerUrl}||${suffix}` : managerUrl);
 }
@@ -151,7 +151,7 @@ export const getPlaylist = async (req, res) => {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
-            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image' })) : safeLogo;
+            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id })) : safeLogo;
             const episodeId = getOrCreateSeriesEpisodeAlias(
               episodeAliases,
               ch.user_channel_id,
@@ -352,12 +352,12 @@ export const playerChannelsJson = async (req, res) => {
       if (ch.drm_license_type || ch.drm_license_key) {
         item.drm = {};
         if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-        if (ch.drm_license_key) item.drm.license_key = clientLicenseKey(req, user, ch.drm_license_key);
+        if (ch.drm_license_key) item.drm.license_key = clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id);
       }
 
       if (!isFirst) jsonOutput += ',';
       const { url, ...metadata } = item;
-      jsonOutput += JSON.stringify({ ...rewriteClientMetadata(req, user, metadata), url });
+      jsonOutput += JSON.stringify({ ...rewriteClientMetadata(req, user, metadata, '', { channelId: ch.user_channel_id }), url });
       isFirst = false;
     };
 
@@ -427,7 +427,7 @@ export const playerChannelsJson = async (req, res) => {
                appendItem({
                  name: `${name} ${episodeCode}`,
                  group,
-                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image' }) : logo,
+                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id }) : logo,
                  epg_id: epgId,
                  url: seriesPrefix + episodeId + '.' + extension + tokenParam,
                  type: 'series',
@@ -592,7 +592,7 @@ export const playerPlaylist = async (req, res) => {
 
       if (ch.drm_license_type || ch.drm_license_key) {
           if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${String(ch.drm_license_type).replace(/[\r\n]+/g, ' ')}\n`;
-          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(clientLicenseKey(req, user, ch.drm_license_key)).replace(/[\r\n]+/g, ' ')}\n`;
+          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id)).replace(/[\r\n]+/g, ' ')}\n`;
       }
 
       buffer += streamUrl + '\n';

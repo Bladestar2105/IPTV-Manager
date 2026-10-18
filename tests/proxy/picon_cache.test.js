@@ -142,6 +142,33 @@ describe('client resource and image proxy', () => {
     expect((await request(app).get(localPath(segment))).status).toBe(200);
     expect(new Headers(mocks.fetchSafe.mock.calls[1][1].headers).get('cookie')).toBe('session=rotated');
   });
+  it.each(['assignment', 'share'])('revokes channel-bound licenses after removing the %s permission', async permission => {
+    const url = localPath(createClientResourceUrl(reqForUrl, { ...user, resource_token: 'shared-token' }, 'https://drm.example/license', { kind: 'license', channelId: 5 }));
+    mocks.getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, allowed_channels: [5] });
+    mocks.fetchSafe.mockResolvedValue(response('license', 'application/octet-stream'));
+    expect((await request(app).post(url).send('challenge')).status).toBe(200);
+    expect(mocks.getXtreamUser).toHaveBeenCalledWith(expect.any(Object), { fresh: true });
+    mocks.fetchSafe.mockClear();
+    if (permission === 'share') {
+      mocks.getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, allowed_channels: [6] });
+    } else {
+      const prepare = mocks.db.prepare.getMockImplementation();
+      mocks.db.prepare.mockImplementation(sql => sql.includes('FROM authorized_user_channels') ? { get: () => undefined } : prepare(sql));
+    }
+    expect((await request(app).post(url).send('challenge')).status).toBe(401);
+    expect(mocks.fetchSafe).not.toHaveBeenCalled();
+  });
+  it('retains channel scope through nested JSON license metadata', async () => {
+    const url = localPath(createClientResourceUrl(reqForUrl, user, 'https://provider.example/metadata', { kind: 'resource', channelId: 5 }));
+    mocks.fetchSafe.mockResolvedValue(response(JSON.stringify({ license_key: 'https://drm.example/license' }), 'application/json'));
+    const metadata = await request(app).get(url);
+    expect(metadata.status).toBe(200);
+    const prepare = mocks.db.prepare.getMockImplementation();
+    mocks.db.prepare.mockImplementation(sql => sql.includes('FROM authorized_user_channels') ? { get: () => undefined } : prepare(sql));
+    mocks.fetchSafe.mockClear();
+    expect((await request(app).post(localPath(metadata.body.license_key)).send('challenge')).status).toBe(401);
+    expect(mocks.fetchSafe).not.toHaveBeenCalled();
+  });
   it('rejects POST with an image grant', async () => {
     expect((await request(app).post(grant()).send('bad')).status).toBe(405);
     expect(mocks.getCachedImage).not.toHaveBeenCalled();

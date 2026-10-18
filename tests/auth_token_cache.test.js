@@ -53,4 +53,17 @@ describe('Auth Service Token Caching', () => {
         // After optimization, it should be 0
         expect(prepareSpy).toHaveBeenCalledTimes(0);
     });
+    it('can revalidate a resource source token after a share edit or deletion', async () => {
+        const req = { query: { token: 'share-token' }, params: {} };
+        const cachedUser = { id: 1, username: 'testuser', is_active: 1, is_share_guest: true, allowed_channels: [5] };
+        tokenCache.set(req.query.token, { user: cachedUser, expiry: Date.now() + 60000 });
+        let share = { user_id: 1, channels: '[6]' };
+        db.prepare.mockImplementation(sql => ({ get: () => {
+            if (sql.includes('shared_links')) return share;
+            if (sql.includes('FROM users')) return { id: 1, username: 'testuser', is_active: 1 };
+        } }));
+        expect((await getXtreamUser(req, { fresh: true })).allowed_channels).toEqual([6]);
+        share = null;
+        expect(await getXtreamUser(req, { fresh: true })).toBeNull();
+    });
 });

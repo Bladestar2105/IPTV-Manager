@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
@@ -115,6 +116,8 @@ describe('xtreamController - playerPlaylist', () => {
     expect(output).not.toContain('https://provider.test');
     expect(output).not.toContain('private-token');
     expect(output).toContain('||R{SSM}|JBlicense');
+    const license = output.match(/#KODIPROP:inputstream\.adaptive\.license_key=([^\n]+)/)[1];
+    expect(await decryptClientGrant(license)).toMatchObject({ channelId: 100, kind: 'license' });
   });
   it.each(['https://provider.test/extra', 'https%3A%2F%2Fprovider.test%2Fextra', '//provider.test/extra'])(
     'rejects a license transform that embeds an external resource: %s', async suffix => {
