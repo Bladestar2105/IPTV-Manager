@@ -130,13 +130,24 @@ the inspected inventory are saved before planning in
 `container-retention-inventory.json`, including when a missing historical image
 mapping prevents a retention plan from being produced.
 
+If an inspected historical release predates the available registry history and
+has no exact-commit image, explicitly acknowledge that absence with the optional
+`missing_release_tags` JSON array, for example `["Stable-26.01.29"]`. The default
+is `[]`, which continues to reject every missing image. Use the same array in
+dry-run and apply. Acknowledged releases appear as tag/commit pairs in the
+hash-covered plan's `missingReleases`; no image is guessed or tagged for them.
+Unknown tags, duplicate entries, releases whose image exists, and omission of
+the latest published stable release are rejected. Inspect the new plan and hash
+before applying this exception.
+
 The helper uses the repository's existing `GITHUB_TOKEN` with `contents: read`
 and `packages: write`; the linked GHCR package must grant this repository admin
 access. No PAT is needed. It resolves every published release's Git tag to its
 exact commit, matches actual image-config OCI revision labels, chooses an existing
 release-tagged root or the newest matching root, and creates missing release tags
-before deletion. Every published release must have a matching image; missing or
-unknown mappings stop cleanup rather than guessing by creation date. Prereleases
+before deletion. Every published release must have a matching image unless its
+historical absence is explicitly acknowledged as above; other missing or unknown
+mappings stop cleanup rather than guessing by creation date. Prereleases
 are included; draft releases are excluded.
 
 Cleanup retains `latest`, selected release roots and their complete recursive
