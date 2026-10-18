@@ -139,28 +139,14 @@ export function deleteEpgSourceData(sourceId, sourceType) {
     db.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
 }
 
-export async function loadAllEpgChannels() {
+export async function loadAllEpgChannels({ includeSourceId = false } = {}) {
     // Return all channels including source info
     const channels = db.prepare(`
-        SELECT id, name, logo, source_type
+        SELECT id, name, logo, source_type${includeSourceId ? ', source_id' : ''}
         FROM epg_channels
         ORDER BY name ASC
     `).all();
     return channels;
-}
-
-export function loadEpgChannelLogosMap() {
-    const channels = db.prepare(`
-        SELECT id, logo
-        FROM epg_channels
-        WHERE logo IS NOT NULL AND logo != ''
-    `).all();
-
-    const logoMap = new Map();
-    for (const ch of channels) {
-        logoMap.set(ch.id, ch.logo);
-    }
-    return logoMap;
 }
 
 export function getEpgPrograms(channelId, limit = 1000, options = {}) {
@@ -340,7 +326,7 @@ export function getLastEpgUpdate(sourceType, sourceId) {
     return row && row.last_update ? row.last_update : 0;
 }
 
-export async function* getEpgXmlForChannels(channelIds) {
+export async function* getEpgXmlForChannels(channelIds, mapLogo = logo => logo) {
     // channelIds is a Set or Array of strings (xml_id)
     if (!channelIds || channelIds.size === 0) return;
 
@@ -359,14 +345,14 @@ export async function* getEpgXmlForChannels(channelIds) {
         // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
         const placeholders = Array(batch.length).fill('?').join(',');
         const channels = db.prepare(`
-            SELECT id, name, logo
+            SELECT id, name, logo, source_type, source_id
             FROM epg_channels
             WHERE id IN (${placeholders})
             GROUP BY id
         `).all(batch);
 
         for (const ch of channels) {
-            buffer += `<channel id="${escapeXml(ch.id)}">\n    <display-name>${escapeXml(ch.name)}</display-name>\n    <icon src="${escapeXml(ch.logo || '')}" />\n  </channel>\n`;
+            buffer += `<channel id="${escapeXml(ch.id)}">\n    <display-name>${escapeXml(ch.name)}</display-name>\n    <icon src="${escapeXml(mapLogo(ch.logo || '', ch))}" />\n  </channel>\n`;
             if (buffer.length >= FLUSH_LIMIT) {
                 yield buffer;
                 buffer = '';

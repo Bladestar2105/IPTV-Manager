@@ -171,7 +171,7 @@ export async function createDefaultAdmin() {
   }
 }
 
-export async function getXtreamUser(req) {
+export async function getXtreamUser(req, { fresh = false } = {}) {
   const username = (req.params.username || req.query.username || '').trim();
   const password = (req.params.password || req.query.password || '').trim();
   const token = (req.query.token || req.params.token || '').trim();
@@ -185,7 +185,7 @@ export async function getXtreamUser(req) {
     );
     if (isStalkerToken) tokenCache.delete(token);
     // 0. Check Token Cache
-    if (!isStalkerToken && tokenCache.has(token)) {
+    if (!fresh && !isStalkerToken && tokenCache.has(token)) {
       const cached = tokenCache.get(token);
       if (Date.now() < cached.expiry) {
         if (cached.requiredSessionId) {
@@ -275,7 +275,7 @@ export async function getXtreamUser(req) {
       }
 
       // Cache the result
-      if (!isStalkerToken && !stalkerRow && (userToCache || row)) {
+      if (!fresh && !isStalkerToken && !stalkerRow && (userToCache || row)) {
           tokenCache.set(token, {
               user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
               requiredSessionId: requiredSessionId,

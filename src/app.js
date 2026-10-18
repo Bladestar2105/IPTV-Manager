@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { securityHeaders, ipBlocker, apiLimiter } from './middleware/security.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { redactUrl } from './utils/helpers.js';
+import { resolveClientResource, resolveCompactLicenseResource } from './services/clientResourceService.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -17,7 +18,7 @@ import epgRoutes from './routes/epg.js';
 import systemRoutes from './routes/system.js';
 import hdhrRoutes from './routes/hdhr.js';
 import stalkerRoutes from './routes/stalker.js';
-import proxyRoutes from './routes/proxy.js';
+import proxyRoutes, { shortLicenseRouter } from './routes/proxy.js';
 import shareRoutes from './routes/shares.js';
 import backupRoutes from './routes/backups.js';
 import aiRoutes from './routes/ai.js';
@@ -48,6 +49,9 @@ if (process.env.TRUST_PROXY) {
 app.use(securityHeaders);
 
 // Middleware
+// DRM requests contain opaque bytes, including JSON challenges whose exact
+// representation must reach the upstream server unchanged.
+app.use(['/api/proxy/resource', '/r'], express.raw({ type: () => true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : false,
@@ -61,8 +65,26 @@ app.use(morgan('[:date[iso]] :method :url :status :response-time ms - :res[conte
 // IP Blocking
 app.use(ipBlocker);
 
+app.use('/r/:id', async (req, res, next) => {
+  req.clientResource = await resolveCompactLicenseResource(req);
+  next();
+});
+app.use('/r', (req, res, next) => {
+  if (req.clientResource?.kind === 'license') return next();
+  return apiLimiter(req, res, next);
+}, shortLicenseRouter);
+
+// Authenticate media grants before deciding whether the request consumes API quota.
+app.use('/api/proxy/resource/:data/:filename', async (req, res, next) => {
+  req.clientResource = await resolveClientResource(req);
+  next();
+});
+
 // Rate Limiting
-app.use('/api', apiLimiter);
+app.use('/api', (req, res, next) => {
+  if (req.clientResource?.kind === 'resource' || req.clientResource?.kind === 'license') return next();
+  return apiLimiter(req, res, next);
+});
 app.use('/player_api.php', apiLimiter);
 app.use('/xmltv.php', apiLimiter);
 app.use('/get.php', apiLimiter);

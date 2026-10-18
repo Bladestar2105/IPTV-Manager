@@ -1,6 +1,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as streamController from '../src/controllers/streamController.js';
+import { PassThrough, Writable } from 'node:stream';
 
 // Mocks
 const { mockDb, mockFetch, mockProviderPoolAll, mockFfmpeg, mockFfmpegCommand } = vi.hoisted(() => {
@@ -38,7 +39,9 @@ vi.mock('../src/services/streamManager.js', () => ({
         getProviderConnectionCount: vi.fn().mockResolvedValue(0),
         add: vi.fn(),
         remove: vi.fn(),
+        touch: vi.fn(),
         cleanupUser: vi.fn(),
+        cleanupSession: vi.fn().mockResolvedValue(undefined),
         localStreams: new Map()
     }
 }));
@@ -65,7 +68,8 @@ vi.mock('../src/config/constants.js', () => ({
     DEFAULT_USER_AGENT: 'TestAgent',
     BCRYPT_ROUNDS: 1,
     DATA_DIR: '/tmp',
-    EPG_CACHE_DIR: '/tmp/epg'
+    EPG_CACHE_DIR: '/tmp/epg',
+    EPG_DB_PATH: ':memory:'
 }));
 
 // Mock fluent-ffmpeg module
@@ -75,9 +79,17 @@ vi.mock('fluent-ffmpeg', () => ({
 
 describe('Stream Controller - Backup Failover', () => {
     let mockReq, mockRes;
+    let sources;
+    const successBody = () => {
+        const body = new PassThrough();
+        body.write(Buffer.from([0x47, 0x40, 0, 0x10, 0, 0, 0, 0]));
+        sources.push(body);
+        return body;
+    };
 
     beforeEach(() => {
         vi.clearAllMocks();
+        sources = [];
         mockProviderPoolAll.mockReturnValue([{
             id: 100,
             user_id: 1,
@@ -95,13 +107,13 @@ describe('Stream Controller - Backup Failover', () => {
             ip: '127.0.0.1',
             on: vi.fn()
         };
-        mockRes = {
+        mockRes = Object.assign(new Writable({ write(_chunk, _encoding, callback) { callback(); } }), {
             sendStatus: vi.fn(),
             setHeader: vi.fn(),
             status: vi.fn(),
             send: vi.fn(),
             headersSent: false
-        };
+        });
 
         // Mock DB prepare to handle different queries
         mockDb.prepare.mockImplementation((query) => {
@@ -136,13 +148,19 @@ describe('Stream Controller - Backup Failover', () => {
         });
     });
 
+    afterEach(() => {
+        sources.forEach(body => body.destroy());
+        mockRes.destroy();
+    });
+
     it('should use primary URL if it succeeds', async () => {
-        const destroy = vi.fn();
+        const body = successBody();
+        const destroy = vi.spyOn(body, 'destroy');
         mockFetch.mockResolvedValueOnce({
             ok: true,
             status: 200,
             headers: { get: () => null },
-            body: { pipe: vi.fn(), on: vi.fn(), destroy }
+            body
         });
 
         await streamController.proxyLive(mockReq, mockRes);
@@ -160,7 +178,7 @@ describe('Stream Controller - Backup Failover', () => {
             ok: true,
             status: 200,
             headers: { get: () => null },
-            body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() }
+            body: successBody()
         });
 
         await streamController.proxyLive(mockReq, mockRes);
@@ -204,7 +222,7 @@ describe('Stream Controller - Backup Failover', () => {
             ok: true,
             status: 200,
             headers: { get: () => null },
-            body: { pipe: vi.fn(), on: vi.fn() }
+            body: successBody()
         });
 
         await streamController.proxyLive(mockReq, mockRes);
@@ -219,7 +237,8 @@ describe('Stream Controller - Backup Failover', () => {
     it('should failover to second backup if first backup also fails', async () => {
         const primaryDestroy = vi.fn();
         const firstBackupDestroy = vi.fn();
-        const successDestroy = vi.fn();
+        const success = successBody();
+        const successDestroy = vi.spyOn(success, 'destroy');
         mockFetch
             .mockResolvedValueOnce({ ok: false, status: 500, body: { destroy: primaryDestroy } }) // Primary
             .mockResolvedValueOnce({ ok: false, status: 404, body: { destroy: firstBackupDestroy } }) // Backup 1
@@ -227,7 +246,7 @@ describe('Stream Controller - Backup Failover', () => {
                 ok: true,
                 status: 200,
                 headers: { get: () => null },
-                body: { pipe: vi.fn(), on: vi.fn(), destroy: successDestroy }
+                body: success
             });
 
         await streamController.proxyLive(mockReq, mockRes);

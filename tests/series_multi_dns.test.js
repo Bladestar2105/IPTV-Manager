@@ -33,6 +33,10 @@ import { tokenCache } from '../src/services/authService.js';
 describe('series across two upstream DNS panels', () => {
   const credentials = { username: 'multi-dns-user', password: 'multi-dns-pass' };
   const assignments = [];
+  const videos = {
+    first: Buffer.concat([Buffer.from('000000106674797069736f6d30303030000000086d6f6f76000000136d646174', 'hex'), Buffer.from('first video')]),
+    second: Buffer.concat([Buffer.from('1a45dfa380', 'hex'), Buffer.from('second video')]),
+  };
 
   beforeAll(() => {
     initDb(true);
@@ -80,7 +84,7 @@ describe('series across two upstream DNS panels', () => {
       }
       const extension = panel === 'first' ? 'mp4' : 'mkv';
       expect(url.pathname).toBe(`/series/${panel}-user/${panel}-pass/123.${extension}`);
-      return new Response(`${panel} video`, { headers: { 'Content-Type': 'text/plain' } });
+      return new Response(videos[panel], { headers: { 'Content-Type': panel === 'first' ? 'video/mp4' : 'video/x-matroska' } });
     });
   });
 
@@ -106,9 +110,14 @@ describe('series across two upstream DNS panels', () => {
       expect(Number(episode.id)).toBeLessThan(2 ** 31);
       const response = await request(app).get(
         `/series/${credentials.username}/${credentials.password}/${episode.id}.${episode.container_extension}`,
-      );
+      ).redirects(1).buffer(true).parse((res, callback) => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => callback(null, Buffer.concat(chunks)));
+        res.on('error', callback);
+      });
       expect(response.status).toBe(200);
-      expect(response.text).toBe(`${panel} video`);
+      expect(response.body).toEqual(videos[panel]);
       expect(episode.direct_source).toBe('');
     }
     expect(db.prepare('SELECT COUNT(*) AS count FROM provider_series_episodes').get().count).toBe(2);

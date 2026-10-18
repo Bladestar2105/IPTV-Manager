@@ -7,8 +7,6 @@ export const DEFAULT_PROVIDER = 'openai_api';
 export const PROVIDERS = [openaiApiProvider, chatgptAccountProvider];
 const BY_ID = new Map(PROVIDERS.map(provider => [provider.id, provider]));
 
-export const PROVIDER_IDS = [...BY_ID.keys()];
-
 // Connections stored before this feature carry no provider marker and stay on
 // the existing OpenAI-compatible API transport.
 export function providerOf(connection) {

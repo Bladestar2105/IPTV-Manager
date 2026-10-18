@@ -1,3 +1,4 @@
+import { createChannelIconUrl } from '../services/clientResourceService.js';
 import db from '../database/db.js';
 import { syncSeriesEpisode } from '../services/syncService.js';
 import { providerSourceKey } from '../utils/helpers.js';
@@ -85,7 +86,7 @@ function emptyOrderedList(page, paginated) {
   };
 }
 
-function mapContentItem(type, channel, number) {
+function mapContentItem(type, channel, number, req, user) {
   const id = String(channel.id);
   const name = channel.custom_name || channel.name;
   const common = {
@@ -96,7 +97,7 @@ function mapContentItem(type, channel, number) {
     title: name,
     number: String(number),
     category_id: String(channel.category_id),
-    logo: channel.logo || '',
+    logo: createChannelIconUrl(req, user, channel.id),
     fav: 0
   };
 
@@ -130,8 +131,8 @@ function mapContentItem(type, channel, number) {
   const details = {
     ...common,
     cmd: `ffmpeg http://localhost/stalker/${type}/${id}`,
-    screenshot_uri: channel.logo || '',
-    cover: channel.logo || '',
+    screenshot_uri: common.logo,
+    cover: common.logo,
     description: channel.plot || '',
     actors: channel.actors || '',
     director: channel.director || '',
@@ -149,7 +150,7 @@ function mapContentItem(type, channel, number) {
   return details;
 }
 
-export function getOrderedList(session, params, type = 'itv', { paginated = true, excludeAdult = false } = {}) {
+export function getOrderedList(session, params, type = 'itv', { paginated = true, excludeAdult = false, req } = {}) {
   const config = contentConfig(type);
   const filter = categoryFilter(params);
   const page = paginated ? pageNumber(params) : 1;
@@ -208,11 +209,11 @@ export function getOrderedList(session, params, type = 'itv', { paginated = true
     selected_item: 0,
     cur_page: page,
     total_pages: paginated ? Math.ceil(total / PAGE_SIZE) : total > 0 ? 1 : 0,
-    data: channels.map((channel, index) => mapContentItem(type, channel, offset + index + 1))
+    data: channels.map((channel, index) => mapContentItem(type, channel, offset + index + 1, req, { id: session.user_id, token_version: session.token_version, resource_token: session.token }))
   };
 }
 
-export async function getSeriesSeasons(session, params) {
+export async function getSeriesSeasons(session, params, req) {
   const seriesId = Number(value(params, 'movie_id'));
   if (!Number.isSafeInteger(seriesId) || seriesId <= 0) return [];
 
@@ -269,7 +270,7 @@ export async function getSeriesSeasons(session, params) {
     age: '',
     rating_imdb: series.rating || '',
     rating_kinopoisk: series.rating || '',
-    screenshot_uri: series.logo || '',
+    screenshot_uri: createChannelIconUrl(req, { id: session.user_id, token_version: session.token_version, resource_token: session.token }, series.id),
     added: '',
     title: displayName,
     series: [...episodeMap.entries()]

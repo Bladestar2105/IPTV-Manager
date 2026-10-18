@@ -4,7 +4,6 @@ import { DATA_DIR } from '../../../config/constants.js';
 // The ChatGPT account adapter drives the officially documented Codex app server
 // over JSON-RPC. Only the protocol surface of a pinned, tested Codex release is
 // used; an unknown release keeps the adapter disabled instead of guessing.
-export const TESTED_CODEX_VERSION = '0.154.0';
 export const SUPPORTED_CODEX_RANGE = { minimum: '0.154.0', below: '0.156.0' };
 
 // Verification targets published by the documented ChatGPT sign-in flow. A

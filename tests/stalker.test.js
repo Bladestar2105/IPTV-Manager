@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
+import { createServer } from 'node:http';
 import app from '../src/app.js';
 import db, { initDb } from '../src/database/db.js';
 import epgDb, { initEpgDb } from '../src/database/epgDb.js';
@@ -11,6 +12,7 @@ import { providerSourceKey } from '../src/utils/helpers.js';
 import { formatStalkerDateTime, STALKER_TIMEZONE } from '../src/utils/stalker.js';
 
 describe('Stalker/MAG portal flow', () => {
+  const server = createServer(app);
   const stamp = `${process.pid}_${Date.now()}`;
   const mac = '02:00:00:00:06:09';
   const upstreamUrl = `http://provider-${stamp}.invalid`;
@@ -51,25 +53,33 @@ describe('Stalker/MAG portal flow', () => {
   });
 
   async function registerDevice(body = {}) {
-    const response = await request(app)
+    const response = await request(server)
       .post(`/api/users/${userId}/stalker-devices`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ mac, ...body });
-    expect(response.status).toBe(201);
+    expect(response.status, `Device registration response: ${response.text}`).toBe(201);
     return response.body;
   }
 
   async function handshake() {
-    const response = await request(app)
+    const response = await request(server)
       .get('/server/load.php')
       .set('Cookie', `mac=${encodeURIComponent(mac)}`)
       .query({ type: 'stb', action: 'handshake' });
-    expect(response.body.js.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(response.status, `Handshake response: ${response.text}`).toBe(200);
+    expect(response.body.js?.token, `Handshake response: ${response.text}`).toMatch(/^[0-9a-f]{64}$/);
     return response.body.js.token;
   }
 
-  beforeAll(() => {
+  beforeAll(async () => {
     initDb(true);
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
     initEpgDb();
     migrateStalkerTables(db);
     migrateStalkerTables(db);
@@ -323,7 +333,13 @@ describe('Stalker/MAG portal flow', () => {
     db.prepare('UPDATE users SET is_active = 1, expiry_date = NULL, allowed_countries = NULL WHERE id = ?').run(userId);
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    if (server.listening) {
+      await new Promise((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+        server.closeAllConnections();
+      });
+    }
     tokenCache.clear();
     if (epgSourceId) {
       epgDb.prepare(`DELETE FROM epg_programs WHERE source_type = 'custom' AND source_id = ?`).run(epgSourceId);
@@ -366,23 +382,23 @@ describe('Stalker/MAG portal flow', () => {
     await registerDevice();
     const token = await handshake();
 
-    const bearerProfile = await request(app)
+    const bearerProfile = await request(server)
       .get('/portal.php')
       .set('Authorization', `Bearer ${token}`)
       .query({ type: 'stb', action: 'get_profile' });
     expect(bearerProfile.body.js.name).toBe(`stalker_user_${stamp}`);
 
-    const tokenProfile = await request(app)
+    const tokenProfile = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', token });
     expect(tokenProfile.body.js.name).toBe(`stalker_user_${stamp}`);
 
-    const accessTokenProfile = await request(app)
+    const accessTokenProfile = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', access_token: token });
     expect(accessTokenProfile.body.js.name).toBe(`stalker_user_${stamp}`);
 
-    const formHandshake = await request(app)
+    const formHandshake = await request(server)
       .post('/stalker_portal/server/load.php')
       .set('Cookie', `mac=${encodeURIComponent(mac)}`)
       .type('form')
@@ -390,41 +406,41 @@ describe('Stalker/MAG portal flow', () => {
     expect(formHandshake.body.js.token).toMatch(/^[0-9a-f]{64}$/);
     const activeToken = formHandshake.body.js.token;
 
-    const formProfile = await request(app)
+    const formProfile = await request(server)
       .post('/server/load.php')
       .type('form')
       .send({ type: 'stb', action: 'get_profile', access_token: activeToken });
     expect(formProfile.body.js.name).toBe(`stalker_user_${stamp}`);
     expect(formProfile.headers['cache-control']).toBe('no-store');
 
-    const auth = await request(app)
+    const auth = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'do_auth', token: activeToken });
     expect(auth.body).toEqual({ js: true });
 
-    const modules = await request(app)
+    const modules = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_modules', token: activeToken });
     expect(modules.body.js.all_modules)
       .toEqual(['tv', 'vclub', 'series', 'radio', 'tv_archive']);
 
-    const localization = await request(app)
+    const localization = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_localization', token: activeToken });
     expect(localization.body).toEqual({ js: {} });
 
-    const mainInfo = await request(app)
+    const mainInfo = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_main_info', token: activeToken });
     expect(mainInfo.body.js).toHaveProperty('end_date');
 
-    const serverTime = await request(app)
+    const serverTime = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_time', token: activeToken });
     expect(serverTime.body.js.time).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     expect(formProfile.body.js.timezone).toBe(STALKER_TIMEZONE);
 
-    const genres = await request(app)
+    const genres = await request(server)
       .get('/server/load.php')
       .set('Authorization', `Bearer ${activeToken}`)
       .query({ type: 'itv', action: 'get_genres' });
@@ -441,19 +457,21 @@ describe('Stalker/MAG portal flow', () => {
     for (const page of [undefined, 0, 1]) {
       const query = { type: 'itv', action: 'get_ordered_list', token: activeToken };
       if (page !== undefined) query.p = page;
-      const response = await request(app).get('/server/load.php').query(query);
+      const response = await request(server).get('/server/load.php').query(query);
       expect(response.body.js).toMatchObject({
         total_items: '253',
         max_page_items: 100,
         cur_page: 1
       });
       expect(response.body.js.data.map(channel => channel.id)).toEqual(firstPageIds);
+      expect(response.body.js.data[0].logo).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
+      expect(response.body.js.data[0].logo).not.toContain('provider');
     }
 
     const listedIds = new Set();
     const expectedPageSizes = [100, 100, 53];
     for (let page = 1; page <= expectedPageSizes.length; page += 1) {
-      const response = await request(app)
+      const response = await request(server)
         .get('/server/load.php')
         .set('Authorization', `Bearer ${activeToken}`)
         .query({ type: 'itv', action: 'get_ordered_list', p: page });
@@ -471,7 +489,7 @@ describe('Stalker/MAG portal flow', () => {
     }
     expect(listedIds).toEqual(new Set(authorizedChannelIds.map(String)));
 
-    const categoryPage1 = await request(app)
+    const categoryPage1 = await request(server)
       .get('/server/load.php')
       .query({
         type: 'itv',
@@ -480,7 +498,7 @@ describe('Stalker/MAG portal flow', () => {
         genre: categoryId,
         p: 1
       });
-    const categoryPage2 = await request(app)
+    const categoryPage2 = await request(server)
       .get('/server/load.php')
       .query({
         type: 'itv',
@@ -495,7 +513,7 @@ describe('Stalker/MAG portal flow', () => {
     expect([...categoryPage1.body.js.data, ...categoryPage2.body.js.data]
       .every(channel => channel.tv_genre_id === String(categoryId))).toBe(true);
 
-    const categoryAlias = await request(app)
+    const categoryAlias = await request(server)
       .get('/server/load.php')
       .query({
         type: 'itv',
@@ -508,12 +526,12 @@ describe('Stalker/MAG portal flow', () => {
     expect(categoryAlias.body.js.total_items).toBe('103');
     expect(categoryAlias.body.js.data.every(channel => channel.tv_genre_id === String(secondCategoryId))).toBe(true);
 
-    const malformedCategory = await request(app)
+    const malformedCategory = await request(server)
       .get('/server/load.php')
       .query({ type: 'itv', action: 'get_ordered_list', token: activeToken, category: '12x' });
     expect(malformedCategory.body.js).toMatchObject({ total_items: '0', cur_page: 1, data: [] });
 
-    const adultCategory = await request(app)
+    const adultCategory = await request(server)
       .get('/server/load.php')
       .query({
         type: 'itv',
@@ -524,7 +542,7 @@ describe('Stalker/MAG portal flow', () => {
       });
     expect(adultCategory.body.js.data.map(channel => channel.id)).toEqual(adultChannelIds.map(String));
 
-    const allChannels = await request(app)
+    const allChannels = await request(server)
       .get('/server/load.php')
       .query({
         type: 'itv',
@@ -542,7 +560,7 @@ describe('Stalker/MAG portal flow', () => {
     expect(allChannels.body.js.data.at(-1).number).toBe('253');
     expect(allChannels.body.js.data.some(channel => forbiddenIds.has(channel.id))).toBe(false);
 
-    const link = await request(app)
+    const link = await request(server)
       .get('/server/load.php')
       .set('Authorization', `Bearer ${activeToken}`)
       .query({
@@ -553,7 +571,7 @@ describe('Stalker/MAG portal flow', () => {
     expect(link.body.js.cmd).toContain(`/live/token/auth/${authorizedChannelIds[0]}.ts?token=`);
 
     for (const channelId of [hiddenChannelIds[0], revokedChannelIds[0], unauthorizedChannelIds[0]]) {
-      const deniedLink = await request(app)
+      const deniedLink = await request(server)
         .get('/server/load.php')
         .query({
           type: 'itv',
@@ -567,11 +585,11 @@ describe('Stalker/MAG portal flow', () => {
     expect((await streamUser(activeToken)).id).toBe(userId);
     expect(tokenCache.has(activeToken)).toBe(false);
 
-    const portal = await request(app).get('/c/');
+    const portal = await request(server).get('/c/');
     expect(portal.status).toBe(200);
     expect(portal.text).toContain('data-i18n="stalkerPortalPageTitle"');
 
-    const canonicalPortal = await request(app).get('/stalker_portal/c/');
+    const canonicalPortal = await request(server).get('/stalker_portal/c/');
     expect(canonicalPortal.status).toBe(200);
     expect(canonicalPortal.text).toContain('data-i18n="stalkerPortalPageTitle"');
   });
@@ -580,7 +598,7 @@ describe('Stalker/MAG portal flow', () => {
     await registerDevice();
     const token = await handshake();
 
-    const shortEpg = await request(app)
+    const shortEpg = await request(server)
       .get('/server/load.php')
       .query({
         type: 'itv',
@@ -610,13 +628,13 @@ describe('Stalker/MAG portal flow', () => {
       revokedChannelIds[0],
       unauthorizedChannelIds[0]
     ]) {
-      const response = await request(app)
+      const response = await request(server)
         .get('/server/load.php')
         .query({ type: 'itv', action: 'get_short_epg', token, ch_id: channelId });
       expect(response.body).toEqual({ js: { data: [] } });
     }
 
-    const bulk = await request(app)
+    const bulk = await request(server)
       .get('/server/load.php')
       .query({ type: 'itv', action: 'get_epg_info', token, period: 999 });
     expect(Object.keys(bulk.body.js.data)).toHaveLength(253);
@@ -635,14 +653,14 @@ describe('Stalker/MAG portal flow', () => {
     expect(JSON.stringify(bulk.body)).not.toContain('upstream');
     expect(JSON.stringify(bulk.body)).not.toContain('unused');
 
-    const malformedPeriod = await request(app)
+    const malformedPeriod = await request(server)
       .get('/server/load.php')
       .query({ type: 'itv', action: 'get_epg_info', token, period: 'invalid' });
     expect(malformedPeriod.body.js.data[String(authorizedChannelIds[0])]
       .some(program => program.name === 'Beyond Clamp')).toBe(false);
 
     const archiveDay = formatStalkerDateTime(archivedProgramStart * 1000).slice(0, 10);
-    const simple = await request(app)
+    const simple = await request(server)
       .get('/server/load.php')
       .query({
         type: 'epg',
@@ -668,7 +686,7 @@ describe('Stalker/MAG portal flow', () => {
       mark_rec: 0
     });
 
-    const deniedSimple = await request(app)
+    const deniedSimple = await request(server)
       .get('/server/load.php')
       .query({
         type: 'epg',
@@ -684,11 +702,11 @@ describe('Stalker/MAG portal flow', () => {
   it('advertises and serves scoped UTC EPG without legacy archive or channel expansion', async () => {
     await registerDevice();
     const token = await handshake();
-    const profile = await request(app).get('/server/load.php')
+    const profile = await request(server).get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', token });
     expect(profile.body.js.epg_bulk).toEqual({ version: 1, max_channels: 100, max_window_hours: 48 });
     const now = Math.floor(Date.now() / 1000);
-    const response = await request(app).get('/server/load.php').query({
+    const response = await request(server).get('/server/load.php').query({
       type: 'itv', action: 'get_epg_info', token,
       channel_ids: [authorizedChannelIds[0], authorizedChannelIds[252], adultChannelIds[0],
         hiddenChannelIds[0], revokedChannelIds[0], unauthorizedChannelIds[0]].join(','),
@@ -708,8 +726,8 @@ describe('Stalker/MAG portal flow', () => {
     const now = Math.floor(Date.now() / 1000);
     const params = { type: 'itv', action: 'get_epg_info', token,
       channel_ids: String(authorizedChannelIds[0]), start_timestamp: now, stop_timestamp: now + 3600 };
-    const query = await request(app).get('/server/load.php').query(params);
-    const json = await request(app).post('/server/load.php').send(params);
+    const query = await request(server).get('/server/load.php').query(params);
+    const json = await request(server).post('/server/load.php').send(params);
     expect(json.body).toEqual(query.body);
     expect(json.body.js.data[String(authorizedChannelIds[0])].map(program => program.name))
       .toEqual(['Current Show', 'Next Show']);
@@ -720,7 +738,7 @@ describe('Stalker/MAG portal flow', () => {
       await registerDevice();
       const token = await handshake();
       for (const field of ['start_timestamp', 'stop_timestamp']) {
-        const response = await request(app).post('/server/load.php').send({
+        const response = await request(server).post('/server/load.php').send({
           type: 'itv', action: 'get_epg_info', token, channel_ids: String(authorizedChannelIds[0]),
           start_timestamp: 1, stop_timestamp: 2, [field]: invalid
         });
@@ -732,7 +750,7 @@ describe('Stalker/MAG portal flow', () => {
   it.each([1, [1], {}, true, '01', '1.5', '1,,2'])('keeps JSON POST channel CSV strict: %j', async ids => {
     await registerDevice();
     const token = await handshake();
-    const response = await request(app).post('/server/load.php').send({
+    const response = await request(server).post('/server/load.php').send({
       type: 'itv', action: 'get_epg_info', token, channel_ids: ids,
       start_timestamp: 1, stop_timestamp: 2
     });
@@ -750,7 +768,7 @@ describe('Stalker/MAG portal flow', () => {
     const insert = epgDb.prepare(`INSERT INTO epg_programs
       (channel_id, source_type, source_id, start, stop, title, desc, lang)
       VALUES (?, 'custom', ?, ?, ?, 'Scoped current', '', 'en')`);
-    const fetchScope = async ids => (await request(app).get('/server/load.php').query({
+    const fetchScope = async ids => (await request(server).get('/server/load.php').query({
       type: 'itv', action: 'get_epg_info', token, channel_ids: ids.join(','),
       start_timestamp: now, stop_timestamp: now + 48 * 3600
     })).body.js;
@@ -795,7 +813,7 @@ describe('Stalker/MAG portal flow', () => {
   ])('rejects invalid scoped EPG without falling back to all channels: %j', async (scope) => {
     await registerDevice();
     const token = await handshake();
-    const response = await request(app).get('/server/load.php')
+    const response = await request(server).get('/server/load.php')
       .query({ type: 'itv', action: 'get_epg_info', token, ...scope });
     expect(response.body).toEqual({ js: { error: 'invalid_epg_request' } });
   });
@@ -828,7 +846,7 @@ describe('Stalker/MAG portal flow', () => {
       const heapBefore = process.memoryUsage().heapUsed;
       const rssBefore = process.memoryUsage().rss;
       const started = performance.now();
-      const response = await request(app)
+      const response = await request(server)
         .get('/server/load.php')
         .query({ type: 'itv', action: 'get_epg_info', token, period });
       const durationMs = performance.now() - started;
@@ -848,12 +866,12 @@ describe('Stalker/MAG portal flow', () => {
     };
 
     try {
-      await request(app)
+      await request(server)
         .post(`/api/users/${benchmarkUserId}/stalker-devices`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ mac: benchmarkMac })
         .expect(201);
-      const handshakeResponse = await request(app)
+      const handshakeResponse = await request(server)
         .get('/server/load.php')
         .set('Cookie', `mac=${encodeURIComponent(benchmarkMac)}`)
         .query({ type: 'stb', action: 'handshake' });
@@ -986,12 +1004,12 @@ describe('Stalker/MAG portal flow', () => {
     await registerDevice();
     const token = await handshake();
 
-    const accountInfo = await request(app)
+    const accountInfo = await request(server)
       .get('/server/load.php')
       .query({ type: 'account_info', action: 'get_main_info', token });
     expect(accountInfo.body.js.account_info).toHaveProperty('expire_date');
 
-    const vodCategories = await request(app)
+    const vodCategories = await request(server)
       .get('/server/load.php')
       .query({ type: 'vod', action: 'get_categories', token });
     expect(vodCategories.body.js.map(category => category.title))
@@ -999,7 +1017,7 @@ describe('Stalker/MAG portal flow', () => {
     expect(vodCategories.body.js.find(category => category.id === String(adultMovieCategoryId)))
       .toMatchObject({ censored: 1 });
 
-    const vod = await request(app)
+    const vod = await request(server)
       .get('/server/load.php')
       .query({
         type: 'vod',
@@ -1020,7 +1038,7 @@ describe('Stalker/MAG portal flow', () => {
     });
     expect(vod.body.js.data[0].cmd).toContain(`/stalker/vod/${movieChannelId}`);
 
-    const adultVod = await request(app)
+    const adultVod = await request(server)
       .get('/server/load.php')
       .query({
         type: 'vod',
@@ -1031,7 +1049,7 @@ describe('Stalker/MAG portal flow', () => {
     expect(adultVod.body.js.data.map(item => item.id)).toEqual([String(adultMovieChannelId)]);
     expect(adultVod.body.js.data[0]).toMatchObject({ censored: 1, lock: 1 });
 
-    const movieLink = await request(app)
+    const movieLink = await request(server)
       .get('/server/load.php')
       .query({
         type: 'vod',
@@ -1044,12 +1062,12 @@ describe('Stalker/MAG portal flow', () => {
     expect(movieLink.body.js.cmd).not.toContain('upstream');
     expect(movieLink.body.js.cmd).not.toContain('unused');
 
-    const seriesCategories = await request(app)
+    const seriesCategories = await request(server)
       .get('/server/load.php')
       .query({ type: 'series', action: 'get_categories', token });
     expect(seriesCategories.body.js.map(category => category.title)).toEqual(['All', 'Series']);
 
-    const series = await request(app)
+    const series = await request(server)
       .get('/server/load.php')
       .query({ type: 'series', action: 'get_ordered_list', token, category: '*' });
     expect(series.body.js.data[0]).toMatchObject({
@@ -1059,7 +1077,7 @@ describe('Stalker/MAG portal flow', () => {
       is_series: 1
     });
 
-    const seasons = await request(app)
+    const seasons = await request(server)
       .get('/server/load.php')
       .query({
         type: 'series',
@@ -1073,7 +1091,7 @@ describe('Stalker/MAG portal flow', () => {
       series: ['1', '2']
     });
 
-    const episodeLink = await request(app)
+    const episodeLink = await request(server)
       .get('/server/load.php')
       .query({
         type: 'vod',
@@ -1094,7 +1112,7 @@ describe('Stalker/MAG portal flow', () => {
       remote_episode_id: 61_001
     });
 
-    const missingEpisode = await request(app)
+    const missingEpisode = await request(server)
       .get('/server/load.php')
       .query({
         type: 'vod',
@@ -1105,12 +1123,12 @@ describe('Stalker/MAG portal flow', () => {
       });
     expect(missingEpisode.body.js).toMatchObject({ cmd: '', error: 'nothing_to_play' });
 
-    const radioCategories = await request(app)
+    const radioCategories = await request(server)
       .get('/server/load.php')
       .query({ type: 'radio', action: 'get_categories', token });
     expect(radioCategories.body.js.map(category => category.title)).toEqual(['All', 'Radio']);
 
-    const radio = await request(app)
+    const radio = await request(server)
       .get('/server/load.php')
       .query({ type: 'radio', action: 'get_ordered_list', token, category: '*' });
     expect(radio.body.js.data[0]).toMatchObject({
@@ -1120,7 +1138,7 @@ describe('Stalker/MAG portal flow', () => {
       radio: true
     });
 
-    const radioLink = await request(app)
+    const radioLink = await request(server)
       .get('/server/load.php')
       .query({
         type: 'radio',
@@ -1132,7 +1150,7 @@ describe('Stalker/MAG portal flow', () => {
       .toContain(`/live/token/auth/${radioChannelId}.mp3?token=`);
     expect(radioLink.body.js.cmd).toContain('&transcode=true');
 
-    const epg = await request(app)
+    const epg = await request(server)
       .get('/server/load.php')
       .query({ type: 'itv', action: 'get_epg_info', token, period: 1 });
     const archived = epg.body.js.data[String(authorizedChannelIds[0])]
@@ -1144,7 +1162,7 @@ describe('Stalker/MAG portal flow', () => {
       mark_archive: 1
     });
 
-    const archiveLink = await request(app)
+    const archiveLink = await request(server)
       .get('/server/load.php')
       .query({
         type: 'tv_archive',
@@ -1163,13 +1181,13 @@ describe('Stalker/MAG portal flow', () => {
       `auto /media/stalker_archive_${authorizedChannelIds[0]}_${archivedProgramStart}_${archivedProgramStop + 1}.mpg`,
       `auto /media/stalker_archive_${authorizedChannelIds[0]}_${expiredArchiveStart}_${expiredArchiveStop}.mpg`
     ]) {
-      const tamperedArchive = await request(app)
+      const tamperedArchive = await request(server)
         .get('/server/load.php')
         .query({ type: 'tv_archive', action: 'create_link', token, cmd: command });
       expect(tamperedArchive.body.js).toMatchObject({ cmd: '', error: 'nothing_to_play' });
     }
 
-    const unknown = await request(app)
+    const unknown = await request(server)
       .get('/server/load.php')
       .query({ type: 'vod', action: 'unsupported_action', token });
     expect(unknown.body).toEqual({ js: {} });
@@ -1182,7 +1200,7 @@ describe('Stalker/MAG portal flow', () => {
       SELECT start, stop FROM epg_programs
       WHERE channel_id = ? AND title = 'Current Show'
     `).get(epgIds[0]);
-    const requestEpoch = (start, duration, channelId = authorizedChannelIds[0]) => request(app)
+    const requestEpoch = (start, duration, channelId = authorizedChannelIds[0]) => request(server)
       .get(`/timeshift/token/auth/${duration}/epoch-${start}/${channelId}.ts`)
       .query({ token });
 
@@ -1207,12 +1225,12 @@ describe('Stalker/MAG portal flow', () => {
     expect((await requestEpoch(archivedProgramStart, 60, hiddenChannelIds[0])).status).toBe(404);
     expect((await requestEpoch(archivedProgramStart, 60, unauthorizedChannelIds[0])).status).toBe(404);
 
-    const formatted = await request(app)
+    const formatted = await request(server)
       .get(`/timeshift/token/auth/60/2026-01-15:12-00/${authorizedChannelIds[0]}.ts`)
       .query({ token });
     expect(formatted.status).toBe(502);
 
-    await request(app)
+    await request(server)
       .put(`/api/users/${userId}/stalker-devices/${(await db.prepare('SELECT id FROM stalker_devices WHERE user_id = ?').get(userId)).id}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ enabled: false })
@@ -1223,7 +1241,7 @@ describe('Stalker/MAG portal flow', () => {
   it('enforces the create_link module type matrix', async () => {
     await registerDevice();
     const token = await handshake();
-    const createLink = (type, cmd, extra = {}) => request(app)
+    const createLink = (type, cmd, extra = {}) => request(server)
       .get('/server/load.php')
       .query({ type, action: 'create_link', token, cmd, ...extra });
     const liveCommand = `ffrt4://itv/${authorizedChannelIds[0]}`;
@@ -1283,7 +1301,7 @@ describe('Stalker/MAG portal flow', () => {
       expect(stored.parental_pin_encrypted).not.toBe('1234');
       expect(decrypt(stored.parental_pin_encrypted)).toBe('1234');
 
-      const devices = await request(app)
+      const devices = await request(server)
         .get(`/api/users/${userId}/stalker-devices`)
         .set('Authorization', `Bearer ${adminToken}`);
       expect(devices.body[0]).toMatchObject({ parental_pin_configured: true });
@@ -1291,19 +1309,19 @@ describe('Stalker/MAG portal flow', () => {
       expect(devices.body[0]).not.toHaveProperty('parental_pin_encrypted');
 
       let token = await handshake();
-      let profileResponse = await request(app)
+      let profileResponse = await request(server)
         .get('/server/load.php')
         .query({ type: 'stb', action: 'get_profile', token });
       expect(profileResponse.body.js.parent_password).toBe('1234');
       expect(profileResponse.body.js.settings_password).toBe('');
 
-      await request(app)
+      await request(server)
         .put(`/api/users/${userId}/stalker-devices/${device.id}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ parental_pin: '12x4' })
         .expect(400, { error: 'invalid_parental_pin' });
 
-      const updated = await request(app)
+      const updated = await request(server)
         .put(`/api/users/${userId}/stalker-devices/${device.id}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ parental_pin: '567890' });
@@ -1312,12 +1330,12 @@ describe('Stalker/MAG portal flow', () => {
       expect(await streamUser(token)).toBeNull();
 
       token = await handshake();
-      profileResponse = await request(app)
+      profileResponse = await request(server)
         .get('/server/load.php')
         .query({ type: 'stb', action: 'get_profile', token });
       expect(profileResponse.body.js.parent_password).toBe('567890');
 
-      const cleared = await request(app)
+      const cleared = await request(server)
         .put(`/api/users/${userId}/stalker-devices/${device.id}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ parental_pin: null });
@@ -1326,7 +1344,7 @@ describe('Stalker/MAG portal flow', () => {
         .parental_pin_encrypted).toBeNull();
 
       token = await handshake();
-      profileResponse = await request(app)
+      profileResponse = await request(server)
         .get('/server/load.php')
         .query({ type: 'stb', action: 'get_profile', token });
       expect(profileResponse.body.js.parent_password).toBe('');
@@ -1388,7 +1406,7 @@ describe('Stalker/MAG portal flow', () => {
       user: { id: userId },
       expiry: Date.now() + 60_000
     });
-    await request(app)
+    await request(server)
       .put(`/api/users/${userId}/stalker-devices/${deviceId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ enabled: false })
@@ -1396,7 +1414,7 @@ describe('Stalker/MAG portal flow', () => {
     expect(tokenCache.has(activeToken)).toBe(false);
     expect(await streamUser(activeToken)).toBeNull();
 
-    await request(app)
+    await request(server)
       .put(`/api/users/${userId}/stalker-devices/${deviceId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ enabled: true })
@@ -1420,7 +1438,7 @@ describe('Stalker/MAG portal flow', () => {
       user: { id: userId },
       expiry: Date.now() + 60_000
     });
-    await request(app)
+    await request(server)
       .delete(`/api/users/${userId}/stalker-devices/${deviceId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -1431,7 +1449,7 @@ describe('Stalker/MAG portal flow', () => {
     const mismatchedToken = await handshake();
     db.prepare('UPDATE stalker_sessions SET user_id = ? WHERE token = ?')
       .run(otherUserId, mismatchedToken);
-    const mismatchedProfile = await request(app)
+    const mismatchedProfile = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', token: mismatchedToken });
     expect(mismatchedProfile.text).toBe('Authorization failed.');
@@ -1441,7 +1459,7 @@ describe('Stalker/MAG portal flow', () => {
     const inactiveUserToken = await handshake();
     db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
     expect(await streamUser(inactiveUserToken)).toBeNull();
-    const inactiveProfile = await request(app)
+    const inactiveProfile = await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', token: inactiveUserToken });
     expect(inactiveProfile.text).toBe('Authorization failed.');
@@ -1453,7 +1471,7 @@ describe('Stalker/MAG portal flow', () => {
     const previousTrustProxy = app.get('trust proxy');
     app.set('trust proxy', 1);
     try {
-      const blockedProfile = await request(app)
+      const blockedProfile = await request(server)
         .get('/server/load.php')
         .set('X-Forwarded-For', '8.8.8.8')
         .query({ type: 'stb', action: 'get_profile', token: regionToken });
@@ -1468,7 +1486,7 @@ describe('Stalker/MAG portal flow', () => {
       .run(Math.floor(Date.now() / 1000) - 1, userId);
     expect(await streamUser(expiredUserToken)).toBeNull();
 
-    const expiredHandshake = await request(app)
+    const expiredHandshake = await request(server)
       .get('/server/load.php')
       .set('Cookie', `mac=${encodeURIComponent(mac)}`)
       .query({ type: 'stb', action: 'handshake' });
@@ -1485,7 +1503,7 @@ describe('Stalker/MAG portal flow', () => {
     db.prepare('UPDATE stalker_sessions SET last_seen = ? WHERE token = ?').run(recent, token);
     db.prepare('UPDATE stalker_devices SET last_seen = ? WHERE id = ?').run(recent, deviceId);
 
-    await request(app)
+    await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', token });
     expect(db.prepare('SELECT last_seen FROM stalker_sessions WHERE token = ?').get(token).last_seen).toBe(recent);
@@ -1495,7 +1513,7 @@ describe('Stalker/MAG portal flow', () => {
     db.prepare('UPDATE stalker_sessions SET last_seen = ? WHERE token = ?').run(stale, token);
     db.prepare('UPDATE stalker_devices SET last_seen = ? WHERE id = ?').run(stale, deviceId);
 
-    await request(app)
+    await request(server)
       .get('/server/load.php')
       .query({ type: 'stb', action: 'get_profile', token });
     expect(db.prepare('SELECT last_seen FROM stalker_sessions WHERE token = ?').get(token).last_seen).toBeGreaterThan(stale);

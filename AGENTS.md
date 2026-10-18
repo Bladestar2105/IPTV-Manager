@@ -33,6 +33,39 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   It must not remove a user's ability to edit their own channel, movie, series,
   or category-scoped EPG mappings.
 
+## Client Resource Privacy
+
+- Client-facing provider URLs, credentials and provider CDN resources must stay
+  behind Manager proxy grants, including nested playback dependencies and DRM.
+- Unknown external hosts are proxied by default. Public metadata/artwork links
+  from approved YouTube, IMDb, TMDB and TVDB domains may remain direct; YouTube
+  trailers must not be proxied or cached by Manager.
+- Keep these exceptions centralized in `src/utils/clientResourcePolicy.js`.
+  Never exempt arbitrary third-party/CDN hosts merely because their origin
+  differs from the configured provider. Credential-bearing URLs and DRM license
+  requests remain proxied even on approved public domains.
+- Inspect binary MP4 PlayReady metadata as well as manifests. Preserve media
+  sample bytes and offsets while replacing provider license addresses.
+- Inspect MP4 ranges using bounded box-header/metadata reads that skip media
+  payloads. Pin reads with strong ETags when available; otherwise assume the
+  provider file remains unchanged between reads, as explicitly approved for
+  playback compatibility. Validate returned byte ranges and total lengths;
+  same-length changes without a reliable validator cannot be ruled out.
+- Relay Matroska (MKV/MKA) media unchanged through Manager, including ranges
+  without validators. Its embedded metadata is not inspected for URLs; do not
+  apply the MP4 full-file inspection fallback to Matroska playback.
+- Revalidate provider-only grants against current ownership/admin access, and
+  channel-bound grants against current channel and provider-pool authorization.
+- Every fixed provider URL grant must carry its selected `providerId`. Category
+  resources for normal users also carry `user_channel_id`, including users with
+  `provider_access`, so explicit admin channel grants keep working.
+- Shared EPG catalog artwork uses current source/channel identity rather than a
+  frozen upstream URL. Recheck source existence and the current EPG row; XMLTV
+  artwork also rechecks the user's current mapping and share scope. Preserve
+  shared EPG catalog visibility independently of provider management access.
+- Review every grant issuer when changing provenance or revocation rules,
+  including category, EPG, XMLTV, Stalker and metadata response paths.
+
 ## Package and Build Rules
 
 - Primary package manager: `npm`.

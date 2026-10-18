@@ -116,6 +116,88 @@ describe('fetchSafe', () => {
     expect(destroy).toHaveBeenCalledOnce();
   });
 
+  it('filters scoped cookies and authorization on every redirect and retains redirect cookies for descendants', async () => {
+    helpers.isSafeUrl.mockResolvedValue(true);
+    const hop = (location, setCookies = []) => ({ status: 302,
+      headers: { get: name => name === 'location' ? location : null, raw: () => ({ 'set-cookie': setCookies }) }, body: { destroy: vi.fn() } });
+    fetch.mockResolvedValueOnce(hop('/live/next', ['shared=one; Domain=example.com; Path=/live; Secure']))
+      .mockResolvedValueOnce(hop('https://cdn.example.com/live/next'))
+      .mockResolvedValueOnce(hop('http://cdn.example.com/elsewhere/final'))
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
+    const final = await fetchSafe('https://panel.example.com/live/main', { headers: {
+      Cookie: 'initial=secret', Authorization: 'Bearer secret', 'Proxy-Authorization': 'Basic secret',
+      'X-Api-Key': 'provider-secret', 'X-Custom-Token': 'token-secret',
+      Referer: 'https://panel.example.com/?password=secret', Origin: 'https://secret.example.com',
+      'User-Agent': 'player', Accept: 'video/mp4', Range: 'bytes=0-1023', 'If-Match': '"media-version"',
+    } });
+    const sent = fetch.mock.calls.map(([, options]) => new Headers(options.headers));
+    expect(sent[0].get('cookie')).toBe('initial=secret');
+    expect(sent[0].get('authorization')).toBe('Bearer secret');
+    expect(sent[1].get('cookie')).toContain('initial=secret');
+    expect(sent[1].get('authorization')).toBe('Bearer secret');
+    expect(sent[1].get('x-api-key')).toBe('provider-secret');
+    expect(sent[1].get('x-custom-token')).toBe('token-secret');
+    expect(sent[2].get('cookie')).toBe('shared=one');
+    for (const name of ['authorization', 'proxy-authorization', 'x-api-key', 'x-custom-token', 'referer', 'origin']) {
+      expect(sent[2].get(name)).toBeNull();
+      expect(sent[3].get(name)).toBeNull();
+    }
+    expect(sent[3].get('cookie')).toBeNull();
+    for (const headers of sent) {
+      expect(headers.get('user-agent')).toBe('player');
+      expect(headers.get('accept')).toBe('video/mp4');
+      expect(headers.get('range')).toBe('bytes=0-1023');
+      expect(headers.get('if-match')).toBe('"media-version"');
+    }
+    expect(final.upstreamCookieJar).toBeTruthy();
+    for (const [, options] of fetch.mock.calls) {
+      expect(options).not.toHaveProperty('cookieJar');
+      expect(options).not.toHaveProperty('headerOrigin');
+    }
+  });
+
+  it.each([
+    [301, 'POST', 'GET'], [302, 'POST', 'GET'], [303, 'POST', 'GET'], [303, 'PUT', 'GET'], [303, 'DELETE', 'GET'],
+    [307, 'POST', 'POST'], [308, 'POST', 'POST'], [301, 'PUT', 'PUT'], [302, 'PUT', 'PUT'],
+    [303, 'GET', 'GET'], [303, 'HEAD', 'HEAD'],
+  ])('applies fetch method and body semantics for %i redirect of %s to %s', async (status, method, expectedMethod) => {
+    helpers.isSafeUrl.mockResolvedValue(true);
+    fetch.mockResolvedValueOnce({ status, headers: { get: name => name === 'location' ? '/redirected' : null }, body: { destroy: vi.fn() } })
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
+    const bodyHeaders = {
+      'Content-Type': 'application/octet-stream', 'content-LENGTH': '3', 'Content-Encoding': 'gzip',
+      'Content-Language': 'en', 'Content-Location': '/original', 'Transfer-Encoding': 'chunked',
+    };
+    const options = { method, headers: { ...bodyHeaders, Accept: 'application/octet-stream', Authorization: 'Bearer secret' },
+      ...(!['GET', 'HEAD'].includes(method) ? { body: Buffer.from([0, 1, 255]) } : {}),
+    };
+    await fetchSafe('https://panel.example.com/original', options);
+    const redirected = fetch.mock.calls[1][1];
+    expect(redirected.method).toBe(expectedMethod);
+    const headers = new Headers(redirected.headers);
+    expect(headers.get('accept')).toBe('application/octet-stream');
+    expect(headers.get('authorization')).toBe('Bearer secret');
+    const converted = method !== expectedMethod;
+    if (converted) expect(redirected).not.toHaveProperty('body');
+    else expect(redirected.body).toEqual(options.body);
+    for (const [name, value] of Object.entries(bodyHeaders)) expect(headers.get(name)).toBe(converted ? null : value);
+    expect(options.headers).toMatchObject(bodyHeaders);
+  });
+
+  it.each([false, true])('scopes image validators after redirects only when requested (%s)', async stripConditionalOnRedirect => {
+    helpers.isSafeUrl.mockResolvedValue(true);
+    fetch.mockResolvedValueOnce({ status: 302, headers: { get: name => name === 'location' ? '/other.png' : null }, body: { destroy: vi.fn() } })
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
+    await fetchSafe('https://cdn.example/icon', { stripConditionalOnRedirect, headers: {
+      'If-None-Match': '"1"', 'iF-mOdIfIeD-sInCe': 'Mon, 01 Jan 2024 00:00:00 GMT', Range: 'bytes=0-99',
+    } });
+    const final = new Headers(fetch.mock.calls[1][1].headers);
+    expect(final.has('if-none-match')).toBe(!stripConditionalOnRedirect);
+    expect(final.has('if-modified-since')).toBe(!stripConditionalOnRedirect);
+    expect(final.get('range')).toBe('bytes=0-99');
+    expect(fetch.mock.calls[1][1]).not.toHaveProperty('stripConditionalOnRedirect');
+  });
+
   it('should handle relative redirects', async () => {
     const initialUrl = 'http://example.com/path';
     const relativeRedirect = '/new-path';

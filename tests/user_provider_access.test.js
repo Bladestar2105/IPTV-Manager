@@ -1,3 +1,4 @@
+import { decryptClientGrant } from './helpers/clientResourceGrant.js';
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -168,6 +169,33 @@ describe('per-user upstream provider visibility', () => {
     expect(grantedRes.body).toEqual(expect.arrayContaining([
       expect.objectContaining({id: providerChannelId, metadata: sensitiveMetadata})
     ]));
+  });
+
+  it.each([{}, { page: '1', limit: '10' }])('proxies restricted catalog artwork and trailer URLs for list editing (%j)', async query => {
+    db.prepare('UPDATE provider_channels SET logo = ?, youtube_trailer = ? WHERE id = ?')
+      .run('icons/channel.png', 'https://provider.example/trailer?token=private', providerChannelId);
+    const res = response();
+    providerCatalogController.getProviderChannels({
+      protocol: 'https', get: () => 'manager.test', app: { get: () => false },
+      user: { id: userId, is_admin: false, provider_access: 0 }, params: { id: providerId }, query
+    }, res);
+    expect(res.statusCode).toBe(200);
+    const channel = (res.body.channels || res.body)[0];
+    expect(channel.id).toBe(providerChannelId);
+    expect(channel.name).toBe('Visible Channel');
+    expect(channel).not.toHaveProperty('metadata');
+    expect(await decryptClientGrant(channel.logo)).toMatchObject({ kind: 'image', url: 'http://provider.example/icons/channel.png' });
+    expect(await decryptClientGrant(channel.youtube_trailer)).toMatchObject({ kind: 'resource', url: 'https://provider.example/trailer?token=private' });
+  });
+
+  it('binds restricted list artwork to its user channel assignment', async () => {
+    const res = response();
+    channelController.getCategoryChannels({
+      protocol: 'https', get: () => 'manager.test', app: { get: () => false }, query: {},
+      user: { id: userId, is_admin: false, provider_access: 0 }, params: { catId: categoryId }
+    }, res);
+    expect(res.statusCode).toBe(200);
+    expect(await decryptClientGrant(res.body[0].logo)).toMatchObject({ channelId: res.body[0].user_channel_id });
   });
 
   it('denies provider EPG mapping access when provider access is disabled', () => {

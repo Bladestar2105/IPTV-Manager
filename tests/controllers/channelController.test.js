@@ -18,7 +18,8 @@ vi.mock('../../src/config/constants.js', async () => {
         BCRYPT_ROUNDS: 1,
         JWT_EXPIRES_IN: '1h',
         AUTH_CACHE_TTL: 60000,
-        AUTH_CACHE_MAX_SIZE: 100
+        AUTH_CACHE_MAX_SIZE: 100,
+        AUTH_CACHE_CLEANUP_INTERVAL: 60000
     };
 });
 
@@ -353,6 +354,34 @@ describe('Channel Controller - createUserCategory', () => {
         expect(db.prepare('SELECT is_hidden, granted_by_admin, authorization_revoked FROM user_channels WHERE id = ?').get(assignmentId)).toEqual({
           is_hidden: 0, granted_by_admin: 1, authorization_revoked: 0
         });
+    });
+
+    it.each(['https://provider.test/trailer?token=secret', 'https://www.youtube.com/watch?v=public', 'https://www.youtube.com/watch?v=private&token=secret'])('keeps list editing fields and sanitizes restricted metadata URLs: %s', trailer => {
+        const categoryId = db.prepare("INSERT INTO user_categories (user_id, name) VALUES (2, 'My Category')").run().lastInsertRowid;
+        const providerId = db.prepare("INSERT INTO providers (name, url, username, password, user_id) VALUES ('Provider', 'http://provider.test', 'u', 'p', 2)").run().lastInsertRowid;
+        const metadata = JSON.stringify({ original_url: 'https://provider.test/stream', http_headers: { Authorization: 'secret' }, drm: { license_key: 'https://provider.test/license' } });
+        const channelId = db.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, logo, metadata) VALUES (?, 100, 'Channel', 'https://provider.test/logo.png', ?)").run(providerId, metadata).lastInsertRowid;
+        const assignmentId = db.prepare('INSERT INTO user_channels (user_category_id, provider_channel_id, sort_order) VALUES (?, ?, 0)').run(categoryId, channelId).lastInsertRowid;
+        db.prepare('UPDATE provider_channels SET youtube_trailer = ? WHERE id = ?').run(trailer, channelId);
+        for (const user of [{ id: 2, is_admin: false }, { id: 2, is_admin: false, provider_access: 1 }, { id: 1, is_admin: true }]) {
+            const req = { params: { catId: String(categoryId) }, user, protocol: 'https', query: {}, get: () => 'manager.test', app: { get: () => false } };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+            channelController.getCategoryChannels(req, res);
+            const row = res.json.mock.calls[0][0][0];
+            expect(row.user_channel_id).toBe(assignmentId);
+            expect(row.name).toBe('Channel');
+            expect(row.logo).toMatch(/^https:\/\/manager\.test\/api\/proxy\/resource\//);
+            if (user.is_admin || user.provider_access) {
+                expect(row.metadata).toBe(metadata);
+                expect(row.youtube_trailer).toBe(trailer);
+            }
+            else {
+                for (const key of ['metadata', 'stream_url', 'direct_source', 'original_url', 'http_headers', 'drm']) expect(row).not.toHaveProperty(key);
+                expect(JSON.stringify(row)).not.toContain('provider.test');
+                if (trailer.includes('v=public')) expect(row.youtube_trailer).toBe(trailer);
+                else expect(row.youtube_trailer).toMatch(/^https:\/\/manager\.test\/api\/proxy\/resource\//);
+            }
+        }
     });
 
     it('should exclude an ungranted legacy mismatch from category lists', () => {

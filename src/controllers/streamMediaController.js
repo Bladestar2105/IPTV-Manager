@@ -1,4 +1,9 @@
 import crypto from 'crypto';
+import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
+import { readBodyWithLimit } from '../utils/network.js';
+import { resolveBudget } from '../utils/env.js';
 import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -22,8 +27,30 @@ import {
   reserveProviderSession,
   sendSubtitleTrack,
   sendTrackInfo,
+  sendPlaybackDocument,
+  preparePlaybackMedia,
   shareGuestAllowed
 } from './streamControllerHelpers.js';
+
+const MANIFEST_BODY_TIMEOUT_MS = resolveBudget(process.env.MANIFEST_BODY_TIMEOUT_MS, 30000, 1000, Number.MAX_SAFE_INTEGER, 'MANIFEST_BODY_TIMEOUT_MS');
+const MANIFEST_MAX_BYTES = resolveBudget(process.env.MANIFEST_MAX_BYTES, 32 * 1024 * 1024, 64 * 1024, Number.MAX_SAFE_INTEGER, 'MANIFEST_MAX_BYTES');
+
+async function sendVodManifest(req, res, upstream, sourceUrl, user, headers, session) {
+  const kind = isClientManifest(upstream.headers.get('content-type'), upstream.url || sourceUrl);
+  if (!kind) return false;
+  const text = await readBodyWithLimit(upstream, { timeoutMs: MANIFEST_BODY_TIMEOUT_MS, maxBytes: MANIFEST_MAX_BYTES });
+  const nextContext = withUpstreamCookies(headers, upstream, sourceUrl);
+  delete nextContext.headers.Range;
+  const playbackId = crypto.randomBytes(16).toString('base64url');
+  const rewrite = kind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+  const output = rewrite(text, upstream.url || sourceUrl, (url, options) => createClientResourceUrl(req, user, url, {
+    kind: 'resource', ...nextContext, playbackId, ...session, ...options
+  }));
+  res.setHeader('Content-Type', kind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(output);
+  return true;
+}
 
 export const proxyMovie = async (req, res) => {
   const connectionId = crypto.randomUUID();
@@ -65,7 +92,8 @@ export const proxyMovie = async (req, res) => {
       return;
     }
 
-    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: shouldTranscode })) return;
 
     channel.provider_pass = decrypt(channel.provider_pass);
     base = channel.provider_url.replace(/\/+$/, '');
@@ -76,8 +104,6 @@ export const proxyMovie = async (req, res) => {
     ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie'));
 
     recordStreamStat(channel.provider_channel_id, 'Movie');
-
-    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -139,8 +165,18 @@ export const proxyMovie = async (req, res) => {
             headers,
             redirect: 'follow'
         });
-        const upstream = result.response;
+        let upstream = result.response;
+        if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
+          channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id,
+        })) {
+          cleanup();
+          return;
+        }
 
+        if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: sessionName, connectionId, releaseSession: cleanup });
+        if (!upstream) return;
+        await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
         res.status(upstream.status);
 
         const contentType = upstream.headers.get('content-type');
@@ -238,7 +274,8 @@ export const proxySeries = async (req, res) => {
       return;
     }
 
-    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName);
+    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
+    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName, { dedupe: shouldTranscode });
     if (!availableProvider) return;
 
     availableProvider.password = decrypt(availableProvider.password);
@@ -252,8 +289,6 @@ export const proxySeries = async (req, res) => {
       'User-Agent': availableProvider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
-
-    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -314,8 +349,18 @@ export const proxySeries = async (req, res) => {
             headers,
             redirect: 'follow'
         });
-        const upstream = result.response;
+        let upstream = result.response;
+        if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
+          channelName: sessionName, providerId: availableProvider.id, channelId: seriesEpisode.user_channel_id,
+        })) {
+          cleanup();
+          return;
+        }
 
+        if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: seriesEpisode.user_channel_id, providerId: availableProvider.id, channelName: sessionName, connectionId, releaseSession: cleanup });
+        if (!upstream) return;
+        await streamManager.cleanupSession(user.id, req.ip, sessionName, availableProvider.id, connectionId);
         res.status(upstream.status);
 
         const contentType = upstream.headers.get('content-type');

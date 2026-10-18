@@ -41,7 +41,7 @@ vi.mock('../../src/utils/network.js', async importOriginal => ({
     fetchSafe: vi.fn()
 }));
 
-import { getEpgProgramsPage, getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels, importEpgFromUrl } from '../../src/services/epgService.js';
+import { getEpgXmlForChannels, getEpgProgramsPage, getEpgProgramsForChannels, getLastEpgUpdate, getProgramsScheduleForChannels, importEpgFromUrl } from '../../src/services/epgService.js';
 import db from '../../src/database/epgDb.js';
 import mainDb from '../../src/database/db.js';
 import { fetchSafe } from '../../src/utils/network.js';
@@ -171,4 +171,48 @@ describe('epgService - paged batch response', () => {
         expect(all).toHaveBeenCalledWith('news', 1, 100, 128, 256);
         expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('ORDER BY start ASC, rowid ASC'));
     });
+});
+
+
+describe('epgService XMLTV client icon mapping', () => {
+    it('maps and XML-escapes exported logos while retaining the default export behavior', async () => {
+        db.prepare.mockImplementation(sql => sql.includes('FROM epg_channels')
+            ? { all: () => [{ id: 'channel', name: 'Name', logo: 'https://provider.test/logo.png' }] }
+            : { iterate: function* () {} });
+        const collect = async mapper => {
+            let xml = '';
+            for await (const chunk of getEpgXmlForChannels(new Set(['channel']), mapper)) xml += chunk;
+            return xml;
+        };
+        expect(await collect()).toContain('https://provider.test/logo.png');
+        const mapper = vi.fn(() => 'https://manager.test/icon?token=opaque&v=1');
+        const xml = await collect(mapper);
+        expect(mapper).toHaveBeenCalledWith('https://provider.test/logo.png', expect.objectContaining({ id: 'channel' }));
+        expect(xml).toContain('https://manager.test/icon?token=opaque&amp;v=1');
+        expect(xml).not.toContain('provider.test');
+    });
+
+    it('passes the selected duplicate XMLTV row provenance to its icon mapper', async () => {
+        const { default: Sqlite } = await vi.importActual('better-sqlite3');
+        const sourceDb = new Sqlite(':memory:');
+        try {
+            sourceDb.exec(`
+                CREATE TABLE epg_channels (id TEXT, name TEXT, logo TEXT, source_type TEXT, source_id INTEGER);
+                CREATE TABLE epg_programs (channel_id TEXT, start INTEGER, stop INTEGER, title TEXT, desc TEXT);
+                INSERT INTO epg_channels VALUES ('duplicate', 'Custom', 'icons/custom.png', 'custom', 3);
+                INSERT INTO epg_channels VALUES ('duplicate', 'Provider', 'icons/provider.png', 'provider', 9);
+            `);
+            db.prepare.mockImplementation(sql => sourceDb.prepare(sql));
+            const selected = [];
+            for await (const chunk of getEpgXmlForChannels(new Set(['duplicate']), (logo, row) => {
+                selected.push({ logo, type: row.source_type, sourceId: row.source_id });
+                return logo;
+            })) expect(chunk).toContain('<channel id="duplicate">');
+            expect(selected).toHaveLength(1);
+            expect(selected[0]).toEqual(selected[0].type === 'custom'
+                ? { logo: 'icons/custom.png', type: 'custom', sourceId: 3 }
+                : { logo: 'icons/provider.png', type: 'provider', sourceId: 9 });
+        } finally { sourceDb.close(); }
+    });
+
 });

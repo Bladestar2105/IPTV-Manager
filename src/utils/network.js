@@ -3,6 +3,7 @@ import https from 'https';
 import fetch from 'node-fetch';
 import { isSafeUrl, safeLookup, sanitizeErrorMessage } from './helpers.js';
 import { resolveBudget } from './env.js';
+import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from './clientCookies.js';
 
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
@@ -92,6 +93,9 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     maxDurationMs,
     maxBytes,
     allowSelfSigned = false,
+    cookieJar,
+    headerOrigin = url,
+    stripConditionalOnRedirect = false,
     ...fetchOptionOverrides
   } = options;
 
@@ -121,8 +125,10 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
   headerTimer.unref?.();
   const disarm = () => clearTimeout(headerTimer);
 
+  const cookieContext = createUpstreamContext(fetchOptionOverrides.headers, url, cookieJar, headerOrigin);
   const fetchOptions = {
     ...fetchOptionOverrides,
+    headers: upstreamRequestHeaders(cookieContext, url),
     signal,
     redirect: 'manual', // Handle redirects manually to re-verify new URL
     agent: (_parsedUrl) => {
@@ -149,9 +155,24 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
         response.body?.destroy?.();
       }
       disarm();
-      return await fetchSafe(nextUrl, options, redirectCount + 1, effectiveDeadline);
+      const nextContext = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin);
+      const nextOptions = { ...options, ...nextContext };
+      if (stripConditionalOnRedirect && nextUrl !== new URL(url).href) {
+        nextOptions.headers = Object.fromEntries(Object.entries(nextOptions.headers).filter(([name]) =>
+          !/^(?:if-none-match|if-modified-since)$/i.test(name)));
+      }
+      const method = String(options.method || 'GET').toUpperCase();
+      if (([301, 302].includes(response.status) && method === 'POST') ||
+          (response.status === 303 && !['GET', 'HEAD'].includes(method))) {
+        nextOptions.method = 'GET';
+        delete nextOptions.body;
+        nextOptions.headers = Object.fromEntries(Object.entries(nextOptions.headers).filter(([name]) =>
+          !/^(?:content-(?:length|type|encoding|language|location)|transfer-encoding)$/i.test(name)));
+      }
+      return await fetchSafe(nextUrl, nextOptions, redirectCount + 1, effectiveDeadline);
     }
 
+    response.upstreamCookieJar = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin).cookieJar;
     if (Number(maxBytes) > 0) {
       // Header-based guard: it only helps when the server announces a length,
       // but it rejects an oversized payload before a byte of it is read.

@@ -42,6 +42,25 @@ verification with the deployment's real catalogs after updating the image.
 
 EPG-logo cache and checkpoint regressions can be run with
 `npm test -- tests/epg_logo_cache.test.js tests/wal_maintenance.test.js`.
+
+Client resource proxy regressions cover opaque grants and revocation, live
+catalog icon resolution, disk-cache revalidation/fallback, nested HLS/DASH,
+license relaying, scoped cookies/redirects, public metadata exceptions, safe
+TTML, legacy HLS redirects, stream-session reuse and frontend same-origin image
+handling. The redirect-cache regression uses the actual SSRF-safe fetch path:
+
+```bash
+npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/services/image_cache_redirect.test.js tests/controllers/legacy_segment_privacy.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js tests/client_resource_policy.test.js tests/client_cookies.test.js tests/client_ttml.test.js tests/client_playready.test.js
+```
+
+Binary PlayReady coverage also exercises unchanged MP4 sizes and sample offsets,
+partial metadata ranges, cancellation, compact SQLite grants and exact binary
+license POST bodies with `SOAPAction`:
+
+```bash
+npm test -- tests/client_mp4.test.js tests/services/clientMediaRelayService.test.js tests/services/compactLicenseGrants.test.js tests/controllers/stream_response_privacy.test.js
+```
+
 The cache tests use independent module instances with real SQLite connections,
 a 33,331-row catalog and a controlled clock; unchanged catalogs must avoid full
 rescans while committed changes still become visible. They also cover explicit
@@ -78,6 +97,63 @@ from `main` before running it so the updater can install the required runtime
 before `npm install`.
 
 ## Maintainer Documentation
+
+### Releases and GHCR retention
+
+The Docker workflow accepts `v*` and `Stable-YY.MM.DD[-hotfix.N]` tags.
+Its validation job rejects other `Stable-*` names before dependency installation
+or publication, including `Stable-Latest`, which is reserved for the image alias.
+Dates must be real UTC calendar dates in 2000–2099, and the complete tag must
+fit Docker's 128-character limit, including any hotfix suffix.
+Stable releases receive the exact release tag as a Docker tag; existing semver
+tags remain supported. Only builds from `main` update `latest`. Both release
+archives and image publication remain gated by validation and container runtime
+verification.
+
+After successful Stable release publication, `Stable-Latest` points to the most
+recently published non-draft, non-prerelease `Stable-*` release, ordered by
+`published_at`. Rerunning an older release selects that same latest published
+release, so the alias cannot roll back to the rerun's tag. The alias is distinct
+from `latest`, which continues to track `main`. The manifest format is preserved
+with Docker's documented
+[`imagetools create --prefer-index=false`](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)
+option.
+
+Use the manual **Container release retention** workflow with `mode: dry-run`
+first. Download its `container-retention-plan` artifact and inspect the published
+release tags/commits, chosen image digests, retained IDs and deletion IDs. No
+registry mutation occurs during a dry-run. To apply that exact plan, dispatch
+again with `mode: apply` and the artifact's `container-retention-plan.sha256` value.
+Any inventory, release, or selection change invalidates the hash and requires a
+new reviewed dry-run. The artifact is retained for 30 days. Resolved releases and
+the inspected inventory are saved before planning in
+`container-retention-inventory.json`, including when a missing historical image
+mapping prevents a retention plan from being produced.
+
+The helper uses the repository's existing `GITHUB_TOKEN` with `contents: read`
+and `packages: write`; the linked GHCR package must grant this repository admin
+access. No PAT is needed. It resolves every published release's Git tag to its
+exact commit, matches actual image-config OCI revision labels, chooses an existing
+release-tagged root or the newest matching root, and creates missing release tags
+before deletion. Every published release must have a matching image; missing or
+unknown mappings stop cleanup rather than guessing by creation date. Prereleases
+are included; draft releases are excluded.
+
+Cleanup retains `latest`, selected release roots and their complete recursive
+platform/attestation/subject dependencies. Its reviewed plan also includes any
+`Stable-Latest` update needed to select the latest published stable release root;
+the alias is synchronized before deletion. Untagged child manifests can be required
+by a retained index and are preserved. Other versions, including duplicate builds
+and label-free orphan artifacts, are deletion candidates. The helper reads only
+manifests and config JSON, never media layers, and fails on unreadable or incomplete
+graphs. Publication and maintenance share a concurrency group; the helper also
+rechecks inventory/releases before mutation and `latest` before each write/delete.
+External registry writers must be paused during apply: GHCR offers no atomic
+transaction across tag creation and version deletion. A failure can leave a
+partially applied cleanup; rerun a dry-run before retrying.
+
+Run the planner's fixtures with
+`npm exec vitest run tests/container_release_retention.test.js`.
 
 - API route inventory: `docs/API_REFERENCE.md`.
 - Runtime environment and Docker configuration: `docs/CONFIGURATION.md`.

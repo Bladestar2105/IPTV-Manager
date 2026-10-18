@@ -149,7 +149,12 @@ describe('Security: M3U Injection', () => {
     await playerPlaylist(req, res);
 
     const output = res.write.mock.calls.map(([chunk]) => chunk).join('');
-    expect(output).toContain('={"keys":[]} #EXTINF:-1,Injected https://evil.example/stream\n');
+    if (field === 'drm_license_key') {
+      expect(output).toContain('#KODIPROP:inputstream.adaptive.license_key=\n');
+      expect(output).not.toContain('evil.example');
+    } else {
+      expect(output).toContain('={"keys":[]} #EXTINF:-1,Injected https://evil.example/stream\n');
+    }
     expect(output.split('\n').filter(line => line.startsWith('#EXTINF:'))).toHaveLength(1);
     expect(output).not.toContain('\nhttps://evil.example/stream');
   });

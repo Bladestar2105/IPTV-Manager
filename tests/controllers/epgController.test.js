@@ -1,3 +1,5 @@
+import * as clientResources from '../../src/services/clientResourceService.js';
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import db, { initDb } from '../../src/database/db.js';
@@ -35,6 +37,38 @@ describe('EPG Controller', () => {
 
     afterEach(() => {
         db.prepare('DELETE FROM epg_sources').run();
+    });
+
+    it('proxies normal-user EPG logos from each exact source while preserving channel fields', async () => {
+        const sourceId = Number(db.prepare("INSERT INTO epg_sources (name, url) VALUES ('Custom', 'https://custom.test/feed/guide.xml')").run().lastInsertRowid);
+        const providerId = Number(db.prepare("INSERT INTO providers (name, url, username, password, epg_url) VALUES ('Provider', 'http://provider.test', 'u', 'p', 'http://provider.test/epg/guide.xml')").run().lastInsertRowid);
+        try {
+            epgService.loadAllEpgChannels.mockResolvedValue([
+                { id: 'duplicate', name: 'Custom', logo: 'icons/custom.png', source_type: 'custom', source_id: sourceId },
+                { id: 'duplicate', name: 'Provider', logo: '//cdn.provider.test/icon.png', source_type: 'provider', source_id: providerId }
+            ]);
+            const req = { protocol: 'https', get: () => 'manager.test', app: { get: () => false }, query: {}, user: { id: 2, is_admin: false } };
+            const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+            await epgController.getEpgChannels(req, res);
+            const rows = res.json.mock.calls[0][0];
+            expect(rows).toHaveLength(2);
+            expect(rows.map(row => row.id)).toEqual(['duplicate', 'duplicate']);
+            expect(rows[0]).not.toHaveProperty('source_id');
+            expect(rows[1]).not.toHaveProperty('source_id');
+            expect(await decryptClientGrant(rows[0].logo)).toMatchObject({ kind: 'image', epgChannelId: 'duplicate', epgSourceType: 'custom', epgSourceId: sourceId });
+            expect(await decryptClientGrant(rows[1].logo)).toMatchObject({ kind: 'image', epgChannelId: 'duplicate', epgSourceType: 'provider', epgSourceId: providerId });
+            epgService.loadAllEpgChannels.mockResolvedValue([
+                { id: 'duplicate', name: 'Provider', logo: '//cdn.provider.test/icon.png', source_type: 'provider', source_id: providerId },
+                ...Array.from({ length: 1000 }, (_, i) => ({ id: `other-${i}`, name: `Other ${i}`, logo: 'icons/other.png', source_type: 'custom', source_id: sourceId }))
+            ]);
+            const resourceFactory = vi.spyOn(clientResources, 'createEpgIconUrl');
+            const suggestions = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+            await epgController.suggestMapping({ ...req, body: { channel_name: 'Provider', epg_id: 'duplicate', limit: 1 } }, suggestions);
+            expect(resourceFactory).toHaveBeenCalledTimes(1);
+            const suggested = suggestions.json.mock.calls[0][0].suggestions[0].epgChannel;
+            expect(suggested).not.toHaveProperty('source_id');
+            expect(await decryptClientGrant(suggested.logo)).toMatchObject({ kind: 'image', epgChannelId: 'duplicate', epgSourceType: 'provider', epgSourceId: providerId });
+        } finally { db.prepare('DELETE FROM providers WHERE id = ?').run(providerId); }
     });
 
     describe('createEpgSource', () => {

@@ -21,11 +21,6 @@ function lockConnection() {
   return lockDb;
 }
 
-/** Test seam: forget the cached bookkeeping connection. */
-export function resetProviderLockConnections() {
-  lockDb = null;
-}
-
 const MAX_CONCURRENT_SYNCS = resolveBudget(process.env.SYNC_MAX_CONCURRENT, 2, 1, 64, 'SYNC_MAX_CONCURRENT');
 
 // A provider sync runs for minutes. The lock outlives a slow run but expires

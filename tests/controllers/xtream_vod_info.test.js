@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
@@ -35,7 +36,8 @@ vi.mock('../../src/config/constants.js', () => ({
   EPG_DB_PATH: '/tmp/epg.db',
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val), // Simple pass-through for test
 }));
 
@@ -53,6 +55,9 @@ describe('xtreamController - get_vod_info', () => {
       params: {},
       hostname: 'localhost',
       secure: false,
+      protocol: 'http',
+      get: vi.fn(() => 'localhost'),
+      app: { get: vi.fn(() => false) },
     };
     res = {
       json: vi.fn(),
@@ -97,8 +102,9 @@ describe('xtreamController - get_vod_info', () => {
     mockDb.prepare.mockReturnValue({ get: mockGet });
 
     const upstreamResponse = {
-      info: { title: 'Test Movie' },
+      info: { title: 'Test Movie', subtitle: 'captions/en.vtt', movie_image: 'https://provider.test/poster.jpg', website: 'https://provider.test/page', youtube_trailer: 'https://www.youtube.com/watch?v=public-trailer', drm: { license_key: '../license|Authorization=Bearer%20secret-token|R{SSM}|JBlicense' } },
       movie_data: {
+        direct_source: 'https://provider.test/private-stream',
         stream_id: remoteVodId, // Should be replaced
         container_extension: 'mp4',
       },
@@ -106,6 +112,7 @@ describe('xtreamController - get_vod_info', () => {
 
     mockFetch.mockResolvedValue({
       ok: true,
+      url: 'https://cdn.example/details/movie.json',
       json: async () => upstreamResponse,
     });
 
@@ -119,14 +126,19 @@ describe('xtreamController - get_vod_info', () => {
     const expectedFetchUrl = `${providerUrl}/player_api.php?username=${channelData.username}&password=${channelData.password}&action=get_vod_info&vod_id=${remoteVodId}`;
     expect(mockFetch).toHaveBeenCalledWith(expectedFetchUrl, expect.any(Object));
 
-    // Verify response
-    expect(res.json).toHaveBeenCalledWith({
-      info: { title: 'Test Movie' },
-      movie_data: {
-        stream_id: vodId, // Replaced with user_channel_id
-        container_extension: 'mp4',
-      },
-    });
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.movie_data.stream_id).toBe(vodId);
+    expect(payload.movie_data.direct_source).toBe('');
+    expect(payload.movie_data.container_extension).toBe('mp4');
+    expect(payload.info.title).toBe('Test Movie');
+    expect(await decryptClientGrant(payload.info.subtitle)).toMatchObject({ channelId: vodId, url: 'https://cdn.example/details/captions/en.vtt' });
+    expect(await decryptClientGrant(payload.info.website)).toMatchObject({ channelId: vodId, kind: 'resource' });
+    expect(await decryptClientGrant(payload.info.drm.license_key)).toMatchObject({ channelId: vodId, providerId: 10, kind: 'license', url: 'https://cdn.example/license', headers: { Authorization: 'Bearer secret-token' } });
+    expect(payload.info.drm.license_key).toContain('||R{SSM}|JBlicense');
+    expect(payload.info.youtube_trailer).toBe('https://www.youtube.com/watch?v=public-trailer');
+    expect(JSON.stringify(payload)).not.toContain('secret-token');
+    expect(JSON.stringify(payload)).not.toContain('https://provider.test');
+
   });
 
   it('should return empty object if channel not found', async () => {

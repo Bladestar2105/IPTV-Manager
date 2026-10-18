@@ -1,323 +1,239 @@
 import express from 'express';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import { pipeline } from 'stream/promises';
-import { PassThrough, Transform } from 'stream';
+import crypto from 'node:crypto';
+import db from '../database/db.js';
 import { authenticateToken } from '../middleware/auth.js';
-import { CACHE_DIR } from '../config/constants.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getLogoCacheHash, registerProviderCachedIcon } from '../services/logoResolver.js';
+import { getCachedImage, clearImageCache, imageRequestHeaders } from '../services/imageCacheService.js';
+import { createClientResourceUrl, createMediaLicenseIdentity, resolveClientResource, resolveCompactLicenseResource, rewriteClientMetadata } from '../services/clientResourceService.js';
+import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
+import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from '../utils/clientCookies.js';
+import { reserveGrantedResourceSession } from '../controllers/streamControllerHelpers.js';
+import { validateClientTtml } from '../utils/clientTtml.js';
+import { prepareClientMediaResponse } from '../services/clientMediaRelayService.js';
+import { persistPlaybackCookies } from '../services/clientPlaybackContextService.js';
 
 const router = express.Router();
+const MANIFEST_LIMIT = 32 * 1024 * 1024;
 
-// Middleware to support both WebUI JWT token and Player temporary token
 async function authenticateAnyToken(req, res, next) {
-    try {
-        // First try the standard WebUI token via the existing middleware
-        // But we don't want it to send an error response if it fails, so we wrap it
-        const authHeader = req.headers['authorization'];
-        let token = authHeader && authHeader.split(' ')[1];
-        if (!token && req.query.token) {
-            token = req.query.token;
-        }
-
-        if (!token) {
-            return res.status(401).json({ error: 'No token provided' });
-        }
-
-        // Try using getXtreamUser which resolves player tokens, shared links, etc.
-        const user = await getXtreamUser(req);
-        if (user) {
-            // Check WebUI Access for normal users (only if not a share guest)
-            if (!user.is_admin && !user.is_share_guest && user.webui_access === 0) {
-                 return res.status(403).json({ error: 'WebUI access revoked' });
-            }
-            req.user = user;
-            return next();
-        }
-
-        // If not found via getXtreamUser, fallback to standard authenticateToken
-        authenticateToken(req, res, next);
-    } catch (e) {
-        console.error('authenticateAnyToken Error:', e);
-        return res.status(500).json({ error: 'Internal Server Error' });
+  try {
+    const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+    const credentialLogin = typeof req.query.username === 'string' && typeof req.query.password === 'string';
+    if (!token && !credentialLogin) return res.status(401).json({ error: 'No token provided' });
+    const user = await getXtreamUser(req);
+    if (user) {
+      if (!credentialLogin && !user.is_admin && !user.is_share_guest && user.webui_access === 0) return res.status(403).json({ error: 'WebUI access revoked' });
+      req.user = user;
+      return next();
     }
-}
-
-// Picon Cache Directory
-const PICON_CACHE_DIR = path.join(CACHE_DIR, 'picons');
-
-// Ensure Cache Directory Exists
-function ensureCacheDir() {
-  if (!fs.existsSync(PICON_CACHE_DIR)) {
-    fs.mkdirSync(PICON_CACHE_DIR, { recursive: true });
+    return authenticateToken(req, res, next);
+  } catch {
+    return res.status(500).json({ error: 'Authentication failed' });
   }
 }
 
-// Initial check
-ensureCacheDir();
+function protectResource(res) {
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src data:; style-src 'none'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+}
+
+async function sendImage(res, url, headers, providerId, response, cookieContext = {}, resource) {
+  let image;
+  try {
+    image = await getCachedImage(url, { headers, response, cookieJar: cookieContext.cookieJar, headerOrigin: cookieContext.headerOrigin });
+  } catch (error) {
+    if (resource && error.upstreamCookieJar) persistPlaybackCookies(resource, cookieContext.cookieJar, error.upstreamCookieJar);
+    throw error;
+  }
+  if (resource && image.upstreamCookieJar) persistPlaybackCookies(resource, cookieContext.cookieJar, image.upstreamCookieJar);
+  protectResource(res);
+  res.setHeader('Content-Type', image.contentType);
+  res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+  res.setHeader('X-Cache', image.cacheStatus);
+  if (image.cacheStatus === 'STALE') res.setHeader('Warning', '110 - "Upstream image unavailable; cached image served"');
+  if (providerId) registerProviderCachedIcon(providerId, url, getLogoCacheHash(url));
+  return res.send(image.body);
+}
 
 router.get('/image', authenticateAnyToken, async (req, res) => {
-  const { url, provider_id } = req.query;
-
-  if (!url) {
-    return res.status(400).send('URL is required');
-  }
-
-  // Parse provider_id if provided
-  const providerId = provider_id ? parseInt(provider_id, 10) : null;
-
+  if (typeof req.query.url !== 'string' || !/^https?:\/\//i.test(req.query.url)) return res.status(400).send('URL is required');
   try {
-    // Generate Hash for Filename using the logoResolver service for consistency
-    const hash = getLogoCacheHash(url) || crypto.createHash('md5').update(url).digest('hex');
-    const filePath = path.join(PICON_CACHE_DIR, `${hash}.png`);
-
-    // Check Cache
-    try {
-      const stat = await fs.promises.stat(filePath);
-      // Serve from Cache
-      res.setHeader('X-Cache', 'HIT');
-      res.setHeader('Content-Length', stat.size);
-
-      // Update provider icon cache tracking if provider_id is provided
-      if (providerId && !isNaN(providerId)) {
-        registerProviderCachedIcon(providerId, url, hash);
-      }
-
-      // Guess Content-Type from URL extension
-      let contentType = 'image/png'; // Fallback
-      try {
-        const parsedUrl = new URL(url);
-        const ext = path.extname(parsedUrl.pathname).toLowerCase();
-        if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
-        else if (ext === '.gif') contentType = 'image/gif';
-        else if (ext === '.webp') contentType = 'image/webp';
-        else if (ext === '.svg') contentType = 'image/svg+xml';
-        else if (ext === '.avif') contentType = 'image/avif';
-        else if (ext === '.png') contentType = 'image/png';
-      } catch {
-        // Ignore URL parsing errors, keep fallback
-      }
-
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      fs.createReadStream(filePath).pipe(res);
-      return;
-    } catch {
-      // File does not exist, proceed to fetch
-    }
-
-    // 1. Fetch Image with fetchSafe (Enforcing safeLookup and isSafeUrl for SSRF protection)
-    const response = await fetchSafe(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      },
-      timeout: 30000
-    });
-
-    if (!response.ok) {
-      return res.status(response.status).send(`Failed to fetch image: ${response.statusText}`);
-    }
-
-    const contentType = response.headers.get('content-type') || '';
-
-    // 3. Security Headers
-    // Prevent XSS by sandboxing the response. This stops JS execution even if served as HTML.
-    res.setHeader('Content-Security-Policy', "sandbox allow-scripts 'none'; default-src 'none'; img-src data:; style-src 'unsafe-inline'");
-
-    // 4. Content-Type Handling
-    // Allow images and generic binary streams. Rewrite everything else to be safe.
-    let finalContentType = 'application/octet-stream';
-    if (contentType.match(/^image\//i) || contentType.toLowerCase() === 'application/octet-stream') {
-        finalContentType = contentType;
-    }
-    res.setHeader('Content-Type', finalContentType);
-
-    // Cache control
-    const cacheControl = response.headers.get('cache-control');
-    if (cacheControl) {
-        res.setHeader('Cache-Control', cacheControl);
-    } else {
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-    }
-
-    // Limit and Buffer
-    const MAX_SIZE = 5 * 1024 * 1024; // 5MB limit
-    const contentLength = response.headers.get('content-length');
-    if (contentLength && parseInt(contentLength) > MAX_SIZE) {
-        return res.status(413).send('Image too large');
-    }
-
-    const tempPath = `${filePath}.${crypto.randomBytes(8).toString('hex')}.tmp`;
-    const fileStream = fs.createWriteStream(tempPath);
-    const multiplexer = new PassThrough();
-    let cacheError = false;
-    let received = 0;
-
-    // 1. Setup error handling and piping for multiplexer destinations
-    fileStream.on('error', (err) => {
-        console.error('Cache write error:', err);
-        cacheError = true;
-        multiplexer.unpipe(fileStream);
-        fileStream.destroy();
-    });
-
-    res.on('error', (err) => {
-        console.error('Response stream error:', err);
-        multiplexer.unpipe(res);
-    });
-
-    res.on('close', () => {
-        multiplexer.unpipe(res);
-    });
-
-    multiplexer.pipe(res);
-    multiplexer.pipe(fileStream);
-
-    // 2. Setup Size Checker
-    const sizeChecker = new Transform({
-        transform(chunk, encoding, callback) {
-            received += chunk.length;
-            if (received > MAX_SIZE) {
-                callback(new Error('Image too large'));
-                return;
-            }
-            callback(null, chunk);
-        }
-    });
-
-    // 3. Prepare Response Headers
-    if (contentLength) {
-        res.setHeader('Content-Length', contentLength);
-    }
-    res.setHeader('X-Cache', 'MISS');
-
-    // 4. Run Pipeline
-    try {
-        await pipeline(
-            response.body,
-            sizeChecker,
-            multiplexer
-        );
-
-        // Success: Rename cache file if no cache error occurred
-        if (!cacheError && !fileStream.destroyed) {
-            // Wait for fileStream to fully flush and close
-            await new Promise((resolve) => {
-                if (fileStream.closed || fileStream.destroyed) {
-                    resolve();
-                } else {
-                    fileStream.on('finish', resolve);
-                    fileStream.on('close', resolve);
-                    fileStream.on('error', resolve);
-                }
-            });
-
-            if (!cacheError && !fileStream.destroyed) {
-                try {
-                    await fs.promises.rename(tempPath, filePath);
-
-                    // Register the cached icon for the provider
-                    if (providerId && !isNaN(providerId)) {
-                        registerProviderCachedIcon(providerId, url, hash);
-                    }
-                } catch (renameErr) {
-                    console.error('Cache rename error:', renameErr);
-                }
-            }
-        }
-    } catch (err) {
-        // Clean up on error
-        if (fileStream && !fileStream.destroyed) fileStream.destroy();
-
-        if (err.message === 'Image too large') {
-            if (!res.headersSent) {
-                return res.status(413).send('Image too large');
-            } else {
-                return res.destroy(); // Truncate response
-            }
-        }
-        throw err; // Re-throw for general error handler
-    } finally {
-        // Final cleanup of temp file if it still exists and wasn't renamed
-        try {
-            if (fs.existsSync(tempPath)) {
-                await fs.promises.unlink(tempPath);
-            }
-        } catch {}
-    }
-
-  } catch (error) {
-    console.error('Proxy Error:', error);
-
-    // Since we relaxed the fetch, these specific errors might not appear unless we re-introduce some checks.
-    // But standard fetch errors (ECONNREFUSED, ENOTFOUND) will occur.
-
-    if (error.code === 'EHOSTUNREACH' || error.code === 'ECONNREFUSED') {
-      return res.status(502).send('Bad Gateway (Upstream Unreachable)');
-    }
-
-    if (error.code === 'ETIMEDOUT' || error.name === 'AbortError' || error.type === 'aborted') {
-      return res.status(504).send('Gateway Timeout');
-    }
-
-    if (error.message === 'Image too large') {
-        if (!res.headersSent) {
-            return res.status(413).send('Image too large');
-        } else {
-            return res.destroy();
-        }
-    }
-
-    if (!res.headersSent) {
-        res.status(500).send('Internal Server Error');
-    } else {
-        res.destroy(); // Truncate response if headers were already sent
-    }
+    await sendImage(res, req.query.url, {}, Number(req.query.provider_id) || null);
+  } catch {
+    if (!res.headersSent) res.status(502).send('Image unavailable');
   }
 });
 
-// Prune Cache Endpoint
+async function relayClientResource(req, res) {
+  const resource = req.clientResource === undefined ? await resolveClientResource(req) : req.clientResource;
+  if (!resource) return res.sendStatus(401);
+  if (!['GET', 'HEAD'].includes(req.method) && !(resource.kind === 'license' && req.method === 'POST')) {
+    res.setHeader('Allow', resource.kind === 'license' ? 'GET, HEAD, POST' : 'GET, HEAD');
+    return res.sendStatus(405);
+  }
+  let upstream;
+  let cleanup = () => {};
+  let heartbeat;
+  const controller = new AbortController();
+  res.once('close', () => { controller.abort(); discardBody(upstream); cleanup(); });
+  try {
+    let cookieContext = createUpstreamContext(resource.headers, resource.headerOrigin || resource.url, resource.cookieJar, resource.headerOrigin || resource.url);
+    const compactIdentity = createMediaLicenseIdentity(resource.playbackId || req.params.data || resource.url, { ...cookieContext, cookieJar: undefined });
+    const scopedHeaders = upstreamRequestHeaders(cookieContext, resource.url);
+    if (resource.kind === 'image') return await sendImage(res, resource.url, scopedHeaders, resource.providerId, undefined, cookieContext, resource);
+
+    if (resource.channelName && resource.providerId && resource.kind === 'resource') {
+      const { default: manager } = await import('../services/streamManager.js');
+      const id = crypto.randomUUID();
+      let registered = false;
+      cleanup = () => { if (registered) { registered = false; manager.localStreams.delete(id); manager.remove(id); } };
+      if (!await reserveGrantedResourceSession(id, resource.user, resource.channelId, resource.providerId, req, res, resource.channelName)) return;
+      registered = true;
+      if (controller.signal.aborted) { cleanup(); return; }
+      manager.localStreams.set(id, { destroy: () => { controller.abort(); discardBody(upstream); res.destroy(); cleanup(); } });
+      heartbeat = () => manager.touch(id);
+    }
+
+    const candidates = [resource.url, ...(resource.alternatives || [])];
+    let headers;
+    for (const [index, url] of candidates.entries()) {
+      const candidateHeaders = upstreamRequestHeaders(cookieContext, url);
+      headers = resource.kind === 'resource' ? imageRequestHeaders(candidateHeaders) : { ...candidateHeaders };
+      for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
+      if (resource.kind === 'license' && req.method === 'POST') {
+        // CDMs generate these challenge headers after the encrypted grant is issued.
+        for (const name of ['content-type', 'soapaction']) {
+          if (!req.headers[name]) continue;
+          for (const existing of Object.keys(headers)) if (existing.toLowerCase() === name) delete headers[existing];
+          headers[name] = req.headers[name];
+        }
+      }
+      try {
+        upstream = await fetchSafe(url, {
+          method: req.method === 'HEAD' ? 'GET' : req.method,
+          headers,
+          cookieJar: cookieContext.cookieJar,
+          headerOrigin: cookieContext.headerOrigin,
+          signal: controller.signal,
+          ...(req.method === 'POST' ? { body: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0) } : {}),
+        });
+        const responseContext = withUpstreamCookies(cookieContext.headers, upstream, url, cookieContext.cookieJar, cookieContext.headerOrigin);
+        responseContext.cookieJar = persistPlaybackCookies(resource, cookieContext.cookieJar, responseContext.cookieJar);
+        cookieContext = responseContext;
+        if (upstream.ok && !(upstream.status >= 300 && upstream.status < 400)) {
+          resource.url = url;
+          break;
+        }
+        discardBody(upstream);
+      } catch (error) {
+        if (controller.signal.aborted || index === candidates.length - 1) throw error;
+      }
+      if (index === candidates.length - 1) return res.sendStatus(502);
+    }
+    protectResource(res);
+    res.setHeader('Cache-Control', 'private, no-store');
+    const type = upstream.headers.get('content-type') || 'application/octet-stream';
+    if (resource.kind !== 'license' && /^application\/ttml\+xml(?:\s*;|$)/i.test(type)) {
+      const text = await readBodyWithLimit(upstream, { maxBytes: 4 * 1024 * 1024, timeoutMs: 30000 });
+      res.setHeader('Content-Type', 'application/ttml+xml; charset=utf-8');
+      return res.send(validateClientTtml(text));
+    }
+    const baseUrl = upstream.url || resource.url;
+    const manifest = resource.kind === 'license' ? null : resource.manifestKind || isClientManifest(type, baseUrl);
+    const nextContext = { ...cookieContext, headers: { ...cookieContext.headers } };
+    delete nextContext.headers.Range;
+    delete nextContext.headers.range;
+    const map = (url, options = {}) => createClientResourceUrl(req, resource.user, url, {
+      kind: 'resource', ...nextContext, playbackId: resource.playbackId, channelId: resource.channelId,
+      channelName: resource.channelName, providerId: resource.providerId, ...options,
+    });
+    // Descendants retain the original share/session constraint, not merely the owner ID.
+    if (resource.sourceToken) resource.user = { ...resource.user, resource_token: resource.sourceToken };
+    if (manifest) {
+      const text = await readBodyWithLimit(upstream, { maxBytes: MANIFEST_LIMIT, timeoutMs: 30000 });
+      const rewritten = manifest === 'hls'
+        ? rewriteHlsManifest(text, baseUrl, map, resource.hlsVariables)
+        : rewriteDashManifest(text, baseUrl, map, candidates.filter(url => url !== resource.url));
+      res.setHeader('Content-Type', manifest === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
+      return res.send(rewritten);
+    }
+    if (resource.kind !== 'license' && /^image\//i.test(type)) {
+      return await sendImage(res, resource.url, upstreamRequestHeaders(cookieContext, resource.url), resource.providerId, upstream, cookieContext, resource);
+    }
+    // Unknown active document formats could contain dependencies we cannot
+    // rewrite safely. Never delegate their network access to the client.
+    if (resource.kind !== 'license' && /(?:html|xml|text\/css)/i.test(type)) {
+      discardBody(upstream);
+      return res.sendStatus(502);
+    }
+    if (resource.kind !== 'license' && /application\/(?:[^;]+\+)?json/i.test(type)) {
+      const data = await readBodyWithLimit(upstream, { as: 'json', maxBytes: MANIFEST_LIMIT, timeoutMs: 30000 });
+      return res.json(rewriteClientMetadata(req, resource.user, data, '', {
+        baseUrl,
+        channelId: resource.channelId, channelName: resource.channelName,
+        providerId: resource.providerId, playbackId: resource.playbackId, ...nextContext,
+      }));
+    }
+    if (resource.kind === 'license') {
+      const body = await readBodyWithLimit(upstream, { as: 'buffer', maxBytes: 8 * 1024 * 1024, timeoutMs: 30000 });
+      res.setHeader('Content-Type', type);
+      return res.send(body);
+    }
+    if (req.method !== 'HEAD') upstream = await prepareClientMediaResponse(upstream, {
+      url: resource.url,
+      fetchOptions: { headers, cookieJar: nextContext.cookieJar, headerOrigin: cookieContext.headerOrigin, signal: controller.signal },
+      mapUrl: (url, options, response) => {
+        const licenseContext = withUpstreamCookies(cookieContext.headers, response || upstream, resource.url, nextContext.cookieJar, cookieContext.headerOrigin);
+        licenseContext.cookieJar = persistPlaybackCookies(resource, nextContext.cookieJar, licenseContext.cookieJar);
+        nextContext.cookieJar = licenseContext.cookieJar;
+        licenseContext.headers = Object.fromEntries(Object.entries(licenseContext.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
+        return map(url, { ...licenseContext, ...options, compact: true, compactIdentity });
+      },
+    });
+    const preparedContext = withUpstreamCookies(cookieContext.headers, upstream, resource.url, nextContext.cookieJar, cookieContext.headerOrigin);
+    nextContext.cookieJar = persistPlaybackCookies(resource, nextContext.cookieJar, preparedContext.cookieJar);
+    res.status(upstream.status);
+    res.setHeader('Content-Type', type);
+    for (const name of ['content-length', 'content-range', 'accept-ranges']) {
+      // node-fetch decodes compressed bodies while retaining upstream headers.
+      if (name === 'content-length' && /^(?:gzip|deflate|br)$/i.test(upstream.headers.get('content-encoding') || '')) continue;
+      const value = upstream.headers.get(name);
+      if (value) res.setHeader(name, value);
+    }
+    if (req.method === 'HEAD') { discardBody(upstream); return res.end(); }
+    if (heartbeat) upstream.body.on('data', heartbeat);
+    upstream.body.once('error', () => { cleanup(); res.destroy(); });
+    upstream.body.once('end', cleanup);
+    return upstream.body.pipe(res);
+  } catch {
+    discardBody(upstream);
+    cleanup();
+    if (!res.headersSent) res.status(502).send('Resource unavailable');
+    else res.destroy();
+  }
+}
+
+router.all('/resource/:data/:filename', relayClientResource);
+
+export const shortLicenseRouter = express.Router();
+shortLicenseRouter.all('/:id', async (req, res) => {
+  if (req.clientResource === undefined) req.clientResource = await resolveCompactLicenseResource(req);
+  if (req.clientResource?.kind !== 'license') return res.sendStatus(401);
+  return relayClientResource(req, res);
+});
+
 router.delete('/picons', authenticateToken, async (req, res) => {
-    if (!req.user.is_admin) {
-        return res.status(403).json({ error: 'Access denied' });
-    }
-
-    try {
-        let files;
-        try {
-            files = await fs.promises.readdir(PICON_CACHE_DIR);
-        } catch (err) {
-            if (err.code === 'ENOENT') {
-                return res.json({ deleted: 0 });
-            }
-            throw err;
-        }
-
-        // ⚡ Bolt: Replace Promise.all with sequential file deletion
-        // 🎯 Why: Promise.all with thousands of files can exhaust file descriptors and block the event loop
-        for (const file of files) {
-            await fs.promises.unlink(path.join(PICON_CACHE_DIR, file));
-        }
-
-        // Also clear the provider_icon_cache table
-        try {
-            const db = (await import('../database/db.js')).default;
-            db.exec('DELETE FROM provider_icon_cache');
-        } catch (dbErr) {
-            console.error('Failed to clear provider_icon_cache:', dbErr.message);
-            // Don't fail the request if DB cleanup fails
-        }
-
-        res.json({ deleted: files.length });
-    } catch (error) {
-        console.error('Failed to prune cache:', error);
-        res.status(500).json({ error: 'Failed to prune cache' });
-    }
+  if (!req.user.is_admin) return res.status(403).json({ error: 'Access denied' });
+  try {
+    const deleted = await clearImageCache();
+    try { db.exec('DELETE FROM provider_icon_cache'); } catch { /* Tracking does not affect image delivery. */ }
+    return res.json({ deleted });
+  } catch {
+    return res.status(500).json({ error: 'Failed to prune cache' });
+  }
 });
 
 export default router;

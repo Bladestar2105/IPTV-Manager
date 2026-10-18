@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 
@@ -45,7 +46,8 @@ vi.mock('../../src/services/logoResolver.js', () => ({
   loadEpgLogosCache: vi.fn(),
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val),
 }));
 
@@ -107,7 +109,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
   };
 
   const episodes = [
-    { remote_episode_id: 123, season: 1, episode_num: 1, container_extension: 'mkv', logo: 'ep1.png' },
+    { remote_episode_id: 123, season: 1, episode_num: 1, container_extension: 'mkv', logo: 'https://provider.test/ep1.png' },
     { remote_episode_id: 124, season: 1, episode_num: 2, container_extension: 'mkv', logo: '' },
   ];
 
@@ -130,6 +132,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
     getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
     episodes[0].container_extension = 'mkv';
+    episodes[0].logo = 'https://provider.test/ep1.png';
     episodes[1].container_extension = 'mkv';
     movieChannel.mime_type = 'mkv';
 
@@ -167,6 +170,15 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
   const collectOutput = () => res.write.mock.calls.map((c) => c[0]).join('');
 
+  it.each(['logo.png', 'art/episode.png', '//cdn.provider.test/icon.png'])('resolves stored relative episode artwork against the provider: %s', async artwork => {
+    episodes[0].logo = artwork;
+    await getPlaylist(req, res);
+    const logoUrl = collectOutput().match(/tvg-logo="([^"]+)"/)[1];
+    expect(await decryptClientGrant(logoUrl)).toMatchObject({
+      url: new URL(artwork, 'http://prov.example/player_api.php').href, channelId: 42, kind: 'image'
+    });
+  });
+
   it('expands series into one entry per episode with compact aliases', async () => {
     await getPlaylist(req, res);
 
@@ -186,8 +198,9 @@ describe('xtreamController - getPlaylist (get.php)', () => {
     expect(output).not.toContain('/series/u/p/42.');
 
     // Episode logo used when present, series logo as fallback
-    expect(output).toContain('tvg-logo="ep1.png"');
-    expect(output.match(/tvg-logo="series\.png"/g).length).toBeGreaterThanOrEqual(1);
+    expect(output).not.toContain('https://provider.test');
+    expect(output).toContain('tvg-logo="http://localhost/');
+    expect(output).not.toContain('tvg-logo="series.png"');
 
     // Category preserved on episode entries
     expect(output).toContain(`group-title="${playableSeries.categoryTitle}",${playableSeries.name} S01 E01`);

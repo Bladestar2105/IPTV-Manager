@@ -99,7 +99,7 @@ function getSession(req, params) {
     SELECT ss.token, ss.expires_at, ss.last_seen AS session_last_seen,
            sd.id AS device_id, sd.mac, sd.model, sd.serial_number, sd.device_uid,
            sd.last_seen AS device_last_seen, sd.parental_pin_encrypted,
-           u.id AS user_id, u.username, u.expiry_date, u.allowed_countries, u.is_active
+           u.id AS user_id, u.username, u.expiry_date, u.allowed_countries, u.is_active, u.token_version
     FROM stalker_sessions ss
     JOIN stalker_devices sd ON sd.id = ss.device_id AND sd.user_id = ss.user_id
     JOIN users u ON u.id = ss.user_id
@@ -208,12 +208,12 @@ export async function portal(req, res) {
     }
     if (action === 'get_ordered_list') {
       if (type === 'series' && value(params, 'movie_id')) {
-        return js(res, await getSeriesSeasons(session, params));
+        return js(res, await getSeriesSeasons(session, params, req));
       }
-      return js(res, getOrderedList(session, params, type));
+      return js(res, getOrderedList(session, params, type, { req }));
     }
     if (type === 'itv' && action === 'get_all_channels') {
-      return js(res, getOrderedList(session, params, type, { paginated: false, excludeAdult: true }));
+      return js(res, getOrderedList(session, params, type, { paginated: false, excludeAdult: true, req }));
     }
     if (type === 'itv' && action === 'get_short_epg') return js(res, getShortEpg(session, params));
     if (type === 'itv' && action === 'get_epg_info') return js(res, getEpgInfo(session, params));

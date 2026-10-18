@@ -3,7 +3,11 @@ import ffmpegPath from 'ffmpeg-static';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { providerSourceKey, redactUrl } from '../utils/helpers.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
+import { isMp4Prefix, isTransportStreamPrefix, TRANSPORT_PREFIX_BYTES } from '../utils/clientMp4.js';
+import { validateClientTtml } from '../utils/clientTtml.js';
+import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { withUpstreamCookies } from '../utils/clientCookies.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 import {
   decodeSeriesEpisodeId,
@@ -263,6 +267,29 @@ export async function ensureUserConnectionAvailable(user, reqIp, sessionName, pr
   return active < user.max_connections;
 }
 
+export async function reserveGrantedResourceSession(connectionId, user, channelId, providerId, req, res, sessionName) {
+  const channel = getChannel(channelId, user.id);
+  const provider = channel && getProviderCandidates(user.id, channel).find(candidate => Number(candidate.id) === Number(providerId));
+  if (!provider || !shareGuestAllowed(user, channel)) {
+    res.status(403).send('Resource provider is no longer authorized');
+    return false;
+  }
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, provider.id)) {
+    res.status(403).send('Max connections reached');
+    return false;
+  }
+  // A grant already contains this account's upstream URL and headers. Switching
+  // accounts here would charge a different provider than the one being used.
+  if (!await streamManager.isSessionActive(user.id, req.ip, sessionName, provider.id) && provider.max_connections > 0 &&
+      await streamManager.getProviderConnectionCount(provider.id) >= provider.max_connections) {
+    res.status(403).send('Provider max connections reached');
+    return false;
+  }
+  if (res.destroyed) return false;
+  await streamManager.add(connectionId, user, sessionName, req.ip, res, provider.id, { dedupe: false });
+  return true;
+}
+
 export function applyProviderToChannel(channel, provider) {
   channel.provider_id = provider.id;
   channel.provider_url = provider.url;
@@ -274,17 +301,123 @@ export function applyProviderToChannel(channel, provider) {
   channel.timeshift_timezone = provider.timeshift_timezone || null;
 }
 
+async function findActiveProvider(user, provider, req, sessionName) {
+  for (const candidate of getProviderCandidates(user.id, provider)) {
+    if (await streamManager.isSessionActive(user.id, req.ip, sessionName, candidate.id)) return candidate;
+  }
+  return null;
+}
+
+export async function sendPlaybackDocument(res, upstream) {
+  const type = upstream.headers.get('content-type') || '';
+  const ttml = /^application\/ttml\+xml(?:\s*;|$)/i.test(type);
+  if (!ttml && !/(?:html|xml|text\/css|(?:java|ecma)script|json)/i.test(type)) return false;
+  try {
+    if (!ttml) {
+      discardBody(upstream);
+      res.sendStatus(502);
+      return true;
+    }
+    const text = await readBodyWithLimit(upstream, { maxBytes: 4 * 1024 * 1024, timeoutMs: 30000 });
+    const safe = validateClientTtml(text);
+    res.setHeader('Content-Type', 'application/ttml+xml; charset=utf-8');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src data:; style-src 'none'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(safe);
+  } catch {
+    discardBody(upstream);
+    res.sendStatus(502);
+  }
+  return true;
+}
+
+// Inspect the first box header, extending only ambiguous TS prefixes to three
+// packet headers. Restore all bytes so continuous TS keeps its original socket.
+async function playbackMediaPrefix(req, res, upstream) {
+  const body = upstream.body;
+  if (!body?.read || !body.once) return Buffer.alloc(0);
+  return new Promise((resolve, reject) => {
+    let timer;
+    let needed = 8;
+    const finish = (error, prefix = Buffer.alloc(0)) => {
+      clearTimeout(timer);
+      for (const [target, event, listener] of listeners) target?.off?.(event, listener);
+      if (error) { discardBody(upstream); reject(error); }
+      else resolve(prefix);
+    };
+    const read = () => {
+      try {
+        const prefix = body.read(needed);
+        if (prefix !== null) {
+          body.unshift(prefix);
+          if (needed === 8 && prefix.length >= 8 && prefix[0] === 0x47 && isMp4Prefix(prefix)) {
+            needed = TRANSPORT_PREFIX_BYTES;
+            read();
+          } else finish(null, prefix);
+        }
+        else if (body.readableEnded) finish();
+      } catch (error) { finish(error); }
+    };
+    const aborted = () => finish(new Error('Media client disconnected'));
+    const closed = () => finish(new Error('Upstream media closed before classification'));
+    const ended = () => finish();
+    const listeners = [[body, 'readable', read], [body, 'end', ended], [body, 'error', finish], [body, 'close', closed], [req, 'aborted', aborted], [res, 'close', aborted]];
+    for (const [target, event, listener] of listeners) target?.on?.(event, listener);
+    timer = setTimeout(() => finish(new Error('Media classification timed out')), 30000);
+    timer.unref?.();
+    read();
+  });
+}
+
+export async function preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl, channelId, providerId, channelName, connectionId, releaseSession }) {
+  if (req.aborted || res.destroyed) {
+    discardBody(upstream);
+    throw new Error('Media client disconnected');
+  }
+  const type = upstream.headers.get('content-type') || '';
+  const mp4 = /^(?:video|audio|application)\/mp4(?:;|$)/i.test(type) ||
+    ((!type || /^application\/octet-stream(?:;|$)/i.test(type)) && /\.(?:mp4|m4s|m4a|m4v|cmfv|cmfa)(?:[?#]|$)/i.test(sourceUrl || ''));
+  if (!mp4 && upstream.status !== 206) {
+    const prefix = await playbackMediaPrefix(req, res, upstream);
+    if (isTransportStreamPrefix(prefix) || !isMp4Prefix(prefix)) return upstream;
+  }
+  const context = withUpstreamCookies(headers, upstream, sourceUrl);
+  // Each entry starts its own opaque playback. Subsequent ranges reuse that
+  // immutable grant, so rotating response cookies cannot change embedded IDs.
+  context.headers = Object.fromEntries(Object.entries(context.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
+  try {
+    const location = createClientResourceUrl(req, user, sourceUrl, {
+      ...context, kind: 'resource', channelId, providerId, channelName,
+    });
+    if (!location) throw new Error('Invalid playback resource');
+    discardBody(upstream);
+    // The provisional registration owns this response. Detach it before
+    // removing accounting, which would otherwise destroy the redirect socket.
+    streamManager.localStreams.delete(connectionId);
+    await releaseSession?.();
+    if (req.aborted || res.destroyed) throw new Error('Media client disconnected');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.redirect(307, location);
+    return null;
+  } finally {
+    discardBody(upstream);
+  }
+}
+
 export async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
-  if (options.cleanupUser) {
+  const activeProvider = options.dedupe === false ? await findActiveProvider(user, channel, req, sessionName) : null;
+  if (options.cleanupUser && !activeProvider) {
     await streamManager.cleanupUser(user.id, req.ip);
   }
 
-  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, channel.provider_id)) {
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, activeProvider?.id || channel.provider_id)) {
     res.status(403).send('Max connections reached');
     return false;
   }
 
-  const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+  const availableProvider = activeProvider || await findAvailableProvider(user.id, channel, req.ip, sessionName);
   if (!availableProvider) {
     res.status(403).send('Provider max connections reached across all accounts');
     return false;
@@ -296,23 +429,26 @@ export async function reserveChannelSession(connectionId, user, channel, req, re
     await new Promise(resolve => setTimeout(resolve, options.delayMs));
   }
 
-  await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
+  if (options.dedupe === false) await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id, { dedupe: false });
+  else await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
   return true;
 }
 
-export async function reserveProviderSession(connectionId, user, provider, req, res, sessionName) {
-  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, provider.id)) {
+export async function reserveProviderSession(connectionId, user, provider, req, res, sessionName, options = {}) {
+  const activeProvider = options.dedupe === false ? await findActiveProvider(user, provider, req, sessionName) : null;
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, activeProvider?.id || provider.id)) {
     res.status(403).send('Max connections reached');
     return null;
   }
 
-  const availableProvider = await findAvailableProvider(user.id, provider, req.ip, sessionName);
+  const availableProvider = activeProvider || await findAvailableProvider(user.id, provider, req.ip, sessionName);
   if (!availableProvider) {
     res.status(403).send('Provider max connections reached across all accounts');
     return null;
   }
 
-  await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
+  if (options.dedupe === false) await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id, { dedupe: false });
+  else await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
   return availableProvider;
 }
 
@@ -513,7 +649,7 @@ export function createSafeCleanup(connectionId) {
   return () => {
     if (cleanedUp) return;
     cleanedUp = true;
-    streamManager.remove(connectionId);
+    return streamManager.remove(connectionId);
   };
 }
 
@@ -557,7 +693,7 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
         try {
             const res = await fetchSafe(u, fetchOptions);
             if (res.ok) {
-                return { response: res, successfulUrl: res.url || u };
+                return { response: res, successfulUrl: res.url || u, selectedUrl: u };
             }
             res.body?.destroy?.();
             // If 404/403/407/etc, we might want to try backup? Yes.

@@ -61,7 +61,9 @@ vi.mock('../src/services/syncService.js', () => ({
 }));
 
 // Mock constants
-vi.mock('../src/config/constants.js', () => ({
+vi.mock('../src/config/constants.js', async importOriginal => ({
+    ...(await importOriginal()),
+    BCRYPT_ROUNDS: 1,
     EPG_CACHE_DIR: '/tmp',
     DATA_DIR: '/tmp'
 }));

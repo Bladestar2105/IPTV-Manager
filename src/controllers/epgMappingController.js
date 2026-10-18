@@ -1,3 +1,4 @@
+import { createEpgIconUrl } from '../services/clientResourceService.js';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { Worker } from 'worker_threads';
@@ -391,10 +392,18 @@ export const suggestMapping = async (req, res) => {
     const { channel_name, epg_id, limit } = req.body;
     if (!channel_name) return res.status(400).json({error: 'channel_name required'});
 
-    const allEpgChannels = await loadAllEpgChannels();
+    const allEpgChannels = await loadAllEpgChannels({ includeSourceId: true });
     const matcher = new ChannelMatcher(allEpgChannels);
-
-    const suggestions = matcher.suggest(channel_name, epg_id || null, limit || 10);
+    const suggestions = matcher.suggest(channel_name, epg_id || null, limit || 10).map(suggestion => {
+      const { source_id, ...channel } = suggestion.epgChannel;
+      return {
+        ...suggestion,
+        epgChannel: {
+          ...channel,
+          logo: req.user.is_admin ? channel.logo : createEpgIconUrl(req, req.user, { ...channel, source_id })
+        }
+      };
+    });
 
     res.json({ success: true, suggestions });
   } catch (e) {

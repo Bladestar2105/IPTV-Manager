@@ -165,6 +165,19 @@ describe('Series episode sync', () => {
   });
 
   describe('syncSeriesEpisodes', () => {
+    it.each([
+      ['https://cdn.example/details/series.json', 'logo.png', 'https://cdn.example/details/logo.png'],
+      [undefined, 'logo.png', 'http://prov.example/logo.png'],
+      ['http://cdn.example/series.json', '//art.example/episode.png', 'http://art.example/episode.png'],
+      ['https://cdn.example/series.json', 'https://image.tmdb.org/poster.png', 'https://image.tmdb.org/poster.png'],
+      ['https://cdn.example/series.json', 'javascript:alert(1)', ''],
+    ])('persists episode artwork against the actual response origin (%s, %s)', async (url, logo, expected) => {
+      memDb.prepare("INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type) VALUES (1, 555, 'Test', 'series')").run();
+      fetchSafeMock.mockResolvedValue({ ...seriesInfoResponse({ 1: [{ id: 100, season: 1, episode_num: 1, info: { movie_image: logo } }] }), url });
+      expect(await syncSeriesEpisode(1, 555)).toMatchObject({ synced: 1, episodes: 1 });
+      expect(memDb.prepare('SELECT logo FROM provider_series_episodes WHERE remote_episode_id = 100').get().logo).toBe(expected);
+    });
+
     it('fetches one selected series without waiting for the bulk sync', async () => {
       memDb.prepare(`INSERT INTO provider_channels (provider_id, remote_stream_id, name, stream_type, metadata)
         VALUES (1, 555, 'Test Show', 'series', '{"last_modified":"1000"}')`).run();

@@ -1,14 +1,14 @@
-import fetch from 'node-fetch';
 import crypto from 'crypto';
-import http from 'http';
-import https from 'https';
 import ffmpeg from 'fluent-ffmpeg';
 import streamManager from '../services/streamManager.js';
 import { getXtreamUser } from '../services/authService.js';
-import { getBaseUrl, isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { redactUrl } from '../utils/helpers.js';
+import { readBodyWithLimit } from '../utils/network.js';
 import { resolveBudget } from '../utils/env.js';
-import { decrypt, encrypt } from '../utils/crypto.js';
+import { decrypt } from '../utils/crypto.js';
+import { createUpstreamContext, withUpstreamCookies } from '../utils/clientCookies.js';
+import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { rewriteHlsManifest, rewriteDashManifest, isClientManifest } from '../utils/clientManifests.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
 import { formatXtreamTimeshiftStart, getEffectiveTimeshiftTimezone, isSupportedEpoch } from '../utils/timezone.js';
@@ -21,8 +21,10 @@ import {
   createSafeCleanup,
   fetchWithBackups,
   getChannel,
+  preparePlaybackMedia,
   recordStreamStat,
   reserveChannelSession,
+  sendPlaybackDocument,
   shareGuestAllowed
 } from './streamControllerHelpers.js';
 import { proxyMovie, proxySeries } from './streamMediaController.js';
@@ -41,10 +43,6 @@ const readManifest = response => readBodyWithLimit(response, {
 
 export { proxyMovie, proxySeries };
 export * from './streamControllerHelpers.js';
-
-// Custom Agents with DNS Rebinding Protection
-const httpAgent = new http.Agent({ lookup: safeLookup });
-const httpsAgent = new https.Agent({ lookup: safeLookup });
 
 // --- MPD Proxy ---
 export const proxyMpd = async (req, res) => {
@@ -86,7 +84,7 @@ export const proxyMpd = async (req, res) => {
             }
         }
     } else {
-        if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+        if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: false })) return;
 
         ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'MPD'));
         channel.provider_pass = decrypt(channel.provider_pass);
@@ -98,17 +96,18 @@ export const proxyMpd = async (req, res) => {
         }, 'MPD');
     }
 
-    if (usesOriginalUrl && !await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+    if (usesOriginalUrl && !await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: false })) return;
 
     recordStreamStat(channel.provider_channel_id, 'MPD');
 
-    let upstream;
+    let upstream, selectedUrl;
     try {
         const result = await fetchWithBackups(upstreamUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
         });
         upstream = result.response;
+        selectedUrl = result.selectedUrl;
     } catch (e) {
         console.error(`MPD proxy failed: ${e.message}`);
         streamManager.localStreams.delete(connectionId);
@@ -116,24 +115,39 @@ export const proxyMpd = async (req, res) => {
         return res.sendStatus(502);
     }
 
-    if (relativePath.endsWith('.mpd')) {
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || upstreamUrl) || ((!relativePath || relativePath.endsWith('.mpd')) ? 'dash' : null);
+    if (manifestKind) {
         const text = await readManifest(upstream);
-        const baseUrl = `${getBaseUrl(req)}/live/mpd/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/${streamId}/`;
-        let newText = text.replace(/<BaseURL>http[^<]+<\/BaseURL>/g, `<BaseURL>${baseUrl}</BaseURL>`);
-        res.setHeader('Content-Type', 'application/dash+xml');
+        const nextContext = withUpstreamCookies(headers, upstream, selectedUrl || upstreamUrl);
+        const playbackId = crypto.randomBytes(16).toString('base64url');
+        const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+        const newText = rewrite(text, upstream.url || upstreamUrl, (url, options) => createClientResourceUrl(req, user, url, {
+          kind: 'resource', ...nextContext, playbackId, channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+        }));
+        res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
         res.send(newText);
         streamManager.remove(connectionId);
         return;
     }
 
+    if (await sendPlaybackDocument(res, upstream)) {
+      streamManager.remove(connectionId);
+      return;
+    }
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || upstreamUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: sessionName, connectionId, releaseSession: () => streamManager.remove(connectionId) });
+    if (!upstream) return;
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
     const contentLength = upstream.headers.get('content-length');
     if (contentLength) res.setHeader('Content-Length', contentLength);
 
     upstream.body.pipe(res);
-
-    req.on('close', () => {
+    upstream.body.once('error', () => {
+       streamManager.remove(connectionId);
+       if (!res.headersSent) res.sendStatus(502);
+       else res.destroy();
+    });
+    attachResponseCleanup(req, res, () => {
        streamManager.remove(connectionId);
        if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
     });
@@ -180,6 +194,7 @@ export const proxyLive = async (req, res) => {
     if (reqExt !== 'm3u8' || wantsTranscode) {
         if (!await reserveChannelSession(connectionId, user, channel, req, res, channel.name, {
           cleanupUser: true,
+          dedupe: wantsTranscode,
           delayMs: 100
         })) return;
     }
@@ -261,7 +276,7 @@ export const proxyLive = async (req, res) => {
       }
     }
 
-    let upstream, successfulUrl;
+    let upstream, successfulUrl, selectedUrl;
     try {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers: fetchHeaders,
@@ -269,6 +284,7 @@ export const proxyLive = async (req, res) => {
         });
         upstream = result.response;
         successfulUrl = result.successfulUrl;
+        selectedUrl = result.selectedUrl;
     } catch(e) {
         console.error(`Stream proxy error: ${e.message} for ${redactUrl(remoteUrl)}`);
         streamManager.localStreams.delete(connectionId);
@@ -276,48 +292,20 @@ export const proxyLive = async (req, res) => {
         return res.sendStatus(502);
     }
 
-    const cookies = upstream.headers.get('set-cookie');
-
-    if (reqExt === 'm3u8') {
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || successfulUrl) || (reqExt === 'm3u8' ? 'hls' : null);
+    if (manifestKind) {
       const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
-      const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+      const nextContext = withUpstreamCookies(fetchHeaders, upstream, selectedUrl || remoteUrl);
 
-      const isProviderSafe = await isSafeUrl(channel.provider_url);
+      const playbackId = crypto.randomBytes(16).toString('base64url');
+      const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+      const newText = rewrite(text, baseUrl, (absoluteUrl, options) => createClientResourceUrl(req, user, absoluteUrl, {
+        kind: 'resource', ...nextContext, playbackId, channelName: channel.name, providerId: channel.provider_id,
+        channelId: channel.user_channel_id || channel.id, ...options,
+      }));
 
-      const headersToForward = { ...fetchHeaders };
-      if (cookies) headersToForward['Cookie'] = cookies;
-
-      // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
-      const baseEncrypted = encrypt(JSON.stringify(basePayload));
-      const baseEncoded = encodeURIComponent(baseEncrypted);
-
-      const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
-        const line = match.trim();
-        if (!line) return match;
-        try {
-          const absoluteUrl = new URL(line, baseUrl).toString();
-          // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
-          const encrypted = encrypt(JSON.stringify(payload));
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
-        } catch {
-          return match;
-        }
-      }).replace(/URI="([^"]+)"/g, (match, p1) => {
-        try {
-          const absoluteUrl = new URL(p1, baseUrl).toString();
-          // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
-          const encrypted = encrypt(JSON.stringify(payload));
-          return `URI="/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.key?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}"`;
-        } catch {
-          return match;
-        }
-      });
-
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
@@ -327,6 +315,10 @@ export const proxyLive = async (req, res) => {
       return;
     }
 
+    if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers: fetchHeaders, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: channel.name, connectionId, releaseSession: cleanup });
+    if (!upstream) return;
+    await streamManager.cleanupSession(user.id, req.ip, channel.name, channel.provider_id, connectionId);
     res.setHeader(
       'Content-Type',
       reqExt === 'mp3' ? 'audio/mpeg' : (reqExt === 'aac' ? 'audio/aac' : 'video/mp2t')
@@ -365,7 +357,7 @@ export const proxyLive = async (req, res) => {
 
   } catch (e) {
     console.error('Stream proxy error:', e.message);
-    if (!res.headersSent) {
+    if (!res.headersSent && !res.destroyed) {
         streamManager.localStreams.delete(connectionId);
         cleanup();
         return res.sendStatus(500);
@@ -376,136 +368,44 @@ export const proxyLive = async (req, res) => {
 
 // --- Segment Proxy ---
 export const proxySegment = async (req, res) => {
-  const connectionId = crypto.randomUUID();
-  let channelName = null;
-  let providerId = 0;
-
   try {
-    const user = await getXtreamUser(req);
+    const user = await getXtreamUser(req, { fresh: true });
     if (!user) return res.sendStatus(401);
 
-    if (user.is_share_guest) {
-        const nowSec = Date.now() / 1000;
-        if ((user.share_start && nowSec < user.share_start) || (user.share_end && nowSec > user.share_end)) {
-            return res.sendStatus(403);
-        }
-    }
-
-    let targetUrl;
-    let headers = {
-        'User-Agent': DEFAULT_USER_AGENT,
-        'Connection': 'keep-alive'
-    };
-
-    let isOriginSafe = true;
-
-    // Handle 'base' param for optimized static headers/settings
+    let headers = { 'User-Agent': DEFAULT_USER_AGENT, Connection: 'keep-alive' };
+    let cookieJar = null;
+    let headerOrigin = null;
     if (req.query.base) {
-        try {
-            const decryptedBase = decrypt(req.query.base);
-            if (decryptedBase) {
-                const basePayload = JSON.parse(decryptedBase);
-                if (basePayload.h) Object.assign(headers, basePayload.h);
-                if (basePayload.s === false) isOriginSafe = false;
-            }
-        } catch {}
+      const rawBase = decrypt(req.query.base);
+      if (!rawBase) return res.sendStatus(400);
+      const base = JSON.parse(rawBase);
+      headers = { ...headers, ...base.h };
+      cookieJar = base.j || null;
+      headerOrigin = base.o || null;
     }
-
-    if (req.query.data) {
-        try {
-            const decrypted = decrypt(req.query.data);
-            if (!decrypted) return res.sendStatus(400);
-
-            const payload = JSON.parse(decrypted);
-            if (payload.u) targetUrl = payload.u;
-            if (payload.c) channelName = payload.c;
-            if (payload.p) providerId = payload.p;
-            // Merge per-segment overrides (if any, legacy support)
-            if (payload.h) Object.assign(headers, payload.h);
-            if (payload.s !== undefined) {
-                 if (payload.s === false) isOriginSafe = false;
-            }
-        } catch {
-            return res.sendStatus(400);
-        }
-    }
-
-    if (!targetUrl) return res.sendStatus(400);
-
-    if (isOriginSafe) {
-        if (!(await isSafeUrl(targetUrl))) {
-            return res.sendStatus(403);
-        }
-    }
-
-    let upstream;
-    if (isOriginSafe) {
-        upstream = await fetchSafe(targetUrl, { headers });
-    } else {
-        // If the original URL was unsafe (e.g. manually added loopback by an admin and we didn't check it)
-        // Then we should probably not use fetchSafe because fetchSafe strictly forbids unsafe IPs.
-        // However, falling back to unprotected fetch with follow-redirects opens up SSRF.
-        // Given that fetchSafe is the secure way, we should use it consistently.
-        // BUT to avoid breaking existing setups where isOriginSafe=false intentionally,
-        // we'll keep the custom agent which blocks loopback via DNS, but we must handle redirects safely.
-        // Since we don't have a manual redirect handler here for raw fetch, it's safer to just use fetchSafe anyway
-        // or disable redirects for unsafe origins.
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-        try {
-            upstream = await fetch(targetUrl, {
-              headers,
-              signal: controller.signal,
-              redirect: 'manual', // Don't follow redirects to arbitrary unsafe places
-              agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
-            });
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    if (!upstream.ok) {
-       console.error(`⚠️ Segment upstream error: ${upstream.status} for ${redactUrl(targetUrl)}`);
-       return res.sendStatus(upstream.status);
-    }
-
-    if (channelName && providerId) {
-        // Technically segment proxy is mostly stateless and shouldn't hit limits,
-        // but it registers as a stream. It's better not to change providerId mid-stream,
-        // so we use the providerId passed in the payload (which was the one chosen by the playlist generator).
-        // For segments, pooling might have already happened when generating the M3U8,
-        // or we just track it against the original provider.
-        await streamManager.add(connectionId, user, `${channelName}`, req.ip, res, providerId, { dedupe: false });
-    }
-
-    const contentType = upstream.headers.get('content-type');
-    if (contentType) res.setHeader('Content-Type', contentType);
-
-    const contentLength = upstream.headers.get('content-length');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
-
-    upstream.body.pipe(res);
-
-    upstream.body.on('error', (err) => {
-      if (err.code !== 'ERR_STREAM_PREMATURE_CLOSE' && err.type !== 'aborted') {
-        console.error('Segment stream error:', err.message);
-      }
-      if (channelName) streamManager.remove(connectionId);
+    const raw = req.query.data && decrypt(req.query.data);
+    if (!raw) return res.sendStatus(400);
+    const payload = JSON.parse(raw);
+    const channelId = Number(payload.i);
+    if (!Number.isSafeInteger(channelId) || channelId <= 0) return res.sendStatus(403);
+    const channel = getChannel(channelId, user.id);
+    if (!channel || !shareGuestAllowed(user, channel)) return res.sendStatus(403);
+    const providerId = Number(payload.p) || Number(channel.provider_id);
+    if (!Number.isSafeInteger(providerId) || providerId <= 0) return res.sendStatus(403);
+    if (typeof payload.u !== 'string' || !/^https?:\/\//i.test(payload.u)) return res.sendStatus(400);
+    headers = { ...headers, ...payload.h };
+    const context = createUpstreamContext(headers, headerOrigin || payload.u, cookieJar, headerOrigin || payload.u);
+    const grant = createClientResourceUrl(req, user, payload.u, {
+      kind: 'resource', ...context, channelId, providerId,
+      channelName: payload.c || channel.name || 'Channel', hlsVariables: payload.v || {},
     });
-
-    req.on('close', () => {
-       if (channelName) streamManager.remove(connectionId);
-       if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
-    });
-
-  } catch (e) {
-    console.error('Segment proxy error:', e.message);
-    if (!res.headersSent) {
-        if (channelName) streamManager.localStreams.delete(connectionId);
-        if (channelName) streamManager.remove(connectionId);
-        return res.sendStatus(500);
-    }
-    if (channelName) streamManager.remove(connectionId);
+    if (!grant) return res.sendStatus(400);
+    // Old envelopes share the same capacity checks and content validation as new grants.
+    const target = new URL(grant);
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.redirect(307, `${target.pathname}${target.search}${target.hash}`);
+  } catch {
+    if (!res.headersSent) return res.sendStatus(400);
   }
 };
 
@@ -574,7 +474,7 @@ export const proxyTimeshift = async (req, res) => {
 
     const sessionName = `${channel.name} (Timeshift)`;
 
-    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: false })) return;
 
     channel.provider_pass = decrypt(channel.provider_pass);
 
@@ -595,7 +495,7 @@ export const proxyTimeshift = async (req, res) => {
 
     const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Timeshift');
 
-    let upstream, successfulUrl;
+    let upstream, successfulUrl, selectedUrl;
     try {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
@@ -603,6 +503,7 @@ export const proxyTimeshift = async (req, res) => {
         });
         upstream = result.response;
         successfulUrl = result.successfulUrl;
+        selectedUrl = result.selectedUrl;
     } catch(e) {
         console.error(`Timeshift proxy error: ${e.message}`);
         streamManager.localStreams.delete(connectionId);
@@ -610,37 +511,20 @@ export const proxyTimeshift = async (req, res) => {
         return res.sendStatus(502);
     }
 
-    if (reqExt === 'm3u8') {
+    const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || successfulUrl) || (reqExt === 'm3u8' ? 'hls' : null);
+    if (manifestKind) {
       const text = await readManifest(upstream);
       const baseUrl = upstream.url || successfulUrl;
-      const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+      const nextContext = withUpstreamCookies(headers, upstream, selectedUrl || remoteUrl);
 
-      const isProviderSafe = await isSafeUrl(channel.provider_url);
+      const playbackId = crypto.randomBytes(16).toString('base64url');
+      const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
+      const newText = rewrite(text, baseUrl, (absoluteUrl, options) => createClientResourceUrl(req, user, absoluteUrl, {
+        kind: 'resource', ...nextContext, playbackId, channelName: sessionName, providerId: channel.provider_id,
+        channelId: channel.user_channel_id || channel.id, ...options,
+      }));
 
-      const headersToForward = { ...headers };
-      const cookies = upstream.headers.get('set-cookie');
-      if (cookies) headersToForward['Cookie'] = cookies;
-
-      // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
-      const baseEncrypted = encrypt(JSON.stringify(basePayload));
-      const baseEncoded = encodeURIComponent(baseEncrypted);
-
-      const newText = text.replace(/^(?!#)(.+)$/gm, (match) => {
-        const line = match.trim();
-        if (!line) return match;
-        try {
-          const absoluteUrl = new URL(line, baseUrl).toString();
-          // Only encrypt the changing URL part
-          const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id };
-          const encrypted = encrypt(JSON.stringify(payload));
-          return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${encodeURIComponent(encrypted)}&base=${baseEncoded}${tokenParam}`;
-        } catch {
-          return match;
-        }
-      });
-
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
@@ -650,6 +534,10 @@ export const proxyTimeshift = async (req, res) => {
       return;
     }
 
+    if (await sendPlaybackDocument(res, upstream)) { streamManager.remove(connectionId); return; }
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id, channelName: sessionName, connectionId, releaseSession: () => streamManager.remove(connectionId) });
+    if (!upstream) return;
+    await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');

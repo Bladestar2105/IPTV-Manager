@@ -547,7 +547,176 @@ logs.
 ## Proxy
 
 - `GET /api/proxy/image?url=<url>&provider_id=<id>` (`provider_id` optional)
+- `GET|HEAD /api/proxy/resource/:data/:filename`
+- `POST /api/proxy/resource/:data/:filename` (license grants only; raw body up to 1 MiB)
+- `GET|HEAD|POST /r/:id` (compact license grants; raw POST body up to 1 MiB)
 - `DELETE /api/proxy/picons`
+
+Client-facing artwork URLs in Xtream, M3U, player JSON, XMLTV and Stalker/MAG
+responses hide provider and unknown CDN URLs behind absolute Manager URLs.
+Public metadata/artwork links on YouTube (including youtu.be/ytimg), IMDb
+(including m.media-amazon.com), TMDB and TVDB may remain direct. This explicit
+policy is centralized in `src/utils/clientResourcePolicy.js`; unknown hosts,
+credential-bearing URLs and DRM license endpoints remain proxied. YouTube
+trailers are deliberately direct and are not cached by Manager.
+Public exceptions also require credential-free effective request headers and
+path/query/fragment data without embedded provider URLs or secrets. Restricted WebUI
+catalog, category and EPG mapping responses follow the same artwork policy;
+authorized provider-management responses retain their connection details.
+Resource grants encrypt the upstream URL
+and required upstream headers; they authorize only that resource. Clients use
+these ordinary HTTP URLs without custom headers or a WebUI login. Grants are
+checked against the active account, token version, expiry, region lock and any
+originating share/session token. Channel grants also check the current channel
+assignment and share scope, including DRM licenses and nested JSON resources.
+Source-token permissions are read fresh for each resource request, so removing
+a shared channel or deleting a share revokes its grants immediately. Treat
+opaque resource URLs as bearer credentials. Upstream URLs on the same origin
+are still encrypted; only authenticated Manager grants can be reused unchanged.
+
+Granted media requests reserve a session before contacting the upstream and
+enforce the current user limit and the bound provider account's capacity.
+Parallel segments from the same active session reuse its connection slot.
+Provider-account pooling happens when issuing the manifest; an existing grant
+cannot switch accounts without changing its encrypted upstream URL/headers.
+
+Channel icon grants resolve the current catalog/EPG icon on each request, so a
+provider-sync URL change also takes effect for clients keeping an older icon
+URL. Relative provider icons use their provider URL; mapped EPG icons use the
+selected EPG source URL. Relative artwork, subtitles and resource fields in
+proxied JSON use the final upstream response URL as their base.
+Image files are revalidated on every request using upstream `ETag` and
+`Last-Modified`, or downloaded again when validators are unavailable. Responses
+use `Cache-Control: private, no-cache, must-revalidate`; `X-Cache` is `MISS`,
+`HIT` (upstream 304), `REVALIDATED` (replacement), or `STALE` (last good image
+after an upstream failure). Parallel requests within a worker share one refresh.
+Redirects to a different image URL drop the previous resource's conditional
+validators, so equal ETags on different targets cannot preserve an obsolete icon.
+Image requests retain the browser-like user agent and image Accept defaults;
+explicit upstream headers override those defaults case-insensitively.
+
+HLS and DASH resources, including nested manifests, keys, initialization data,
+subtitles and HTTP DRM license URLs, stay behind the Manager. License POST
+challenges and responses are relayed as bytes. Only the client challenge
+headers `Content-Type` and `SOAPAction` are accepted on license POST requests;
+browser credentials and arbitrary client headers are not forwarded. Upstream
+credentials remain inside the grant. Kodi challenge/response transform suffixes
+remain available to the client. Manifest cookies retain Domain, Path, Secure and expiry rules in
+an encrypted cookie jar and are selected separately for every dependency and
+redirect. Authorization and custom provider headers are limited to their
+originating HTTP origin; only standard playback/negotiation headers cross origins.
+Explicitly configured Cookie headers cover all paths on their upstream host;
+cookies received through Set-Cookie retain their declared path scope. License
+POST redirects use GET after 301/302/303, while 307/308 retain the POST body.
+The cookie jar uses `tough-cookie` for standard scope and public-suffix handling.
+Optional content steering is removed; unsupported external
+protocols fail closed. DASH's resolve-to-zero XLink sentinel is preserved without
+issuing a resource request. ClearKey license elements and embedded PlayReady
+license URLs in manifest PRO/PSSH records are proxied; optional PlayReady
+interactive license pages are removed. Malformed PlayReady data and embedded
+license stores are rejected. Binary MP4 PlayReady PSSH records in `moov`,
+`moof`, or top-level boxes also use Manager license addresses. Rewriting keeps
+box sizes, byte offsets and media samples unchanged; malformed metadata or
+insufficient space for a safe replacement fails closed. Metadata buffering is
+limited to 32 MiB and 256 license addresses per metadata box.
+External MP4 data references, compressed/reference QuickTime movies and
+network-bearing movie/streaming/text sample formats are rejected so players
+cannot fetch provider media outside the relay. Normal CENC audio/video sample
+entries remain supported.
+Playback cookie rotations are shared across sibling manifests, media ranges,
+images (including cache revalidation), and license requests using an opaque
+playback context. Context jars are encrypted in SQLite and shared across workers;
+independent playback roots retain independent contexts. Rows are created or
+updated only when cookie values/scope/expiry change, with bounded cleanup and a
+seven-day lifetime since the last change. Every grant request rechecks current
+authorization before loading its matching user/channel/provider/session context.
+Standalone licenses use a keyed context identity derived from their initial
+credentials so repeated compact grants retain their identity. Explicit license
+Cookie overrides use a separate context seeded with the other parent cookies;
+license renewals retain their own rotations without changing the media session.
+Compact license grants are encrypted in SQLite, survive restarts and expire
+after seven days. Every request rechecks current user and channel access.
+Provider-only grants also require current provider ownership (or an active admin)
+and stop working after provider deletion or transfer. Channel-bound grants use
+current playback-pool authorization, including explicit admin channel grants.
+Fixed-URL channel grants without a selected provider are rejected; dynamic
+channel icons instead resolve artwork from the currently authorized assignment.
+Shared EPG catalog artwork grants identify an exact EPG channel and source,
+then read its current logo at request time. They stop working when that EPG row
+or provider/custom source is deleted. Shared catalog browsing and mapping remain
+available without provider-management access. XMLTV artwork also rechecks that
+the EPG channel is still mapped to an authorized channel within the current
+user or share scope.
+Raw MP4 entry requests and initial binary range responses return HTTP `307` to a
+fresh, opaque Manager resource URL. Clients must follow this standard redirect
+and reuse its destination for later range requests in the same playback. Each
+entry has its own upstream cookie context; rotating cookies within that resource
+do not change embedded license addresses. Reopening the original entry URL starts
+a separate playback. Continuous MPEG-TS responses keep their original connection.
+Partial MP4 requests inspect complete metadata using bounded range reads,
+skipping media payload boxes. Reads target the final upstream media URL while
+retaining origin-scoped credentials and cookies. Strong ETags pin those reads
+when available; ETags first observed during probing are also tracked and checked
+on subsequent reads, including the byte-zero fallback. That fallback also uses
+`If-Match` for an observed strong ETag and rejects missing or changed validators.
+Without a strong validator, Manager assumes the provider file remains unchanged
+between reads, as ordinary player range requests do. Returned intervals and total
+lengths are checked, but same-length replacements without a reliable validator
+cannot be ruled out. This compatibility policy preserves MP4/PlayReady playback
+without downloading the entire movie before a late metadata request.
+Matroska (`video/audio/application/x-matroska`,
+or an effective response URL pathname ending in `.mkv`/`.mka` with an absent or
+generic binary MIME type) is streamed unchanged through Manager, including range
+requests without validators. Its embedded metadata is not rewritten or checked
+for URLs. Explicit MP4 MIME types still receive MP4
+inspection even under a `.mkv` filename. Unsupported or inconsistent range
+responses fall back to reading from byte zero, as do unclassified binary ranges
+without a trustworthy validator. In that fallback, a late seek in a
+large file may need to read all preceding bytes and fail if it cannot reach the
+requested position within the 30-second preparation budget. Cancellation stops
+upstream reads.
+HLS child playlists retain their manifest role even without an extension or a
+correct upstream MIME type. Inline AES keys and supported DRM PSSH keys remain
+supported; embedded data manifests and unsupported data dependencies fail closed.
+Nonsemantic HLS/XML comments, inline SESSION-DATA values and URL-bearing
+EXTINF titles are removed. Apple interstitial DATERANGE asset playlists and
+asset-list JSON stay behind Manager grants, including nested asset URIs. Unknown
+DATERANGE X-attributes containing HTTP URLs are removed; semantic IDs and
+non-URL attributes remain available.
+DASH sibling BaseURL choices and inherited segment descriptors retain their CDN
+fallback paths inside encrypted Manager grants, including nested manifests and
+template substitutions. Manager tries candidates in manifest order after network
+or non-success HTTP responses, before sending response bytes. Each attempt keeps
+Range headers and reselects origin-scoped credentials/cookies, including valid
+Set-Cookie updates from failed candidates; SSRF and access
+checks apply as usual. At most 64 distinct resolved candidates are accepted per
+resource; larger BaseURL combinations fail closed. Failures after body streaming
+starts are handled by the player retrying its Manager URL.
+DASH bitstream-switching and DVB font URLs are relayed. XML stylesheets,
+optional program-information links, telemetry, URL-query extensions and automatic
+event callbacks are removed; required URL-query extensions fail closed rather than exposing their
+credentials. HTTP UTC timing URLs, including encoded and fallback URLs, use
+Manager grants; unsupported timing schemes are removed. Legacy HLS segment URLs redirect only to an authenticated Manager
+resource URL and use the same content checks and connection limits.
+Existing HLS playlists issued before channel-scoped
+grants must be reloaded once after upgrading.
+YouTube trailer IDs and official YouTube trailer links remain direct, without
+Manager proxying or caching. Other URL/path-shaped trailer values are proxied.
+DASH representation IDs are encoded as URL components, retaining
+valid punctuation and Unicode while rejecting traversal/control sequences.
+Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
+through with dependencies that clients could load directly.
+Static TTML captions (`application/ttml+xml`) are supported; external references,
+image/font/link extensions and malformed TTML remain rejected. DASH tracks
+declaring TTML or fragmented MP4 TTML (`stpp`) are omitted while audio, video
+and WebVTT remain available: inherited declarations and binary subtitle samples
+can otherwise cause unvalidated external image requests. HLS manifests declaring
+these subtitle codecs are rejected. TTML declarations outside supported DASH
+track elements also fail closed.
+
+The legacy image route remains authenticated for WebUI/player compatibility.
+Cache pruning requires an administrator. Provider configuration and authorized
+administrative import/export remain management data, not client playback URLs.
 
 ## Xtream and Player Compatibility
 

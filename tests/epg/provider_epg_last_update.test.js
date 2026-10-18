@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock Config Constants
-vi.mock('../../src/config/constants.js', () => ({
+vi.mock('../../src/config/constants.js', async importOriginal => ({
+    ...(await importOriginal()),
     DATA_DIR: '/tmp',
     EPG_CACHE_DIR: '/tmp/epg_cache',
     JWT_SECRET: 'testsecret'

@@ -74,7 +74,8 @@ vi.mock('bcrypt', () => ({
   }
 }));
 
-vi.mock('../../src/config/constants.js', () => ({
+vi.mock('../../src/config/constants.js', async importOriginal => ({
+  ...(await importOriginal()),
   BCRYPT_ROUNDS: 10
 }));
 

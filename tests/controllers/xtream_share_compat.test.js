@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Writable } from 'stream';
 import zlib from 'zlib';
@@ -23,7 +24,8 @@ vi.mock('../../src/services/epgService.js', () => ({
   getEpgXmlForChannels: vi.fn(),
 }));
 
-vi.mock('../../src/services/logoResolver.js', () => ({
+vi.mock('../../src/services/logoResolver.js', async importOriginal => ({
+  ...(await importOriginal()),
   getEpgLogo: vi.fn(() => null),
   loadEpgLogosCache: vi.fn(),
 }));
@@ -34,7 +36,8 @@ vi.mock('../../src/services/streamManager.js', () => ({
   },
 }));
 
-vi.mock('../../src/utils/crypto.js', () => ({
+vi.mock('../../src/utils/crypto.js', async importOriginal => ({
+  ...(await importOriginal()),
   decrypt: vi.fn((val) => val),
 }));
 
@@ -205,6 +208,25 @@ describe('xtreamController share compatibility', () => {
     expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM authorized_user_channels uc'));
     const xml = res.write.mock.calls.map(call => call[0]).join('');
     expect(xml).toContain('<channel id="news.epg">');
+  });
+
+  it.each([
+    ['custom', 3, 'icons/news.png', 'https://custom.test/feed/guide.xml', 'https://custom.test/feed/icons/news.png'],
+    ['provider', 9, '//cdn.test/news.png', 'http://provider.test/guide.xml', 'http://cdn.test/news.png'],
+    ['custom', 4, 'icons/news.png', null, null],
+  ])('binds XMLTV icons to the selected row source (%s %s)', async (type, id, logo, base) => {
+    getXtreamUser.mockResolvedValue({ id: 1 });
+    mockDb.prepare.mockImplementation(sql => sql.includes('FROM authorized_user_channels')
+      ? { iterate: () => [{ epg_id: 'duplicate.epg' }] }
+      : { get: selectedId => selectedId === id && base ? { url: base } : undefined });
+    getEpgXmlForChannels.mockImplementation(async function* (ids, mapLogo) {
+      const channel = { id: 'duplicate.epg', logo, source_type: type, source_id: id };
+      yield mapLogo(logo, channel);
+    });
+    await xmltv(req, res);
+    const value = res.write.mock.calls[1][0];
+    expect(await decryptClientGrant(value)).toMatchObject({ epgChannelId: 'duplicate.epg', epgSourceType: type, epgSourceId: id, kind: 'image', requireMappedChannel: true });
+    expect(await decryptClientGrant(value)).not.toHaveProperty('url');
   });
 
   it('serves XMLTV as streamed gzip when explicitly requested', async () => {

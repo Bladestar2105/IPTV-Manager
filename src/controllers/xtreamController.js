@@ -1,3 +1,4 @@
+import { createChannelIconUrl, createClientResourceUrl, createEpgIconUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
 import zlib from 'zlib';
 import db, { openDbConnection } from '../database/db.js';
 import { getXtreamUser } from '../services/authService.js';
@@ -5,7 +6,6 @@ import { getEpgXmlForChannels } from '../services/epgService.js';
 import { channelsJsonCache } from '../services/cacheService.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
-import { getEpgLogo, loadEpgLogosCache } from '../services/logoResolver.js';
 import {
   getOrCreateSeriesEpisodeAlias,
   prepareSeriesEpisodeAliases
@@ -21,6 +21,27 @@ import {
 } from './xtreamControllerUtils.js';
 export * from './xtreamControllerUtils.js';
 export { playerApi } from './xtreamPlayerApiController.js';
+import { normalizeInlineClearKey } from '../utils/clientClearKey.js';
+
+function clientLicenseKey(req, user, value, channelId, providerId, baseUrl) {
+  if (typeof value !== 'string' || !value.trim() || /[\r\n\u0000]/.test(value)) return '';
+  // Kodi also accepts inline ClearKey JWK sets and hexadecimal KID:key pairs.
+  const inline = normalizeInlineClearKey(value);
+  if (inline !== undefined) return inline;
+  const [url, headerQuery = '', ...transforms] = value.split('|');
+  if (!url.trim()) return '';
+  let licenseUrl;
+  try { licenseUrl = new URL(url, baseUrl); } catch { return ''; }
+  if (!['http:', 'https:'].includes(licenseUrl.protocol)) return '';
+  const suffix = transforms.join('|');
+  let decodedSuffix;
+  try { decodedSuffix = decodeURIComponent(suffix); } catch { return ''; }
+  if (/(?:https?|ftp|rtsp|rtmp):|\/\//i.test(decodedSuffix) || /[\r\n\u0000]/.test(decodedSuffix)) return '';
+  const managerUrl = createClientResourceUrl(req, user, licenseUrl.href, {
+    kind: 'license', channelId, providerId, headers: Object.fromEntries(new URLSearchParams(headerQuery))
+  });
+  return managerUrl && (transforms.length ? `${managerUrl}||${suffix}` : managerUrl);
+}
 
 export const getPlaylist = async (req, res) => {
   try {
@@ -97,8 +118,8 @@ export const getPlaylist = async (req, res) => {
     const seriesEpisodesCache = new Map();
     const episodeAliasDb = openDbConnection();
     const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
-    const sourceKeyByProviderId = new Map(
-      db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, providerSourceKey(p.url)])
+    const providerSources = new Map(
+      db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, { key: providerSourceKey(p.url), baseUrl: `${p.url.replace(/\/+$/, '')}/player_api.php` }])
     );
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
@@ -106,7 +127,7 @@ export const getPlaylist = async (req, res) => {
     try {
     for (const ch of stmt.iterate(...params)) {
       const epgId = sanitizeM3uTag(ch.manual_epg_id || ch.epg_channel_id || '');
-      const logo = ch.logo || '';
+      const logo = createChannelIconUrl(req, user, ch.user_channel_id);
       const group = ch.category_name || '';
       const name = ch.custom_name ? ch.custom_name : (ch.name || 'Unknown');
       const streamId = ch.user_channel_id;
@@ -123,7 +144,8 @@ export const getPlaylist = async (req, res) => {
       finalName = finalName.trim();
 
       if (ch.stream_type === 'series') {
-        const sourceKey = sourceKeyByProviderId.get(ch.provider_id) || '';
+        const providerSource = providerSources.get(ch.provider_id);
+        const sourceKey = providerSource?.key || '';
         let episodesBySeries = seriesEpisodesCache.get(sourceKey);
         if (!episodesBySeries) {
           episodesBySeries = new Map();
@@ -138,7 +160,7 @@ export const getPlaylist = async (req, res) => {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
-            const epLogo = ep.logo ? sanitizeM3uTag(ep.logo) : safeLogo;
+            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, providerId: ch.provider_id, baseUrl: providerSource?.baseUrl })) : safeLogo;
             const episodeId = getOrCreateSeriesEpisodeAlias(
               episodeAliases,
               ch.user_channel_id,
@@ -250,7 +272,7 @@ export const xmltv = async (req, res) => {
     output.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
     // Use the generator to stream content
-    for await (const chunk of getEpgXmlForChannels(allowedIds)) {
+    for await (const chunk of getEpgXmlForChannels(allowedIds, (_logo, channel) => createEpgIconUrl(req, user, channel, { requireMappedChannel: true }))) {
         output.write(chunk);
     }
 
@@ -271,15 +293,12 @@ export const playerChannelsJson = async (req, res) => {
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
     const host = getBaseUrl(req);
     // Cache key incorporates whether it's a guest, the user ID, the host string, and token
-    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${host}_${tokenParam}`;
+    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${user.token_version || 0}_${host}_${tokenParam}`;
 
     if (channelsJsonCache.has(cacheKey)) {
       res.setHeader('Content-Type', 'application/json');
       return res.send(channelsJsonCache.get(cacheKey));
     }
-
-    // Load EPG logos cache for logo resolution
-    loadEpgLogosCache();
 
     const stmt = db.prepare(`
       SELECT
@@ -342,11 +361,12 @@ export const playerChannelsJson = async (req, res) => {
       if (ch.drm_license_type || ch.drm_license_key) {
         item.drm = {};
         if (ch.drm_license_type) item.drm.license_type = ch.drm_license_type;
-        if (ch.drm_license_key) item.drm.license_key = ch.drm_license_key;
+        if (ch.drm_license_key) item.drm.license_key = clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id, ch.provider_id, ch.provider_url ? `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` : undefined);
       }
 
       if (!isFirst) jsonOutput += ',';
-      jsonOutput += JSON.stringify(item);
+      const { url, ...metadata } = item;
+      jsonOutput += JSON.stringify({ ...rewriteClientMetadata(req, user, metadata, '', { channelId: ch.user_channel_id, providerId: ch.provider_id }), url });
       isFirst = false;
     };
 
@@ -372,11 +392,7 @@ export const playerChannelsJson = async (req, res) => {
 
           const group = ch.category_name || 'Uncategorized';
           const epgId = ch.manual_epg_id || ch.epg_channel_id;
-          let logo = ch.logo || '';
-          if (ch.use_mapped_epg_icon && epgId) {
-            const epgLogo = getEpgLogo(epgId);
-            if (epgLogo) logo = epgLogo;
-          }
+          const logo = createChannelIconUrl(req, user, ch.user_channel_id);
           let name = String(ch.custom_name ? ch.custom_name : (ch.name || 'Unknown'));
           if (name.indexOf('\n') !== -1 || name.indexOf('\r') !== -1) {
               name = name.replace(/[\r\n]+/g, ' ');
@@ -420,7 +436,7 @@ export const playerChannelsJson = async (req, res) => {
                appendItem({
                  name: `${name} ${episodeCode}`,
                  group,
-                 logo: ep.logo || logo,
+                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, providerId: ch.provider_id, baseUrl: `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` }) : logo,
                  epg_id: epgId,
                  url: seriesPrefix + episodeId + '.' + extension + tokenParam,
                  type: 'series',
@@ -482,6 +498,7 @@ export const playerPlaylist = async (req, res) => {
         pc.logo,
         pc.epg_channel_id,
         pc.remote_stream_id,
+        pc.provider_id,
         pc.stream_type,
         pc.tv_archive,
         pc.tv_archive_duration,
@@ -490,11 +507,13 @@ export const playerPlaylist = async (req, res) => {
         json_extract(pc.metadata, '$.drm.license_key') as drm_license_key,
         pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.rating, pc.episode_run_time,
         cat.name as category_name,
-        map.epg_channel_id as manual_epg_id
+        map.epg_channel_id as manual_epg_id,
+        p.url as provider_url
       FROM user_categories cat
       JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
+      LEFT JOIN providers p ON p.id = pc.provider_id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
@@ -538,7 +557,7 @@ export const playerPlaylist = async (req, res) => {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
-      const logo = ch.logo || '';
+      const logo = createChannelIconUrl(req, user, ch.user_channel_id);
       const name = ch.name || 'Unknown';
 
       let streamUrl;
@@ -585,7 +604,7 @@ export const playerPlaylist = async (req, res) => {
 
       if (ch.drm_license_type || ch.drm_license_key) {
           if (ch.drm_license_type) buffer += `#KODIPROP:inputstream.adaptive.license_type=${String(ch.drm_license_type).replace(/[\r\n]+/g, ' ')}\n`;
-          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(ch.drm_license_key).replace(/[\r\n]+/g, ' ')}\n`;
+          if (ch.drm_license_key) buffer += `#KODIPROP:inputstream.adaptive.license_key=${String(clientLicenseKey(req, user, ch.drm_license_key, ch.user_channel_id, ch.provider_id, ch.provider_url ? `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` : undefined)).replace(/[\r\n]+/g, ' ')}\n`;
       }
 
       buffer += streamUrl + '\n';
