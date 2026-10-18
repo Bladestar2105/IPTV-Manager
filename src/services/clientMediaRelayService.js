@@ -8,7 +8,7 @@ function knownMp4(response, url) {
   return /^(?:video|audio|application)\/mp4(?:;|$)/i.test(type) ||
     ((!type || /^application\/octet-stream(?:;|$)/i.test(type)) && /\.(?:mp4|m4s|m4a|m4v|cmfv|cmfa)(?:[?#]|$)/i.test(url || ''));
 }
-const METADATA = new Set(['moov', 'moof', 'pssh']);
+const METADATA = new Set(['moov', 'moof', 'pssh', 'meta', 'dref', 'stsd', 'hdlr', 'rmra', 'rmda', 'rdrf', 'cmov']);
 const unsafe = () => new Error('Unable to inspect upstream media range safely');
 function contentRange(response) {
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') || '');
@@ -155,7 +155,7 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
             if (position === 0 && !knownMp4(upstream, url)) break;
             throw unsafe();
           }
-          if (METADATA.has(type) && position+size > range.start) {
+          if (METADATA.has(type)) {
             metadataBytes += size; if (metadataBytes > MAX_METADATA) throw unsafe();
             replacements.push({ start: position, bytes: await probe(position, position+size-1) });
           }

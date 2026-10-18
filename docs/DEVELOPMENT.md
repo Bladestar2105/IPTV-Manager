@@ -49,16 +49,16 @@ license relaying, scoped cookies/redirects, public metadata exceptions, safe
 TTML, legacy HLS redirects, stream-session reuse and frontend same-origin image
 handling. The redirect-cache regression uses the actual SSRF-safe fetch path:
 
+```bash
+npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/services/image_cache_redirect.test.js tests/controllers/legacy_segment_privacy.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js tests/client_resource_policy.test.js tests/client_cookies.test.js tests/client_ttml.test.js tests/client_playready.test.js
+```
+
 Binary PlayReady coverage also exercises unchanged MP4 sizes and sample offsets,
 partial metadata ranges, cancellation, compact SQLite grants and exact binary
 license POST bodies with `SOAPAction`:
 
 ```bash
 npm test -- tests/client_mp4.test.js tests/services/clientMediaRelayService.test.js tests/services/compactLicenseGrants.test.js tests/controllers/stream_response_privacy.test.js
-```
-
-```bash
-npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/services/image_cache_redirect.test.js tests/controllers/legacy_segment_privacy.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js tests/client_resource_policy.test.js tests/client_cookies.test.js tests/client_ttml.test.js tests/client_playready.test.js
 ```
 
 The cache tests use independent module instances with real SQLite connections,

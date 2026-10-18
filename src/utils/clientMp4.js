@@ -3,8 +3,11 @@ import { rewritePlayReadyPsshBuffer } from './clientPlayReady.js';
 
 const MAX_METADATA = 32 * 1024 * 1024;
 const MAX_LICENSE_URLS = 256;
-const metadataTypes = new Set(['moov', 'moof', 'pssh']);
-const initialTypes = new Set(['ftyp', 'styp', 'moov', 'moof', 'pssh', 'mdat', 'sidx', 'ssix', 'free', 'skip', 'wide', 'pdin', 'uuid', 'emsg', 'prft']);
+const referenceTypes = new Set(['rmra', 'rmda', 'rdrf', 'cmov']);
+const metadataTypes = new Set(['moov', 'moof', 'pssh', 'meta', 'dref', 'stsd', 'hdlr', ...referenceTypes]);
+const containerTypes = new Set(['moov', 'moof', 'trak', 'mdia', 'minf', 'dinf', 'traf', 'meta', 'udta', 'stbl', 'sinf']);
+const unsafeSampleTypes = new Set(['stpp', 'rtsp', 'sdp ', 'moov', 'enct', 'encs']);
+const initialTypes = new Set(['ftyp', 'styp', ...metadataTypes, 'mdat', 'sidx', 'ssix', 'free', 'skip', 'wide', 'pdin', 'uuid', 'emsg', 'prft']);
 const invalid = message => { throw new Error(`Unsupported MP4 metadata: ${message}`); };
 const validateLimit = limit => {
   if (!Number.isSafeInteger(limit) || limit < 16 || limit > MAX_METADATA) invalid('invalid buffer limit');
@@ -22,6 +25,22 @@ function readHeader(buffer, offset = 0) {
   return { size, headerSize, type: buffer.toString('latin1', offset + 4, offset + 8) };
 }
 
+function validateDataReferences(body, header) {
+  let offset = header.headerSize;
+  if (body.length - offset < 8 || body.readUInt32BE(offset) !== 0) invalid('invalid data reference FullBox');
+  const count = body.readUInt32BE(offset + 4); offset += 8;
+  if (count > Math.floor((body.length - offset) / 12)) invalid('invalid data reference count');
+  for (let index = 0; index < count; index++) {
+    const entry = readHeader(body, offset);
+    if (!entry) invalid('truncated data reference');
+    const size = entry.size || body.length - offset;
+    // Only the self-contained URL entry has no external location to follow.
+    if (size > body.length - offset || entry.type !== 'url ' || size !== entry.headerSize + 4 || body.readUInt32BE(offset + entry.headerSize) !== 1) invalid('external or unsupported data reference');
+    offset += size;
+  }
+  if (offset !== body.length) invalid('data reference count does not match entries');
+}
+
 function rewriteBox(body, header, mapUrl, maxMetadataBytes) {
   if (body.length > maxMetadataBytes) invalid('metadata exceeds buffer limit');
   let mappedUrls = 0;
@@ -31,21 +50,70 @@ function rewriteBox(body, header, mapUrl, maxMetadataBytes) {
   };
   if (header.type === 'pssh') return rewritePlayReadyPsshBuffer(body, boundedMapUrl, header.headerSize);
   const result = Buffer.from(body);
-  // PSSH is defined directly in moov and moof. Other child payloads (including
-  // sample tables and encrypted samples) are deliberately never scanned as text.
-  let offset = header.headerSize;
-  while (offset < body.length) {
-    const child = readHeader(body, offset);
-    if (!child) invalid('truncated child header');
-    const size = child.size || body.length - offset;
-    if (size > body.length - offset) invalid('child exceeds container');
-    if (child.type === 'pssh') {
-      rewritePlayReadyPsshBuffer(body.subarray(offset, offset + size), boundedMapUrl, child.headerSize).copy(result, offset);
-    } else if (child.type === 'moov' || child.type === 'moof') {
-      invalid('nested movie containers');
+  const visit = (value, info, start, depth) => {
+    if (depth > 32) invalid('container nesting exceeds limit');
+    if (referenceTypes.has(info.type)) invalid('external QuickTime reference movie');
+    if (info.type === 'dref') { validateDataReferences(value, info); return; }
+    let offset = info.headerSize;
+    if (info.type === 'hdlr') {
+      if (value.length - offset < 12) invalid('truncated handler metadata');
+      if (value.toString('latin1', offset + 8, offset + 12) === 'strm') invalid('external streaming media handler');
+      return;
     }
-    offset += size;
-  }
+    if (info.type === 'stsd') {
+      if (value.length - offset < 8 || value.readUInt32BE(offset) !== 0) invalid('invalid sample description FullBox');
+      const count = value.readUInt32BE(offset + 4); offset += 8;
+      if (count > Math.floor((value.length - offset) / 16)) invalid('invalid sample description count');
+      for (let index = 0; index < count; index++) {
+        const entry = readHeader(value, offset);
+        if (!entry) invalid('truncated sample description');
+        const size = entry.size || value.length - offset;
+        if (size > value.length - offset || size < entry.headerSize + 8) invalid('invalid sample description size');
+        if (unsafeSampleTypes.has(entry.type)) invalid('external or unsupported sample format');
+        if (entry.type === 'encv' || entry.type === 'enca') {
+          let prefix = entry.type === 'encv' ? 78 : 28;
+          if (size < entry.headerSize + prefix) invalid('truncated encrypted sample entry');
+          if (entry.type === 'enca') {
+            const version = value.readUInt16BE(offset + entry.headerSize + 8);
+            if (version > 2) invalid('unsupported encrypted audio entry');
+            prefix += version === 1 ? 16 : version === 2 ? 36 : 0;
+          }
+          if (size < entry.headerSize + prefix) invalid('truncated encrypted sample entry');
+          const entryBody = value.subarray(offset, offset + size);
+          visit(entryBody, { ...entry, headerSize: entry.headerSize + prefix }, start + offset, depth + 1);
+        }
+        offset += size;
+      }
+      if (offset !== value.length) invalid('sample description count does not match entries');
+      return;
+    }
+    if (info.type === 'meta') {
+      if (value.length - offset < 4 || value.readUInt32BE(offset) !== 0) invalid('unsupported meta FullBox');
+      offset += 4;
+    }
+    // Traverse only defined container layouts; sample and unknown leaf payloads
+    // remain opaque. Data references are inspected through trak/mdia/minf/dinf.
+    while (offset < value.length) {
+      const child = readHeader(value, offset);
+      if (!child) invalid('truncated child header');
+      const size = child.size || value.length - offset;
+      if (size > value.length - offset) invalid('child exceeds container');
+      const payload = value.subarray(offset, offset + size);
+      if (child.type === 'frma') {
+        if (size !== child.headerSize + 4) invalid('invalid original sample format');
+        if (unsafeSampleTypes.has(payload.toString('latin1', child.headerSize))) invalid('external encrypted sample format');
+      } else if (child.type === 'pssh') {
+        if (info.type !== 'moov' && info.type !== 'moof') invalid('unsupported PSSH location');
+        rewritePlayReadyPsshBuffer(payload, boundedMapUrl, child.headerSize).copy(result, start + offset);
+      } else if (child.type === 'moov' || child.type === 'moof') {
+        invalid('nested movie containers');
+      } else if (containerTypes.has(child.type) || child.type === 'dref' || child.type === 'stsd' || child.type === 'hdlr' || referenceTypes.has(child.type)) {
+        visit(payload, child, start + offset, depth + 1);
+      }
+      offset += size;
+    }
+  };
+  visit(body, header, 0, 0);
   return result;
 }
 

@@ -22,6 +22,13 @@ function pssh({ version = 0, id = system, xml, extended = false } = {}) {
   prefix.writeUInt32BE(pro.length, prefix.length - 4);
   return box('pssh', Buffer.concat([prefix, pro]), extended);
 }
+function dataReference(type = 'url ', flags = 0, payload = Buffer.from('https://provider.example/private-samples?token=secret\0')) {
+  const full = Buffer.alloc(4); full.writeUInt32BE(flags);
+  const prefix = Buffer.alloc(8); prefix.writeUInt32BE(1, 4);
+  let result = box('dref', Buffer.concat([prefix, box(type, Buffer.concat([full, payload]))]));
+  for (const parent of ['dinf', 'minf', 'mdia', 'trak', 'moov']) result = box(parent, result);
+  return result;
+}
 async function stream(input, options, split = 1) {
   const chunks = [];
   for (let offset = 0; offset < input.length; offset += split) chunks.push(input.subarray(offset, offset + split));
@@ -30,6 +37,60 @@ async function stream(input, options, split = 1) {
   return Buffer.concat(result);
 }
 describe('length-preserving binary PlayReady privacy', () => {
+  it.each(['url ', 'urn ', 'alis'])('rejects external %s data references in structured movie metadata', async type => {
+    const value = dataReference(type);
+    expect(() => rewriteMp4Metadata(value, () => target)).toThrow(/reference/i);
+    await expect(stream(value)).rejects.toThrow(/reference/i);
+  });
+  it('preserves self-contained data references and rejects malformed counts and flags', async () => {
+    const value = dataReference('url ', 1, Buffer.alloc(0));
+    expect(rewriteMp4Metadata(value, () => target)).toEqual(value);
+    expect(await stream(value)).toEqual(value);
+    const badCount = Buffer.from(value); badCount.writeUInt32BE(2, 52);
+    const badFlags = Buffer.from(value); badFlags[48] = 1;
+    for (const bad of [badCount, badFlags, dataReference('url ', 1)]) {
+      expect(() => rewriteMp4Metadata(bad, () => target)).toThrow();
+    }
+  });
+  it.each(['rmra', 'rmda', 'rdrf', 'cmov'])('rejects QuickTime automatic reference movie box %s', async type => {
+    for (const value of [box(type, Buffer.alloc(0)), box('moov', box(type, Buffer.alloc(0)))]) {
+      expect(() => rewriteMp4Metadata(value, () => target)).toThrow(/reference/i);
+      await expect(stream(value, { isMp4: true })).rejects.toThrow(/reference/i);
+    }
+  });
+  it('inspects FullBox meta data references under user data and at top level', () => {
+    const dref = dataReference().subarray(40);
+    const meta = box('meta', Buffer.concat([Buffer.alloc(4), box('dinf', dref)]));
+    for (const value of [meta, box('moov', box('trak', box('udta', meta)))]) {
+      expect(() => rewriteMp4Metadata(value, () => target)).toThrow(/reference/);
+    }
+  });
+  it.each(['stpp', 'rtsp', 'sdp ', 'moov', 'enct', 'encs'])('rejects sample format %s that can load external resources', async type => {
+    const prefix = Buffer.alloc(8); prefix.writeUInt32BE(1, 4);
+    const value = box('moov', box('trak', box('mdia', box('minf', box('stbl', box('stsd', Buffer.concat([prefix, box(type, Buffer.alloc(8))])))))));
+    expect(() => rewriteMp4Metadata(value, () => target)).toThrow(/sample format/);
+    await expect(stream(value)).rejects.toThrow(/sample format/);
+  });
+  it('rejects streaming handlers and encrypted unsafe original formats while preserving CENC video', () => {
+    const handler = Buffer.alloc(24); handler.write('strm', 8);
+    expect(() => rewriteMp4Metadata(box('moov', box('trak', box('mdia', box('hdlr', handler)))), () => target)).toThrow(/streaming/);
+    const prefix = Buffer.alloc(8); prefix.writeUInt32BE(1, 4);
+    const encrypted = original => box('moov', box('stbl', box('stsd', Buffer.concat([prefix, box('encv', Buffer.concat([Buffer.alloc(78), box('sinf', box('frma', Buffer.from(original)))]))]))));
+    expect(() => rewriteMp4Metadata(encrypted('stpp'), () => target)).toThrow(/sample format/);
+    const safe = encrypted('avc1'); expect(rewriteMp4Metadata(safe, () => target)).toEqual(safe);
+    for (const version of [0, 1, 2]) {
+      const payload = Buffer.alloc(version === 0 ? 28 : version === 1 ? 44 : 64); payload.writeUInt16BE(version, 8);
+      const audio = box('moov', box('stbl', box('stsd', Buffer.concat([prefix, box('enca', Buffer.concat([payload, box('sinf', box('frma', Buffer.from('mp4a')))]))]))));
+      expect(rewriteMp4Metadata(audio, () => target)).toEqual(audio);
+    }
+  });
+  it('bounds nested metadata validation and validates every sample description entry', () => {
+    let nested = box('dinf', Buffer.alloc(0));
+    for (let index = 0; index < 33; index++) nested = box('udta', nested);
+    expect(() => rewriteMp4Metadata(box('moov', nested), () => target)).toThrow(/nesting/);
+    const prefix = Buffer.alloc(8); prefix.writeUInt32BE(2, 4);
+    expect(() => rewriteMp4Metadata(box('stsd', Buffer.concat([prefix, box('avc1', Buffer.alloc(8))])), () => target)).toThrow(/count/);
+  });
   it.each([0, 1])('rewrites moov/moof/top-level PSSH v%s and preserves offsets, key IDs, other DRM and samples', async version => {
     const drm = pssh({ version });
     const other = pssh({ id: Buffer.alloc(16, 5) });

@@ -63,6 +63,19 @@ describe('client media relay', () => {
     const r=await prepareClientMediaResponse(upstream(data,0,data.length-1,'"v1"',status),{url,mapUrl:()=>target});
     await expect(collect(r.body)).rejects.toThrow();
   });
+  it.each([[200,false],[206,false],[206,true]])('rejects external item data references through a top-level meta box for status %s (media only: %s)',async (status,mediaOnly)=>{
+    const location=Buffer.from('https://provider.example/private-sample?token=secret\0');
+    const entry=box('url ',Buffer.concat([Buffer.alloc(4),location]));
+    const dref=box('dref',Buffer.concat([Buffer.from([0,0,0,0,0,0,0,1]),entry]));
+    const data=Buffer.concat([box('meta',Buffer.concat([Buffer.alloc(4),box('dinf',dref)])),box('mdat',Buffer.alloc(16))]);
+    provider(data);
+    const start=mediaOnly?data.length-8:status===206?data.indexOf(location):0;
+    const operation=async()=>{
+      const r=await prepareClientMediaResponse(upstream(data,start,data.length-1,'"v1"',status),{url,mapUrl:()=>target});
+      return collect(r.body);
+    };
+    await expect(operation()).rejects.toThrow(/reference/i);
+  });
   it('drops compressed wire headers for the decoded full response body', async () => {
     const data=fixture(); const original=upstream(data,0,data.length-1,'"v1"',200);
     original.headers.set('content-encoding','gzip'); original.headers.set('content-length','99');

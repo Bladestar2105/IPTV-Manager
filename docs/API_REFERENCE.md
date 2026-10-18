@@ -619,6 +619,10 @@ license stores are rejected. Binary MP4 PlayReady PSSH records in `moov`,
 box sizes, byte offsets and media samples unchanged; malformed metadata or
 insufficient space for a safe replacement fails closed. Metadata buffering is
 limited to 32 MiB and 256 license addresses per metadata box.
+External MP4 data references, compressed/reference QuickTime movies and
+network-bearing movie/streaming/text sample formats are rejected so players
+cannot fetch provider media outside the relay. Normal CENC audio/video sample
+entries remain supported.
 Compact license grants are encrypted in SQLite, survive restarts and expire
 after seven days. Every request rechecks current user and channel access.
 Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
