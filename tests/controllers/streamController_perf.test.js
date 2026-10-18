@@ -10,6 +10,7 @@ import * as authService from '../../src/services/authService.js';
 import fetch from 'node-fetch';
 import { spawn } from 'child_process';
 import ffmpeg from 'fluent-ffmpeg';
+import { upstreamRequestHeaders } from '../../src/utils/clientCookies.js';
 
 const { streamDbState } = vi.hoisted(() => ({
   streamDbState: { channelOverrides: {}, providerPool: [] }
@@ -417,7 +418,11 @@ describe('Stream Controller Performance (proxyLive)', () => {
     });
     await streamController[method](req, res);
     const base = JSON.parse(decodeURIComponent(res.send.mock.calls[0][0].match(/base=([^&"\n]+)/)[1]));
-    expect(base.h.Cookie).toBe(method === 'proxySegment' ? 'old=one; session=new; extra=two' : 'session=new; extra=two');
+    expect(base.h.Cookie).toBeUndefined();
+    const context = { headers: base.h, cookieJar: base.j, headerOrigin: base.o };
+    expect(new Headers(upstreamRequestHeaders(context, 'https://cdn.example/chunk.ts')).get('cookie'))
+      .toBe(method === 'proxySegment' ? 'old=one; session=new; extra=two' : 'session=new; extra=two');
+    expect(new Headers(upstreamRequestHeaders(context, 'https://license.example/key')).get('cookie')).toBeNull();
   });
 
   it('should NOT call streamManager.add/cleanupUser/remove for standard .m3u8 requests', async () => {

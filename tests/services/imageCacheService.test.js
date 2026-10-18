@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
+import { withUpstreamCookies } from '../../src/utils/clientCookies.js';
 
 const mocks = vi.hoisted(() => ({ fetchSafe: vi.fn(), cacheDir: '' }));
 vi.mock('../../src/config/constants.js', () => ({
@@ -26,6 +27,19 @@ beforeEach(async () => {
 afterAll(() => fs.rm(root, { recursive: true, force: true }));
 
 describe('image disk cache', () => {
+    it('retains cookie scope for upstream image redirects and separates different scoped jars', async () => {
+        const sourceUrl = 'https://cdn.example.com/icon.png';
+        const cookieResponse = cookie => ({ url: sourceUrl, headers: { raw: () => ({ 'set-cookie': [cookie] }) } });
+        const hostOnly = withUpstreamCookies({}, cookieResponse('session=one; Path=/; Secure'), sourceUrl);
+        const shared = withUpstreamCookies({}, cookieResponse('session=one; Domain=example.com; Path=/; Secure'), sourceUrl);
+        mocks.fetchSafe.mockImplementation(async () => response());
+        const options = context => ({ headers: { Cookie: 'session=one' }, cookieJar: context.cookieJar, headerOrigin: sourceUrl });
+        await getCachedImage(sourceUrl, options(hostOnly));
+        expect(mocks.fetchSafe.mock.calls[0][1]).toMatchObject({ cookieJar: hostOnly.cookieJar, headerOrigin: sourceUrl });
+        expect(await getCachedImage(sourceUrl, options(shared))).toMatchObject({ cacheStatus: 'MISS' });
+        expect((await fs.readdir(path.join(mocks.cacheDir, 'picons'))).filter(file => file.endsWith('.png'))).toHaveLength(2);
+    });
+
     it('adopts an already fetched image without another upstream request and retains its validators', async () => {
         const headers = { 'UsEr-AgEnT': 'provider-agent', Authorization: 'provider-secret' };
         const prefetched = response(png, { etag: '"prefetched"' });

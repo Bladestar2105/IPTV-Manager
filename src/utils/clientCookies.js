@@ -1,16 +1,38 @@
-// Set-Cookie attributes belong to the response, not the next request's Cookie header.
-export function withUpstreamCookies(headers, response) {
-  const next = { ...headers };
-  const cookies = new Map();
-  const remember = text => {
-    const index = text.indexOf('=');
-    if (index > 0) cookies.set(text.slice(0, index).trim(), text.slice(index + 1).trim());
-  };
-  for (const value of String(next.Cookie || next.cookie || '').split(';')) remember(value);
-  const setCookies = response.headers.raw?.()['set-cookie'] || response.headers.getSetCookie?.() || [response.headers.get('set-cookie')];
-  for (const value of setCookies) if (value) remember(value.split(';')[0]);
-  delete next.cookie;
-  delete next.Cookie;
-  if (cookies.size) next.Cookie = [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
-  return next;
+import { CookieJar } from 'tough-cookie';
+
+const entries = headers => headers?.entries ? [...headers.entries()] : Object.entries(headers || {});
+const restoreJar = value => value ? CookieJar.deserializeSync(value) : new CookieJar();
+
+// Grants carry the jar encrypted; Cookie headers are selected only at request time.
+export function createUpstreamContext(headers, sourceUrl, cookieJar = null, headerOrigin = sourceUrl, seedCookies = !cookieJar) {
+  const jar = restoreJar(cookieJar);
+  const next = {};
+  for (const [name, value] of entries(headers)) {
+    if (name.toLowerCase() !== 'cookie') { next[name] = value; continue; }
+    if (!seedCookies) continue;
+    const source = new URL(sourceUrl);
+    const cookiePath = source.pathname.slice(0, source.pathname.lastIndexOf('/') + 1) || '/';
+    for (const pair of String(value).split(';')) {
+      jar.setCookieSync(`${pair.trim()}; Path=${cookiePath}${source.protocol === 'https:' ? '; Secure' : ''}`, source.href, { ignoreError: true });
+    }
+  }
+  return { headers: next, cookieJar: jar.serializeSync(), headerOrigin };
+}
+
+export function upstreamRequestHeaders(context, targetUrl) {
+  const sameOrigin = new URL(context.headerOrigin || targetUrl).origin === new URL(targetUrl).origin;
+  const headers = Object.fromEntries(entries(context.headers).filter(([name]) =>
+    name.toLowerCase() !== 'cookie' && (sameOrigin || !/^(?:authorization|proxy-authorization)$/i.test(name))));
+  const cookie = restoreJar(context.cookieJar).getCookieStringSync(targetUrl);
+  if (cookie) headers.Cookie = cookie;
+  return headers;
+}
+
+export function withUpstreamCookies(headers, response, sourceUrl, cookieJar = null, headerOrigin = sourceUrl) {
+  const context = createUpstreamContext(headers, sourceUrl, response.upstreamCookieJar || cookieJar, headerOrigin);
+  if (response.upstreamCookieJar) return context;
+  const jar = restoreJar(context.cookieJar);
+  const setCookies = response.headers?.raw?.()['set-cookie'] || response.headers?.getSetCookie?.() || [response.headers?.get?.('set-cookie')];
+  for (const value of setCookies) if (value) jar.setCookieSync(value, response.url || sourceUrl, { ignoreError: true });
+  return { ...context, cookieJar: jar.serializeSync() };
 }

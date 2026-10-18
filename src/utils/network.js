@@ -3,6 +3,7 @@ import https from 'https';
 import fetch from 'node-fetch';
 import { isSafeUrl, safeLookup, sanitizeErrorMessage } from './helpers.js';
 import { resolveBudget } from './env.js';
+import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from './clientCookies.js';
 
 // Custom Agents with DNS Rebinding Protection
 const httpAgent = new http.Agent({ lookup: safeLookup });
@@ -92,6 +93,8 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     maxDurationMs,
     maxBytes,
     allowSelfSigned = false,
+    cookieJar,
+    headerOrigin = url,
     ...fetchOptionOverrides
   } = options;
 
@@ -121,8 +124,10 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
   headerTimer.unref?.();
   const disarm = () => clearTimeout(headerTimer);
 
+  const cookieContext = createUpstreamContext(fetchOptionOverrides.headers, url, cookieJar, headerOrigin);
   const fetchOptions = {
     ...fetchOptionOverrides,
+    headers: upstreamRequestHeaders(cookieContext, url),
     signal,
     redirect: 'manual', // Handle redirects manually to re-verify new URL
     agent: (_parsedUrl) => {
@@ -149,9 +154,11 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
         response.body?.destroy?.();
       }
       disarm();
-      return await fetchSafe(nextUrl, options, redirectCount + 1, effectiveDeadline);
+      const nextContext = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin);
+      return await fetchSafe(nextUrl, { ...options, ...nextContext }, redirectCount + 1, effectiveDeadline);
     }
 
+    response.upstreamCookieJar = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin).cookieJar;
     if (Number(maxBytes) > 0) {
       // Header-based guard: it only helps when the server announces a length,
       // but it rejects an oversized payload before a byte of it is read.

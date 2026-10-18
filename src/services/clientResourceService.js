@@ -5,6 +5,7 @@ import { expiryEpoch } from '../utils/stalker.js';
 import { getXtreamUser } from './authService.js';
 import { isIpAllowedForUser } from './geoIpService.js';
 import { getEpgLogo } from './logoResolver.js';
+import { createUpstreamContext } from '../utils/clientCookies.js';
 
 const PURPOSE = 'client-resource-v1';
 const TEMPLATE = /\$(RepresentationID|Number|Bandwidth|Time|SubNumber)(?:%0\d+d)?\$/g;
@@ -73,7 +74,7 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   if (!['image', 'resource', 'license'].includes(kind)) return '';
   return resourceUrl(req, {
     ...context(req, user), kind, url: parsed.href,
-    headers: options.headers || {},
+    ...createUpstreamContext(options.headers || {}, options.headerOrigin || parsed.href, options.cookieJar, options.headerOrigin || parsed.href, true),
     channelId: options.channelId || null,
     channelName: options.channelName || null,
     providerId: options.providerId || null,
@@ -160,7 +161,7 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
     try { decoded = decodeURIComponent(transforms.join('|')); } catch { return ''; }
     if (/(?:https?|ftp|rtsp|rtmp):|\/\/|[\r\n\u0000]/i.test(decoded)) return '';
     const headers = Object.fromEntries(new URLSearchParams(encodedHeaders || ''));
-    const local = createClientResourceUrl(req, user, url, { ...options, kind: 'license', headers });
+    const local = createClientResourceUrl(req, user, url, { ...options, kind: 'license', headers, headerOrigin: httpUrl(url, getBaseUrl(req))?.href });
     return transforms.length ? `${local}||${transforms.join('|')}` : local;
   }
   if (/^(?:https?:)?\/\//i.test(value.trim())) {

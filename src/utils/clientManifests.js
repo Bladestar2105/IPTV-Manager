@@ -1,3 +1,5 @@
+import { rewritePlayReadyObject, rewritePlayReadyPssh } from './clientPlayReady.js';
+
 // Resolve every playable resource before mapping it to an opaque Manager URL.
 function resolveResource(value, baseUrl) {
   if (/^data:/i.test(value)) return value;
@@ -76,16 +78,23 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
     const base = baseText ? resolveResource(decodeXml(baseText.trim()), nodeBase) : nodeBase;
     node.open = node.open?.replace(/([\w:.-]+)\s*=\s*(["'])(.*?)\2/g, (match, attr, quote, value) => {
       if (attr === 'xml:base') return '';
+      // DASH uses this XLink value to remove an element without a network fetch.
+      if (attr === 'xlink:href' && decodeXml(value.trim()) === 'urn:mpeg:dash:resolve-to-zero:2013') return match;
       if (['media', 'initialization', 'sourceURL', 'index', 'href', 'licenseUrl', 'licenseURL', 'licenseUri', 'licenseURI'].includes(localName(attr)) || (localName(node.name) === 'UTCTiming' && attr === 'value' && /^(?:https?:)?\/\//i.test(value))) {
         return `${attr}=${quote}${encodeXml(rewrite(value, base, attr === 'xlink:href' ? { manifestKind: 'dash' } : /^license(?:Url|URL|Uri|URI)$/.test(localName(attr)) ? { kind: 'license' } : {}))}${quote}`;
       }
       return match;
     });
     const name = localName(node.name || '');
-    if (['BaseURL', 'Location', 'PatchLocation', 'Laurl'].includes(name)) {
+    if (name === 'pro' || name === 'pssh') {
+      const value = node.children.filter(child => typeof child === 'string').join('');
+      const rewriteDrm = name === 'pro' ? rewritePlayReadyObject : rewritePlayReadyPssh;
+      return node.open + rewriteDrm(decodeXml(value.trim()), mapUrl) + node.close;
+    }
+    if (['BaseURL', 'Location', 'PatchLocation', 'Laurl', 'laurl'].includes(name)) {
       const value = node.children.filter(child => typeof child === 'string').join('');
       if (!value.trim()) return node.open + node.close;
-      return node.open + encodeXml(rewrite(value, nodeBase, name === 'Laurl' ? { kind: 'license' } : ['Location', 'PatchLocation'].includes(name) ? { manifestKind: 'dash' } : {})) + node.close;
+      return node.open + encodeXml(rewrite(value, nodeBase, /^(?:Laurl|laurl)$/.test(name) ? { kind: 'license' } : ['Location', 'PatchLocation'].includes(name) ? { manifestKind: 'dash' } : {})) + node.close;
     }
     return (node.open || '') + node.children.map(child => render(child, typeof child !== 'string' && localName(child.name) === 'BaseURL' ? nodeBase : base)).join('') + (node.close || '');
   };

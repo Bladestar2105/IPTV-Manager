@@ -37,11 +37,11 @@ async function sendVodManifest(req, res, upstream, sourceUrl, user, headers, ses
   const kind = isClientManifest(upstream.headers.get('content-type'), upstream.url || sourceUrl);
   if (!kind) return false;
   const text = await readBodyWithLimit(upstream, { timeoutMs: MANIFEST_BODY_TIMEOUT_MS, maxBytes: MANIFEST_MAX_BYTES });
-  const nextHeaders = withUpstreamCookies(headers, upstream);
-  delete nextHeaders.Range;
+  const nextContext = withUpstreamCookies(headers, upstream, sourceUrl);
+  delete nextContext.headers.Range;
   const rewrite = kind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
   const output = rewrite(text, upstream.url || sourceUrl, (url, options) => createClientResourceUrl(req, user, url, {
-    kind: 'resource', headers: nextHeaders, ...session, ...options
+    kind: 'resource', ...nextContext, ...session, ...options
   }));
   res.setHeader('Content-Type', kind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
   res.setHeader('Cache-Control', 'no-store');

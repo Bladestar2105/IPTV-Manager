@@ -583,8 +583,17 @@ HLS and DASH resources, including nested manifests, keys, initialization data,
 subtitles and HTTP DRM license URLs, stay behind the Manager. License POST
 challenges and responses are relayed as bytes; upstream credentials remain
 inside the grant. Kodi challenge/response transform suffixes remain available
-to the client. Optional content steering is removed; unsupported external
-protocols fail closed. Existing HLS playlists issued before channel-scoped
+to the client. Manifest cookies retain Domain, Path, Secure and expiry rules in
+an encrypted cookie jar and are selected separately for every dependency and
+redirect. Authorization headers are limited to their originating HTTP origin.
+The cookie jar uses `tough-cookie` for standard scope and public-suffix handling.
+Optional content steering is removed; unsupported external
+protocols fail closed. DASH's resolve-to-zero XLink sentinel is preserved without
+issuing a resource request. ClearKey license elements and embedded PlayReady
+license URLs in manifest PRO/PSSH records are proxied; optional PlayReady
+interactive license pages are removed. Malformed PlayReady data and embedded
+license stores are rejected. Media payload bytes are relayed unchanged.
+Existing HLS playlists issued before channel-scoped
 grants must be reloaded once after upgrading.
 Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
 through with dependencies that clients could load directly.

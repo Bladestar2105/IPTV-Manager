@@ -9,6 +9,7 @@ vi.mock('../../src/services/geoIpService.js', () => ({ isIpAllowedForUser }));
 vi.mock('../../src/services/logoResolver.js', () => ({ getEpgLogo: vi.fn(() => 'https://epg.example/current.png') }));
 
 import { createClientResourceUrl, createChannelIconUrl, resolveClientResource, rewriteClientMetadata } from '../../src/services/clientResourceService.js';
+import { upstreamRequestHeaders, withUpstreamCookies } from '../../src/utils/clientCookies.js';
 
 const user = { id: 7, token_version: 2, is_active: 1, webui_access: 0 };
 const request = () => ({ protocol: 'https', get: name => name === 'host' ? 'manager.example' : undefined,
@@ -104,6 +105,20 @@ describe('scoped client resource URLs', () => {
     expect(await resolveClientResource(resourceRequest(rewritten.drm.license_key))).toMatchObject({
       kind: 'license', url: 'https://drm.example/license', headers: { Authorization: 'Bearer secret' }
     });
+  });
+
+  it('binds explicitly encoded license authorization to the license origin while retaining cookie scope', async () => {
+    const context = withUpstreamCookies({ Authorization: 'Bearer panel-secret' }, {
+      url: 'https://panel.example.com/main.mpd', headers: { getSetCookie: () => ['session=panel-secret; Path=/'] },
+    }, 'https://panel.example.com/main.mpd');
+    const rewritten = rewriteClientMetadata(request(), user, {
+      license_key: 'https://drm.example/license|Authorization=Bearer%20license-secret&Cookie=license%3Dexplicit',
+    }, '', context);
+    const resource = await resolveClientResource(resourceRequest(rewritten.license_key));
+    const headers = new Headers(upstreamRequestHeaders(resource, resource.url));
+    expect(headers.get('authorization')).toBe('Bearer license-secret');
+    expect(headers.get('cookie')).toBe('license=explicit');
+    expect(new Headers(upstreamRequestHeaders(resource, 'https://other.example/license')).get('cookie')).toBeNull();
   });
 
   it('does not wrap Manager URLs again and blocks unsafe schemes and protocol-relative bypasses', () => {

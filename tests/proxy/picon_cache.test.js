@@ -142,6 +142,39 @@ describe('client resource and image proxy', () => {
     expect((await request(app).get(localPath(segment))).status).toBe(200);
     expect(new Headers(mocks.fetchSafe.mock.calls[1][1].headers).get('cookie')).toBe('session=rotated');
   });
+  it('preserves encrypted cookie scopes through nested manifests and strips provider authorization from foreign hosts', async () => {
+    const root = localPath(createClientResourceUrl(reqForUrl, user, 'https://panel.example.com/live/main.m3u8', {
+      kind: 'resource', headers: { Cookie: 'initial=secret', Authorization: 'Bearer provider-secret' },
+    }));
+    const master = response('#EXTM3U\nchild.m3u8\nhttps://cdn.example.com/live/segment.ts\nhttps://license.example.net/key\n', 'application/vnd.apple.mpegurl');
+    master.url = 'https://panel.example.com/live/main.m3u8';
+    master.headers.getSetCookie = () => ['host=secret; Path=/', 'shared=yes; Domain=example.com; Path=/live; Secure'];
+    mocks.fetchSafe.mockResolvedValueOnce(master);
+    const result = await request(app).get(root);
+    expect(result.status).toBe(200);
+    expect(result.text).not.toMatch(/secret|example\.com|example\.net/);
+    const urls = result.text.split('\n').filter(line => line.startsWith('http'));
+    const child = response('#EXTM3U\nchunk.ts\nhttps://cdn.example.com/live/chunk.ts\n', 'application/vnd.apple.mpegurl');
+    child.url = 'https://panel.example.com/live/child.m3u8';
+    child.headers.set('set-cookie', 'host=; Max-Age=0; Path=/');
+    mocks.fetchSafe.mockResolvedValueOnce(child);
+    const childResult = await request(app).get(localPath(urls[0]));
+    const nested = childResult.text.split('\n').filter(line => line.startsWith('http'));
+    for (const url of [...nested, urls[1], urls[2]]) {
+      mocks.fetchSafe.mockResolvedValueOnce(response('segment', 'video/mp2t'));
+      expect((await request(app).get(localPath(url))).status).toBe(200);
+    }
+    const sent = mocks.fetchSafe.mock.calls.map(([, options]) => new Headers(options.headers));
+    expect(sent[0].get('cookie')).toBe('initial=secret');
+    expect(sent[1].get('cookie')).toContain('host=secret');
+    expect(sent[2].get('cookie')).not.toContain('host=secret');
+    expect(sent[2].get('authorization')).toBe('Bearer provider-secret');
+    expect(sent[3].get('cookie')).toBe('shared=yes');
+    expect(sent[3].get('authorization')).toBeNull();
+    expect(sent[4].get('cookie')).toBe('shared=yes');
+    expect(sent[5].get('cookie')).toBeNull();
+    expect(sent[5].get('authorization')).toBeNull();
+  });
   it.each(['assignment', 'share'])('revokes channel-bound licenses after removing the %s permission', async permission => {
     const url = localPath(createClientResourceUrl(reqForUrl, { ...user, resource_token: 'shared-token' }, 'https://drm.example/license', { kind: 'license', channelId: 5 }));
     mocks.getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, allowed_channels: [5] });

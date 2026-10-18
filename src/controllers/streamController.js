@@ -9,7 +9,7 @@ import { isSafeUrl, safeLookup, redactUrl } from '../utils/helpers.js';
 import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { resolveBudget } from '../utils/env.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
-import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from '../utils/clientCookies.js';
 import { createClientResourceUrl } from '../services/clientResourceService.js';
 import { rewriteHlsManifest, rewriteDashManifest, isClientManifest } from '../utils/clientManifests.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
@@ -122,10 +122,10 @@ export const proxyMpd = async (req, res) => {
     const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || upstreamUrl) || ((!relativePath || relativePath.endsWith('.mpd')) ? 'dash' : null);
     if (manifestKind) {
         const text = await readManifest(upstream);
-        const headersToForward = withUpstreamCookies(headers, upstream);
+        const nextContext = withUpstreamCookies(headers, upstream, upstreamUrl);
         const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
         const newText = rewrite(text, upstream.url || upstreamUrl, (url, options) => createClientResourceUrl(req, user, url, {
-          kind: 'resource', headers: headersToForward, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+          kind: 'resource', ...nextContext, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
         }));
         res.setHeader('Content-Type', manifestKind === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml');
         res.send(newText);
@@ -291,17 +291,17 @@ export const proxyLive = async (req, res) => {
 
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
-      const headersToForward = withUpstreamCookies(fetchHeaders, upstream);
+      const nextContext = withUpstreamCookies(fetchHeaders, upstream, remoteUrl);
 
       // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const basePayload = { h: nextContext.headers, j: nextContext.cookieJar, o: nextContext.headerOrigin, s: isProviderSafe };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
       const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
       const newText = rewrite(text, baseUrl, (absoluteUrl, options) => {
         if (manifestKind === 'dash') return createClientResourceUrl(req, user, absoluteUrl, {
-          kind: 'resource', headers: headersToForward, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+          kind: 'resource', ...nextContext, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
         });
         const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, i: channel.user_channel_id || channel.id, v: options?.hlsVariables };
         const encrypted = encrypt(JSON.stringify(payload));
@@ -372,6 +372,8 @@ export const proxySegment = async (req, res) => {
   let providerId = 0;
   let channelId = null;
   let hlsVariables = {};
+  let cookieJar = null;
+  let headerOrigin = null;
 
   try {
     const user = await getXtreamUser(req);
@@ -400,6 +402,8 @@ export const proxySegment = async (req, res) => {
             if (decryptedBase) {
                 const basePayload = JSON.parse(decryptedBase);
                 if (basePayload.h) Object.assign(headers, basePayload.h);
+                cookieJar = basePayload.j || null;
+                headerOrigin = basePayload.o || null;
                 if (basePayload.s === false) isOriginSafe = false;
             }
         } catch {}
@@ -442,9 +446,11 @@ export const proxySegment = async (req, res) => {
         }
     }
 
+    const cookieContext = createUpstreamContext(headers, headerOrigin || targetUrl, cookieJar, headerOrigin || targetUrl);
+    headers = upstreamRequestHeaders(cookieContext, targetUrl);
     let upstream;
     if (isOriginSafe) {
-        upstream = await fetchSafe(targetUrl, { headers });
+        upstream = await fetchSafe(targetUrl, { headers, cookieJar: cookieContext.cookieJar, headerOrigin: cookieContext.headerOrigin });
     } else {
         // If the original URL was unsafe (e.g. manually added loopback by an admin and we didn't check it)
         // Then we should probably not use fetchSafe because fetchSafe strictly forbids unsafe IPs.
@@ -476,11 +482,11 @@ export const proxySegment = async (req, res) => {
     const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || targetUrl);
     if (manifestKind) {
       const text = await readManifest(upstream);
-      const nextHeaders = withUpstreamCookies(headers, upstream);
-      const baseEncoded = encodeURIComponent(encrypt(JSON.stringify({ h: nextHeaders, s: isOriginSafe })));
+      const nextContext = withUpstreamCookies(cookieContext.headers, upstream, targetUrl, cookieContext.cookieJar, cookieContext.headerOrigin);
+      const baseEncoded = encodeURIComponent(encrypt(JSON.stringify({ h: nextContext.headers, j: nextContext.cookieJar, o: nextContext.headerOrigin, s: isOriginSafe })));
       const tokenParam = req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
       const mapUrl = (url, options) => {
-        if (manifestKind === 'dash') return createClientResourceUrl(req, user, url, { kind: 'resource', headers: nextHeaders, channelName, providerId, channelId, ...options });
+        if (manifestKind === 'dash') return createClientResourceUrl(req, user, url, { kind: 'resource', ...nextContext, channelName, providerId, channelId, ...options });
         const data = encodeURIComponent(encrypt(JSON.stringify({ u: url, c: channelName, p: providerId, i: channelId, v: options?.hlsVariables })));
         return `/live/segment/${encodeURIComponent(req.params.username)}/${encodeURIComponent(req.params.password)}/seg.ts?data=${data}&base=${baseEncoded}${tokenParam}`;
       };
@@ -647,17 +653,17 @@ export const proxyTimeshift = async (req, res) => {
 
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
-      const headersToForward = withUpstreamCookies(headers, upstream);
+      const nextContext = withUpstreamCookies(headers, upstream, remoteUrl);
 
       // Optimization: Encrypt headers and safe-check once
-      const basePayload = { h: headersToForward, s: isProviderSafe };
+      const basePayload = { h: nextContext.headers, j: nextContext.cookieJar, o: nextContext.headerOrigin, s: isProviderSafe };
       const baseEncrypted = encrypt(JSON.stringify(basePayload));
       const baseEncoded = encodeURIComponent(baseEncrypted);
 
       const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
       const newText = rewrite(text, baseUrl, (absoluteUrl, options) => {
         if (manifestKind === 'dash') return createClientResourceUrl(req, user, absoluteUrl, {
-          kind: 'resource', headers: headersToForward, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
+          kind: 'resource', ...nextContext, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
         });
         const payload = { u: absoluteUrl, c: channel.name, p: channel.provider_id, i: channel.user_channel_id || channel.id, v: options?.hlsVariables };
         const encrypted = encrypt(JSON.stringify(payload));

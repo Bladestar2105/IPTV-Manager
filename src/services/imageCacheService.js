@@ -89,7 +89,7 @@ export function imageRequestHeaders(headers = {}) {
     };
 }
 
-async function refreshImage(url, headers, key, suppliedResponse) {
+async function refreshImage(url, headers, key, suppliedResponse, cookieJar, headerOrigin) {
     const directory = path.join(CACHE_DIR, 'picons');
     const file = path.join(directory, `${key}.png`);
     const metadataFile = path.join(directory, `${key}.json`);
@@ -100,7 +100,7 @@ async function refreshImage(url, headers, key, suppliedResponse) {
             const value = cached?.metadata?.[field];
             if (typeof value === 'string' && value.length <= 4096 && !/[\r\n]/.test(value)) conditional[header] = value;
         }
-        const response = suppliedResponse || await fetchSafe(url, { headers: conditional, timeout: 30000 });
+        const response = suppliedResponse || await fetchSafe(url, { headers: conditional, cookieJar, headerOrigin, timeout: 30000 });
         if (response.status === 304) {
             discardBody(response);
             if (!cached) throw new Error('Invalid revalidation');
@@ -128,11 +128,14 @@ async function refreshImage(url, headers, key, suppliedResponse) {
     }
 }
 
-export async function getCachedImage(url, { headers = {}, response = null } = {}) {
+export async function getCachedImage(url, { headers = {}, response = null, cookieJar = null, headerOrigin = url } = {}) {
     const normalizedHeaders = Object.fromEntries([...new Headers(headers).entries()].sort(([a], [b]) => a.localeCompare(b)));
-    const key = Object.keys(normalizedHeaders).length ? digest(JSON.stringify([url, normalizedHeaders])) : getLogoCacheHash(url);
+    // Cookie scope affects redirect requests; access timestamps do not affect identity.
+    const scopedCookies = cookieJar?.cookies?.map(cookie => [cookie.key, cookie.value, cookie.domain, cookie.path, cookie.secure, cookie.hostOnly, cookie.expires, cookie.maxAge]);
+    const identity = scopedCookies?.length ? [url, normalizedHeaders, scopedCookies] : [url, normalizedHeaders];
+    const key = Object.keys(normalizedHeaders).length || scopedCookies?.length ? digest(JSON.stringify(identity)) : getLogoCacheHash(url);
     if (!pending.has(key)) {
-        const request = refreshImage(url, normalizedHeaders, key, response).finally(() => pending.delete(key));
+        const request = refreshImage(url, normalizedHeaders, key, response, cookieJar, headerOrigin).finally(() => pending.delete(key));
         pending.set(key, request);
     } else if (response) discardBody(response);
     return pending.get(key);

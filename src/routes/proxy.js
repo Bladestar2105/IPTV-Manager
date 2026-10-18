@@ -8,7 +8,7 @@ import { getLogoCacheHash, registerProviderCachedIcon } from '../services/logoRe
 import { getCachedImage, clearImageCache, imageRequestHeaders } from '../services/imageCacheService.js';
 import { createClientResourceUrl, resolveClientResource, rewriteClientMetadata } from '../services/clientResourceService.js';
 import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
-import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from '../utils/clientCookies.js';
 import { reserveGrantedResourceSession } from '../controllers/streamControllerHelpers.js';
 
 const router = express.Router();
@@ -37,8 +37,8 @@ function protectResource(res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
-async function sendImage(res, url, headers, providerId, response) {
-  const image = await getCachedImage(url, { headers, response });
+async function sendImage(res, url, headers, providerId, response, cookieContext = {}) {
+  const image = await getCachedImage(url, { headers, response, cookieJar: cookieContext.cookieJar, headerOrigin: cookieContext.headerOrigin });
   protectResource(res);
   res.setHeader('Content-Type', image.contentType);
   res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
@@ -70,7 +70,9 @@ router.all('/resource/:data/:filename', async (req, res) => {
   const controller = new AbortController();
   res.once('close', () => { controller.abort(); discardBody(upstream); cleanup(); });
   try {
-    if (resource.kind === 'image') return await sendImage(res, resource.url, resource.headers, resource.providerId);
+    const cookieContext = createUpstreamContext(resource.headers, resource.headerOrigin || resource.url, resource.cookieJar, resource.headerOrigin || resource.url);
+    const scopedHeaders = upstreamRequestHeaders(cookieContext, resource.url);
+    if (resource.kind === 'image') return await sendImage(res, resource.url, scopedHeaders, resource.providerId, undefined, cookieContext);
 
     if (resource.channelName && resource.providerId && resource.kind === 'resource') {
       const { default: manager } = await import('../services/streamManager.js');
@@ -84,12 +86,14 @@ router.all('/resource/:data/:filename', async (req, res) => {
       heartbeat = () => manager.touch(id);
     }
 
-    const headers = resource.kind === 'resource' ? imageRequestHeaders(resource.headers) : { ...resource.headers };
+    const headers = resource.kind === 'resource' ? imageRequestHeaders(scopedHeaders) : { ...scopedHeaders };
     for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
     if (resource.kind === 'license' && req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'];
     upstream = await fetchSafe(resource.url, {
       method: req.method === 'HEAD' ? 'GET' : req.method,
       headers,
+      cookieJar: cookieContext.cookieJar,
+      headerOrigin: cookieContext.headerOrigin,
       signal: controller.signal,
       ...(req.method === 'POST' ? { body: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0) } : {}),
     });
@@ -102,11 +106,11 @@ router.all('/resource/:data/:filename', async (req, res) => {
     const type = upstream.headers.get('content-type') || 'application/octet-stream';
     const baseUrl = upstream.url || resource.url;
     const manifest = resource.kind === 'license' ? null : resource.manifestKind || isClientManifest(type, baseUrl);
-    const nextHeaders = withUpstreamCookies(resource.headers, upstream);
-    delete nextHeaders.Range;
-    delete nextHeaders.range;
+    const nextContext = withUpstreamCookies(cookieContext.headers, upstream, resource.url, cookieContext.cookieJar, cookieContext.headerOrigin);
+    delete nextContext.headers.Range;
+    delete nextContext.headers.range;
     const map = (url, options = {}) => createClientResourceUrl(req, resource.user, url, {
-      kind: 'resource', headers: nextHeaders, channelId: resource.channelId,
+      kind: 'resource', ...nextContext, channelId: resource.channelId,
       channelName: resource.channelName, providerId: resource.providerId, ...options,
     });
     // Descendants retain the original share/session constraint, not merely the owner ID.
@@ -120,7 +124,7 @@ router.all('/resource/:data/:filename', async (req, res) => {
       return res.send(rewritten);
     }
     if (resource.kind !== 'license' && /^image\//i.test(type)) {
-      return await sendImage(res, resource.url, resource.headers, resource.providerId, upstream);
+      return await sendImage(res, resource.url, scopedHeaders, resource.providerId, upstream, cookieContext);
     }
     // Unknown active document formats could contain dependencies we cannot
     // rewrite safely. Never delegate their network access to the client.
@@ -132,7 +136,7 @@ router.all('/resource/:data/:filename', async (req, res) => {
       const data = await readBodyWithLimit(upstream, { as: 'json', maxBytes: MANIFEST_LIMIT, timeoutMs: 30000 });
       return res.json(rewriteClientMetadata(req, resource.user, data, '', {
         channelId: resource.channelId, channelName: resource.channelName,
-        providerId: resource.providerId, headers: nextHeaders,
+        providerId: resource.providerId, ...nextContext,
       }));
     }
     if (resource.kind === 'license') {

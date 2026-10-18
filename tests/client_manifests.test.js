@@ -49,6 +49,20 @@ describe('client manifest resources', () => {
     expect(result).not.toContain('EXT-X-CONTENT-STEERING');
     expect(result).not.toContain('steer.json');
   });
+  it('preserves the DASH resolve-to-zero XLink sentinel without mapping a resource', () => {
+    const urls = [];
+    const result = rewriteDashManifest('<MPD><Period xlink:href="urn:mpeg:dash:resolve-to-zero:2013" xlink:actuate="onLoad"/><Period xlink:href="next.xml"/></MPD>', 'https://origin/manifest.mpd', url => { urls.push(url); return 'https://manager/resource'; });
+    expect(result).toContain('xlink:href="urn:mpeg:dash:resolve-to-zero:2013"');
+    expect(urls).toEqual(['https://origin/next.xml']);
+    expect(() => rewriteDashManifest('<MPD><Period xlink:href="urn:unrecognized"/></MPD>', 'https://origin/manifest.mpd', url => url)).toThrow('Unsupported manifest resource protocol');
+  });
+  it('proxies lowercase ClearKey license elements used by DASH clients', () => {
+    const urls = [];
+    const result = rewriteDashManifest('<MPD><ContentProtection><clearkey:laurl Lic_type="EME-1.0">https://license.example/key?token=provider-secret</clearkey:laurl></ContentProtection></MPD>', 'https://origin/manifest.mpd', (url, options) => { urls.push([url, options]); return 'https://manager/license'; });
+    expect(urls).toEqual([['https://license.example/key?token=provider-secret', { template: false, kind: 'license' }]]);
+    expect(result).toContain('https://manager/license');
+    expect(result).not.toContain('provider-secret');
+  });
   it('marks extensionless DASH updates as manifests and maps license URI attributes', () => {
     const urls = [];
     rewriteDashManifest('<MPD><Location>https://cdn.example/update</Location><PatchLocation>patch</PatchLocation><ContentProtection licenseUri="https://license.example/key"/></MPD>', 'https://origin/manifest.mpd', (url, options) => { urls.push([url, options]); return 'https://manager/resource'; });
