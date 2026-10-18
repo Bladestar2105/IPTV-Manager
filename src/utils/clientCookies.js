@@ -2,6 +2,10 @@ import { CookieJar } from 'tough-cookie';
 
 const entries = headers => headers?.entries ? [...headers.entries()] : Object.entries(headers || {});
 const restoreJar = value => value ? CookieJar.deserializeSync(value) : new CookieJar();
+const crossOriginHeaders = new Set([
+  'user-agent', 'accept', 'accept-language', 'accept-encoding',
+  'range', 'if-range', 'if-modified-since', 'if-none-match', 'content-type', 'content-length',
+]);
 
 // Grants carry the jar encrypted; Cookie headers are selected only at request time.
 export function createUpstreamContext(headers, sourceUrl, cookieJar = null, headerOrigin = sourceUrl, seedCookies = !cookieJar) {
@@ -22,7 +26,7 @@ export function createUpstreamContext(headers, sourceUrl, cookieJar = null, head
 export function upstreamRequestHeaders(context, targetUrl) {
   const sameOrigin = new URL(context.headerOrigin || targetUrl).origin === new URL(targetUrl).origin;
   const headers = Object.fromEntries(entries(context.headers).filter(([name]) =>
-    name.toLowerCase() !== 'cookie' && (sameOrigin || !/^(?:authorization|proxy-authorization)$/i.test(name))));
+    name.toLowerCase() !== 'cookie' && (sameOrigin || crossOriginHeaders.has(name.toLowerCase()))));
   const cookie = restoreJar(context.cookieJar).getCookieStringSync(targetUrl);
   if (cookie) headers.Cookie = cookie;
   return headers;

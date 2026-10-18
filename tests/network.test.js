@@ -120,17 +120,34 @@ describe('fetchSafe', () => {
     helpers.isSafeUrl.mockResolvedValue(true);
     const hop = (location, setCookies = []) => ({ status: 302,
       headers: { get: name => name === 'location' ? location : null, raw: () => ({ 'set-cookie': setCookies }) }, body: { destroy: vi.fn() } });
-    fetch.mockResolvedValueOnce(hop('https://cdn.example.com/live/next', ['shared=one; Domain=example.com; Path=/live; Secure']))
+    fetch.mockResolvedValueOnce(hop('/live/next', ['shared=one; Domain=example.com; Path=/live; Secure']))
+      .mockResolvedValueOnce(hop('https://cdn.example.com/live/next'))
       .mockResolvedValueOnce(hop('http://cdn.example.com/elsewhere/final'))
       .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
-    const final = await fetchSafe('https://panel.example.com/live/main', { headers: { Cookie: 'initial=secret', Authorization: 'Bearer secret', 'Proxy-Authorization': 'Basic secret' } });
+    const final = await fetchSafe('https://panel.example.com/live/main', { headers: {
+      Cookie: 'initial=secret', Authorization: 'Bearer secret', 'Proxy-Authorization': 'Basic secret',
+      'X-Api-Key': 'provider-secret', 'X-Custom-Token': 'token-secret',
+      Referer: 'https://panel.example.com/?password=secret', Origin: 'https://secret.example.com',
+      'User-Agent': 'player', Accept: 'video/mp4', Range: 'bytes=0-1023',
+    } });
     const sent = fetch.mock.calls.map(([, options]) => new Headers(options.headers));
     expect(sent[0].get('cookie')).toBe('initial=secret');
     expect(sent[0].get('authorization')).toBe('Bearer secret');
-    expect(sent[1].get('cookie')).toBe('shared=one');
-    expect(sent[1].get('authorization')).toBeNull();
-    expect(sent[1].get('proxy-authorization')).toBeNull();
-    expect(sent[2].get('cookie')).toBeNull();
+    expect(sent[1].get('cookie')).toContain('initial=secret');
+    expect(sent[1].get('authorization')).toBe('Bearer secret');
+    expect(sent[1].get('x-api-key')).toBe('provider-secret');
+    expect(sent[1].get('x-custom-token')).toBe('token-secret');
+    expect(sent[2].get('cookie')).toBe('shared=one');
+    for (const name of ['authorization', 'proxy-authorization', 'x-api-key', 'x-custom-token', 'referer', 'origin']) {
+      expect(sent[2].get(name)).toBeNull();
+      expect(sent[3].get(name)).toBeNull();
+    }
+    expect(sent[3].get('cookie')).toBeNull();
+    for (const headers of sent) {
+      expect(headers.get('user-agent')).toBe('player');
+      expect(headers.get('accept')).toBe('video/mp4');
+      expect(headers.get('range')).toBe('bytes=0-1023');
+    }
     expect(final.upstreamCookieJar).toBeTruthy();
     for (const [, options] of fetch.mock.calls) {
       expect(options).not.toHaveProperty('cookieJar');

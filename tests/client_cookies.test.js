@@ -46,4 +46,27 @@ describe('scoped upstream cookie propagation', () => {
     expect(foreign.get('proxy-authorization')).toBeNull();
     expect(new Headers(cookies.upstreamRequestHeaders(context, 'https://panel.example.com/live/chunk.ts')).get('authorization')).toBe('Bearer secret');
   });
+
+  it('forwards only safe playback headers across origins while preserving custom credentials on their origin', () => {
+    const source = 'https://panel.example.com/live/main.m3u8';
+    const sensitive = {
+      'X-Api-Key': 'provider-secret', 'x-CuStOm-ToKeN': 'token-secret',
+      Referer: 'https://panel.example.com/?password=secret', Origin: 'https://secret.example.com',
+      Authorization: 'Bearer secret', 'Proxy-Authorization': 'Basic secret',
+    };
+    const safe = {
+      'User-Agent': 'player', Accept: 'video/mp4', 'Accept-Language': 'en', 'Accept-Encoding': 'gzip',
+      Range: 'bytes=0-1023', 'If-Range': '"one"', 'If-Modified-Since': 'Mon, 01 Jan 2024 00:00:00 GMT',
+      'If-None-Match': '"two"', 'Content-Type': 'application/octet-stream', 'Content-Length': '3',
+    };
+    const context = cookies.withUpstreamCookies({ ...sensitive, ...safe }, response(source, [
+      'shared=yes; Domain=example.com; Path=/live; Secure',
+    ]), source);
+    const sameOrigin = new Headers(cookies.upstreamRequestHeaders(context, 'https://panel.example.com/live/child.m3u8'));
+    for (const [name, value] of Object.entries({ ...sensitive, ...safe })) expect(sameOrigin.get(name)).toBe(value);
+    const foreign = new Headers(cookies.upstreamRequestHeaders(context, 'https://cdn.example.com/live/segment.ts'));
+    for (const name of Object.keys(sensitive)) expect(foreign.get(name)).toBeNull();
+    for (const [name, value] of Object.entries(safe)) expect(foreign.get(name)).toBe(value);
+    expect(foreign.get('cookie')).toBe('shared=yes');
+  });
 });

@@ -588,7 +588,8 @@ challenges and responses are relayed as bytes; upstream credentials remain
 inside the grant. Kodi challenge/response transform suffixes remain available
 to the client. Manifest cookies retain Domain, Path, Secure and expiry rules in
 an encrypted cookie jar and are selected separately for every dependency and
-redirect. Authorization headers are limited to their originating HTTP origin.
+redirect. Authorization and custom provider headers are limited to their
+originating HTTP origin; only standard playback/negotiation headers cross origins.
 The cookie jar uses `tough-cookie` for standard scope and public-suffix handling.
 Optional content steering is removed; unsupported external
 protocols fail closed. DASH's resolve-to-zero XLink sentinel is preserved without
@@ -598,6 +599,9 @@ interactive license pages are removed. Malformed PlayReady data and embedded
 license stores are rejected. Media payload bytes are relayed unchanged.
 Existing HLS playlists issued before channel-scoped
 grants must be reloaded once after upgrading.
+Bare YouTube trailer IDs remain unchanged; URL/path-shaped trailer values are
+proxied. DASH representation IDs are encoded as URL components, retaining
+valid punctuation and Unicode while rejecting traversal/control sequences.
 Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
 through with dependencies that clients could load directly.
 

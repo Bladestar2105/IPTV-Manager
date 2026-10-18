@@ -96,6 +96,16 @@ describe('scoped client resource URLs', () => {
     const req = resourceRequest(filled); req.query.tpl0 = '../secret';
     expect(await resolveClientResource(req)).toBeNull();
   });
+  it.each(['video:main=1080', 'Bild ä', 'video..main', 'track?x=1&y=2#part', '100%'])('accepts and safely encodes DASH representation ID %s', async id => {
+    const url = createClientResourceUrl(request(), user, 'https://cdn.example/$RepresentationID$/seg-$Number$.m4s', { kind: 'resource' });
+    const req = resourceRequest(url); req.query.tpl0 = id; req.query.tpl1 = '23';
+    expect(await resolveClientResource(req)).toMatchObject({ url: `https://cdn.example/${encodeURIComponent(id)}/seg-23.m4s` });
+  });
+  it.each(['..', '%2e%2e%2fsecret', '../secret', '..\\secret', 'bad\nheader'])('rejects unsafe DASH representation ID %s', async id => {
+    const url = createClientResourceUrl(request(), user, 'https://cdn.example/$RepresentationID$/seg.m4s', { kind: 'resource' });
+    const req = resourceRequest(url); req.query.tpl0 = id;
+    expect(await resolveClientResource(req)).toBeNull();
+  });
 
   it('rewrites nested artwork, subtitles and license URLs without leaking stream sources or headers', async () => {
     const rewritten = rewriteClientMetadata(request(), user, {
@@ -131,12 +141,15 @@ describe('scoped client resource URLs', () => {
   });
   it('resolves recognized relative JSON resource fields without rewriting descriptive text', async () => {
     const rewritten = rewriteClientMetadata(request(), user, {
-      title: 'Movie title', plot: 'A story about captions/en.vtt',
+      title: 'Movie title', plot: 'A story about captions/en.vtt', youtube_trailer: 'dQw4w9WgXcQ',
+      trailer: '../trailers/movie.mp4',
       subtitle: 'captions/en.vtt', poster: '../cover.jpg', logo: 'logo.png',
       subtitles: [{ language: 'en', url: '/subs/en.vtt' }],
       drm: { license_type: 'com.widevine.alpha', license_key: '../license|Authorization=Bearer%20secret', licenseUrl: './alternate-license' },
     }, '', { baseUrl: 'https://cdn.example/metadata/info.json' });
     expect(rewritten.title).toBe('Movie title');
+    expect(rewritten.youtube_trailer).toBe('dQw4w9WgXcQ');
+    expect(await resolveClientResource(resourceRequest(rewritten.trailer))).toMatchObject({ url: 'https://cdn.example/trailers/movie.mp4' });
     expect(rewritten.plot).toBe('A story about captions/en.vtt');
     expect(rewritten.subtitles[0].language).toBe('en');
     for (const [url, expected] of [[rewritten.subtitle, 'https://cdn.example/metadata/captions/en.vtt'], [rewritten.poster, 'https://cdn.example/cover.jpg'], [rewritten.logo, 'https://cdn.example/metadata/logo.png'], [rewritten.subtitles[0].url, 'https://cdn.example/subs/en.vtt']]) {

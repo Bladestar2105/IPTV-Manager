@@ -98,6 +98,20 @@ function shareAllowed(user, channelId) {
   return !channelId || (user.allowed_channels || []).some(id => Number(id) === Number(channelId));
 }
 
+function representationComponent(value) {
+  if (typeof value !== 'string' || !value || value.length > 4096) return null;
+  let decoded = value;
+  for (let depth = 0; depth <= 8; depth++) {
+    if (/[\u0000-\u001f\u007f]/.test(decoded) || /(?:^|[\\/])\.\.?(?:[\\/]|$)/.test(decoded)) return null;
+    let next;
+    try { next = decodeURIComponent(decoded); } catch { break; }
+    if (next === decoded) break;
+    if (depth === 8) return null;
+    decoded = next;
+  }
+  return encodeURIComponent(value);
+}
+
 export async function resolveClientResource(req) {
   try {
     const payload = readGrant(req.params.data);
@@ -134,13 +148,14 @@ export async function resolveClientResource(req) {
     }
     for (const [index, item] of (payload.templates || []).entries()) {
       const value = req.query[`tpl${index}`];
-      if (typeof value !== 'string' || !(item.type === 'RepresentationID'
-        ? /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/.test(value) && !value.includes('..')
-        : /^\d{1,32}$/.test(value))) return null;
-      url = url.replace(item.token, value);
+      const component = item.type === 'RepresentationID' ? representationComponent(value)
+        : typeof value === 'string' && /^\d{1,32}$/.test(value) ? value : null;
+      if (component === null) return null;
+      url = url.replace(item.token, () => component);
     }
     const parsed = httpUrl(url, payload.currentIcon ? channel.provider_url || getBaseUrl(req) : undefined);
     if (!parsed) return null;
+    if (payload.templates?.length && parsed.origin !== httpUrl(payload.url)?.origin) return null;
     return {
       ...payload, url: parsed.href,
       user: { ...authorizedUser, max_connections: user.max_connections },
@@ -158,6 +173,7 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
   }
   if (typeof value !== 'string') return value;
   const relative = options.baseUrl && value.trim() && !/^(?:[a-z][a-z\d+.-]*:|#)/i.test(value.trim()) &&
+    (!/trailer/i.test(key) || /[./\\?#]/.test(value)) &&
     (imageFields.test(key) || resourceFields.test(key) || /^license_key$/i.test(key));
   if (/^license_key$/i.test(key) && (/^(?:https?:)?\/\//i.test(value) || relative)) {
     const [url, encodedHeaders, ...transforms] = value.split('|');
