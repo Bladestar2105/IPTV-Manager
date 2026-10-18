@@ -1,6 +1,7 @@
 import { PassThrough, Readable, pipeline } from 'node:stream';
 import { createMp4PrivacyTransform, rewriteMp4Metadata } from '../utils/clientMp4.js';
 import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { createUpstreamContext } from '../utils/clientCookies.js';
 
 const MAX_METADATA = 32 * 1024 * 1024;
 function knownMp4(response, url) {
@@ -108,14 +109,22 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
   let range;
   try { range = contentRange(upstream); } catch (error) { discardBody(upstream); throw error; }
   discardBody(upstream);
-  const etag = upstream.headers.get('etag');
-  const strong = etag && /^"[^"\r\n]*"$/.test(etag);
+  let etag = upstream.headers.get('etag');
+  const strong = () => etag && /^"[^"\r\n]*"$/.test(etag);
+  const observeEtag = response => {
+    const value = response.headers.get('etag');
+    if (etag && value !== etag) throw unsafe();
+    etag ||= value;
+  };
   const controller = new AbortController();
   const signal = fetchOptions.signal ? AbortSignal.any([fetchOptions.signal, controller.signal]) : controller.signal;
   const deadline = Date.now() + 30_000;
   const timer = setTimeout(() => controller.abort(unsafe()), 30_000);
   timer.unref?.();
-  let cookieJar = upstream.upstreamCookieJar || fetchOptions.cookieJar;
+  const mediaUrl = upstream.url || url;
+  const headerOrigin = fetchOptions.headerOrigin || url;
+  const context = createUpstreamContext(fetchOptions.headers, headerOrigin, upstream.upstreamCookieJar || fetchOptions.cookieJar, headerOrigin);
+  let cookieJar = context.cookieJar;
   let streamingFallback = false;
   const fetchMedia = async (start, end, pinned = false) => {
     const headers = new Headers(fetchOptions.headers);
@@ -124,17 +133,18 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
     headers.set('accept-encoding', 'identity');
     if (start !== undefined) headers.set('range', `bytes=${start}-${end}`);
     if (pinned) headers.set('if-match', etag);
-    const response = await fetchSafe(url, { ...fetchOptions, headers: Object.fromEntries(headers), signal, cookieJar,
+    const response = await fetchSafe(mediaUrl, { ...fetchOptions, headers: Object.fromEntries(headers), signal, cookieJar, headerOrigin: context.headerOrigin,
       timeout: Math.max(1, Math.min(fetchOptions.timeout || 15000, deadline-Date.now())), maxDurationMs: Math.max(1, deadline-Date.now()) });
     cookieJar = response.upstreamCookieJar || cookieJar;
     if (response.headers.get('content-encoding') && response.headers.get('content-encoding') !== 'identity') { discardBody(response); throw unsafe(); }
     return response;
   };
   const probe = async (start, end) => {
-    const response = await fetchMedia(start, end, strong);
+    const response = await fetchMedia(start, end, strong());
     try {
       const actual = contentRange(response);
-      if (response.status !== 206 || (etag && response.headers.get('etag') !== etag) || actual.start !== start || actual.end !== end || actual.total !== range.total) throw unsafe();
+      if (response.status !== 206 || actual.start !== start || actual.end !== end || actual.total !== range.total) throw unsafe();
+      observeEtag(response);
       const bytes = await readBodyWithLimit(response, { as: 'buffer', maxBytes: end-start+1, timeoutMs: Math.max(1, deadline-Date.now()) });
       if (bytes.length !== end-start+1) throw unsafe();
       return bytes;
@@ -142,7 +152,7 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
   };
   try {
     // Without a strong validator, MP4 range reads assume the provider file stays unchanged.
-    if (strong || isMp4) {
+    if (strong() || isMp4) {
       try {
         const replacements = [];
         let position = 0, metadataBytes = 0, boxes = 0;
@@ -172,10 +182,11 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
           }
           position += size;
         }
-        const response = await fetchMedia(range.start, range.end, strong);
+        const response = await fetchMedia(range.start, range.end, strong());
         try {
           const actual = contentRange(response);
-          if (response.status !== 206 || (etag && response.headers.get('etag') !== etag) || actual.start !== range.start || actual.end !== range.end || actual.total !== range.total) throw unsafe();
+          if (response.status !== 206 || actual.start !== range.start || actual.end !== range.end || actual.total !== range.total) throw unsafe();
+          observeEtag(response);
           for (const replacement of replacements) replacement.bytes = rewriteMp4Metadata(replacement.bytes, (url, options) => mapUrl(url, options, response));
           return result(response, overlayStream(response.body, range, replacements));
         } catch (error) { discardBody(response); throw error; }

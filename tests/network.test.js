@@ -128,7 +128,7 @@ describe('fetchSafe', () => {
       Cookie: 'initial=secret', Authorization: 'Bearer secret', 'Proxy-Authorization': 'Basic secret',
       'X-Api-Key': 'provider-secret', 'X-Custom-Token': 'token-secret',
       Referer: 'https://panel.example.com/?password=secret', Origin: 'https://secret.example.com',
-      'User-Agent': 'player', Accept: 'video/mp4', Range: 'bytes=0-1023',
+      'User-Agent': 'player', Accept: 'video/mp4', Range: 'bytes=0-1023', 'If-Match': '"media-version"',
     } });
     const sent = fetch.mock.calls.map(([, options]) => new Headers(options.headers));
     expect(sent[0].get('cookie')).toBe('initial=secret');
@@ -147,6 +147,7 @@ describe('fetchSafe', () => {
       expect(headers.get('user-agent')).toBe('player');
       expect(headers.get('accept')).toBe('video/mp4');
       expect(headers.get('range')).toBe('bytes=0-1023');
+      expect(headers.get('if-match')).toBe('"media-version"');
     }
     expect(final.upstreamCookieJar).toBeTruthy();
     for (const [, options] of fetch.mock.calls) {

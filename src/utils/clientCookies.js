@@ -4,7 +4,7 @@ const entries = headers => headers?.entries ? [...headers.entries()] : Object.en
 const restoreJar = value => value ? CookieJar.deserializeSync(value) : new CookieJar();
 const crossOriginHeaders = new Set([
   'user-agent', 'accept', 'accept-language', 'accept-encoding',
-  'range', 'if-range', 'if-modified-since', 'if-none-match', 'content-type', 'content-length',
+  'range', 'if-range', 'if-match', 'if-modified-since', 'if-none-match', 'content-type', 'content-length',
 ]);
 
 // Grants carry the jar encrypted; Cookie headers are selected only at request time.

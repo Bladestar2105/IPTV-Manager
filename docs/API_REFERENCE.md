@@ -654,7 +654,10 @@ entry has its own upstream cookie context; rotating cookies within that resource
 do not change embedded license addresses. Reopening the original entry URL starts
 a separate playback. Continuous MPEG-TS responses keep their original connection.
 Partial MP4 requests inspect complete metadata using bounded range reads,
-skipping media payload boxes. Strong ETags pin those reads when available.
+skipping media payload boxes. Reads target the final upstream media URL while
+retaining origin-scoped credentials and cookies. Strong ETags pin those reads
+when available; ETags first observed during probing are also tracked and checked
+on subsequent reads.
 Without a strong validator, Manager assumes the provider file remains unchanged
 between reads, as ordinary player range requests do. Returned intervals and total
 lengths are checked, but same-length replacements without a reliable validator

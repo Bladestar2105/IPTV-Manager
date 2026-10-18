@@ -67,7 +67,7 @@ describe('scoped upstream cookie propagation', () => {
     };
     const safe = {
       'User-Agent': 'player', Accept: 'video/mp4', 'Accept-Language': 'en', 'Accept-Encoding': 'gzip',
-      Range: 'bytes=0-1023', 'If-Range': '"one"', 'If-Modified-Since': 'Mon, 01 Jan 2024 00:00:00 GMT',
+      Range: 'bytes=0-1023', 'If-Range': '"one"', 'If-Match': '"media-version"', 'If-Modified-Since': 'Mon, 01 Jan 2024 00:00:00 GMT',
       'If-None-Match': '"two"', 'Content-Type': 'application/octet-stream', 'Content-Length': '3',
     };
     const context = cookies.withUpstreamCookies({ ...sensitive, ...safe }, response(source, [

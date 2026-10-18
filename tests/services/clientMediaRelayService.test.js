@@ -5,6 +5,7 @@ const { fetchSafe } = vi.hoisted(() => ({ fetchSafe: vi.fn() }));
 vi.mock('../../src/utils/network.js', async original => ({ ...await original(), fetchSafe }));
 import { prepareClientMediaResponse } from '../../src/services/clientMediaRelayService.js';
 import { rewriteMp4Metadata } from '../../src/utils/clientMp4.js';
+import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from '../../src/utils/clientCookies.js';
 
 const url = 'https://provider.example/video.mp4';
 const target = 'https://manager.test/r/1234567890123456789012';
@@ -128,6 +129,49 @@ describe('client media relay', () => {
     expect(r.status).toBe(206); expect(r.headers.get('content-range')).toBe(`bytes ${start}-${end}/${data.length}`);
     expect(await collect(r.body)).toEqual(rewriteMp4Metadata(data, () => target).subarray(start,end+1));
     expect(fetchSafe.mock.calls.every(([,o]) => new Headers(o.headers).get('authorization') === 'upstream-only')).toBe(true);
+  });
+  it.each([
+    [false, url, undefined], [true, url, undefined],
+    [false, 'https://cdn.example/movie.mp4', url],
+  ])('pins reads directly at the effective CDN without leaking provider credentials (%s, %s, %s)', async (cdnCookie, entryUrl, headerOrigin) => {
+    const data = fixture(), cdn = 'https://cdn.example/movie.mp4';
+    const initial = upstream(data,80,180);
+    Object.defineProperty(initial, 'url', { value: cdn });
+    const headers = { Authorization: 'Bearer provider-secret', Cookie: 'panel=secret' };
+    if (cdnCookie) initial.upstreamCookieJar = withUpstreamCookies(headers, {
+      url: cdn, headers: { raw: () => ({ 'set-cookie': ['cdn=allowed; Path=/; Secure'] }) },
+    }, url).cookieJar;
+    provider(data);
+    const provide = fetchSafe.getMockImplementation(), sent = [];
+    fetchSafe.mockImplementation(async (targetUrl, options) => {
+      const context = createUpstreamContext(options.headers, targetUrl, options.cookieJar, options.headerOrigin);
+      sent.push({ url: targetUrl, headers: new Headers(upstreamRequestHeaders(context, targetUrl)) });
+      return provide(targetUrl, options);
+    });
+    const result = await prepareClientMediaResponse(initial, {url:entryUrl,mapUrl:()=>target,fetchOptions:{headers,headerOrigin}});
+    expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181));
+    for (const request of sent) {
+      expect(request.url).toBe(cdn);
+      expect(request.headers.get('if-match')).toBe('"v1"');
+      expect(request.headers.get('authorization')).toBeNull();
+      expect(request.headers.get('cookie')).toBe(cdnCookie ? 'cdn=allowed' : null);
+    }
+  });
+  it.each(['"v1"', 'W/"v1"'])('tracks a validator appearing after the initial response and rejects later changes (%s)', async observed => {
+    const data = fixture(), sent = [];
+    fetchSafe.mockImplementation(async (_url, options) => {
+      const headers = new Headers(options.headers), range = headers.get('range');
+      sent.push(headers);
+      if (!range) return upstream(data,0,data.length-1,'"v2"',200);
+      const [,s,e] = /^bytes=(\d+)-(\d+)$/.exec(range);
+      return upstream(data,Number(s),Number(e), range === 'bytes=80-180' ? '"v2"' : observed);
+    });
+    const result = await prepareClientMediaResponse(upstream(data,80,180,null), {url,mapUrl:()=>target});
+    expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181));
+    expect(sent.at(-1).get('range')).toBeNull();
+    expect(result.headers.get('etag')).toBe('"v2"');
+    expect(sent[0].get('if-match')).toBeNull();
+    expect(sent.slice(1,-1).every(headers => headers.get('if-match') === (observed === '"v1"' ? observed : null))).toBe(true);
   });
   it('rewrites unvalidated MP4 ranges using metadata probes without downloading the movie', async () => {
     const data = fixture(); provider(data, null); const start = 80, end = 230;
