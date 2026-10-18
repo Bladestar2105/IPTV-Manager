@@ -17,6 +17,7 @@ vi.mock('../../src/controllers/shareController.js', () => ({ handleShortLink: vi
 const user = { id: 7, token_version: 2, is_active: 1 };
 let app;
 let createClientResourceUrl;
+const compact = new Map();
 
 async function loadApp() {
   vi.resetModules();
@@ -31,11 +32,14 @@ async function loadApp() {
   }
   vi.doMock('../../src/routes/proxy.js', () => {
     const router = express.Router();
-    router.all('/resource/:data/:filename', (req, res) => {
+    const relay = (req, res) => {
       if (!req.clientResource) return res.sendStatus(401);
       return res.json({ kind: req.clientResource.kind, rawBody: Buffer.isBuffer(req.body) });
-    });
-    return { default: router };
+    };
+    router.all('/resource/:data/:filename', relay);
+    const shortLicenseRouter = express.Router();
+    shortLicenseRouter.all('/:id', relay);
+    return { default: router, shortLicenseRouter };
   });
   ({ default: app } = await import('../../src/app.js'));
   ({ createClientResourceUrl } = await import('../../src/services/clientResourceService.js'));
@@ -50,12 +54,29 @@ function grantPath(kind) {
 
 beforeEach(async () => {
   db.prepare.mockReset();
-  db.prepare.mockImplementation(sql => ({ get: () => sql.includes('FROM users') ? user : undefined }));
+  compact.clear();
+  db.prepare.mockImplementation(sql => ({ get: id => sql.includes('FROM users') ? user
+    : sql.includes('FROM client_license_grants') ? compact.get(id) : undefined }));
   await loadApp();
 });
 afterAll(() => { vi.unstubAllEnvs(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
 describe('validated resource grants and general API quota', () => {
+  it('authenticates compact licenses before quota and preserves raw POST challenges', async () => {
+    const id = 'a'.repeat(22);
+    const envelope = grantPath('license').split('/')[4];
+    compact.set(id, { envelope });
+    for (let i = 0; i < 4; i++) {
+      const response = await request(app).post(`/r/${id}`).set('Content-Type', 'application/json').send('{"challenge":1}');
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ kind: 'license', rawBody: true });
+    }
+    expect(db.prepare.mock.calls.filter(([sql]) => sql.includes('FROM users'))).toHaveLength(4);
+    compact.clear();
+    expect((await request(app).post(`/r/${id}`)).status).toBe(401);
+    expect((await request(app).post(`/r/${id}`)).status).toBe(401);
+    expect((await request(app).post(`/r/${id}`)).status).toBe(429);
+  });
   it.each(['resource', 'license'])('keeps %s playback outside the API quota after authentication', async kind => {
     const path = grantPath(kind);
     for (let i = 0; i < 4; i++) {

@@ -6,11 +6,12 @@ import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getLogoCacheHash, registerProviderCachedIcon } from '../services/logoResolver.js';
 import { getCachedImage, clearImageCache, imageRequestHeaders } from '../services/imageCacheService.js';
-import { createClientResourceUrl, resolveClientResource, rewriteClientMetadata } from '../services/clientResourceService.js';
+import { createClientResourceUrl, createMediaLicenseIdentity, resolveClientResource, resolveCompactLicenseResource, rewriteClientMetadata } from '../services/clientResourceService.js';
 import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
 import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from '../utils/clientCookies.js';
 import { reserveGrantedResourceSession } from '../controllers/streamControllerHelpers.js';
 import { validateClientTtml } from '../utils/clientTtml.js';
+import { prepareClientMediaResponse } from '../services/clientMediaRelayService.js';
 
 const router = express.Router();
 const MANIFEST_LIMIT = 32 * 1024 * 1024;
@@ -58,7 +59,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
   }
 });
 
-router.all('/resource/:data/:filename', async (req, res) => {
+async function relayClientResource(req, res) {
   const resource = req.clientResource === undefined ? await resolveClientResource(req) : req.clientResource;
   if (!resource) return res.sendStatus(401);
   if (!['GET', 'HEAD'].includes(req.method) && !(resource.kind === 'license' && req.method === 'POST')) {
@@ -120,6 +121,7 @@ router.all('/resource/:data/:filename', async (req, res) => {
     const baseUrl = upstream.url || resource.url;
     const manifest = resource.kind === 'license' ? null : resource.manifestKind || isClientManifest(type, baseUrl);
     const nextContext = withUpstreamCookies(cookieContext.headers, upstream, resource.url, cookieContext.cookieJar, cookieContext.headerOrigin);
+    const compactIdentity = createMediaLicenseIdentity(req.params.data || resource.url, cookieContext);
     delete nextContext.headers.Range;
     delete nextContext.headers.range;
     const map = (url, options = {}) => createClientResourceUrl(req, resource.user, url, {
@@ -158,6 +160,15 @@ router.all('/resource/:data/:filename', async (req, res) => {
       res.setHeader('Content-Type', type);
       return res.send(body);
     }
+    if (req.method !== 'HEAD') upstream = await prepareClientMediaResponse(upstream, {
+      url: resource.url,
+      fetchOptions: { headers, cookieJar: nextContext.cookieJar, headerOrigin: cookieContext.headerOrigin, signal: controller.signal },
+      mapUrl: (url, options, response) => {
+        const licenseContext = withUpstreamCookies(cookieContext.headers, response || upstream, resource.url, nextContext.cookieJar, cookieContext.headerOrigin);
+        licenseContext.headers = Object.fromEntries(Object.entries(licenseContext.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
+        return map(url, { ...licenseContext, ...options, compact: true, compactIdentity });
+      },
+    });
     res.status(upstream.status);
     res.setHeader('Content-Type', type);
     for (const name of ['content-length', 'content-range', 'accept-ranges']) {
@@ -177,6 +188,15 @@ router.all('/resource/:data/:filename', async (req, res) => {
     if (!res.headersSent) res.status(502).send('Resource unavailable');
     else res.destroy();
   }
+}
+
+router.all('/resource/:data/:filename', relayClientResource);
+
+export const shortLicenseRouter = express.Router();
+shortLicenseRouter.all('/:id', async (req, res) => {
+  if (req.clientResource === undefined) req.clientResource = await resolveCompactLicenseResource(req);
+  if (req.clientResource?.kind !== 'license') return res.sendStatus(401);
+  return relayClientResource(req, res);
 });
 
 router.delete('/picons', authenticateToken, async (req, res) => {

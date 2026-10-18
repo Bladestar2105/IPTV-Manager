@@ -208,6 +208,10 @@ describe('getCookie', () => {
 
 describe('redactUrl', () => {
   it('redacts opaque image and manifest bearer grants', () => {
+    expect(redactUrl('https://manager.example/r/short-license-token'))
+      .toBe('https://manager.example/r/********');
+    expect(redactUrl('request to https://manager.example/r/short-license-token failed'))
+      .toBe('request to https://manager.example/r/******** failed');
     expect(redactUrl('https://manager.example/api/proxy/resource/encrypted-grant/image.png?tpl0=42'))
       .toBe('https://manager.example/api/proxy/resource/********/image.png?tpl0=42');
     expect(redactUrl('/live/segment/user/pass/seg.ts?data=encrypted-url&base=encrypted-headers'))

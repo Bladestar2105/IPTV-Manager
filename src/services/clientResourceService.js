@@ -1,5 +1,6 @@
 import db from '../database/db.js';
-import { decrypt, encrypt } from '../utils/crypto.js';
+import crypto from 'node:crypto';
+import { decrypt, encrypt, ENCRYPTION_KEY } from '../utils/crypto.js';
 import { getBaseUrl } from '../utils/helpers.js';
 import { expiryEpoch } from '../utils/stalker.js';
 import { getXtreamUser } from './authService.js';
@@ -9,6 +10,8 @@ import { createUpstreamContext } from '../utils/clientCookies.js';
 import { directMetadataUrl } from '../utils/clientResourcePolicy.js';
 
 const PURPOSE = 'client-resource-v1';
+const LICENSE_TTL = 7 * 86400;
+let nextLicenseCleanup = 0;
 const TEMPLATE = /\$(RepresentationID|Number|Bandwidth|Time|SubNumber)(?:%0\d+d)?\$/g;
 const secretFields = /^(?:headers|http_headers|authorization|cookie|password|provider_pass|provider_user|provider_url|username|access_token)$/i;
 const sourceFields = /^(?:direct_source|stream_url|original_url|source_url|playback_url|play_url|stream_source|stream_link)$/i;
@@ -56,6 +59,61 @@ function resourceUrl(req, payload, extension) {
   return `${getBaseUrl(req)}/api/proxy/resource/${opaque(payload)}/${extension}${query.length ? `?${query.join('&')}` : ''}`;
 }
 
+function normalizedGrant(payload) {
+  const normalized = { ...payload, cookieJar: { ...payload.cookieJar, cookies: (payload.cookieJar?.cookies || []).map(cookie => {
+    const copy = { ...cookie };
+    delete copy.lastAccessed;
+    if (copy.maxAge === undefined) delete copy.creation;
+    return copy;
+  }) } };
+  const stable = value => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+  return JSON.stringify(stable(normalized));
+}
+
+export function createMediaLicenseIdentity(source, context) {
+  const headers = Object.fromEntries(Object.entries(context.headers || {}).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
+  return crypto.createHash('sha256').update(normalizedGrant({ source, ...context, headers })).digest('hex');
+}
+
+function compactLicenseUrl(req, payload) {
+  const now = Math.floor(Date.now() / 1000);
+  if (now >= nextLicenseCleanup) {
+    db.prepare('DELETE FROM client_license_grants WHERE id IN (SELECT id FROM client_license_grants WHERE expires_at <= ? ORDER BY expires_at LIMIT 100)').run(now);
+    nextLicenseCleanup = now + 60;
+  }
+  // A keyed fingerprint deduplicates repeated PSSH without exposing target guesses.
+  // Range slices of the same entity must embed the same URL after credential rotation.
+  const fingerprintPayload = payload.compactIdentity
+    ? Object.fromEntries(['purpose', 'kind', 'uid', 'version', 'admin', 'sourceToken', 'channelId', 'providerId', 'url', 'headerOrigin', 'compactIdentity'].map(key => [key, payload[key]]))
+    : payload;
+  const fingerprint = crypto.createHmac('sha256', Buffer.from(ENCRYPTION_KEY, 'hex')).update(normalizedGrant(fingerprintPayload)).digest('hex');
+  let row = db.prepare('SELECT id, expires_at, envelope FROM client_license_grants WHERE fingerprint = ?').get(fingerprint);
+  if (!row) {
+    db.prepare('INSERT OR IGNORE INTO client_license_grants (id, fingerprint, envelope, expires_at) VALUES (?, ?, ?, ?)')
+      .run(crypto.randomBytes(16).toString('base64url'), fingerprint, opaque(payload), now + LICENSE_TTL);
+    row = db.prepare('SELECT id, expires_at, envelope FROM client_license_grants WHERE fingerprint = ?').get(fingerprint);
+  }
+  // Avoid a write for every repeated initialization/rotation record.
+  const current = readGrant(row.envelope);
+  if (!current || normalizedGrant(current) !== normalizedGrant(payload)) {
+    db.prepare('UPDATE client_license_grants SET envelope = ?, expires_at = MAX(expires_at, ?) WHERE id = ?').run(opaque(payload), now + LICENSE_TTL, row.id);
+  } else if (row.expires_at < now + LICENSE_TTL - 3600) {
+    db.prepare('UPDATE client_license_grants SET expires_at = MAX(expires_at, ?) WHERE id = ?').run(now + LICENSE_TTL, row.id);
+  }
+  return `${getBaseUrl(req)}/r/${row.id}`;
+}
+
+export async function resolveCompactLicenseResource(req) {
+  const id = req.params.id;
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(id)) return null;
+  try {
+    const row = db.prepare('SELECT envelope FROM client_license_grants WHERE id = ? AND expires_at > ?').get(id, Math.floor(Date.now() / 1000));
+    if (!row || readGrant(row.envelope)?.kind !== 'license') return null;
+    return await resolveClientResource({ params: { data: row.envelope }, query: {}, ip: req.ip, headers: req.headers });
+  } catch { return null; }
+}
+
 // Grants name one resource, rather than exposing provider credentials or issuing
 // a full-account bearer token just to let an IPTV client display an image.
 export function createClientResourceUrl(req, user, url, options = {}) {
@@ -70,7 +128,10 @@ export function createClientResourceUrl(req, user, url, options = {}) {
     const filename = existing.kind === 'image' ? 'image.png' : existing.kind === 'license' ? 'license' : 'resource';
     const parameters = (existing.templates || []).map((item, index) => `tpl${index}=${item.token}`).join('&');
     const search = parameters ? `?${parameters}` : '';
-    if (match[2] === filename && parsed.search === search) return `${base}${parsed.pathname}${search}`;
+    if (match[2] === filename && parsed.search === search) {
+      if (existing.kind === 'license' && options.compact) return compactLicenseUrl(req, existing);
+      return `${base}${parsed.pathname}${search}`;
+    }
   }
   if (!options.baseUrl && /^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
   const kind = options.kind || 'image';
@@ -80,7 +141,7 @@ export function createClientResourceUrl(req, user, url, options = {}) {
     const direct = directMetadataUrl(parsed.href, undefined, upstreamContext);
     if (direct) return direct;
   }
-  return resourceUrl(req, {
+  const payload = {
     ...context(req, user), kind, url: parsed.href,
     ...upstreamContext,
     channelId: options.channelId || null,
@@ -88,7 +149,12 @@ export function createClientResourceUrl(req, user, url, options = {}) {
     providerId: options.providerId || null,
     hlsVariables: options.hlsVariables || {},
     manifestKind: options.manifestKind || null,
-  }, kind === 'image' ? 'image.png' : kind === 'license' ? 'license' : 'resource');
+  };
+  if (kind === 'license' && options.compact && typeof options.compactIdentity === 'string' && options.compactIdentity && payload.providerId && payload.channelId) {
+    payload.compactIdentity = options.compactIdentity;
+  }
+  if (kind === 'license' && options.compact) return compactLicenseUrl(req, payload);
+  return resourceUrl(req, payload, kind === 'image' ? 'image.png' : kind === 'license' ? 'license' : 'resource');
 }
 
 export function createChannelIconUrl(req, user, userChannelId) {
@@ -146,6 +212,12 @@ export async function resolveClientResource(req) {
         WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
       `).get(payload.channelId, user.id);
       if (!channel) return null;
+      if (payload.kind === 'license' && payload.providerId) {
+        // Use the playback pool rules, including explicit cross-owner grants.
+        const { getChannel, getProviderCandidates } = await import('../controllers/streamControllerHelpers.js');
+        const current = getChannel(payload.channelId, user.id);
+        if (!current || !getProviderCandidates(user.id, current).some(provider => Number(provider.id) === Number(payload.providerId))) return null;
+      }
     }
     let url = payload.url;
     if (payload.currentIcon) {

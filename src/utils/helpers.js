@@ -235,6 +235,7 @@ export function redactUrl(url) {
     // 2. Redact share-management tokens while preserving any query string.
     redacted = redacted.replace(/(\/api\/shares\/)[^/?#]+/gi, '$1********');
     redacted = redacted.replace(/(\/api\/proxy\/resource\/)[^/?#]+/gi, '$1********');
+    redacted = redacted.replace(/(\/r\/)[^/?#\s]+/gi, '$1********');
 
     // Public share slugs are bearer credentials too.
     redacted = redacted.replace(/^((?:https?:\/\/[^/?#]+)?\/share\/)[^/?#]+/i, '$1********');

@@ -44,6 +44,8 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   Never exempt arbitrary third-party/CDN hosts merely because their origin
   differs from the configured provider. Credential-bearing URLs and DRM license
   requests remain proxied even on approved public domains.
+- Inspect binary MP4 PlayReady metadata as well as manifests. Preserve media
+  sample bytes and offsets while replacing provider license addresses.
 
 ## Package and Build Rules
 

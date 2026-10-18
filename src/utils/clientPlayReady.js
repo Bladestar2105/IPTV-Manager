@@ -30,7 +30,7 @@ function validateXml(xml) {
   if (stack.length) invalid();
 }
 
-function rewriteHeader(body, mapUrl) {
+function rewriteHeader(body, mapUrl, preserveLength = false) {
   if (body.length % 2) invalid();
   const xml = body.toString('utf16le');
   if (!Buffer.from(xml, 'utf16le').equals(body) || /<!|<\?|[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(xml) ||
@@ -38,7 +38,7 @@ function rewriteHeader(body, mapUrl) {
   validateXml(xml);
   const tag = /<((?:[\w.-]+:)?(?:LA_URL|LUI_URL))\s*>([^<]*)<\/\1\s*>/g;
   if (/<(?:[\w.-]+:)?(?:LA_URL|LUI_URL)\b/.test(xml.replace(tag, ''))) invalid();
-  const rewritten = xml.replace(tag, (_match, name, text) => {
+  let rewritten = xml.replace(tag, (_match, name, text) => {
     // Non-silent acquisition is an interactive external webpage, not a license relay.
     if (name.split(':').pop() === 'LUI_URL') return '';
     const names = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
@@ -55,10 +55,17 @@ function rewriteHeader(body, mapUrl) {
     const escaped = mapped.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `<${name}>${escaped}</${name}>`;
   });
+  if (preserveLength) {
+    const budget = body.length / 2;
+    if (rewritten.length > budget) rewritten = rewritten.replace(/>\s+</g, '><');
+    if (rewritten.length > budget) throw new Error('PlayReady Manager license URL exceeds original XML budget');
+    // XML permits trailing whitespace; zero bytes or arbitrary padding would corrupt WRMHEADER.
+    rewritten += ' '.repeat(budget - rewritten.length);
+  }
   return Buffer.from(rewritten, 'utf16le');
 }
 
-function rewriteObject(body, mapUrl) {
+function rewriteObject(body, mapUrl, preserveLength = false) {
   if (body.length < 6 || body.length > MAX_OBJECT || body.readUInt32LE(0) !== body.length) invalid();
   const count = body.readUInt16LE(4);
   const records = [];
@@ -70,7 +77,7 @@ function rewriteObject(body, mapUrl) {
     const length = body.readUInt16LE(offset + 2);
     if (offset + 4 + length > body.length || type === 3) invalid();
     const original = body.subarray(offset + 4, offset + 4 + length);
-    const value = type === 1 ? rewriteHeader(original, mapUrl) : original;
+    const value = type === 1 ? rewriteHeader(original, mapUrl, preserveLength) : original;
     if (type === 1) headers++;
     if (value.length > MAX_OBJECT) invalid();
     const record = Buffer.alloc(4);
@@ -109,4 +116,24 @@ export function rewritePlayReadyPssh(base64, mapUrl) {
   const result = Buffer.concat([prefix, pro]);
   result.writeUInt32BE(result.length);
   return result.toString('base64');
+}
+
+// The caller has parsed the ISO-BMFF box header (including extended/zero sizes).
+// Keep full-box flags, version-one KIDs, all PRO record lengths and offsets intact.
+export function rewritePlayReadyPsshBuffer(body, mapUrl, headerSize = 8) {
+  if (body.length > MAX_PSSH || body.length < headerSize + 24) invalid();
+  const start = headerSize;
+  if (body.subarray(start + 4, start + 20).toString('hex') !== PLAYREADY_ID) return body;
+  const version = body[start];
+  if (version > 1) invalid();
+  let offset = start + 20;
+  if (version === 1) {
+    if (offset + 4 > body.length) invalid();
+    offset += 4 + body.readUInt32BE(offset) * 16;
+  }
+  if (offset + 4 > body.length || body.readUInt32BE(offset) !== body.length - offset - 4) invalid();
+  const pro = rewriteObject(body.subarray(offset + 4), mapUrl, true);
+  const result = Buffer.from(body);
+  pro.copy(result, offset + 4);
+  return result;
 }

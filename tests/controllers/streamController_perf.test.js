@@ -166,6 +166,24 @@ function mockFfmpegProbe(stderrText) {
   });
 }
 
+function mockMatroskaRangeSource(url) {
+  const file = Buffer.alloc(1000);
+  Buffer.from([0x1a, 0x45, 0xdf, 0xa3]).copy(file);
+  fetch.mockImplementation(async (requestedUrl, options = {}) => {
+    const range = /^bytes=(\d+)-(\d+)$/.exec(new Headers(options.headers).get('range') || '');
+    const start = range ? Number(range[1]) : 0;
+    const end = range ? Number(range[2]) : file.length - 1;
+    const headers = new Headers({
+      'content-type': 'video/x-matroska',
+      'content-length': String(end - start + 1),
+      'accept-ranges': 'bytes',
+    });
+    if (range) headers.set('content-range', `bytes ${start}-${end}/${file.length}`);
+    return { ok: true, status: range ? 206 : 200, url: requestedUrl || url, headers,
+      body: new PassThrough().end(file.subarray(start, end + 1)) };
+  });
+}
+
 describe('Stream Controller Performance (proxyLive)', () => {
   let req, res;
 
@@ -498,25 +516,12 @@ describe('Stream Controller Performance (proxyLive)', () => {
     };
     res.headersSent = false;
 
-    fetch.mockResolvedValueOnce({
-      ok: true,
-      status: 206,
-      url: 'http://upstream.com/movie/puser/ppass/remote1.mkv',
-      headers: {
-        get: vi.fn((name) => {
-          const values = {
-            'content-type': 'video/x-matroska',
-            'content-length': '101',
-            'content-range': 'bytes 100-200/1000',
-            'accept-ranges': 'bytes',
-          };
-          return values[String(name).toLowerCase()] || null;
-        }),
-      },
-      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
-    });
+    res = Object.assign(new PassThrough(), { setHeader: res.setHeader, status: res.status, sendStatus: res.sendStatus, headersSent: false });
+    mockMatroskaRangeSource('http://upstream.com/movie/puser/ppass/remote1.mkv');
+    const finished = once(res, 'finish');
 
     await streamController.proxyMovie(req, res);
+    await finished;
 
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining('/movie/puser/ppass/remote1.mkv'),
@@ -527,6 +532,8 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 100-200/1000');
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+    expect(res.read()).toEqual(Buffer.alloc(101));
+    res.destroy();
   });
 
   it('falls back to MP4 when stored movie metadata has no extension', async () => {
@@ -667,25 +674,12 @@ describe('Stream Controller Performance (proxyLive)', () => {
     };
     res.headersSent = false;
 
-    fetch.mockResolvedValueOnce({
-      ok: true,
-      status: 206,
-      url: 'http://upstream.com/series/puser/ppass/1.mkv',
-      headers: {
-        get: vi.fn((name) => {
-          const values = {
-            'content-type': 'video/x-matroska',
-            'content-length': '101',
-            'content-range': 'bytes 300-400/1000',
-            'accept-ranges': 'bytes',
-          };
-          return values[String(name).toLowerCase()] || null;
-        }),
-      },
-      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
-    });
+    res = Object.assign(new PassThrough(), { setHeader: res.setHeader, status: res.status, sendStatus: res.sendStatus, headersSent: false });
+    mockMatroskaRangeSource('http://upstream.com/series/puser/ppass/1.mkv');
+    const finished = once(res, 'finish');
 
     await streamController.proxySeries(req, res);
+    await finished;
 
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM series_episode_aliases a'));
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('FROM provider_series_episodes'));
@@ -698,6 +692,8 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.status).toHaveBeenCalledWith(206);
     expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 300-400/1000');
     expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+    expect(res.read()).toEqual(Buffer.alloc(101));
+    res.destroy();
   });
 
   it('resolves a stale provider-based episode ID only when it has one exact match', async () => {

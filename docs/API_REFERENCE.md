@@ -549,6 +549,7 @@ logs.
 - `GET /api/proxy/image?url=<url>&provider_id=<id>` (`provider_id` optional)
 - `GET|HEAD /api/proxy/resource/:data/:filename`
 - `POST /api/proxy/resource/:data/:filename` (license grants only; raw body up to 1 MiB)
+- `GET|HEAD|POST /r/:id` (compact license grants; raw POST body up to 1 MiB)
 - `DELETE /api/proxy/picons`
 
 Client-facing artwork URLs in Xtream, M3U, player JSON, XMLTV and Stalker/MAG
@@ -613,7 +614,18 @@ protocols fail closed. DASH's resolve-to-zero XLink sentinel is preserved withou
 issuing a resource request. ClearKey license elements and embedded PlayReady
 license URLs in manifest PRO/PSSH records are proxied; optional PlayReady
 interactive license pages are removed. Malformed PlayReady data and embedded
-license stores are rejected. Media payload bytes are relayed unchanged.
+license stores are rejected. Binary MP4 PlayReady PSSH records in `moov`,
+`moof`, or top-level boxes also use Manager license addresses. Rewriting keeps
+box sizes, byte offsets and media samples unchanged; malformed metadata or
+insufficient space for a safe replacement fails closed. Metadata buffering is
+limited to 32 MiB and 256 license addresses per metadata box.
+Compact license grants are encrypted in SQLite, survive restarts and expire
+after seven days. Every request rechecks current user and channel access.
+Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
+reads, skipping media payload boxes. Without reliable range validation, Manager
+reads from byte zero and streams only the requested interval; distant seeks can
+therefore require extra upstream traffic. Preparation is bounded to 30 seconds
+and cancellation stops upstream reads.
 HLS child playlists retain their manifest role even without an extension or a
 correct upstream MIME type. Inline AES keys and supported DRM PSSH keys remain
 supported; embedded data manifests and unsupported data dependencies fail closed.

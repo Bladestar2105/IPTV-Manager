@@ -55,7 +55,7 @@ describe('Stalker/MAG portal flow', () => {
       .post(`/api/users/${userId}/stalker-devices`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ mac, ...body });
-    expect(response.status).toBe(201);
+    expect(response.status, `Device registration response: ${response.text}`).toBe(201);
     return response.body;
   }
 
@@ -64,7 +64,8 @@ describe('Stalker/MAG portal flow', () => {
       .get('/server/load.php')
       .set('Cookie', `mac=${encodeURIComponent(mac)}`)
       .query({ type: 'stb', action: 'handshake' });
-    expect(response.body.js.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(response.status, `Handshake response: ${response.text}`).toBe(200);
+    expect(response.body.js?.token, `Handshake response: ${response.text}`).toMatch(/^[0-9a-f]{64}$/);
     return response.body.js.token;
   }
 

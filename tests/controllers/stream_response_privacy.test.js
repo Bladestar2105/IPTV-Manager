@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { Readable } from 'node:stream';
+import { playreadyMp4, providerLicense } from '../fixtures/playreadyMp4.js';
 
-const state = vi.hoisted(() => ({ fetchSafe: vi.fn() }));
+const state = vi.hoisted(() => ({ fetchSafe: vi.fn(), createClientResourceUrl: vi.fn() }));
 vi.mock('../../src/database/db.js', () => ({ default: { prepare: () => ({ get: () => null, all: () => [], run: () => ({}) }) } }));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: async () => ({ id: 1 }) }));
 vi.mock('../../src/services/streamManager.js', () => ({ default: { localStreams: new Map(), remove: vi.fn(), touch: vi.fn(), cleanupSession: vi.fn() } }));
-vi.mock('../../src/services/clientResourceService.js', () => ({ createClientResourceUrl: () => 'http://manager.example/api/proxy/resource/safe/resource' }));
+vi.mock('../../src/services/clientResourceService.js', async original => ({ ...await original(), createClientResourceUrl: state.createClientResourceUrl }));
 vi.mock('../../src/utils/crypto.js', () => ({ decrypt: value => value, encrypt: value => value }));
 vi.mock('../../src/utils/network.js', async original => ({ ...(await original()), fetchSafe: state.fetchSafe }));
 vi.mock('../../src/controllers/streamControllerHelpers.js', async original => ({
@@ -30,9 +31,21 @@ app.get('/series/:episode_id.mp4', controllers.proxySeries);
 const paths = ['/live/1.ts', '/mpd/1/chunk.bin', '/timeshift/60/2026-10-18:10-00/1', '/movie/1.mp4', '/series/1.mp4'];
 const response = (body, type, status = 200) => ({ url: 'https://provider.example/raw', status, ok: true,
   headers: new Headers({ 'content-type': type }), body: Readable.from([body]) });
-beforeEach(() => state.fetchSafe.mockReset());
+beforeEach(() => { state.fetchSafe.mockReset(); state.createClientResourceUrl.mockReset().mockReturnValue('http://manager.example/r/abcdefghijklmnopqrstuv'); });
 
 describe.each(paths)('initial stream privacy for %s', url => {
+  it.each(['moov', 'moof'])('rewrites binary PlayReady %s metadata without moving media', async container => {
+    const original = playreadyMp4(container);
+    state.fetchSafe.mockResolvedValue(response(original, 'video/mp4'));
+    const result = await request(app).get(url);
+    expect(result.status).toBe(200);
+    expect(result.body.length).toBe(original.length);
+    expect(result.body.includes(Buffer.from(providerLicense, 'utf16le'))).toBe(false);
+    expect(result.body.includes(Buffer.from('http://manager.example/r/abcdefghijklmnopqrstuv', 'utf16le'))).toBe(true);
+    expect(result.body.indexOf(Buffer.from('sample-bytes'))).toBe(original.indexOf(Buffer.from('sample-bytes')));
+    expect(state.createClientResourceUrl).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 1 }), providerLicense,
+      expect.objectContaining({ kind: 'license', compact: true, compactIdentity: expect.any(String), channelId: 1, providerId: 3 }));
+  });
   it.each(['text/html', 'application/xml', 'text/css', 'application/json', 'image/svg+xml', 'application/javascript'])('rejects provider error documents returned as %s', async type => {
     const body = type === 'application/json' ? JSON.stringify({ error: 'https://provider.example/private?password=secret' }) : '<document href="https://provider.example/private?password=secret">login</document>';
     const upstream = response(body, type);
@@ -62,9 +75,14 @@ describe.each(paths)('initial stream privacy for %s', url => {
 
   it('preserves binary media and range responses', async () => {
     const status = url.startsWith('/movie/') || url.startsWith('/series/') ? 206 : 200;
-    const upstream = response('media-bytes', 'video/mp4', status);
-    upstream.headers.set('content-range', 'bytes 10-20/100');
-    state.fetchSafe.mockResolvedValue(upstream);
+    state.fetchSafe.mockImplementation((_target, options) => {
+      const ranged = status === 206 && new Headers(options.headers).has('range');
+      const body = status === 200 || ranged ? Buffer.from('media-bytes') : Buffer.concat([Buffer.alloc(10), Buffer.from('media-bytes'), Buffer.alloc(79)]);
+      const upstream = response(body, 'video/mp4', ranged ? 206 : 200);
+      upstream.headers.set('content-length', String(body.length));
+      if (ranged) upstream.headers.set('content-range', 'bytes 10-20/100');
+      return upstream;
+    });
     const result = await request(app).get(url).set('Range', 'bytes=10-20');
     expect(result.status).toBe(status);
     expect(result.body.toString()).toBe('media-bytes');

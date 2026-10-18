@@ -5,6 +5,9 @@ import streamManager from '../services/streamManager.js';
 import { providerSourceKey, redactUrl } from '../utils/helpers.js';
 import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
 import { validateClientTtml } from '../utils/clientTtml.js';
+import { prepareClientMediaResponse } from '../services/clientMediaRelayService.js';
+import { createClientResourceUrl, createMediaLicenseIdentity } from '../services/clientResourceService.js';
+import { createUpstreamContext, withUpstreamCookies } from '../utils/clientCookies.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 import {
   decodeSeriesEpisodeId,
@@ -328,6 +331,35 @@ export async function sendPlaybackDocument(res, upstream) {
     res.sendStatus(502);
   }
   return true;
+}
+
+export async function preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl, channelId, providerId }) {
+  if (req.aborted || res.destroyed) {
+    discardBody(upstream);
+    throw new Error('Media client disconnected');
+  }
+  const context = withUpstreamCookies(headers, upstream, sourceUrl);
+  const compactIdentity = createMediaLicenseIdentity(JSON.stringify([sourceUrl, req.ip, req.headers?.['user-agent']]), createUpstreamContext(headers, sourceUrl));
+  const controller = new AbortController();
+  res.once?.('close', () => controller.abort());
+  req.once?.('aborted', () => controller.abort());
+  const response = await prepareClientMediaResponse(upstream, {
+    url: sourceUrl,
+    fetchOptions: { ...context, signal: controller.signal },
+    mapUrl: (url, options, response) => {
+      const licenseContext = withUpstreamCookies(context.headers, response || upstream, sourceUrl, context.cookieJar, context.headerOrigin);
+      licenseContext.headers = Object.fromEntries(Object.entries(licenseContext.headers).filter(([name]) => !/^(?:range|if-range)$/i.test(name)));
+      return createClientResourceUrl(req, user, url, {
+        ...licenseContext, ...options, kind: 'license', compact: true, compactIdentity, channelId, providerId,
+      });
+    },
+  });
+  response.body.once?.('error', () => {
+    controller.abort();
+    if (!res.headersSent && res.sendStatus) res.sendStatus(502);
+    else res.destroy?.();
+  });
+  return response;
 }
 
 export async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {

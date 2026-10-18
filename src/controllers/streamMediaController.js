@@ -28,6 +28,7 @@ import {
   sendSubtitleTrack,
   sendTrackInfo,
   sendPlaybackDocument,
+  preparePlaybackMedia,
   shareGuestAllowed
 } from './streamControllerHelpers.js';
 
@@ -163,7 +164,7 @@ export const proxyMovie = async (req, res) => {
             headers,
             redirect: 'follow'
         });
-        const upstream = result.response;
+        let upstream = result.response;
         if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
           channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id,
         })) {
@@ -172,6 +173,7 @@ export const proxyMovie = async (req, res) => {
         }
 
         if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
         await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
         res.status(upstream.status);
 
@@ -345,7 +347,7 @@ export const proxySeries = async (req, res) => {
             headers,
             redirect: 'follow'
         });
-        const upstream = result.response;
+        let upstream = result.response;
         if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
           channelName: sessionName, providerId: availableProvider.id, channelId: seriesEpisode.user_channel_id,
         })) {
@@ -354,6 +356,7 @@ export const proxySeries = async (req, res) => {
         }
 
         if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+        upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: result.selectedUrl || remoteUrl, channelId: seriesEpisode.user_channel_id, providerId: availableProvider.id });
         await streamManager.cleanupSession(user.id, req.ip, sessionName, availableProvider.id, connectionId);
         res.status(upstream.status);
 

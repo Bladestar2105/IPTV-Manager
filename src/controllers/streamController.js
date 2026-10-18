@@ -21,6 +21,7 @@ import {
   createSafeCleanup,
   fetchWithBackups,
   getChannel,
+  preparePlaybackMedia,
   recordStreamStat,
   reserveChannelSession,
   sendPlaybackDocument,
@@ -132,14 +133,19 @@ export const proxyMpd = async (req, res) => {
       streamManager.remove(connectionId);
       return;
     }
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || upstreamUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
     const contentType = upstream.headers.get('content-type');
     if (contentType) res.setHeader('Content-Type', contentType);
     const contentLength = upstream.headers.get('content-length');
     if (contentLength) res.setHeader('Content-Length', contentLength);
 
     upstream.body.pipe(res);
-
-    req.on('close', () => {
+    upstream.body.once('error', () => {
+       streamManager.remove(connectionId);
+       if (!res.headersSent) res.sendStatus(502);
+       else res.destroy();
+    });
+    attachResponseCleanup(req, res, () => {
        streamManager.remove(connectionId);
        if (upstream.body && !upstream.body.destroyed) upstream.body.destroy();
     });
@@ -307,6 +313,7 @@ export const proxyLive = async (req, res) => {
     }
 
     if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers: fetchHeaders, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
     await streamManager.cleanupSession(user.id, req.ip, channel.name, channel.provider_id, connectionId);
     res.setHeader(
       'Content-Type',
@@ -346,7 +353,7 @@ export const proxyLive = async (req, res) => {
 
   } catch (e) {
     console.error('Stream proxy error:', e.message);
-    if (!res.headersSent) {
+    if (!res.headersSent && !res.destroyed) {
         streamManager.localStreams.delete(connectionId);
         cleanup();
         return res.sendStatus(500);
@@ -523,6 +530,7 @@ export const proxyTimeshift = async (req, res) => {
     }
 
     if (await sendPlaybackDocument(res, upstream)) { streamManager.remove(connectionId); return; }
+    upstream = await preparePlaybackMedia(req, res, user, upstream, { headers, sourceUrl: selectedUrl || remoteUrl, channelId: channel.user_channel_id || channel.id, providerId: channel.provider_id });
     await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Connection', 'keep-alive');

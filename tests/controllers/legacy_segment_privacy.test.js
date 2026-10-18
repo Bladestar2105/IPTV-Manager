@@ -118,9 +118,14 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
   });
 
   it('preserves byte ranges, response status and tracked provider attribution', async () => {
-    const upstream = response('chunk', 'video/mp4', 206);
-    upstream.headers.set('content-range', 'bytes 100-104/1000');
-    mocks.fetchSafe.mockResolvedValue(upstream);
+    mocks.fetchSafe.mockImplementation((_url, options) => {
+      const ranged = new Headers(options.headers).has('range');
+      const bytes = ranged ? Buffer.from('chunk') : Buffer.concat([Buffer.alloc(100), Buffer.from('chunk'), Buffer.alloc(895)]);
+      const upstream = response(bytes, 'video/mp4', ranged ? 206 : 200);
+      upstream.headers.set('content-length', String(bytes.length));
+      if (ranged) upstream.headers.set('content-range', 'bytes 100-104/1000');
+      return upstream;
+    });
     const result = await request(app).get(legacyUrl()).set('Range', 'bytes=100-104').redirects(1);
     expect(result.status).toBe(206);
     expect(result.headers['content-range']).toBe('bytes 100-104/1000');

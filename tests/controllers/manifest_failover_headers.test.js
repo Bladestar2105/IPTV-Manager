@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({ fetchSafe: vi.fn(), createResource: vi.fn(), c
 vi.mock('../../src/database/db.js', () => ({ default: { prepare: () => ({ get: () => null, all: () => [], run: () => ({}) }) } }));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: async () => ({ id: 1 }) }));
 vi.mock('../../src/services/streamManager.js', () => ({ default: { localStreams: new Map(), remove: vi.fn(), touch: vi.fn() } }));
-vi.mock('../../src/services/clientResourceService.js', () => ({ createClientResourceUrl: (...args) => state.createResource(...args) }));
+vi.mock('../../src/services/clientResourceService.js', async original => ({ ...await original(), createClientResourceUrl: (...args) => state.createResource(...args) }));
 vi.mock('../../src/utils/crypto.js', () => ({ decrypt: value => value, encrypt: value => value }));
 vi.mock('../../src/utils/helpers.js', async original => ({ ...(await original()), isSafeUrl: async () => true }));
 vi.mock('../../src/utils/network.js', async original => ({ ...(await original()), fetchSafe: state.fetchSafe }));
