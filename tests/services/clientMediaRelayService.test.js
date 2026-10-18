@@ -43,7 +43,7 @@ describe('client media relay', () => {
     ['application/octet-stream', 'https://provider.example/download?id=1', 'https://cdn.example/movie.mkv'],
     [null, 'https://provider.example/download?id=1', 'https://cdn.example/audio.mka'],
   ])('streams a late Matroska range without rereading the whole movie (%s, %s, %s)', async (type, url, responseUrl) => {
-    const total = 1693044896, length = 29174, start = total-length;
+    const total = 2_000_000_000, length = 32_768, start = total-length;
     const bytes = Buffer.alloc(length, 7);
     const response = new Response(Readable.from([bytes]), { status: 206, url: responseUrl, headers: {
       'content-length': String(length), 'content-range': `bytes ${start}-${total-1}/${total}`,
