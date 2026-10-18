@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestStableRelease, planRetention, validateReleaseRef } from '../scripts/container-release-retention.mjs';
+import { isStableReleaseTag, latestStableRelease, planRetention, validateReleaseRef } from '../scripts/container-release-retention.mjs';
 
 const sha = 'a'.repeat(40);
 const other = 'b'.repeat(40);
@@ -10,6 +10,30 @@ const version = (id, revision, children = [], tags = []) => ({
 const release = { tag: 'Stable-26.10.18', commit: sha, publishedAt: '2026-10-18T10:00:00Z', prerelease: false };
 
 describe('container release retention', () => {
+    it.each(['Stable-26.13.40', 'Stable-26.02.30', 'Stable-26.02.29', 'Stable-26.00.18',
+        'Stable-26.10.00', 'Stable-26.04.31', 'Stable-99.02.29', 'Stable-00.02.30'])(
+        'rejects impossible calendar date %s at every release boundary', tag => {
+            expect(isStableReleaseTag(tag)).toBe(false);
+            expect(() => validateReleaseRef(`refs/tags/${tag}`)).toThrow(/Stable/);
+            expect(latestStableRelease([{ tag, publishedAt: '2026-10-18T10:00:00Z' }])).toBeNull();
+        });
+    it('rejects a final newline instead of accepting a partial regex match', () => {
+        expect(isStableReleaseTag('Stable-26.10.18\n')).toBe(false);
+    });
+    it.each(['Stable-28.02.29', 'Stable-00.02.29', 'Stable-26.12.31'])(
+        'accepts real calendar date %s including leap years', tag => {
+            expect(isStableReleaseTag(tag)).toBe(true);
+            expect(() => validateReleaseRef(`refs/tags/${tag}`)).not.toThrow();
+        });
+    it('accepts a 128-character Docker tag and rejects 129 characters', () => {
+        const prefix = 'Stable-26.10.18-hotfix.';
+        const accepted = prefix + '1'.repeat(128 - prefix.length);
+        const rejected = accepted + '1';
+        expect(isStableReleaseTag(accepted)).toBe(true);
+        expect(() => validateReleaseRef(`refs/tags/${accepted}`)).not.toThrow();
+        expect(isStableReleaseTag(rejected)).toBe(false);
+        expect(() => validateReleaseRef(`refs/tags/${rejected}`)).toThrow(/Stable/);
+    });
     it.each(['refs/tags/Stable-26.10.18', 'refs/tags/Stable-26.10.18-hotfix.2',
         'refs/heads/main', 'refs/pull/10/merge', 'refs/tags/v1.2.3'])(
         'allows supported release and non-release ref %s', ref => {

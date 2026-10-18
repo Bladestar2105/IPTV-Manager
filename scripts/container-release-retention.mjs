@@ -2,17 +2,26 @@ import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-const stableReleaseTag = /^Stable-\d{2}\.\d{2}\.\d{2}(?:-hotfix\.\d+)?$/;
+export function isStableReleaseTag(tag) {
+    if (typeof tag !== 'string' || tag.length > 128) return false;
+    const match = /^Stable-(\d{2})\.(\d{2})\.(\d{2})(?:-hotfix\.\d+)?$/.exec(tag);
+    if (!match) return false;
+    const year = 2000 + Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
 
 export function validateReleaseRef(ref) {
-    if (ref.startsWith('refs/tags/Stable-') && !stableReleaseTag.test(ref.slice('refs/tags/'.length))) {
+    if (ref.startsWith('refs/tags/Stable-') && !isStableReleaseTag(ref.slice('refs/tags/'.length))) {
         throw new Error('Stable release tags must use Stable-YY.MM.DD[-hotfix.N]');
     }
 }
 
 export function latestStableRelease(releases) {
     const stable = releases.filter(r => !r.draft && !r.prerelease
-        && stableReleaseTag.test(r.tag));
+        && isStableReleaseTag(r.tag));
     if (stable.some(r => !Number.isFinite(Date.parse(r.publishedAt)))) throw new Error('Missing stable publication date');
     stable.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
     if (stable.length > 1 && Date.parse(stable[0].publishedAt) === Date.parse(stable[1].publishedAt)) {
@@ -126,7 +135,7 @@ async function main() {
         const published = (await pages(`/repos/${repository}/releases`)).filter(r => !r.draft);
         const result = [];
         for (const release of published) {
-            if (!stableReleaseTag.test(release.tag_name) && !/^v[\w.-]+$/.test(release.tag_name)) {
+            if (!isStableReleaseTag(release.tag_name) && !/^v[\w.-]+$/.test(release.tag_name)) {
                 throw new Error('Unsupported published release tag');
             }
             let object = (await api(`/repos/${repository}/git/ref/tags/${encodeURIComponent(release.tag_name)}`)).object;
