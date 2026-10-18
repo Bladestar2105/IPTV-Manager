@@ -81,7 +81,7 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
     if (limit === 'user') mocks.manager.getUserConnectionCount.mockResolvedValue(2);
     if (limit === 'provider') mocks.manager.getProviderConnectionCount.mockResolvedValue(2);
     const result = await request(app).get(legacyUrl(limit === 'foreign-provider' ? { p: 99, c: 'Channel' } : {})).redirects(1);
-    expect(result.status).toBe(403);
+    expect(result.status).toBe(limit === 'foreign-provider' ? 401 : 403);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
     expect(mocks.manager.add).not.toHaveBeenCalled();
   });

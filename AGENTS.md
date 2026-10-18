@@ -46,6 +46,8 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   requests remain proxied even on approved public domains.
 - Inspect binary MP4 PlayReady metadata as well as manifests. Preserve media
   sample bytes and offsets while replacing provider license addresses.
+- Revalidate provider-only grants against current ownership/admin access, and
+  channel-bound grants against current channel and provider-pool authorization.
 
 ## Package and Build Rules
 

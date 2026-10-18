@@ -199,6 +199,10 @@ export async function resolveClientResource(req) {
       if (!authorizedUser || Number(authorizedUser.id) !== payload.uid) return null;
     }
     if (!shareAllowed(authorizedUser, payload.channelId)) return null;
+    if (payload.providerId && !payload.channelId) {
+      const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(payload.providerId);
+      if (!provider || (!payload.admin && Number(provider.user_id) !== Number(user.id))) return null;
+    }
 
     let channel;
     if (payload.channelId) {
@@ -212,7 +216,7 @@ export async function resolveClientResource(req) {
         WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
       `).get(payload.channelId, user.id);
       if (!channel) return null;
-      if (payload.kind === 'license' && payload.providerId) {
+      if (payload.providerId) {
         // Use the playback pool rules, including explicit cross-owner grants.
         const { getChannel, getProviderCandidates } = await import('../controllers/streamControllerHelpers.js');
         const current = getChannel(payload.channelId, user.id);

@@ -625,6 +625,9 @@ cannot fetch provider media outside the relay. Normal CENC audio/video sample
 entries remain supported.
 Compact license grants are encrypted in SQLite, survive restarts and expire
 after seven days. Every request rechecks current user and channel access.
+Provider-only grants also require current provider ownership (or an active admin)
+and stop working after provider deletion or transfer. Channel-bound grants use
+current playback-pool authorization, including explicit admin channel grants.
 Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
 reads, skipping media payload boxes. Without reliable range validation, Manager
 reads from byte zero and streams only the requested interval; distant seeks can

@@ -403,7 +403,7 @@ describe('client resource and image proxy', () => {
   });
   it('rejects a grant if its provider account is no longer an authorized candidate', async () => {
     mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
-    expect((await request(app).get(mediaGrant(99))).status).toBe(403);
+    expect((await request(app).get(mediaGrant(99))).status).toBe(401);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
   });
   it('prunes only for administrators', async () => {

@@ -80,6 +80,29 @@ it('rechecks channel and source-token/share access', async () => {
   expect(await resolve(url)).toBeNull();
 });
 
+it('revokes every provider-only grant after ownership transfer or deletion while retaining admin access',async()=>{
+  const other=user.id+1;
+  db.prepare('INSERT INTO users(id,username,password,is_active) VALUES(?,?,?,1)').run(other,'compact-other','unused');
+  db.prepare('INSERT INTO admin_users(id,username,password,is_active) VALUES(?,?,?,1)').run(user.id,'compact-admin','unused');
+  db.prepare('INSERT INTO providers(id,name,url,username,password,user_id) VALUES(?,?,?,?,?,?)').run(user.id,'compact','https://provider.test','u','p',user.id);
+  try{
+    const create=owner=>[['image',false],['resource',false],['license',false],['license',true]].map(([kind,compact])=>
+      createClientResourceUrl(req(),owner,'https://provider.test/private',{kind,compact,providerId:user.id}));
+    const check=url=>new URL(url).pathname.startsWith('/r/')?resolve(url):resolveClientResource({...req(),params:{data:new URL(url).pathname.split('/')[4]}});
+    const normal=create(user),admin=create({...user,is_admin:true});
+    for(const url of [...normal,...admin]) expect(await check(url)).not.toBeNull();
+    db.prepare('UPDATE providers SET user_id=? WHERE id=?').run(other,user.id);
+    for(const url of normal) expect(await check(url)).toBeNull();
+    for(const url of admin) expect(await check(url)).not.toBeNull();
+    db.prepare('DELETE FROM providers WHERE id=?').run(user.id);
+    for(const url of [...normal,...admin]) expect(await check(url)).toBeNull();
+  }finally{
+    db.prepare('DELETE FROM providers WHERE id=?').run(user.id);
+    db.prepare('DELETE FROM admin_users WHERE id=?').run(user.id);
+    db.prepare('DELETE FROM users WHERE id=?').run(other);
+  }
+});
+
 it('rechecks a previously authorized channel after it is hidden and a share after its scope changes', async () => {
   db.prepare('INSERT INTO providers (id, name, url, username, password, user_id) VALUES (?, ?, ?, ?, ?, ?)').run(user.id, 'compact', 'https://provider.test', 'u', 'p', user.id);
   db.prepare('INSERT INTO provider_channels (id, provider_id, remote_stream_id, name) VALUES (?, ?, ?, ?)').run(user.id, user.id, 1, 'compact');
@@ -128,9 +151,13 @@ it('keeps range rewrite IDs stable as credentials rotate within a scoped media e
       const compact=issue({...scope,providerId:pooledId});
       const generic=createClientResourceUrl(req(),user,'https://provider.test/license',{kind:'license',channelId:user.id,providerId:pooledId});
       const resolveGeneric=()=>resolveClientResource({...req(),params:{data:new URL(generic).pathname.split('/')[4]}});
+      const linked=['image','resource'].map(kind=>createClientResourceUrl(req(),user,'https://provider.test/private',{kind,channelId:user.id,providerId:pooledId}));
+      const resolveLinked=url=>resolveClientResource({...req(),params:{data:new URL(url).pathname.split('/')[4]}});
       expect(await resolve(compact)).not.toBeNull(); expect(await resolveGeneric()).not.toBeNull();
+      for(const url of linked) expect(await resolveLinked(url)).not.toBeNull();
       db.prepare('DELETE FROM providers WHERE id=?').run(pooledId);
       expect(await resolve(compact)).toBeNull(); expect(await resolveGeneric()).toBeNull();
+      for(const url of linked) expect(await resolveLinked(url)).toBeNull();
     } finally { db.prepare('DELETE FROM providers WHERE id=?').run(pooledId); }
     db.prepare('UPDATE users SET token_version = 1 WHERE id = ?').run(user.id);
     expect(await resolve(first)).toBeNull();
