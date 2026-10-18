@@ -166,10 +166,9 @@ describe('client media relay', () => {
       const [,s,e] = /^bytes=(\d+)-(\d+)$/.exec(range);
       return upstream(data,Number(s),Number(e), range === 'bytes=80-180' ? '"v2"' : observed);
     });
-    const result = await prepareClientMediaResponse(upstream(data,80,180,null), {url,mapUrl:()=>target});
-    expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181));
+    await expect(prepareClientMediaResponse(upstream(data,80,180,null), {url,mapUrl:()=>target})).rejects.toThrow(/safely/);
     expect(sent.at(-1).get('range')).toBeNull();
-    expect(result.headers.get('etag')).toBe('"v2"');
+    expect(sent.at(-1).get('if-match')).toBe(observed === '"v1"' ? observed : null);
     expect(sent[0].get('if-match')).toBeNull();
     expect(sent.slice(1,-1).every(headers => headers.get('if-match') === (observed === '"v1"' ? observed : null))).toBe(true);
   });
@@ -209,11 +208,11 @@ describe('client media relay', () => {
     const data=fixture(); let calls=0;
     fetchSafe.mockImplementation(async (_url,options) => {
       calls++; const range=new Headers(options.headers).get('range');
-      if (!range || failure==='ignored range') return upstream(data,0,data.length-1,'"v2"',200);
+      if (!range || failure==='ignored range') return upstream(data,0,data.length-1,range ? '"v2"' : '"v1"',200);
       const [,s,e]=/^bytes=(\d+)-(\d+)$/.exec(range); return upstream(data,Number(s),Number(e),'"v2"');
     });
     const r=await prepareClientMediaResponse(upstream(data,80,180),{url,mapUrl:()=>target});
-    expect(r.headers.get('etag')).toBe('"v2"'); expect(await collect(r.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181)); expect(calls).toBe(2);
+    expect(r.headers.get('etag')).toBe('"v1"'); expect(await collect(r.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181)); expect(calls).toBe(2);
   });
   it.each(['different total', 'wrong interval'])('rejects an inconsistent unvalidated probe (%s) and inspects a fresh full response', async failure => {
     const data = fixture();
@@ -225,6 +224,23 @@ describe('client media relay', () => {
     const result = await prepareClientMediaResponse(upstream(data,80,180,null), {url,mapUrl:()=>target});
     expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181));
     expect(fetchSafe).toHaveBeenCalledTimes(2);
+  });
+  it('pins the full fallback after a provider rejects small ranges', async () => {
+    const data = fixture();
+    fetchSafe.mockImplementation(async (_url, options) => {
+      const headers = new Headers(options.headers);
+      if (headers.has('range')) return new Response(null, {status:416});
+      if (headers.get('if-match') !== '"v1"') return new Response(null, {status:412});
+      return upstream(data,0,data.length-1,'"v1"',200);
+    });
+    const result = await prepareClientMediaResponse(upstream(data,80,180), {url,mapUrl:()=>target});
+    expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data,()=>target).subarray(80,181));
+  });
+  it.each(['"v2"', null])('rejects a fallback that loses or changes the observed validator (%s)', async etag => {
+    const data = fixture();
+    fetchSafe.mockImplementation(async (_url, options) => new Headers(options.headers).has('range')
+      ? new Response(null, {status:416}) : upstream(data,0,data.length-1,etag,200));
+    await expect(prepareClientMediaResponse(upstream(data,80,180), {url,mapUrl:()=>target})).rejects.toThrow(/safely/);
   });
   it('rejects a fallback with a different representation length', async () => {
     const data=fixture(); fetchSafe.mockResolvedValue(upstream(Buffer.concat([data,Buffer.alloc(8)]),0,0,null,200));

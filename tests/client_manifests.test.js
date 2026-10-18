@@ -188,4 +188,19 @@ describe('client manifest resources', () => {
     expect(result).toContain('2026-10-18T00:00:00Z');
     expect(result).not.toMatch(/provider\.example|secret|ntp:2014/);
   });
+  it.each(['https://provider.example/info?token=secret', '../info?token=secret', 'https&#58;//provider.example/info?token=secret', '\nhttps://provider.example/info?token=secret\n'])('removes optional DASH program-information links (%s)', value => {
+    const result = rewriteDashManifest(`<MPD><ProgramInformation moreInformationURL="${value}" lang="en"><Title>Example</Title></ProgramInformation><SegmentTemplate media="video.m4s"/></MPD>`, 'https://provider.example/live/master', () => 'https://manager/resource');
+    expect(result).not.toMatch(/moreInformationURL|provider\.example|secret/);
+    expect(result).toContain('lang="en"');
+    expect(result).toContain('<Title>Example</Title>');
+    expect(result).toContain('media="https://manager/resource"');
+  });
+
+  it('rewrites multiline DASH URL attributes and inherited descriptors', () => {
+    const urls = [];
+    const result = rewriteDashManifest('<MPD xml:base="\nhttps://provider.example/live/\n"><Period><SegmentTemplate media="\n$Number$.m4s?token=secret\n"/><AdaptationSet><Representation id="video"><SegmentTemplate startNumber="1"/></Representation></AdaptationSet></Period><SupplementalProperty schemeIdUri="\nurn:dvb:dash:fontdownload:2014\n" dvb:url="\nhttps://provider.example/font.woff?token=secret\n"/><UTCTiming schemeIdUri="\nurn:mpeg:dash:utc:http-iso:2014\n" value="\nhttps://provider.example/time?token=secret\n"/></MPD>', 'https://origin.example/master', url => { urls.push(url); return 'https://manager/resource'; });
+    expect(urls).toEqual(['https://provider.example/live/$Number$.m4s?token=secret', 'https://provider.example/font.woff?token=secret', 'https://provider.example/time?token=secret']);
+    expect(result).not.toMatch(/provider\.example|secret|xml:base/);
+    expect(result).toContain('id="video"');
+  });
 });

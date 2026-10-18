@@ -657,7 +657,8 @@ Partial MP4 requests inspect complete metadata using bounded range reads,
 skipping media payload boxes. Reads target the final upstream media URL while
 retaining origin-scoped credentials and cookies. Strong ETags pin those reads
 when available; ETags first observed during probing are also tracked and checked
-on subsequent reads.
+on subsequent reads, including the byte-zero fallback. That fallback also uses
+`If-Match` for an observed strong ETag and rejects missing or changed validators.
 Without a strong validator, Manager assumes the provider file remains unchanged
 between reads, as ordinary player range requests do. Returned intervals and total
 lengths are checked, but same-length replacements without a reliable validator
@@ -692,8 +693,8 @@ checks apply as usual. At most 64 distinct resolved candidates are accepted per
 resource; larger BaseURL combinations fail closed. Failures after body streaming
 starts are handled by the player retrying its Manager URL.
 DASH bitstream-switching and DVB font URLs are relayed. XML stylesheets,
-optional telemetry, URL-query extensions and automatic event callbacks are
-removed; required URL-query extensions fail closed rather than exposing their
+optional program-information links, telemetry, URL-query extensions and automatic
+event callbacks are removed; required URL-query extensions fail closed rather than exposing their
 credentials. HTTP UTC timing URLs, including encoded and fallback URLs, use
 Manager grants; unsupported timing schemes are removed. Legacy HLS segment URLs redirect only to an authenticated Manager
 resource URL and use the same content checks and connection limits.

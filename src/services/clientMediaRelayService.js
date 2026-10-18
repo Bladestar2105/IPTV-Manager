@@ -195,8 +195,8 @@ export async function prepareClientMediaResponse(upstream, { url = upstream.url,
         // Unsupported or inconsistent random access: inspect from byte zero instead.
       }
     }
-    const full = await fetchMedia();
-    if (full.status !== 200 || !/^\d+$/.test(full.headers.get('content-length') || '') || Number(full.headers.get('content-length')) !== range.total) {
+    const full = await fetchMedia(undefined, undefined, strong());
+    if (full.status !== 200 || (etag && full.headers.get('etag') !== etag) || !/^\d+$/.test(full.headers.get('content-length') || '') || Number(full.headers.get('content-length')) !== range.total) {
       discardBody(full); throw unsafe();
     }
     const headers = new Headers(full.headers);

@@ -131,7 +131,7 @@ export function rewriteDashManifest(text, baseUrl, mapUrl, alternativeBases = []
     const own = descriptors[0];
     let effective = own ? structuredClone(own) : inherited;
     if (own && inherited && localName(own.name) === localName(inherited.name)) {
-      const attributes = value => [...value.matchAll(/([\w:.-]+)\s*=\s*(["'])(.*?)\2/g)].map(match => [match[1], `${match[1]}=${match[2]}${match[3]}${match[2]}`]);
+      const attributes = value => [...value.matchAll(/([\w:.-]+)\s*=\s*(["'])([\s\S]*?)\2/g)].map(match => [match[1], `${match[1]}=${match[2]}${match[3]}${match[2]}`]);
       const merged = new Map([...attributes(inherited.open), ...attributes(own.open)]);
       effective.open = `<${own.name} ${[...merged.values()].join(' ')}>`;
       effective.close = `</${own.name}>`;
@@ -158,9 +158,9 @@ export function rewriteDashManifest(text, baseUrl, mapUrl, alternativeBases = []
   const render = (node, inheritedBase) => {
     if (typeof node === 'string') return node;
     const name = localName(node.name || '');
-    const scheme = decodeXml(node.open?.match(/\bschemeIdUri\s*=\s*(["'])(.*?)\1/)?.[2] || '').trim();
-    const codecs = decodeXml(node.open?.match(/\bcodecs\s*=\s*(["'])(.*?)\1/)?.[2] || '');
-    const mime = decodeXml(node.open?.match(/\bmimeType\s*=\s*(["'])(.*?)\1/)?.[2] || '');
+    const scheme = decodeXml(node.open?.match(/\bschemeIdUri\s*=\s*(["'])([\s\S]*?)\1/)?.[2] || '').trim();
+    const codecs = decodeXml(node.open?.match(/\bcodecs\s*=\s*(["'])([\s\S]*?)\1/)?.[2] || '');
+    const mime = decodeXml(node.open?.match(/\bmimeType\s*=\s*(["'])([\s\S]*?)\1/)?.[2] || '');
     if (/stpp|ttml/i.test(`${codecs} ${mime}`)) {
       if (['AdaptationSet', 'Representation', 'SubRepresentation'].includes(name)) return '';
       throw new Error('Unsupported DASH TTML declaration');
@@ -174,13 +174,13 @@ export function rewriteDashManifest(text, baseUrl, mapUrl, alternativeBases = []
       return '';
     }
     if (['UrlQueryInfo', 'ExtUrlQueryInfo'].includes(name)) throw new Error('Unsupported DASH URL query extension');
-    const xmlBase = node.open?.match(/\bxml:base\s*=\s*(["'])(.*?)\1/);
+    const xmlBase = node.open?.match(/\bxml:base\s*=\s*(["'])([\s\S]*?)\1/);
     const nodeBase = xmlBase ? resolveChoices([xmlBase[2]], inheritedBase) : inheritedBase;
     const baseTexts = node.children.filter(child => typeof child !== 'string' && localName(child.name) === 'BaseURL')
       .map(child => child.children.filter(value => typeof value === 'string').join('')).filter(value => value.trim());
     const base = baseTexts.length ? resolveChoices(baseTexts, nodeBase) : nodeBase;
-    node.open = node.open?.replace(/([\w:.-]+)\s*=\s*(["'])(.*?)\2/g, (match, attr, quote, value) => {
-      if (attr === 'xml:base') return '';
+    node.open = node.open?.replace(/([\w:.-]+)\s*=\s*(["'])([\s\S]*?)\2/g, (match, attr, quote, value) => {
+      if (attr === 'xml:base' || (name === 'ProgramInformation' && localName(attr) === 'moreInformationURL')) return '';
       // DASH uses this XLink value to remove an element without a network fetch.
       if (attr === 'xlink:href' && decodeXml(value.trim()) === 'urn:mpeg:dash:resolve-to-zero:2013') return match;
       if (name === 'UTCTiming' && attr === 'value' && (httpTiming || /^(?:https?:)?\/\//i.test(decodeXml(value.trim())))) {
