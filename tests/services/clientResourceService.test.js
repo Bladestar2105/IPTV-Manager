@@ -77,6 +77,15 @@ describe('scoped client resource URLs', () => {
     db.prepare.mockImplementation(sql => ({ get: () => sql.includes('FROM users') ? user : { logo: 'https://provider.example/a.png' } }));
     expect(await resolveClientResource(resourceRequest(url))).toBeNull();
   });
+  it.each([
+    ['//cdn.example/logo.png', 'https://cdn.example/logo.png'],
+    ['/icons/logo.png', 'https://provider.example/icons/logo.png'],
+    ['icons/logo.png', 'https://provider.example/catalog/icons/logo.png'],
+  ])('resolves current provider icon %s against the provider catalog origin', async (logo, expected) => {
+    const url = createChannelIconUrl(request(), user, 51);
+    db.prepare.mockImplementation(sql => ({ get: () => sql.includes('FROM users') ? user : { logo, provider_id: 8, provider_url: 'https://provider.example/catalog/list.m3u' } }));
+    expect(await resolveClientResource(resourceRequest(url))).toMatchObject({ url: expected });
+  });
 
   it('keeps DASH substitution tokens visible while validating substituted values', async () => {
     const url = createClientResourceUrl(request(), user, 'https://cdn.example/$RepresentationID$/seg-$Number%05d$.m4s', { kind: 'resource', template: true });
@@ -119,6 +128,22 @@ describe('scoped client resource URLs', () => {
     expect(headers.get('authorization')).toBe('Bearer license-secret');
     expect(headers.get('cookie')).toBe('license=explicit');
     expect(new Headers(upstreamRequestHeaders(resource, 'https://other.example/license')).get('cookie')).toBeNull();
+  });
+  it('resolves recognized relative JSON resource fields without rewriting descriptive text', async () => {
+    const rewritten = rewriteClientMetadata(request(), user, {
+      title: 'Movie title', plot: 'A story about captions/en.vtt',
+      subtitle: 'captions/en.vtt', poster: '../cover.jpg', logo: 'logo.png',
+      subtitles: [{ language: 'en', url: '/subs/en.vtt' }],
+      drm: { license_type: 'com.widevine.alpha', license_key: '../license|Authorization=Bearer%20secret', licenseUrl: './alternate-license' },
+    }, '', { baseUrl: 'https://cdn.example/metadata/info.json' });
+    expect(rewritten.title).toBe('Movie title');
+    expect(rewritten.plot).toBe('A story about captions/en.vtt');
+    expect(rewritten.subtitles[0].language).toBe('en');
+    for (const [url, expected] of [[rewritten.subtitle, 'https://cdn.example/metadata/captions/en.vtt'], [rewritten.poster, 'https://cdn.example/cover.jpg'], [rewritten.logo, 'https://cdn.example/metadata/logo.png'], [rewritten.subtitles[0].url, 'https://cdn.example/subs/en.vtt']]) {
+      expect(await resolveClientResource(resourceRequest(url))).toMatchObject({ url: expected });
+    }
+    expect(await resolveClientResource(resourceRequest(rewritten.drm.license_key))).toMatchObject({ url: 'https://cdn.example/license', kind: 'license', headers: { Authorization: 'Bearer secret' } });
+    expect(await resolveClientResource(resourceRequest(rewritten.drm.licenseUrl))).toMatchObject({ url: 'https://cdn.example/metadata/alternate-license', kind: 'license' });
   });
 
   it('does not wrap Manager URLs again and blocks unsafe schemes and protocol-relative bypasses', () => {

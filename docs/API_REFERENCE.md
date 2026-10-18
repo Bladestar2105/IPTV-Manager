@@ -571,7 +571,10 @@ cannot switch accounts without changing its encrypted upstream URL/headers.
 
 Channel icon grants resolve the current catalog/EPG icon on each request, so a
 provider-sync URL change also takes effect for clients keeping an older icon
-URL. Image files are revalidated on every request using upstream `ETag` and
+URL. Relative provider icons use their provider URL; mapped EPG icons use the
+selected EPG source URL. Relative artwork, subtitles and resource fields in
+proxied JSON use the final upstream response URL as their base.
+Image files are revalidated on every request using upstream `ETag` and
 `Last-Modified`, or downloaded again when validators are unavailable. Responses
 use `Cache-Control: private, no-cache, must-revalidate`; `X-Cache` is `MISS`,
 `HIT` (upstream 304), `REVALIDATED` (replacement), or `STALE` (last good image

@@ -368,7 +368,7 @@ export const playerApi = async (req, res) => {
             if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
           }
         }
-        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id }));
+        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id, baseUrl: resp.url || `${baseUrl}/player_api.php` }));
 
       } catch(e) {
          console.error('get_series_info error:', e);
@@ -421,7 +421,7 @@ export const playerApi = async (req, res) => {
             if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
           }
         }
-        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id }));
+        return res.json(rewriteClientMetadata(req, user, data, '', { channelId: channel.user_channel_id, baseUrl: resp.url || `${baseUrl}/player_api.php` }));
 
       } catch(e) {
          console.error('get_vod_info error:', e);

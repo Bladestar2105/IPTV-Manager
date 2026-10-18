@@ -5,6 +5,7 @@ import crypto from 'crypto';
 
 // Cache for EPG logos: Map<epg_channel_id, logo_url>
 let epgLogosCache = null;
+const epgLogoSources = new WeakMap();
 let lastCacheUpdate = 0;
 let lastCacheVersion = null;
 const CACHE_TTL = 300000; // Check freshness every 5 minutes; unchanged data stays cached.
@@ -34,15 +35,18 @@ export function loadEpgLogosCache() {
         }
 
         const channels = epgDb.prepare(`
-            SELECT id, logo
+            SELECT id, logo, source_type, source_id
             FROM epg_channels
             WHERE logo IS NOT NULL AND logo != ''
         `).all();
 
         const logos = new Map();
+        const sources = new Map();
         for (const ch of channels) {
             logos.set(ch.id, ch.logo);
+            sources.set(ch.id, { type: ch.source_type, id: ch.source_id });
         }
+        epgLogoSources.set(logos, sources);
         // Never publish an uncommitted or older transaction snapshot into the cache.
         if (!epgDb.inTransaction) {
             epgLogosCache = logos;
@@ -80,13 +84,31 @@ export function resolveChannelLogo({ providerLogo, epgChannelId, useEpgLogo = fa
 /**
  * Get EPG logo for a channel ID
  * @param {string} epgChannelId - EPG channel ID
+ * @param {Object} options - Set absolute to resolve the icon against its EPG source URL
  * @returns {string|null} - EPG logo URL or null
  */
-export function getEpgLogo(epgChannelId) {
+export function getEpgLogo(epgChannelId, { absolute = false } = {}) {
     if (!epgChannelId) return null;
 
     const epgLogos = loadEpgLogosCache();
-    return epgLogos.get(epgChannelId) || null;
+    const logo = epgLogos.get(epgChannelId) || null;
+    if (!absolute || !logo) return logo;
+    try {
+        let parsed;
+        try { parsed = new URL(logo); }
+        catch {
+            const source = epgLogoSources.get(epgLogos)?.get(epgChannelId);
+            let base;
+            if (source?.type === 'custom') {
+                base = db.prepare('SELECT url FROM epg_sources WHERE id = ?').get(source.id)?.url;
+            } else if (source?.type === 'provider') {
+                base = db.prepare("SELECT COALESCE(NULLIF(TRIM(epg_url), ''), url) AS url FROM providers WHERE id = ?").get(source.id)?.url;
+            }
+            if (!base) return null;
+            parsed = new URL(logo, base);
+        }
+        return /^https?:$/.test(parsed.protocol) ? parsed.href : null;
+    } catch { return null; }
 }
 
 /**

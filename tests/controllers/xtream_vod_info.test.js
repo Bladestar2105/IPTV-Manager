@@ -102,7 +102,7 @@ describe('xtreamController - get_vod_info', () => {
     mockDb.prepare.mockReturnValue({ get: mockGet });
 
     const upstreamResponse = {
-      info: { title: 'Test Movie', movie_image: 'https://provider.test/poster.jpg', website: 'https://provider.test/page', drm: { license_key: 'https://provider.test/license' } },
+      info: { title: 'Test Movie', subtitle: 'captions/en.vtt', movie_image: 'https://provider.test/poster.jpg', website: 'https://provider.test/page', drm: { license_key: 'https://provider.test/license' } },
       movie_data: {
         direct_source: 'https://provider.test/private-stream',
         stream_id: remoteVodId, // Should be replaced
@@ -112,6 +112,7 @@ describe('xtreamController - get_vod_info', () => {
 
     mockFetch.mockResolvedValue({
       ok: true,
+      url: 'https://cdn.example/details/movie.json',
       json: async () => upstreamResponse,
     });
 
@@ -130,6 +131,7 @@ describe('xtreamController - get_vod_info', () => {
     expect(payload.movie_data.direct_source).toBe('');
     expect(payload.movie_data.container_extension).toBe('mp4');
     expect(payload.info.title).toBe('Test Movie');
+    expect(await decryptClientGrant(payload.info.subtitle)).toMatchObject({ channelId: vodId, url: 'https://cdn.example/details/captions/en.vtt' });
     expect(await decryptClientGrant(payload.info.website)).toMatchObject({ channelId: vodId, kind: 'resource' });
     expect(await decryptClientGrant(payload.info.drm.license_key)).toMatchObject({ channelId: vodId, kind: 'license' });
     expect(JSON.stringify(payload)).not.toContain('https://provider.test');

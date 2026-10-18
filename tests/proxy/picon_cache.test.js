@@ -202,6 +202,18 @@ describe('client resource and image proxy', () => {
     expect((await request(app).post(localPath(metadata.body.license_key)).send('challenge')).status).toBe(401);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
   });
+  it('resolves relative JSON dependencies against the final upstream response URL', async () => {
+    const upstream = response(JSON.stringify({ title: 'Unchanged title', subtitle: 'captions/en.vtt', poster: '../cover.png' }), 'application/json');
+    upstream.url = 'https://cdn.example/metadata/info.json';
+    mocks.fetchSafe.mockResolvedValueOnce(upstream);
+    const metadata = await request(app).get(grant('resource'));
+    expect(metadata.status).toBe(200);
+    expect(metadata.body.title).toBe('Unchanged title');
+    expect(metadata.body.poster).toContain('/api/proxy/resource/');
+    mocks.fetchSafe.mockResolvedValueOnce(response('WEBVTT', 'text/vtt'));
+    expect((await request(app).get(localPath(metadata.body.subtitle))).status).toBe(200);
+    expect(mocks.fetchSafe.mock.calls[1][0]).toBe('https://cdn.example/metadata/captions/en.vtt');
+  });
   it('rejects POST with an image grant', async () => {
     expect((await request(app).post(grant()).send('bad')).status).toBe(405);
     expect(mocks.getCachedImage).not.toHaveBeenCalled();

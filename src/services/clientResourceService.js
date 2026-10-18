@@ -12,6 +12,8 @@ const TEMPLATE = /\$(RepresentationID|Number|Bandwidth|Time|SubNumber)(?:%0\d+d)
 const secretFields = /^(?:headers|http_headers|authorization|cookie|password|provider_pass|provider_user|provider_url|username|access_token)$/i;
 const sourceFields = /^(?:direct_source|stream_url|original_url|source_url|playback_url|play_url|stream_source|stream_link)$/i;
 const imageFields = /(?:icon|logo|cover|poster|backdrop|screenshot|movie_image|image)/i;
+const resourceFields = /(?:subtitle|caption|trailer)|(?:url|uri|href|src|path)$|^file$/i;
+const licenseFields = /^(?:license_?(?:url|uri)|la_url)$/i;
 
 function opaque(payload) {
   return encrypt(JSON.stringify(payload)).split(':').map(part => Buffer.from(part, 'hex').toString('base64url')).join('.');
@@ -57,7 +59,7 @@ function resourceUrl(req, payload, extension) {
 // a full-account bearer token just to let an IPTV client display an image.
 export function createClientResourceUrl(req, user, url, options = {}) {
   const base = getBaseUrl(req);
-  const parsed = httpUrl(url, base);
+  const parsed = httpUrl(url, options.baseUrl || base);
   if (!parsed) return '';
   // Host/forwarded-host are request-controlled and cannot prove that an URL is
   // Manager-owned. Preserve only an authenticated grant with its exact envelope.
@@ -69,7 +71,7 @@ export function createClientResourceUrl(req, user, url, options = {}) {
     const search = parameters ? `?${parameters}` : '';
     if (match[2] === filename && parsed.search === search) return `${base}${parsed.pathname}${search}`;
   }
-  if (/^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
+  if (!options.baseUrl && /^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
   const kind = options.kind || 'image';
   if (!['image', 'resource', 'license'].includes(kind)) return '';
   return resourceUrl(req, {
@@ -115,7 +117,7 @@ export async function resolveClientResource(req) {
     let channel;
     if (payload.channelId) {
       channel = db.prepare(`
-        SELECT pc.logo, pc.provider_id, pc.epg_channel_id, map.epg_channel_id AS manual_epg_id, p.use_mapped_epg_icon
+        SELECT pc.logo, pc.provider_id, pc.epg_channel_id, map.epg_channel_id AS manual_epg_id, p.use_mapped_epg_icon, p.url AS provider_url
         FROM authorized_user_channels uc
         JOIN user_categories cat ON cat.id = uc.user_category_id
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
@@ -128,7 +130,7 @@ export async function resolveClientResource(req) {
     let url = payload.url;
     if (payload.currentIcon) {
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
-      url = (channel.use_mapped_epg_icon && epgId && getEpgLogo(epgId)) || channel.logo;
+      url = (channel.use_mapped_epg_icon && epgId && getEpgLogo(epgId, { absolute: true })) || channel.logo;
     }
     for (const [index, item] of (payload.templates || []).entries()) {
       const value = req.query[`tpl${index}`];
@@ -137,7 +139,7 @@ export async function resolveClientResource(req) {
         : /^\d{1,32}$/.test(value))) return null;
       url = url.replace(item.token, value);
     }
-    const parsed = httpUrl(url);
+    const parsed = httpUrl(url, payload.currentIcon ? channel.provider_url || getBaseUrl(req) : undefined);
     if (!parsed) return null;
     return {
       ...payload, url: parsed.href,
@@ -155,17 +157,19 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
       .map(([field, item]) => [field, sourceFields.test(field) ? '' : rewriteClientMetadata(req, user, item, field, options)]));
   }
   if (typeof value !== 'string') return value;
-  if (/^license_key$/i.test(key) && /^(?:https?:)?\/\//i.test(value)) {
+  const relative = options.baseUrl && value.trim() && !/^(?:[a-z][a-z\d+.-]*:|#)/i.test(value.trim()) &&
+    (imageFields.test(key) || resourceFields.test(key) || /^license_key$/i.test(key));
+  if (/^license_key$/i.test(key) && (/^(?:https?:)?\/\//i.test(value) || relative)) {
     const [url, encodedHeaders, ...transforms] = value.split('|');
     let decoded;
     try { decoded = decodeURIComponent(transforms.join('|')); } catch { return ''; }
     if (/(?:https?|ftp|rtsp|rtmp):|\/\/|[\r\n\u0000]/i.test(decoded)) return '';
     const headers = Object.fromEntries(new URLSearchParams(encodedHeaders || ''));
-    const local = createClientResourceUrl(req, user, url, { ...options, kind: 'license', headers, headerOrigin: httpUrl(url, getBaseUrl(req))?.href });
+    const local = createClientResourceUrl(req, user, url, { ...options, kind: 'license', headers, headerOrigin: httpUrl(url, options.baseUrl || getBaseUrl(req))?.href });
     return transforms.length ? `${local}||${transforms.join('|')}` : local;
   }
-  if (/^(?:https?:)?\/\//i.test(value.trim())) {
-    return createClientResourceUrl(req, user, value.trim(), { ...options, kind: imageFields.test(key) ? 'image' : 'resource' });
+  if (/^(?:https?:)?\/\//i.test(value.trim()) || relative) {
+    return createClientResourceUrl(req, user, value.trim(), { ...options, kind: imageFields.test(key) ? 'image' : licenseFields.test(key) ? 'license' : 'resource' });
   }
   if (/^(?:javascript|file|ftp|rtsp|rtmp):/i.test(value.trim())) return '';
   return value;
