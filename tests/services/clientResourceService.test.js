@@ -173,6 +173,19 @@ describe('scoped client resource URLs', () => {
     expect(result.poster).toContain('/api/proxy/resource/');
     expect(result.unrelated.trailer).toContain('/api/proxy/resource/');
   });
+  it('allows public film metadata while retaining opaque provider and license URLs', () => {
+    const result = rewriteClientMetadata(request(), user, {
+      website: 'https://www.imdb.com/title/tt1234567/',
+      poster: 'https://image.tmdb.org/t/p/original/poster.jpg',
+      license_url: 'https://www.imdb.com/license',
+      nested: { poster: 'https://cdn.provider.example/poster.jpg' },
+    });
+    expect(result.website).toBe('https://www.imdb.com/title/tt1234567/');
+    expect(result.poster).toBe('https://image.tmdb.org/t/p/original/poster.jpg');
+    expect(result.license_url).toContain('/api/proxy/resource/');
+    expect(result.nested.poster).toContain('/api/proxy/resource/');
+    expect(createClientResourceUrl(request(), user, 'https://image.tmdb.org/t/p/original/poster.jpg')).toBe(result.poster);
+  });
 
   it('does not wrap Manager URLs again and blocks unsafe schemes and protocol-relative bypasses', () => {
     const req = request();

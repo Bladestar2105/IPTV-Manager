@@ -164,7 +164,7 @@ export const proxyMovie = async (req, res) => {
             redirect: 'follow'
         });
         const upstream = result.response;
-        if (await sendVodManifest(req, res, upstream, result.successfulUrl || remoteUrl, user, headers, {
+        if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
           channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id,
         })) {
           cleanup();
@@ -345,7 +345,7 @@ export const proxySeries = async (req, res) => {
             redirect: 'follow'
         });
         const upstream = result.response;
-        if (await sendVodManifest(req, res, upstream, result.successfulUrl || remoteUrl, user, headers, {
+        if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
           channelName: sessionName, providerId: availableProvider.id, channelId: seriesEpisode.user_channel_id,
         })) {
           cleanup();

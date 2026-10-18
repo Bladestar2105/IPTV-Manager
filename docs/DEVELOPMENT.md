@@ -45,10 +45,11 @@ EPG-logo cache and checkpoint regressions can be run with
 
 Client resource proxy regressions cover opaque grants and revocation, live
 catalog icon resolution, disk-cache revalidation/fallback, nested HLS/DASH,
-license relaying and frontend same-origin image handling:
+license relaying, scoped cookies/redirects, public metadata exceptions, safe
+TTML and frontend same-origin image handling:
 
 ```bash
-npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js
+npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js tests/client_resource_policy.test.js tests/client_cookies.test.js tests/client_ttml.test.js tests/client_playready.test.js
 ```
 
 The cache tests use independent module instances with real SQLite connections,

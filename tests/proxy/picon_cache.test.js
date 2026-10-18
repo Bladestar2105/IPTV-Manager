@@ -117,6 +117,18 @@ describe('client resource and image proxy', () => {
     mocks.fetchSafe.mockResolvedValue(response('https://tracker.example/pixel', type));
     expect((await request(app).get(grant('resource'))).status).toBe(502);
   });
+  it('relays standard TTML subtitles with their exact timed text', async () => {
+    const xml = '<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="1s" end="3s">Caption &amp; text</p></div></body></tt>';
+    mocks.fetchSafe.mockResolvedValue(response(xml, 'application/ttml+xml; charset=utf-8'));
+    const res = await request(app).get(grant('resource'));
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^application\/ttml\+xml/);
+    expect(res.text).toBe(xml);
+  });
+  it('blocks TTML external resources while keeping generic XML blocked', async () => {
+    mocks.fetchSafe.mockResolvedValue(response('<tt><body><image src="https://tracker.example/image.png"/></body></tt>', 'application/ttml+xml'));
+    expect((await request(app).get(grant('resource'))).status).toBe(502);
+  });
   it('rewrites nested HLS keys and segments', async () => {
     mocks.fetchSafe.mockResolvedValue(response('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="https://keys.example/key"\nsegment.ts\n', 'application/vnd.apple.mpegurl'));
     const res = await request(app).get(grant('resource'));

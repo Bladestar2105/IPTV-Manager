@@ -6,6 +6,7 @@ import { getXtreamUser } from './authService.js';
 import { isIpAllowedForUser } from './geoIpService.js';
 import { getEpgLogo } from './logoResolver.js';
 import { createUpstreamContext } from '../utils/clientCookies.js';
+import { directMetadataUrl } from '../utils/clientResourcePolicy.js';
 
 const PURPOSE = 'client-resource-v1';
 const TEMPLATE = /\$(RepresentationID|Number|Bandwidth|Time|SubNumber)(?:%0\d+d)?\$/g;
@@ -74,6 +75,10 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   if (!options.baseUrl && /^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
   const kind = options.kind || 'image';
   if (!['image', 'resource', 'license'].includes(kind)) return '';
+  if (kind !== 'license' && (kind === 'image' || options.allowDirectMetadata)) {
+    const direct = directMetadataUrl(parsed.href);
+    if (direct) return direct;
+  }
   return resourceUrl(req, {
     ...context(req, user), kind, url: parsed.href,
     ...createUpstreamContext(options.headers || {}, options.headerOrigin || parsed.href, options.cookieJar, options.headerOrigin || parsed.href, true),
@@ -172,13 +177,6 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
       .map(([field, item]) => [field, sourceFields.test(field) ? '' : rewriteClientMetadata(req, user, item, field, options)]));
   }
   if (typeof value !== 'string') return value;
-  if (/trailer/i.test(key)) {
-    const youtube = httpUrl(value, options.baseUrl || getBaseUrl(req));
-    if (youtube && /^(?:(?:[a-z\d-]+\.)*youtube(?:-nocookie)?\.com|(?:www\.)?youtu\.be)$/.test(youtube.hostname)) {
-      youtube.username = ''; youtube.password = '';
-      return youtube.href;
-    }
-  }
   const relative = options.baseUrl && value.trim() && !/^(?:[a-z][a-z\d+.-]*:|#)/i.test(value.trim()) &&
     (!/trailer/i.test(key) || /[./\\?#]/.test(value)) &&
     (imageFields.test(key) || resourceFields.test(key) || /^license_key$/i.test(key));
@@ -192,7 +190,7 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
     return transforms.length ? `${local}||${transforms.join('|')}` : local;
   }
   if (/^(?:https?:)?\/\//i.test(value.trim()) || relative) {
-    return createClientResourceUrl(req, user, value.trim(), { ...options, kind: imageFields.test(key) ? 'image' : licenseFields.test(key) ? 'license' : 'resource' });
+    return createClientResourceUrl(req, user, value.trim(), { ...options, allowDirectMetadata: true, kind: imageFields.test(key) ? 'image' : licenseFields.test(key) ? 'license' : 'resource' });
   }
   if (/^(?:javascript|file|ftp|rtsp|rtmp):/i.test(value.trim())) return '';
   return value;

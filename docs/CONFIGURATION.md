@@ -208,12 +208,17 @@ until this is exercised on a real Proxmox host.
 
 ## Network and Proxy
 
-IPTV clients receive Manager URLs for artwork and dependent playback resources.
+IPTV clients receive Manager URLs for provider artwork and dependent playback resources.
 No client-specific proxy setting is required. Configure the public Manager host
 and `TRUST_PROXY` correctly so generated absolute URLs are reachable by clients.
 The bundled browser UI restricts images, media and network requests to its own
 origin (plus inline images/blob media); external provider resources must use the
 Manager proxy.
+Unknown external/CDN hosts also use the proxy. The centralized public metadata
+policy allows YouTube, IMDb, TMDB and TVDB links/artwork to remain direct;
+credential-bearing URLs and DRM licenses remain proxied. YouTube trailers are
+direct and are not cached by Manager. Approved domains are maintained in
+`src/utils/clientResourcePolicy.js` and documented in `AGENTS.md`.
 
 The image cache under `DATA_DIR/cache/picons` checks the provider on every
 request. It uses conditional requests where supported, atomically replaces

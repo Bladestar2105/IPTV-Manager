@@ -105,13 +105,14 @@ export const proxyMpd = async (req, res) => {
 
     recordStreamStat(channel.provider_channel_id, 'MPD');
 
-    let upstream;
+    let upstream, selectedUrl;
     try {
         const result = await fetchWithBackups(upstreamUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
         });
         upstream = result.response;
+        selectedUrl = result.selectedUrl;
     } catch (e) {
         console.error(`MPD proxy failed: ${e.message}`);
         streamManager.localStreams.delete(connectionId);
@@ -122,7 +123,7 @@ export const proxyMpd = async (req, res) => {
     const manifestKind = isClientManifest(upstream.headers.get('content-type'), upstream.url || upstreamUrl) || ((!relativePath || relativePath.endsWith('.mpd')) ? 'dash' : null);
     if (manifestKind) {
         const text = await readManifest(upstream);
-        const nextContext = withUpstreamCookies(headers, upstream, upstreamUrl);
+        const nextContext = withUpstreamCookies(headers, upstream, selectedUrl || upstreamUrl);
         const rewrite = manifestKind === 'hls' ? rewriteHlsManifest : rewriteDashManifest;
         const newText = rewrite(text, upstream.url || upstreamUrl, (url, options) => createClientResourceUrl(req, user, url, {
           kind: 'resource', ...nextContext, channelName: channel.name, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id, ...options
@@ -268,7 +269,7 @@ export const proxyLive = async (req, res) => {
       }
     }
 
-    let upstream, successfulUrl;
+    let upstream, successfulUrl, selectedUrl;
     try {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers: fetchHeaders,
@@ -276,6 +277,7 @@ export const proxyLive = async (req, res) => {
         });
         upstream = result.response;
         successfulUrl = result.successfulUrl;
+        selectedUrl = result.selectedUrl;
     } catch(e) {
         console.error(`Stream proxy error: ${e.message} for ${redactUrl(remoteUrl)}`);
         streamManager.localStreams.delete(connectionId);
@@ -291,7 +293,7 @@ export const proxyLive = async (req, res) => {
 
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
-      const nextContext = withUpstreamCookies(fetchHeaders, upstream, remoteUrl);
+      const nextContext = withUpstreamCookies(fetchHeaders, upstream, selectedUrl || remoteUrl);
 
       // Optimization: Encrypt headers and safe-check once
       const basePayload = { h: nextContext.headers, j: nextContext.cookieJar, o: nextContext.headerOrigin, s: isProviderSafe };
@@ -630,7 +632,7 @@ export const proxyTimeshift = async (req, res) => {
 
     const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Timeshift');
 
-    let upstream, successfulUrl;
+    let upstream, successfulUrl, selectedUrl;
     try {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
@@ -638,6 +640,7 @@ export const proxyTimeshift = async (req, res) => {
         });
         upstream = result.response;
         successfulUrl = result.successfulUrl;
+        selectedUrl = result.selectedUrl;
     } catch(e) {
         console.error(`Timeshift proxy error: ${e.message}`);
         streamManager.localStreams.delete(connectionId);
@@ -653,7 +656,7 @@ export const proxyTimeshift = async (req, res) => {
 
       const isProviderSafe = await isSafeUrl(channel.provider_url);
 
-      const nextContext = withUpstreamCookies(headers, upstream, remoteUrl);
+      const nextContext = withUpstreamCookies(headers, upstream, selectedUrl || remoteUrl);
 
       // Optimization: Encrypt headers and safe-check once
       const basePayload = { h: nextContext.headers, j: nextContext.cookieJar, o: nextContext.headerOrigin, s: isProviderSafe };

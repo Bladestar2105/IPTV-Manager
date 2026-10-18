@@ -10,6 +10,7 @@ import { createClientResourceUrl, resolveClientResource, rewriteClientMetadata }
 import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
 import { createUpstreamContext, upstreamRequestHeaders, withUpstreamCookies } from '../utils/clientCookies.js';
 import { reserveGrantedResourceSession } from '../controllers/streamControllerHelpers.js';
+import { validateClientTtml } from '../utils/clientTtml.js';
 
 const router = express.Router();
 const MANIFEST_LIMIT = 32 * 1024 * 1024;
@@ -125,6 +126,11 @@ router.all('/resource/:data/:filename', async (req, res) => {
     }
     if (resource.kind !== 'license' && /^image\//i.test(type)) {
       return await sendImage(res, resource.url, scopedHeaders, resource.providerId, upstream, cookieContext);
+    }
+    if (resource.kind !== 'license' && /^application\/ttml\+xml(?:\s*;|$)/i.test(type)) {
+      const text = await readBodyWithLimit(upstream, { maxBytes: 4 * 1024 * 1024, timeoutMs: 30000 });
+      res.setHeader('Content-Type', 'application/ttml+xml; charset=utf-8');
+      return res.send(validateClientTtml(text));
     }
     // Unknown active document formats could contain dependencies we cannot
     // rewrite safely. Never delegate their network access to the client.

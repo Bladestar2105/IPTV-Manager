@@ -552,7 +552,13 @@ logs.
 - `DELETE /api/proxy/picons`
 
 Client-facing artwork URLs in Xtream, M3U, player JSON, XMLTV and Stalker/MAG
-responses use absolute Manager URLs. Resource grants encrypt the upstream URL
+responses hide provider and unknown CDN URLs behind absolute Manager URLs.
+Public metadata/artwork links on YouTube (including youtu.be/ytimg), IMDb
+(including m.media-amazon.com), TMDB and TVDB may remain direct. This explicit
+policy is centralized in `src/utils/clientResourcePolicy.js`; unknown hosts,
+credential-bearing URLs and DRM license endpoints remain proxied. YouTube
+trailers are deliberately direct and are not cached by Manager.
+Resource grants encrypt the upstream URL
 and required upstream headers; they authorize only that resource. Clients use
 these ordinary HTTP URLs without custom headers or a WebUI login. Grants are
 checked against the active account, token version, expiry, region lock and any
@@ -608,6 +614,8 @@ DASH representation IDs are encoded as URL components, retaining
 valid punctuation and Unicode while rejecting traversal/control sequences.
 Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
 through with dependencies that clients could load directly.
+Static TTML captions (`application/ttml+xml`) are supported; external references,
+image/font/link extensions and malformed TTML remain rejected.
 
 The legacy image route remains authenticated for WebUI/player compatibility.
 Cache pruning requires an administrator. Provider configuration and authorized

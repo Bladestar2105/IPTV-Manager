@@ -580,7 +580,7 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
         try {
             const res = await fetchSafe(u, fetchOptions);
             if (res.ok) {
-                return { response: res, successfulUrl: res.url || u };
+                return { response: res, successfulUrl: res.url || u, selectedUrl: u };
             }
             res.body?.destroy?.();
             // If 404/403/407/etc, we might want to try backup? Yes.

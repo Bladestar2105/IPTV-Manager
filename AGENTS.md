@@ -33,6 +33,18 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   It must not remove a user's ability to edit their own channel, movie, series,
   or category-scoped EPG mappings.
 
+## Client Resource Privacy
+
+- Client-facing provider URLs, credentials and provider CDN resources must stay
+  behind Manager proxy grants, including nested playback dependencies and DRM.
+- Unknown external hosts are proxied by default. Public metadata/artwork links
+  from approved YouTube, IMDb, TMDB and TVDB domains may remain direct; YouTube
+  trailers must not be proxied or cached by Manager.
+- Keep these exceptions centralized in `src/utils/clientResourcePolicy.js`.
+  Never exempt arbitrary third-party/CDN hosts merely because their origin
+  differs from the configured provider. Credential-bearing URLs and DRM license
+  requests remain proxied even on approved public domains.
+
 ## Package and Build Rules
 
 - Primary package manager: `npm`.
