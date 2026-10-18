@@ -81,22 +81,26 @@ async function atomicWrite(file, body) {
     }
 }
 
-async function refreshImage(url, headers, key) {
+export function imageRequestHeaders(headers = {}) {
+    return {
+        'user-agent': DEFAULT_USER_AGENT,
+        accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        ...Object.fromEntries(new Headers(headers).entries()),
+    };
+}
+
+async function refreshImage(url, headers, key, suppliedResponse) {
     const directory = path.join(CACHE_DIR, 'picons');
     const file = path.join(directory, `${key}.png`);
     const metadataFile = path.join(directory, `${key}.json`);
     const cached = await readCached(file, metadataFile);
     try {
-        const conditional = {
-            'user-agent': DEFAULT_USER_AGENT,
-            accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-            ...headers,
-        };
+        const conditional = imageRequestHeaders(headers);
         for (const [field, header] of [['etag', 'If-None-Match'], ['lastModified', 'If-Modified-Since']]) {
             const value = cached?.metadata?.[field];
             if (typeof value === 'string' && value.length <= 4096 && !/[\r\n]/.test(value)) conditional[header] = value;
         }
-        const response = await fetchSafe(url, { headers: conditional, timeout: 30000 });
+        const response = suppliedResponse || await fetchSafe(url, { headers: conditional, timeout: 30000 });
         if (response.status === 304) {
             discardBody(response);
             if (!cached) throw new Error('Invalid revalidation');
@@ -124,13 +128,13 @@ async function refreshImage(url, headers, key) {
     }
 }
 
-export async function getCachedImage(url, { headers = {} } = {}) {
+export async function getCachedImage(url, { headers = {}, response = null } = {}) {
     const normalizedHeaders = Object.fromEntries([...new Headers(headers).entries()].sort(([a], [b]) => a.localeCompare(b)));
     const key = Object.keys(normalizedHeaders).length ? digest(JSON.stringify([url, normalizedHeaders])) : getLogoCacheHash(url);
     if (!pending.has(key)) {
-        const request = refreshImage(url, normalizedHeaders, key).finally(() => pending.delete(key));
+        const request = refreshImage(url, normalizedHeaders, key, response).finally(() => pending.delete(key));
         pending.set(key, request);
-    }
+    } else if (response) discardBody(response);
     return pending.get(key);
 }
 

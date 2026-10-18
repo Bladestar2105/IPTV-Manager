@@ -12,7 +12,8 @@ vi.mock('../../src/config/constants.js', () => ({
 }));
 vi.mock('../../src/services/logoResolver.js', () => ({ getLogoCacheHash: url => crypto.createHash('md5').update(url).digest('hex') }));
 vi.mock('../../src/utils/network.js', async original => ({ ...(await original()), fetchSafe: mocks.fetchSafe }));
-const { getCachedImage, clearImageCache } = await import('../../src/services/imageCacheService.js');
+const imageCache = await import('../../src/services/imageCacheService.js');
+const { getCachedImage, clearImageCache } = imageCache;
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'image-cache-test-'));
 const url = 'https://cdn.example/icon.png?token=secret';
 const png = Buffer.from('89504e470d0a1a0a00000000', 'hex');
@@ -25,6 +26,53 @@ beforeEach(async () => {
 afterAll(() => fs.rm(root, { recursive: true, force: true }));
 
 describe('image disk cache', () => {
+    it('adopts an already fetched image without another upstream request and retains its validators', async () => {
+        const headers = { 'UsEr-AgEnT': 'provider-agent', Authorization: 'provider-secret' };
+        const prefetched = response(png, { etag: '"prefetched"' });
+        mocks.fetchSafe.mockResolvedValue(response(changed));
+        expect(await getCachedImage(url, { headers, response: prefetched })).toMatchObject({ body: png, cacheStatus: 'MISS' });
+        expect(mocks.fetchSafe).not.toHaveBeenCalled();
+        mocks.fetchSafe.mockResolvedValueOnce(response('', {}, 304));
+        expect(await getCachedImage(url, { headers })).toMatchObject({ body: png, cacheStatus: 'HIT' });
+        const sent = new Headers(mocks.fetchSafe.mock.calls[0][1].headers);
+        expect(sent.get('user-agent')).toBe('provider-agent');
+        expect(sent.get('authorization')).toBe('provider-secret');
+        expect(sent.get('if-none-match')).toBe('"prefetched"');
+    });
+
+    it('discards an unused adopted response when the same image is already pending', async () => {
+        mocks.fetchSafe.mockResolvedValue(response());
+        const unused = response(changed);
+        const first = getCachedImage(url, { response: response() });
+        const second = getCachedImage(url, { response: unused });
+        const discardedImmediately = unused.body.destroyed;
+        const results = await Promise.all([first, second]);
+        expect(discardedImmediately).toBe(true);
+        expect(results.map(result => result.body)).toEqual([png, png]);
+        expect(mocks.fetchSafe).not.toHaveBeenCalled();
+    });
+
+    it('uses the same bounded validation and stale fallback for adopted responses', async () => {
+        mocks.fetchSafe.mockImplementation(async () => response());
+        await getCachedImage(url);
+        mocks.fetchSafe.mockClear();
+        expect(await getCachedImage(url, { response: response(Buffer.alloc(5 * 1024 * 1024 + 1)) }))
+            .toMatchObject({ body: png, cacheStatus: 'STALE' });
+        expect(await getCachedImage(url, { response: response('<html>not an image</html>') }))
+            .toMatchObject({ body: png, cacheStatus: 'STALE' });
+        expect(mocks.fetchSafe).not.toHaveBeenCalled();
+    });
+
+    it('exports browser image headers with explicit case-insensitive overrides', () => {
+        expect(imageCache.imageRequestHeaders).toBeTypeOf('function');
+        expect(imageCache.imageRequestHeaders()).toEqual({
+            'user-agent': 'Mozilla/5.0 image-cache-test-browser',
+            accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        });
+        expect(imageCache.imageRequestHeaders({ 'UsEr-AgEnT': 'custom-agent', ACCEPT: 'image/png' }))
+            .toEqual({ 'user-agent': 'custom-agent', accept: 'image/png' });
+    });
+
     it('fetches from CDNs requiring the browser user agent and image Accept defaults', async () => {
         mocks.fetchSafe.mockImplementation(async (_url, { headers }) => {
             const requestHeaders = new Headers(headers);

@@ -234,7 +234,9 @@ require a list refresh if it ignores HTTP cache directives.
   for production.
 - `API_RATE_LIMIT_MAX`: Maximum requests per IP for general `/api`,
   Xtream API, XMLTV, and playlist endpoints within
-  `API_RATE_LIMIT_WINDOW_MS`. Defaults to `1000`.
+  `API_RATE_LIMIT_WINDOW_MS`. Defaults to `1000`. Validated media and DRM license
+  grants under `/api/proxy/resource` do not consume this API quota; image grants
+  and invalid grants remain subject to it.
 - `API_RATE_LIMIT_WINDOW_MS`: General API rate limit window in milliseconds.
   Defaults to `60000` (1 minute).
 - `AUTH_RATE_LIMIT_MAX`: Maximum requests per IP for login, password changes,

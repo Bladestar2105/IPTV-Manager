@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { securityHeaders, ipBlocker, apiLimiter } from './middleware/security.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { redactUrl } from './utils/helpers.js';
+import { resolveClientResource } from './services/clientResourceService.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -64,8 +65,17 @@ app.use(morgan('[:date[iso]] :method :url :status :response-time ms - :res[conte
 // IP Blocking
 app.use(ipBlocker);
 
+// Authenticate media grants before deciding whether the request consumes API quota.
+app.use('/api/proxy/resource/:data/:filename', async (req, res, next) => {
+  req.clientResource = await resolveClientResource(req);
+  next();
+});
+
 // Rate Limiting
-app.use('/api', apiLimiter);
+app.use('/api', (req, res, next) => {
+  if (req.clientResource?.kind === 'resource' || req.clientResource?.kind === 'license') return next();
+  return apiLimiter(req, res, next);
+});
 app.use('/player_api.php', apiLimiter);
 app.use('/xmltv.php', apiLimiter);
 app.use('/get.php', apiLimiter);

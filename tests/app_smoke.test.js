@@ -40,7 +40,10 @@ describe('application wiring smoke checks', () => {
     expect(appSource).toContain("express.json({ limit: '1mb' })");
     expect(appSource).toContain('process.env.ALLOWED_ORIGINS');
     expect(appSource).toContain('redactUrl(req.originalUrl || req.url)');
-    expect(appSource).toContain("app.use('/api', apiLimiter)");
+    expect(appSource).toContain("app.use('/api', (req, res, next) =>");
+    expect(appSource).toContain('return apiLimiter(req, res, next)');
+    expect(appSource.indexOf('req.clientResource = await resolveClientResource(req)'))
+      .toBeLessThan(appSource.indexOf("app.use('/api', (req, res, next) =>"));
     expect(appSource).toContain("app.use('/player_api.php', apiLimiter)");
     expect(appSource).toContain('app.use(ipBlocker)');
   });

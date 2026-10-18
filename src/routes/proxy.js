@@ -5,7 +5,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getLogoCacheHash, registerProviderCachedIcon } from '../services/logoResolver.js';
-import { getCachedImage, clearImageCache } from '../services/imageCacheService.js';
+import { getCachedImage, clearImageCache, imageRequestHeaders } from '../services/imageCacheService.js';
 import { createClientResourceUrl, resolveClientResource, rewriteClientMetadata } from '../services/clientResourceService.js';
 import { isClientManifest, rewriteHlsManifest, rewriteDashManifest } from '../utils/clientManifests.js';
 import { withUpstreamCookies } from '../utils/clientCookies.js';
@@ -37,8 +37,8 @@ function protectResource(res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
-async function sendImage(res, url, headers, providerId) {
-  const image = await getCachedImage(url, { headers });
+async function sendImage(res, url, headers, providerId, response) {
+  const image = await getCachedImage(url, { headers, response });
   protectResource(res);
   res.setHeader('Content-Type', image.contentType);
   res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
@@ -58,7 +58,7 @@ router.get('/image', authenticateAnyToken, async (req, res) => {
 });
 
 router.all('/resource/:data/:filename', async (req, res) => {
-  const resource = await resolveClientResource(req);
+  const resource = req.clientResource === undefined ? await resolveClientResource(req) : req.clientResource;
   if (!resource) return res.sendStatus(401);
   if (!['GET', 'HEAD'].includes(req.method) && !(resource.kind === 'license' && req.method === 'POST')) {
     res.setHeader('Allow', resource.kind === 'license' ? 'GET, HEAD, POST' : 'GET, HEAD');
@@ -84,7 +84,7 @@ router.all('/resource/:data/:filename', async (req, res) => {
       heartbeat = () => manager.touch(id);
     }
 
-    const headers = { ...resource.headers };
+    const headers = resource.kind === 'resource' ? imageRequestHeaders(resource.headers) : { ...resource.headers };
     for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
     if (resource.kind === 'license' && req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'];
     upstream = await fetchSafe(resource.url, {
@@ -120,8 +120,7 @@ router.all('/resource/:data/:filename', async (req, res) => {
       return res.send(rewritten);
     }
     if (resource.kind !== 'license' && /^image\//i.test(type)) {
-      discardBody(upstream);
-      return await sendImage(res, resource.url, resource.headers, resource.providerId);
+      return await sendImage(res, resource.url, resource.headers, resource.providerId, upstream);
     }
     // Unknown active document formats could contain dependencies we cannot
     // rewrite safely. Never delegate their network access to the client.

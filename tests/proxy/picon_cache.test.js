@@ -11,7 +11,7 @@ vi.mock('../../src/database/db.js', () => ({ default: mocks.db }));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: mocks.getXtreamUser }));
 vi.mock('../../src/services/geoIpService.js', () => ({ isIpAllowedForUser: () => true }));
 vi.mock('../../src/services/logoResolver.js', () => ({ getEpgLogo: vi.fn(), getLogoCacheHash: () => 'hash', registerProviderCachedIcon: vi.fn() }));
-vi.mock('../../src/services/imageCacheService.js', () => ({ getCachedImage: mocks.getCachedImage, clearImageCache: mocks.clearImageCache }));
+vi.mock('../../src/services/imageCacheService.js', async importOriginal => ({ ...(await importOriginal()), getCachedImage: mocks.getCachedImage, clearImageCache: mocks.clearImageCache }));
 vi.mock('../../src/middleware/auth.js', () => ({ authenticateToken: (req, res, next) => { req.user = { id: 1, is_admin: req.query.admin !== '0' }; next(); } }));
 vi.mock('../../src/utils/network.js', async importOriginal => ({ ...(await importOriginal()), fetchSafe: mocks.fetchSafe }));
 
@@ -95,6 +95,23 @@ describe('client resource and image proxy', () => {
     expect(res.body.toString()).toBe('cached-image');
     expect(mocks.getCachedImage).toHaveBeenCalled();
     expect(upstream.body.destroyed).toBe(true);
+  });
+  it('uses image compatibility headers on the initial generic probe and adopts its one-shot body', async () => {
+    const upstream = response('one-shot-image', 'image/png');
+    mocks.fetchSafe.mockImplementation(async (_url, options) => {
+      const headers = new Headers(options.headers);
+      return /Mozilla/.test(headers.get('user-agent') || '') && /image\//.test(headers.get('accept') || '')
+        ? upstream : response('blocked', 'text/plain', 403);
+    });
+    mocks.getCachedImage.mockImplementationOnce(async (_url, options) => {
+      expect(options.response).toBe(upstream);
+      expect(options.response.body.destroyed).toBe(false);
+      return { body: Buffer.from('one-shot-image'), contentType: 'image/png', cacheStatus: 'MISS' };
+    });
+    const res = await request(app).get(grant('resource'));
+    expect(res.status).toBe(200);
+    expect(res.body.toString()).toBe('one-shot-image');
+    expect(mocks.fetchSafe).toHaveBeenCalledOnce();
   });
   it.each(['application/xml', 'text/css'])('blocks unsupported active documents with type %s', async type => {
     mocks.fetchSafe.mockResolvedValue(response('https://tracker.example/pixel', type));
