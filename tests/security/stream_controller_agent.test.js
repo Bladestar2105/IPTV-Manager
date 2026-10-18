@@ -1,214 +1,77 @@
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as streamController from '../../src/controllers/streamController.js';
-import fetch from 'node-fetch';
+import express from 'express';
+import request from 'supertest';
+import { Readable } from 'node:stream';
 import { safeLookup } from '../../src/utils/helpers.js';
-import { getXtreamUser } from '../../src/services/authService.js';
-import db from '../../src/database/db.js';
-import streamManager from '../../src/services/streamManager.js';
-import { isSafeUrl, getBaseUrl } from '../../src/utils/helpers.js';
-import { decrypt, encrypt } from '../../src/utils/crypto.js';
+import { encrypt } from '../../src/utils/crypto.js';
+import fetch from 'node-fetch';
 
-// --- Mocks ---
-
-// Mock dotenv
-vi.mock('dotenv', () => ({
-    default: { config: vi.fn() },
-    config: vi.fn()
+const fixtures = vi.hoisted(() => ({
+    user: { id: 1, username: 'agent-user', is_active: 1, token_version: 0, max_connections: 0 },
+    channel: { user_channel_id: 1, provider_channel_id: 1, provider_id: 1, remote_stream_id: '123',
+        name: 'Security channel', metadata: '{}', provider_url: 'http://example.com',
+        provider_user: 'provider-user', provider_pass: 'provider-pass', user_agent: 'TestAgent',
+        category_owner_id: 1, provider_owner_id: 1, granted_by_admin: 0 },
 }));
+vi.mock('node-fetch', () => ({ default: vi.fn() }));
+vi.mock('../../src/database/db.js', () => ({ default: {
+    prepare: vi.fn(sql => {
+        if (sql.includes('FROM users')) return { get: () => fixtures.user };
+        if (sql.includes('FROM authorized_user_channels')) return { get: () => ({ ...fixtures.channel }) };
+        if (sql.includes('url LIKE')) return { all: () => [{ id: 1, url: 'http://example.com', username: 'provider-user', password: 'provider-pass', max_connections: 0 }] };
+        return { get: () => null, all: () => [], run: () => ({}) };
+    }),
+} }));
+vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: async () => fixtures.user }));
+vi.mock('../../src/services/geoIpService.js', () => ({ isIpAllowedForUser: () => true }));
+vi.mock('../../src/services/logoResolver.js', () => ({ getEpgLogo: () => null, getLogoCacheHash: () => 'image', registerProviderCachedIcon: vi.fn() }));
+vi.mock('../../src/services/streamManager.js', () => ({ default: {
+    add: vi.fn(), remove: vi.fn(), touch: vi.fn(), cleanupUser: vi.fn(), cleanupSession: vi.fn(),
+    isSessionActive: async () => false, getUserConnectionCount: async () => 0,
+    getProviderConnectionCount: async () => 0, localStreams: new Map(),
+} }));
+vi.mock('../../src/utils/helpers.js', async original => ({ ...(await original()), isSafeUrl: vi.fn(async () => true) }));
 
-// Mock fluent-ffmpeg
-vi.mock('fluent-ffmpeg', () => ({
-    default: vi.fn(() => ({
-        inputFormat: vi.fn().mockReturnThis(),
-        outputOptions: vi.fn().mockReturnThis(),
-        on: vi.fn().mockReturnThis(),
-        pipe: vi.fn()
-    })),
-    setFfmpegPath: vi.fn()
-}));
-
-// Mock fetch
-vi.mock('node-fetch', () => {
-    return {
-        default: vi.fn().mockImplementation(async (url, opts) => {
-            return {
-                ok: true,
-                status: 200,
-                headers: { get: () => null },
-                body: { pipe: () => {}, on: () => {}, destroy: () => {} },
-                text: () => Promise.resolve('<MPD>test</MPD>'),
-                url: url
-            };
-        })
-    };
-});
-
-// Mock database
-vi.mock('../../src/database/db.js', () => {
-    const dbMock = {
-        prepare: vi.fn((query) => {
-            // Mock getChannel
-            if (query.includes('user_channels')) {
-                return {
-                    get: vi.fn().mockReturnValue({
-                        user_channel_id: 1,
-                        provider_channel_id: 1,
-                        remote_stream_id: '123',
-                        name: 'Test Channel',
-                        metadata: '{}',
-                        provider_url: 'http://example.com',
-                        provider_user: 'user',
-                        provider_pass: 'pass',
-                        user_agent: 'TestAgent'
-                    })
-                };
-            }
-            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
-                return {
-                    all: vi.fn().mockReturnValue([{
-                        id: 1,
-                        user_id: 1,
-                        url: 'http://example.com',
-                        username: 'user',
-                        password: 'pass',
-                        max_connections: 10
-                    }])
-                };
-            }
-            // Mock getStat
-            if (query.includes('SELECT id FROM stream_stats')) {
-                 return { get: vi.fn().mockReturnValue({ id: 1 }) };
-            }
-            // Mock getProviderPool
-            if (query.includes('FROM providers WHERE user_id = ? AND url LIKE ?')) {
-                return {
-                    all: vi.fn().mockReturnValue([{
-                        id: 1,
-                        user_id: 1,
-                        url: 'http://example.com',
-                        username: 'user',
-                        password: 'pass',
-                        max_connections: 10,
-                        backup_urls: JSON.stringify(['http://backup1.com', 'http://backup2.com'])
-                    }])
-                };
-            }
-            // Mock updateStat/insertStat
-            return { run: vi.fn(), get: vi.fn(), all: vi.fn().mockReturnValue([]) };
-        })
-    };
-    return {
-        default: dbMock,
-        getDb: vi.fn(() => dbMock)
-    };
-});
-
-// Mock auth service
-vi.mock('../../src/services/authService.js', () => ({
-    getXtreamUser: vi.fn().mockResolvedValue({
-        id: 1,
-        username: 'testuser',
-        is_share_guest: false,
-        allowed_channels: [1]
-    })
-}));
-
-// Mock stream manager
-vi.mock('../../src/services/streamManager.js', () => ({
-    default: {
-        add: vi.fn(),
-        remove: vi.fn(),
-        cleanupUser: vi.fn(),
-        isSessionActive: vi.fn().mockResolvedValue(false),
-        getUserConnectionCount: vi.fn().mockResolvedValue(0),
-        getProviderConnectionCount: vi.fn().mockResolvedValue(0),
-        localStreams: new Map()
+const { proxyMpd, proxySegment } = await import('../../src/controllers/streamController.js');
+const { default: router } = await import('../../src/routes/proxy.js');
+const app = express();
+app.get('/mpd/:stream_id/:mpdPath', proxyMpd);
+app.get('/legacy/:username/:password/:filename', proxySegment);
+app.use('/api/proxy', router);
+const response = url => ({ url, status: 200, ok: true, headers: new Headers({ 'content-type': 'video/mp2t' }), body: Readable.from(['media']) });
+const assertPinned = options => {
+    expect(options.agent).toBeTypeOf('function');
+    for (const protocol of ['http:', 'https:']) {
+        const agent = options.agent(new URL(`${protocol}//example.com/segment.ts`));
+        expect(agent.options.lookup).toBe(safeLookup);
+        expect(agent.options.rejectUnauthorized).not.toBe(false);
     }
-}));
+};
+beforeEach(() => { fetch.mockReset(); fetch.mockImplementation(async url => response(url)); });
 
-// Mock helpers
-vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
-    const actual = await importOriginal();
-    return {
-        ...actual,
-        isSafeUrl: vi.fn().mockResolvedValue(true), // Mock isSafeUrl to pass
-        getBaseUrl: vi.fn().mockReturnValue('http://localhost:3000'),
-        // safeLookup: actual.safeLookup // We use the real one if possible, but mocked implies imported
-    };
-});
-
-// Mock crypto
-vi.mock('../../src/utils/crypto.js', () => ({
-    decrypt: vi.fn((val) => val), // Echo value (mock decrypt implies input is valid json string usually, but here we just echo)
-    encrypt: vi.fn((val) => val)
-}));
-
-// Adjust decrypt mock to return parsed object if input is stringified json
-// Wait, my mock above just echoes. So if I pass '{"u":...}', it returns '{"u":...}'.
-// But the code expects `JSON.parse(decrypted)`.
-// So I should just use the real crypto or make decrypt return the string I passed.
-
-describe('Stream Controller Security', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
+describe('pinned DNS agents in stream resource fetching', () => {
+    it('pins MPD endpoint resource requests to safeLookup', async () => {
+        expect((await request(app).get('/mpd/1/chunk.bin')).status).toBe(200);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        assertPinned(fetch.mock.calls[0][1]);
     });
-
-    it('proxyMpd should use an agent with safeLookup for fetch', async () => {
-        const req = {
-            params: { stream_id: '1', username: 'u', password: 'p', 0: 'manifest.mpd' },
-            ip: '127.0.0.1',
-            on: vi.fn(),
-            query: {}
-        };
-        const res = {
-            sendStatus: vi.fn(),
-            setHeader: vi.fn(),
-            send: vi.fn(),
-            status: vi.fn().mockReturnThis()
-        };
-
-        await streamController.proxyMpd(req, res);
-
-        expect(fetch).toHaveBeenCalled();
-        const callArgs = fetch.mock.calls[0];
-        const options = callArgs[1];
-
-        // Ensure agent is defined
-        expect(options.agent).toBeDefined();
-
-        // Verify it's a function (for protocol switching)
-        expect(typeof options.agent).toBe('function');
-
-        // Check the agent returned
-        const agent = options.agent(new URL('http://example.com'));
-
-        // Check if lookup property is set (it should be our safeLookup function)
-        expect(agent.options.lookup).toBeDefined();
-        // Since safeLookup is imported, we can check if it matches the imported function or name
-        expect(agent.options.lookup.name).toBe('safeLookup');
+    it('pins the protected relay after upgrading an old encrypted segment envelope', async () => {
+        const data = encrypt(JSON.stringify({ u: 'http://example.com/seg.ts', i: 1 }));
+        const upgraded = await request(app).get('/legacy/user/pass/seg.ts').query({ data });
+        expect(upgraded.status).toBe(307);
+        expect(fetch).not.toHaveBeenCalled();
+        expect((await request(app).get(upgraded.headers.location)).status).toBe(200);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        assertPinned(fetch.mock.calls[0][1]);
     });
-
-    it('proxySegment should use an agent with safeLookup for fetch', async () => {
-         const req = {
-            query: { data: '{"u": "http://example.com/seg.ts", "i": 1}' }, // Mock decrypt just echoes this
-            on: vi.fn()
-        };
-        const res = {
-            sendStatus: vi.fn(),
-            setHeader: vi.fn(),
-            send: vi.fn(),
-            status: vi.fn().mockReturnThis()
-        };
-
-        await streamController.proxySegment(req, res);
-
-        expect(fetch).toHaveBeenCalled();
-        // Check the last call
-        const callArgs = fetch.mock.calls[fetch.mock.calls.length - 1];
-        const options = callArgs[1];
-        expect(options.agent).toBeDefined();
-        const agent = options.agent(new URL('http://example.com'));
-        expect(agent.options.lookup.name).toBe('safeLookup');
+    it('keeps lookup pinning on every upstream redirect hop', async () => {
+        fetch.mockImplementationOnce(async () => ({ status: 302, ok: false,
+            headers: new Headers({ location: 'https://cdn.example/seg.ts' }), body: Readable.from([]),
+        }));
+        const data = encrypt(JSON.stringify({ u: 'http://example.com/seg.ts', i: 1 }));
+        const result = await request(app).get('/legacy/user/pass/seg.ts').query({ data }).redirects(1);
+        expect(result.status).toBe(200);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        for (const [, options] of fetch.mock.calls) assertPinned(options);
     });
 });

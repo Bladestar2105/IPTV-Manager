@@ -8,7 +8,8 @@ const { TEST_DB_DIR } = vi.hoisted(() => {
   return { TEST_DB_DIR: fsModule.mkdtempSync(path.join(os.tmpdir(), 'iptv-provider-timezone-')) };
 });
 
-vi.mock('../src/config/constants.js', () => ({
+vi.mock('../src/config/constants.js', async importOriginal => ({
+  ...(await importOriginal()),
   DATA_DIR: TEST_DB_DIR,
   EPG_DB_PATH: `${TEST_DB_DIR}/epg.db`,
   PORT: 3000,

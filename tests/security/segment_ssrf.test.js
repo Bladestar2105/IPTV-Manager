@@ -1,148 +1,73 @@
-
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
+import { Readable } from 'node:stream';
 import app from '../../src/app.js';
 import db, { initDb } from '../../src/database/db.js';
 import { encrypt } from '../../src/utils/crypto.js';
 import * as helpers from '../../src/utils/helpers.js';
 import fetch from 'node-fetch';
 
-// Keep requests authorized so these checks exercise network protection.
-vi.mock('../../src/controllers/streamControllerHelpers.js', async importOriginal => ({
-    ...(await importOriginal()),
-    getChannel: vi.fn(id => Number(id) === 1 ? { user_channel_id: 1 } : null),
+vi.mock('../../src/utils/helpers.js', async original => ({
+    ...(await original()),
+    isSafeUrl: vi.fn(async url => !/127\.0\.0\.1|localhost|private/.test(url)),
 }));
-
-// Mock isSafeUrl to return true for public IPs and false for private
-vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
-    const actual = await importOriginal();
-    return {
-        ...actual,
-        isSafeUrl: vi.fn().mockImplementation(async (url) => {
-            if (url.includes('127.0.0.1') || url.includes('localhost') || url.includes('private')) {
-                return false;
-            }
-            return true;
-        }),
-        getBaseUrl: actual.getBaseUrl
-    };
+vi.mock('node-fetch', () => ({ default: vi.fn() }));
+const mediaResponse = url => ({ url, status: 200, ok: true,
+    headers: new Headers({ 'content-type': 'video/mp2t' }), body: Readable.from(['fake video content']),
 });
 
-// Mock fetch to simulate upstream
-vi.mock('node-fetch', () => {
-    return {
-        default: vi.fn().mockImplementation(async (url) => {
-            return {
-                ok: true,
-                status: 200,
-                headers: {
-                    get: (name) => {
-                        if (name.toLowerCase() === 'content-type') return 'video/mp2t';
-                        if (name.toLowerCase() === 'content-length') return '18';
-                        return null;
-                    }
-                },
-                body: {
-                    pipe: (res) => {
-                        res.write('fake video content');
-                        res.end();
-                    },
-                    on: () => {},
-                    destroy: () => {}
-                }
-            };
-        })
-    };
-});
-
-describe('SSRF Protection in proxySegment', () => {
-    let userToken;
-    let userId;
-    const username = 'ssrf_test_user';
-
-    beforeEach(() => vi.clearAllMocks());
-
-    beforeAll(async () => {
+describe('SSRF protection after legacy segment grant upgrade', () => {
+    let userId, providerId, providerChannelId, categoryId, channelId;
+    const userToken = 'ssrf-scope-valid-token';
+    const username = 'ssrf_scope_user';
+    beforeEach(() => {
+        vi.clearAllMocks();
+        fetch.mockImplementation(async url => mediaResponse(url));
+    });
+    beforeAll(() => {
         initDb(true);
-
-        // Clean up if exists from previous run
-        try {
-            const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-            if (existing) {
-                db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(existing.id);
-                db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
-            }
-        } catch(e) {}
-
-        const info = db.prepare('INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled) VALUES (?, ?, 1, 1, 0)').run(username, 'password');
-        userId = info.lastInsertRowid;
-
-        const token = 'ssrf-valid-token-123';
-        const now = Math.floor(Date.now() / 1000);
-        db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, now + 3600);
-        userToken = token;
+        userId = Number(db.prepare('INSERT INTO users (username,password,is_active,webui_access,max_connections) VALUES (?,?,1,1,0)').run(username, 'password').lastInsertRowid);
+        providerId = Number(db.prepare('INSERT INTO providers (name,url,username,password,user_id) VALUES (?,?,?,?,?)').run(username, 'http://example.com', 'provider-user', encrypt('provider-pass'), userId).lastInsertRowid);
+        providerChannelId = Number(db.prepare('INSERT INTO provider_channels (provider_id,remote_stream_id,name) VALUES (?,?,?)').run(providerId, 123, 'Security channel').lastInsertRowid);
+        categoryId = Number(db.prepare('INSERT INTO user_categories (user_id,name) VALUES (?,?)').run(userId, 'Security list').lastInsertRowid);
+        channelId = Number(db.prepare("INSERT INTO user_channels (user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')").run(categoryId, providerChannelId).lastInsertRowid);
+        db.prepare('INSERT INTO temporary_tokens (token,user_id,expires_at) VALUES (?,?,?)').run(userToken, userId, Math.floor(Date.now() / 1000) + 3600);
     });
-
     afterAll(() => {
-        try {
-            db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
-            db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-        } catch(e) {}
+        db.prepare('DELETE FROM temporary_tokens WHERE user_id=?').run(userId);
+        db.prepare('DELETE FROM user_channels WHERE id=?').run(channelId);
+        db.prepare('DELETE FROM user_categories WHERE id=?').run(categoryId);
+        db.prepare('DELETE FROM provider_channels WHERE id=?').run(providerChannelId);
+        db.prepare('DELETE FROM providers WHERE id=?').run(providerId);
+        db.prepare('DELETE FROM users WHERE id=?').run(userId);
     });
+    const legacyRequest = payload => request(app).get(`/live/segment/${username}/password/seg.ts`).query({ token: userToken, data: encrypt(JSON.stringify({ i: channelId, ...payload })) });
 
-    it('should BLOCK access to private IP if payload does not explicitly allow it', async () => {
-        const targetUrl = 'http://127.0.0.1:8080/private-data';
-        const payload = {
-            u: targetUrl,
-            i: 1,
-            h: {},
-            s: true // Simulating public origin or default
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
-
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
-
-        expect(res.status).toBe(403);
-        expect(helpers.isSafeUrl).toHaveBeenCalledWith(targetUrl);
+    it.each([true, false])('rejects private upstreams even when the old encrypted safe-origin flag is %s', async s => {
+        const target = 'http://127.0.0.1:8080/private-data';
+        const upgraded = await legacyRequest({ u: target, s });
+        expect(upgraded.status).toBe(307);
+        expect(upgraded.headers.location).toMatch(/^\/api\/proxy\/resource\//);
+        expect(fetch).not.toHaveBeenCalled();
+        const blocked = await request(app).get(upgraded.headers.location);
+        expect(blocked.status).toBe(502);
+        expect(helpers.isSafeUrl).toHaveBeenCalledWith(target);
         expect(fetch).not.toHaveBeenCalled();
     });
-
-    it('should ALLOW access to public IP', async () => {
-        const targetUrl = 'http://example.com/video.ts';
-        const payload = {
-            u: targetUrl,
-            i: 1,
-            h: {},
-            s: true
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
-
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
-
-        expect(res.status).toBe(200);
-        expect(fetch).toHaveBeenCalledWith(targetUrl, expect.any(Object));
+    it('streams authorized public resources after the Manager-local redirect', async () => {
+        const target = 'http://example.com/video.ts';
+        const result = await legacyRequest({ u: target, s: true }).redirects(1);
+        expect(result.status).toBe(200);
+        expect(result.body.toString()).toBe('fake video content');
+        expect(fetch).toHaveBeenCalledWith(target, expect.any(Object));
     });
-
-    it('should ALLOW access to private IP if origin is marked as unsafe (s: false)', async () => {
-        // This simulates a scenario where the admin configured a local provider
-        const targetUrl = 'http://127.0.0.1:8080/private-stream.ts';
-        const payload = {
-            u: targetUrl,
-            i: 1,
-            h: {},
-            s: false // Origin is unsafe/private
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
-
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
-
-        expect(res.status).toBe(200);
-        expect(fetch).toHaveBeenCalledWith(targetUrl, expect.any(Object));
+    it('blocks redirects from a public upstream to a private address', async () => {
+        const target = 'http://example.com/video.ts';
+        fetch.mockImplementationOnce(async () => ({ status: 302, ok: false,
+            headers: new Headers({ location: 'http://127.0.0.1:8080/private-data' }), body: Readable.from([]),
+        }));
+        expect((await legacyRequest({ u: target }).redirects(1)).status).toBe(502);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(helpers.isSafeUrl).toHaveBeenCalledWith('http://127.0.0.1:8080/private-data');
     });
 });

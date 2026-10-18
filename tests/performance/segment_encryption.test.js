@@ -1,135 +1,67 @@
-
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
+import { Readable } from 'node:stream';
 import app from '../../src/app.js';
 import db, { initDb } from '../../src/database/db.js';
 import { encrypt } from '../../src/utils/crypto.js';
+import * as helpers from '../../src/utils/helpers.js';
 import fetch from 'node-fetch';
 
-// The grant still uses the real encryption and HTTP route; channel scope is
-// covered separately by streamController_perf's ownership/revocation checks.
-vi.mock('../../src/controllers/streamControllerHelpers.js', async importOriginal => ({
-    ...(await importOriginal()),
-    getChannel: vi.fn(id => Number(id) === 1 ? { user_channel_id: 1 } : null),
+vi.mock('../../src/utils/helpers.js', async original => ({
+    ...(await original()),
+    isSafeUrl: vi.fn(async url => !/127\.0\.0\.1|localhost|private/.test(url)),
 }));
-
-// Mock isSafeUrl
-vi.mock('../../src/utils/helpers.js', async (importOriginal) => {
-    const actual = await importOriginal();
-    return {
-        ...actual,
-        isSafeUrl: vi.fn().mockResolvedValue(true),
-        getBaseUrl: actual.getBaseUrl
-    };
+vi.mock('node-fetch', () => ({ default: vi.fn() }));
+const mediaResponse = url => ({ url, status: 200, ok: true,
+    headers: new Headers({ 'content-type': 'video/mp2t' }), body: Readable.from(['fake video content']),
 });
 
-// Mock fetch
-vi.mock('node-fetch', () => {
-    return {
-        default: vi.fn().mockImplementation(async (url, options) => {
-            return {
-                ok: true,
-                status: 200,
-                headers: {
-                    get: (name) => {
-                        if (name.toLowerCase() === 'content-type') return 'video/mp2t';
-                        if (name.toLowerCase() === 'content-length') return '18';
-                        return null;
-                    }
-                },
-                body: {
-                    pipe: (res) => {
-                        res.write('fake video content');
-                        res.end();
-                    },
-                    on: () => {},
-                    destroy: () => {}
-                },
-                // Expose options for verification
-                _options: options
-            };
-        })
-    };
-});
-
-describe('Segment Encryption Format', () => {
-    let userToken;
-    let userId;
-    const username = 'enc_test_user';
-
-    beforeAll(async () => {
+describe('legacy segment encryption formats through the protected relay', () => {
+    let userId, providerId, providerChannelId, categoryId, channelId;
+    const userToken = 'enc-scope-valid-token';
+    const username = 'enc_scope_user';
+    beforeEach(() => {
+        vi.clearAllMocks();
+        fetch.mockImplementation(async url => mediaResponse(url));
+    });
+    beforeAll(() => {
         initDb(true);
-
-        // Clean up
-        try {
-            const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-            if (existing) {
-                db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(existing.id);
-                db.prepare('DELETE FROM users WHERE id = ?').run(existing.id);
-            }
-        } catch(e) {}
-
-        const info = db.prepare('INSERT INTO users (username, password, is_active, webui_access, hdhr_enabled) VALUES (?, ?, 1, 1, 0)').run(username, 'password');
-        userId = info.lastInsertRowid;
-
-        const token = 'enc-valid-token-123';
-        const now = Math.floor(Date.now() / 1000);
-        db.prepare('INSERT INTO temporary_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, now + 3600);
-        userToken = token;
+        userId = Number(db.prepare('INSERT INTO users (username,password,is_active,webui_access,max_connections) VALUES (?,?,1,1,0)').run(username, 'password').lastInsertRowid);
+        providerId = Number(db.prepare('INSERT INTO providers (name,url,username,password,user_id) VALUES (?,?,?,?,?)').run(username, 'http://example.com', 'provider-user', encrypt('provider-pass'), userId).lastInsertRowid);
+        providerChannelId = Number(db.prepare('INSERT INTO provider_channels (provider_id,remote_stream_id,name) VALUES (?,?,?)').run(providerId, 123, 'Security channel').lastInsertRowid);
+        categoryId = Number(db.prepare('INSERT INTO user_categories (user_id,name) VALUES (?,?)').run(userId, 'Security list').lastInsertRowid);
+        channelId = Number(db.prepare("INSERT INTO user_channels (user_category_id,provider_channel_id,assignment_origin) VALUES (?,?,'manual')").run(categoryId, providerChannelId).lastInsertRowid);
+        db.prepare('INSERT INTO temporary_tokens (token,user_id,expires_at) VALUES (?,?,?)').run(userToken, userId, Math.floor(Date.now() / 1000) + 3600);
     });
-
     afterAll(() => {
-        try {
-            db.prepare('DELETE FROM temporary_tokens WHERE user_id = ?').run(userId);
-            db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-        } catch(e) {}
+        db.prepare('DELETE FROM temporary_tokens WHERE user_id=?').run(userId);
+        db.prepare('DELETE FROM user_channels WHERE id=?').run(channelId);
+        db.prepare('DELETE FROM user_categories WHERE id=?').run(categoryId);
+        db.prepare('DELETE FROM provider_channels WHERE id=?').run(providerChannelId);
+        db.prepare('DELETE FROM providers WHERE id=?').run(providerId);
+        db.prepare('DELETE FROM users WHERE id=?').run(userId);
     });
+    const legacyRequest = payload => request(app).get(`/live/segment/${username}/password/seg.ts`).query({ token: userToken, data: encrypt(JSON.stringify({ i: channelId, ...payload })) });
 
-    it('should support LEGACY format (all data in "data" param)', async () => {
-        const targetUrl = 'http://example.com/legacy.ts';
-        const payload = {
-            u: targetUrl,
-            i: 1,
-            h: { 'X-Custom-Header': 'LegacyHeader' },
-            s: true
-        };
-        const encrypted = encrypt(JSON.stringify(payload));
-
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: encrypted });
-
-        expect(res.status).toBe(200);
-
-        // Verify fetch was called with correct headers
-        const lastCall = fetch.mock.calls[fetch.mock.calls.length - 1];
-        expect(lastCall[0]).toBe(targetUrl);
-        expect(lastCall[1].headers).toHaveProperty('X-Custom-Header', 'LegacyHeader');
+    it('supports an encrypted legacy envelope containing URL and headers', async () => {
+        const target = 'http://example.com/legacy.ts';
+        const upgraded = await legacyRequest({ u: target, h: { 'X-Custom-Header': 'LegacyHeader' }, s: true });
+        expect(upgraded.status).toBe(307);
+        expect(fetch).not.toHaveBeenCalled();
+        expect(upgraded.headers.location).not.toMatch(/example\.com|LegacyHeader/);
+        const result = await request(app).get(upgraded.headers.location);
+        expect(result.status).toBe(200);
+        const [url, options] = fetch.mock.calls[0];
+        expect(url).toBe(target);
+        expect(new Headers(options.headers).get('x-custom-header')).toBe('LegacyHeader');
     });
-
-    it('should support OPTIMIZED format (url in "data", headers in "base")', async () => {
-        const targetUrl = 'http://example.com/optimized.ts';
-        const basePayload = {
-            h: { 'X-Custom-Header': 'OptimizedHeader' },
-            s: true
-        };
-        const baseEncrypted = encrypt(JSON.stringify(basePayload));
-
-        const dataPayload = {
-            u: targetUrl,
-            i: 1
-        };
-        const dataEncrypted = encrypt(JSON.stringify(dataPayload));
-
-        const res = await request(app)
-            .get(`/live/segment/${username}/password/seg.ts`)
-            .query({ token: userToken, data: dataEncrypted, base: baseEncrypted });
-
-        expect(res.status).toBe(200);
-
-        // Verify fetch was called with correct headers
-        const lastCall = fetch.mock.calls[fetch.mock.calls.length - 1];
-        expect(lastCall[0]).toBe(targetUrl);
-        expect(lastCall[1].headers).toHaveProperty('X-Custom-Header', 'OptimizedHeader');
+    it('supports optimized encrypted headers in base and URL in data', async () => {
+        const target = 'http://example.com/optimized.ts';
+        const base = encrypt(JSON.stringify({ h: { 'X-Custom-Header': 'OptimizedHeader' }, s: true }));
+        const result = await legacyRequest({ u: target }).query({ base }).redirects(1);
+        expect(result.status).toBe(200);
+        const [url, options] = fetch.mock.calls[0];
+        expect(url).toBe(target);
+        expect(new Headers(options.headers).get('x-custom-header')).toBe('OptimizedHeader');
     });
 });

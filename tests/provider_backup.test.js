@@ -39,6 +39,7 @@ vi.mock('../src/services/streamManager.js', () => ({
         add: vi.fn(),
         remove: vi.fn(),
         cleanupUser: vi.fn(),
+        cleanupSession: vi.fn().mockResolvedValue(undefined),
         localStreams: new Map()
     }
 }));

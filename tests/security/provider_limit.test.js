@@ -228,6 +228,6 @@ describe('Provider Connection Limit', () => {
             expect.stringContaining('/live/pool/poolpass/123.mpd'),
             expect.anything()
         );
-        expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), 102);
+        expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'Test Channel (DASH)', expect.anything(), expect.anything(), 102, { dedupe: false });
     });
 });

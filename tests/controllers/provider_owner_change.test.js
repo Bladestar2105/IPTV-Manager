@@ -8,9 +8,10 @@ const { TEST_DB_DIR } = vi.hoisted(() => {
   return { TEST_DB_DIR: fsModule.mkdtempSync(pathModule.join(osModule.tmpdir(), 'iptv-provider-owner-')) };
 });
 
-vi.mock('../../src/config/constants.js', () => {
+vi.mock('../../src/config/constants.js', async importOriginal => {
   const pathModule = require('path');
   return {
+    ...(await importOriginal()),
     DATA_DIR: TEST_DB_DIR,
     EPG_DB_PATH: pathModule.join(TEST_DB_DIR, 'epg.db'),
     BCRYPT_ROUNDS: 1,
