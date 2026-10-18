@@ -558,6 +558,10 @@ Public metadata/artwork links on YouTube (including youtu.be/ytimg), IMDb
 policy is centralized in `src/utils/clientResourcePolicy.js`; unknown hosts,
 credential-bearing URLs and DRM license endpoints remain proxied. YouTube
 trailers are deliberately direct and are not cached by Manager.
+Public exceptions also require credential-free effective request headers and
+query/fragment data without embedded provider URLs or secrets. Restricted WebUI
+catalog, category and EPG mapping responses follow the same artwork policy;
+authorized provider-management responses retain their connection details.
 Resource grants encrypt the upstream URL
 and required upstream headers; they authorize only that resource. Clients use
 these ordinary HTTP URLs without custom headers or a WebUI login. Grants are
@@ -585,6 +589,8 @@ Image files are revalidated on every request using upstream `ETag` and
 use `Cache-Control: private, no-cache, must-revalidate`; `X-Cache` is `MISS`,
 `HIT` (upstream 304), `REVALIDATED` (replacement), or `STALE` (last good image
 after an upstream failure). Parallel requests within a worker share one refresh.
+Redirects to a different image URL drop the previous resource's conditional
+validators, so equal ETags on different targets cannot preserve an obsolete icon.
 Image requests retain the browser-like user agent and image Accept defaults;
 explicit upstream headers override those defaults case-insensitively.
 
@@ -606,6 +612,12 @@ issuing a resource request. ClearKey license elements and embedded PlayReady
 license URLs in manifest PRO/PSSH records are proxied; optional PlayReady
 interactive license pages are removed. Malformed PlayReady data and embedded
 license stores are rejected. Media payload bytes are relayed unchanged.
+HLS child playlists retain their manifest role even without an extension or a
+correct upstream MIME type. Inline AES keys and supported DRM PSSH keys remain
+supported; embedded data manifests and unsupported data dependencies fail closed.
+DASH bitstream-switching URLs are relayed, and XML stylesheet instructions are
+removed. Legacy HLS segment URLs redirect only to an authenticated Manager
+resource URL and use the same content checks and connection limits.
 Existing HLS playlists issued before channel-scoped
 grants must be reloaded once after upgrading.
 YouTube trailer IDs and official YouTube trailer links remain direct, without

@@ -40,10 +40,11 @@ vi.mock('../../src/services/epgService.js', () => ({
   getEpgXmlForChannels: vi.fn(),
 }));
 
-vi.mock('../../src/utils/crypto.js', async importOriginal => ({
-  ...(await importOriginal()),
-  decrypt: vi.fn((val) => val), // Simple pass-through for test
-}));
+vi.mock('../../src/utils/crypto.js', async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, decrypt: vi.fn(value => /^[a-f0-9]+:[a-f0-9]+:[a-f0-9]+$/i.test(value)
+    ? actual.decrypt(value) : value) };
+});
 
 vi.mock('../../src/utils/helpers.js', async importOriginal => ({
   ...(await importOriginal()),
@@ -185,7 +186,7 @@ describe('xtreamController - playerChannelsJson', () => {
       if (sql.includes('FROM provider_series_episodes')) {
         return {
           all: vi.fn((_sourceKey, seriesId) => seriesId === 500
-            ? [{ remote_episode_id: 9, season: 1, episode_num: 2, container_extension: '.MKV', logo: '' }]
+            ? [{ remote_episode_id: 9, season: 1, episode_num: 2, container_extension: '.MKV', logo: 'logo.png' }]
             : []),
         };
       }
@@ -204,6 +205,7 @@ describe('xtreamController - playerChannelsJson', () => {
       container_extension: 'mkv',
       url: 'http://localhost/series/token/auth/900000009.mkv',
     });
+    expect(await decryptClientGrant(output[0].logo)).toMatchObject({ url: 'http://panel.test/logo.png', channelId: 42, kind: 'image' });
     expect(JSON.stringify(output)).not.toContain('/42.');
     expect(JSON.stringify(output)).not.toContain('/43.');
   });

@@ -1,3 +1,4 @@
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 
@@ -131,6 +132,7 @@ describe('xtreamController - getPlaylist (get.php)', () => {
 
     getXtreamUser.mockResolvedValue({ id: 1, is_share_guest: false });
     episodes[0].container_extension = 'mkv';
+    episodes[0].logo = 'https://provider.test/ep1.png';
     episodes[1].container_extension = 'mkv';
     movieChannel.mime_type = 'mkv';
 
@@ -167,6 +169,15 @@ describe('xtreamController - getPlaylist (get.php)', () => {
   });
 
   const collectOutput = () => res.write.mock.calls.map((c) => c[0]).join('');
+
+  it.each(['logo.png', 'art/episode.png', '//cdn.provider.test/icon.png'])('resolves stored relative episode artwork against the provider: %s', async artwork => {
+    episodes[0].logo = artwork;
+    await getPlaylist(req, res);
+    const logoUrl = collectOutput().match(/tvg-logo="([^"]+)"/)[1];
+    expect(await decryptClientGrant(logoUrl)).toMatchObject({
+      url: new URL(artwork, 'http://prov.example/player_api.php').href, channelId: 42, kind: 'image'
+    });
+  });
 
   it('expands series into one entry per episode with compact aliases', async () => {
     await getPlaylist(req, res);

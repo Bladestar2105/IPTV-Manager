@@ -139,28 +139,14 @@ export function deleteEpgSourceData(sourceId, sourceType) {
     db.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
 }
 
-export async function loadAllEpgChannels() {
+export async function loadAllEpgChannels({ includeSourceId = false } = {}) {
     // Return all channels including source info
     const channels = db.prepare(`
-        SELECT id, name, logo, source_type
+        SELECT id, name, logo, source_type${includeSourceId ? ', source_id' : ''}
         FROM epg_channels
         ORDER BY name ASC
     `).all();
     return channels;
-}
-
-export function loadEpgChannelLogosMap() {
-    const channels = db.prepare(`
-        SELECT id, logo
-        FROM epg_channels
-        WHERE logo IS NOT NULL AND logo != ''
-    `).all();
-
-    const logoMap = new Map();
-    for (const ch of channels) {
-        logoMap.set(ch.id, ch.logo);
-    }
-    return logoMap;
 }
 
 export function getEpgPrograms(channelId, limit = 1000, options = {}) {
@@ -359,7 +345,7 @@ export async function* getEpgXmlForChannels(channelIds, mapLogo = logo => logo) 
         // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
         const placeholders = Array(batch.length).fill('?').join(',');
         const channels = db.prepare(`
-            SELECT id, name, logo
+            SELECT id, name, logo, source_type, source_id
             FROM epg_channels
             WHERE id IN (${placeholders})
             GROUP BY id

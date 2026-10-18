@@ -183,6 +183,20 @@ describe('fetchSafe', () => {
     expect(options.headers).toMatchObject(bodyHeaders);
   });
 
+  it.each([false, true])('scopes image validators after redirects only when requested (%s)', async stripConditionalOnRedirect => {
+    helpers.isSafeUrl.mockResolvedValue(true);
+    fetch.mockResolvedValueOnce({ status: 302, headers: { get: name => name === 'location' ? '/other.png' : null }, body: { destroy: vi.fn() } })
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => null } });
+    await fetchSafe('https://cdn.example/icon', { stripConditionalOnRedirect, headers: {
+      'If-None-Match': '"1"', 'iF-mOdIfIeD-sInCe': 'Mon, 01 Jan 2024 00:00:00 GMT', Range: 'bytes=0-99',
+    } });
+    const final = new Headers(fetch.mock.calls[1][1].headers);
+    expect(final.has('if-none-match')).toBe(!stripConditionalOnRedirect);
+    expect(final.has('if-modified-since')).toBe(!stripConditionalOnRedirect);
+    expect(final.get('range')).toBe('bytes=0-99');
+    expect(fetch.mock.calls[1][1]).not.toHaveProperty('stripConditionalOnRedirect');
+  });
+
   it('should handle relative redirects', async () => {
     const initialUrl = 'http://example.com/path';
     const relativeRedirect = '/new-path';

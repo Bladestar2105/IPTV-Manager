@@ -27,6 +27,7 @@ import {
   reserveProviderSession,
   sendSubtitleTrack,
   sendTrackInfo,
+  sendPlaybackDocument,
   shareGuestAllowed
 } from './streamControllerHelpers.js';
 
@@ -89,7 +90,8 @@ export const proxyMovie = async (req, res) => {
       return;
     }
 
-    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName)) return;
+    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: shouldTranscode })) return;
 
     channel.provider_pass = decrypt(channel.provider_pass);
     base = channel.provider_url.replace(/\/+$/, '');
@@ -100,8 +102,6 @@ export const proxyMovie = async (req, res) => {
     ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie'));
 
     recordStreamStat(channel.provider_channel_id, 'Movie');
-
-    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -171,6 +171,8 @@ export const proxyMovie = async (req, res) => {
           return;
         }
 
+        if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+        await streamManager.cleanupSession(user.id, req.ip, sessionName, channel.provider_id, connectionId);
         res.status(upstream.status);
 
         const contentType = upstream.headers.get('content-type');
@@ -268,7 +270,8 @@ export const proxySeries = async (req, res) => {
       return;
     }
 
-    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName);
+    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
+    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName, { dedupe: shouldTranscode });
     if (!availableProvider) return;
 
     availableProvider.password = decrypt(availableProvider.password);
@@ -282,8 +285,6 @@ export const proxySeries = async (req, res) => {
       'User-Agent': availableProvider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
-
-    const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -352,6 +353,8 @@ export const proxySeries = async (req, res) => {
           return;
         }
 
+        if (await sendPlaybackDocument(res, upstream)) { cleanup(); return; }
+        await streamManager.cleanupSession(user.id, req.ip, sessionName, availableProvider.id, connectionId);
         res.status(upstream.status);
 
         const contentType = upstream.headers.get('content-type');

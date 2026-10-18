@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rewritePlayReadyObject, rewritePlayReadyPssh } from '../src/utils/clientPlayReady.js';
+import { rewriteHlsManifest } from '../src/utils/clientManifests.js';
 import { rewriteDashManifest } from '../src/utils/clientManifests.js';
 
 const systemId = Buffer.from('9a04f07998404286ab92e65be0885f95', 'hex');
@@ -27,6 +28,14 @@ function pssh(version = 0, id = systemId) {
   return result;
 }
 describe('PlayReady manifest license resources', () => {
+  it('rewrites license URLs inside an inline HLS PlayReady PSSH key', () => {
+    const output = rewriteHlsManifest(`#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="data:text/plain;base64,${pssh().toString('base64')}"`, 'https://origin/master.m3u8', map);
+    const payload = output.match(/base64,([a-z\d+/=]+)/i)[1];
+    const xml = Buffer.from(payload, 'base64').subarray(42).toString('utf16le');
+    expect(xml).toContain(key);
+    expect(xml).toContain('https://manager.example/license');
+    expect(xml).not.toContain('drm.example');
+  });
   it('rewrites UTF16 license URL, removes interactive URL and preserves key material', () => {
     const result = Buffer.from(rewritePlayReadyObject(object().toString('base64'), map), 'base64');
     expect(result.readUInt32LE()).toBe(result.length);

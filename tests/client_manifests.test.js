@@ -73,4 +73,26 @@ describe('client manifest resources', () => {
   it('fails closed for unsupported external schemes', () => {
     expect(() => rewriteHlsManifest('#EXTM3U\nrtsp://upstream/stream', 'https://origin/a', url => url)).toThrow();
   });
+  it('marks extensionless HLS playlist references independently of response MIME', () => {
+    const targets = [];
+    rewriteHlsManifest('#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,URI="subs?id=1"\n#EXT-X-I-FRAME-STREAM-INF:URI="iframe?id=1"\n#EXT-X-RENDITION-REPORT:URI="rendition?id=1"\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n# comment\nchild?id=1\n', 'https://provider.example/master', (url, options) => { targets.push([url, options]); return 'https://manager/resource'; });
+    expect(targets).toHaveLength(4);
+    for (const [, options] of targets) expect(options).toMatchObject({ manifestKind: 'hls' });
+  });
+  it('rewrites DASH bitstream switching resources and removes external stylesheets', () => {
+    const targets = [];
+    const result = rewriteDashManifest('<?xml version="1.0"?><?xml-stylesheet href="https://provider.example/style.xsl?password=secret"?><MPD><SegmentTemplate bitstreamSwitching="https://provider.example/switch-$RepresentationID$.m4s"/></MPD>', 'https://provider.example/master', url => { targets.push(url); return 'https://manager/resource'; });
+    expect(targets).toEqual(['https://provider.example/switch-$RepresentationID$.m4s']);
+    expect(result).not.toContain('provider.example');
+    expect(result).not.toContain('xml-stylesheet');
+    expect(result).toContain('<?xml version="1.0"?>');
+  });
+  it('rejects data-embedded manifests while retaining ordinary inline AES keys', () => {
+    const nested = 'data:application/vnd.apple.mpegurl;base64,' + Buffer.from('#EXTM3U\nhttps://provider.example/user/password/seg.ts').toString('base64');
+    expect(() => rewriteHlsManifest('#EXTM3U\n' + nested, 'https://origin/master', url => url)).toThrow();
+    expect(() => rewriteDashManifest(`<MPD><BaseURL>${nested}</BaseURL></MPD>`, 'https://origin/master', url => url)).toThrow();
+    const key = 'data:text/plain;base64,' + Buffer.alloc(16, 7).toString('base64');
+    expect(rewriteHlsManifest(`#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="${key}"\nsegment.ts`, 'https://origin/master', () => 'https://manager/resource')).toContain(key);
+    expect(() => rewriteHlsManifest(`#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="${nested}"`, 'https://origin/master', url => url)).toThrow();
+  });
 });

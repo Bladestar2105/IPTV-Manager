@@ -11,6 +11,7 @@ import fetch from 'node-fetch';
 import { spawn } from 'child_process';
 import ffmpeg from 'fluent-ffmpeg';
 import { upstreamRequestHeaders } from '../../src/utils/clientCookies.js';
+import { decryptClientGrant } from '../helpers/clientResourceGrant.js';
 
 const { streamDbState } = vi.hoisted(() => ({
   streamDbState: { channelOverrides: {}, providerPool: [] }
@@ -26,6 +27,7 @@ vi.mock('../../src/services/streamManager.js', () => ({
     add: vi.fn(),
     remove: vi.fn(),
     cleanupUser: vi.fn(),
+    cleanupSession: vi.fn(),
     isSessionActive: vi.fn(),
     getUserConnectionCount: vi.fn(),
     getProviderConnectionCount: vi.fn(),
@@ -125,10 +127,10 @@ vi.mock('../../src/database/db.js', () => {
     }))
   };
 });
-vi.mock('../../src/utils/crypto.js', () => ({
-  decrypt: vi.fn((val) => val),
-  encrypt: vi.fn((val) => val),
-}));
+vi.mock('../../src/utils/crypto.js', async original => {
+  const actual = await original();
+  return { ...actual, decrypt: vi.fn(value => /^[a-f0-9]+:[a-f0-9]+:[a-f0-9]+$/i.test(value) ? actual.decrypt(value) : value) };
+});
 vi.mock('../../src/utils/helpers.js', async importOriginal => ({
   ...(await importOriginal()),
   getBaseUrl: vi.fn(() => 'http://localhost'),
@@ -193,6 +195,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
     };
 
     res = {
+      redirect: vi.fn(),
       sendStatus: vi.fn(),
       setHeader: vi.fn(),
       send: vi.fn(),
@@ -298,19 +301,13 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(streamManager.getProviderConnectionCount).not.toHaveBeenCalledWith(101);
   });
 
-  it('rewrites nested HLS manifests fetched through the legacy segment route', async () => {
-    req.query.data = JSON.stringify({ u: 'https://cdn.example/live/child.m3u8', i: 1, c: 'Test', p: 100 });
-    fetch.mockResolvedValueOnce({
-      ok: true, status: 200, url: 'https://cdn.example/redirect/child.m3u8',
-      headers: { get: name => name === 'content-type' ? 'application/vnd.apple.mpegurl' : null },
-      text: vi.fn().mockResolvedValue('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\nsegment.ts'),
-      body: new PassThrough().end('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\nsegment.ts'),
-    });
+  it('upgrades legacy nested HLS grants without fetching outside the protected relay', async () => {
+    req.query.data = JSON.stringify({ u: 'https://cdn.example/live/child.m3u8', i: 1, c: 'Test', p: 100, v: { key: 'value' } });
     await streamController.proxySegment(req, res);
-    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('URI="/live/segment/'));
-    const output = res.send.mock.calls[0][0];
-    const resources = [...output.matchAll(/data=([^&"\n]+)/g)].map(match => JSON.parse(decodeURIComponent(match[1])).u);
-    expect(resources).toEqual(['https://cdn.example/redirect/key.bin', 'https://cdn.example/redirect/segment.ts']);
+    expect(res.redirect).toHaveBeenCalledWith(307, expect.stringContaining('/api/proxy/resource/'));
+    const grant = await decryptClientGrant(`http://localhost${res.redirect.mock.calls[0][1]}`);
+    expect(grant).toMatchObject({ url: 'https://cdn.example/live/child.m3u8', kind: 'resource', channelId: 1, providerId: 100, hlsVariables: { key: 'value' } });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('recognizes redirected manifests for a standard live TS client', async () => {
@@ -322,22 +319,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
       body: new PassThrough().end('#EXTM3U\nhttps://cdn.example/live/segment.ts'),
     });
     await streamController.proxyLive(req, res);
-    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('/live/segment/'));
-  });
-
-  it('preserves partial-content semantics for HLS byte-range resources', async () => {
-    req.headers.range = 'bytes=100-199';
-    req.query.data = JSON.stringify({ u: 'https://cdn.example/file.mp4', i: 1 });
-    fetch.mockResolvedValueOnce({
-      ok: true, status: 206,
-      headers: { get: name => ({ 'content-type': 'video/mp4', 'content-range': 'bytes 100-199/1000', 'accept-ranges': 'bytes', 'content-length': '100' })[name] || null },
-      body: { pipe: vi.fn(), on: vi.fn(), destroy: vi.fn() },
-    });
-    await streamController.proxySegment(req, res);
-    expect(fetch).toHaveBeenCalledWith('https://cdn.example/file.mp4', expect.objectContaining({ headers: expect.objectContaining({ Range: 'bytes=100-199' }) }));
-    expect(res.status).toHaveBeenCalledWith(206);
-    expect(res.setHeader).toHaveBeenCalledWith('Content-Range', 'bytes 100-199/1000');
-    expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('/api/proxy/resource/'));
   });
 
   it('rewrites timeshift keys, subtitle playlists and segment maps', async () => {
@@ -351,7 +333,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
     });
     await streamController.proxyTimeshift(req, res);
     const output = res.send.mock.calls[0][0];
-    const resources = [...output.matchAll(/data=([^&"\n]+)/g)].map(match => JSON.parse(decodeURIComponent(match[1])).u);
+    const resources = await Promise.all([...output.matchAll(/https?:\/\/[^"\s]+/g)].map(async match => (await decryptClientGrant(match[0])).url));
     expect(resources).toEqual(['https://cdn.example/archive/key.bin', 'https://cdn.example/archive/init.mp4', 'https://cdn.example/archive/subs.m3u8', 'https://cdn.example/archive/segment.ts']);
   });
 
@@ -395,19 +377,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('touches tracked segment sessions while bytes arrive', async () => {
-    req.query.data = JSON.stringify({ u: 'https://cdn.example/segment.ts', i: 1, c: 'Channel', p: 100 });
-    const body = new PassThrough();
-    body.pipe = vi.fn();
-    fetch.mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'video/mp2t' }, body });
-    await streamController.proxySegment(req, res);
-    body.emit('data', Buffer.from('segment'));
-    expect(streamManager.touch).toHaveBeenCalledWith(expect.any(String));
-    body.destroy();
-  });
-
-  it.each(['proxyLive', 'proxySegment'])('forwards only cookie pairs from %s manifest responses', async method => {
-    req.query.data = JSON.stringify({ u: 'https://cdn.example/child.m3u8', i: 1, h: { Cookie: 'old=one; session=old' } });
+  it('retains scoped response cookies inside new live HLS grants', async () => {
     fetch.mockResolvedValueOnce({
       ok: true, status: 200, url: 'https://cdn.example/child.m3u8',
       headers: {
@@ -416,12 +386,11 @@ describe('Stream Controller Performance (proxyLive)', () => {
       },
       body: new PassThrough().end('#EXTM3U\nchunk.ts'),
     });
-    await streamController[method](req, res);
-    const base = JSON.parse(decodeURIComponent(res.send.mock.calls[0][0].match(/base=([^&"\n]+)/)[1]));
-    expect(base.h.Cookie).toBeUndefined();
-    const context = { headers: base.h, cookieJar: base.j, headerOrigin: base.o };
-    expect(new Headers(upstreamRequestHeaders(context, 'https://cdn.example/chunk.ts')).get('cookie'))
-      .toBe(method === 'proxySegment' ? 'old=one; session=new; extra=two' : 'session=new; extra=two');
+    await streamController.proxyLive(req, res);
+    const grantUrl = res.send.mock.calls[0][0].split('\n').find(line => line.startsWith('http'));
+    const context = await decryptClientGrant(grantUrl);
+    expect(context.headers.Cookie).toBeUndefined();
+    expect(new Headers(upstreamRequestHeaders(context, 'https://cdn.example/chunk.ts')).get('cookie')).toBe('session=new; extra=two');
     expect(new Headers(upstreamRequestHeaders(context, 'https://license.example/key')).get('cookie')).toBeNull();
   });
 

@@ -58,6 +58,13 @@ describe('scoped client resource URLs', () => {
     getXtreamUser.mockResolvedValue({ ...user, is_share_guest: true, share_end: 1 });
     expect(await resolveClientResource(resourceRequest(url))).toBeNull();
   });
+  it('does not mistake authenticated WebUI query JWTs for IPTV share tokens', async () => {
+    const req = request(); req.user = user; req.query.token = 'webui-jwt';
+    const url = createClientResourceUrl(req, user, 'https://provider.example/icon.png');
+    getXtreamUser.mockResolvedValue(null);
+    expect(await resolveClientResource(resourceRequest(url))).toMatchObject({ url: 'https://provider.example/icon.png', sourceToken: null });
+    expect(getXtreamUser).not.toHaveBeenCalled();
+  });
 
   it('resolves channel icons from the current catalog even when the client keeps its old URL', async () => {
     const url = createChannelIconUrl(request(), user, 51);
@@ -185,6 +192,11 @@ describe('scoped client resource URLs', () => {
     expect(result.license_url).toContain('/api/proxy/resource/');
     expect(result.nested.poster).toContain('/api/proxy/resource/');
     expect(createClientResourceUrl(request(), user, 'https://image.tmdb.org/t/p/original/poster.jpg')).toBe(result.poster);
+  });
+  it('retains grants when approved metadata needs upstream credentials', async () => {
+    const url = createClientResourceUrl(request(), user, 'https://www.imdb.com/private/poster.jpg', { headers: { Authorization: 'Bearer secret' } });
+    expect(url).toContain('/api/proxy/resource/');
+    expect(await resolveClientResource(resourceRequest(url))).toMatchObject({ headers: { Authorization: 'Bearer secret' } });
   });
 
   it('does not wrap Manager URLs again and blocks unsafe schemes and protocol-relative bypasses', () => {

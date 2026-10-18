@@ -123,6 +123,13 @@ async function fetchSeriesEpisodes(baseUrl, authParams, sid, lastModified, apply
   // skip instead of wiping previously synced episodes.
   if (!data || typeof data !== 'object' || (!data.episodes && !data.info)) return null;
   const episodes = parseSeriesInfoEpisodes(data);
+  for (const episode of episodes) {
+    if (!episode.logo) continue;
+    try {
+      const logo = new URL(episode.logo, resp.url || `${baseUrl}/player_api.php`);
+      episode.logo = /^https?:$/.test(logo.protocol) ? logo.href : '';
+    } catch { episode.logo = ''; }
+  }
   // The write is short and fully repeatable: it rebuilds the episode set for
   // this series from the payload that is already in memory.
   try {

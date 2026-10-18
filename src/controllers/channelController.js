@@ -1,4 +1,4 @@
-import { createClientResourceUrl } from '../services/clientResourceService.js';
+import { createClientResourceUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
 import { clearChannelsCache } from '../services/cacheService.js';
 import db from '../database/db.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -224,7 +224,7 @@ export const getCategoryChannels = (req, res) => {
     loadEpgLogosCache();
 
     const rows = db.prepare(`
-      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
+      SELECT uc.id as user_channel_id, uc.custom_name, pc.*, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon, p.url AS resource_base_url
       FROM authorized_user_channels uc
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
@@ -238,14 +238,17 @@ export const getCategoryChannels = (req, res) => {
       const epgId = ch.manual_epg_id || ch.epg_channel_id;
       let logo = ch.logo;
       if (ch.use_mapped_epg_icon && epgId) {
-        const epgLogo = getEpgLogo(epgId);
+        const epgLogo = getEpgLogo(epgId, { absolute: true });
         if (epgLogo) logo = epgLogo;
       }
-      const item = { ...ch, logo: createClientResourceUrl(req, req.user, logo, { kind: 'image' }) };
+      const { resource_base_url: baseUrl, ...values } = ch;
+      let item = values;
+      delete item.logo;
       if (!req.user.is_admin && Number(req.user.provider_access) !== 1) {
         for (const key of ['metadata', 'stream_url', 'direct_source', 'original_url', 'http_headers', 'drm']) delete item[key];
+        item = rewriteClientMetadata(req, req.user, item, '', { baseUrl, channelId: ch.user_channel_id });
       }
-      return item;
+      return { ...item, logo: createClientResourceUrl(req, req.user, logo, { kind: 'image', baseUrl, channelId: !req.user.is_admin && Number(req.user.provider_access) !== 1 ? ch.user_channel_id : undefined }) };
     });
 
     res.json(rowsWithLogos);

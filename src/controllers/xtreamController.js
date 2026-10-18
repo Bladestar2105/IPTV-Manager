@@ -1,3 +1,4 @@
+import { resolveEpgLogoUrl } from '../services/logoResolver.js';
 import { createChannelIconUrl, createClientResourceUrl, rewriteClientMetadata } from '../services/clientResourceService.js';
 import zlib from 'zlib';
 import db, { openDbConnection } from '../database/db.js';
@@ -110,8 +111,8 @@ export const getPlaylist = async (req, res) => {
     const seriesEpisodesCache = new Map();
     const episodeAliasDb = openDbConnection();
     const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
-    const sourceKeyByProviderId = new Map(
-      db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, providerSourceKey(p.url)])
+    const providerSources = new Map(
+      db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, { key: providerSourceKey(p.url), baseUrl: `${p.url.replace(/\/+$/, '')}/player_api.php` }])
     );
     // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
     // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
@@ -136,7 +137,8 @@ export const getPlaylist = async (req, res) => {
       finalName = finalName.trim();
 
       if (ch.stream_type === 'series') {
-        const sourceKey = sourceKeyByProviderId.get(ch.provider_id) || '';
+        const providerSource = providerSources.get(ch.provider_id);
+        const sourceKey = providerSource?.key || '';
         let episodesBySeries = seriesEpisodesCache.get(sourceKey);
         if (!episodesBySeries) {
           episodesBySeries = new Map();
@@ -151,7 +153,7 @@ export const getPlaylist = async (req, res) => {
           for (const ep of episodes) {
             const epCode = `S${String(ep.season || 0).padStart(2, '0')} E${String(ep.episode_num || 0).padStart(2, '0')}`;
             const epName = `${finalName} ${epCode}`;
-            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id })) : safeLogo;
+            const epLogo = ep.logo ? sanitizeM3uTag(createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, baseUrl: providerSource?.baseUrl })) : safeLogo;
             const episodeId = getOrCreateSeriesEpisodeAlias(
               episodeAliases,
               ch.user_channel_id,
@@ -263,7 +265,8 @@ export const xmltv = async (req, res) => {
     output.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n');
 
     // Use the generator to stream content
-    for await (const chunk of getEpgXmlForChannels(allowedIds, logo => createClientResourceUrl(req, user, logo, { kind: 'image' }))) {
+    for await (const chunk of getEpgXmlForChannels(allowedIds, (logo, channel) => createClientResourceUrl(req, user,
+      resolveEpgLogoUrl(logo, channel.source_type, channel.source_id), { kind: 'image' }))) {
         output.write(chunk);
     }
 
@@ -427,7 +430,7 @@ export const playerChannelsJson = async (req, res) => {
                appendItem({
                  name: `${name} ${episodeCode}`,
                  group,
-                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id }) : logo,
+                 logo: ep.logo ? createClientResourceUrl(req, user, ep.logo, { kind: 'image', channelId: ch.user_channel_id, baseUrl: `${ch.provider_url.replace(/\/+$/, '')}/player_api.php` }) : logo,
                  epg_id: epgId,
                  url: seriesPrefix + episodeId + '.' + extension + tokenParam,
                  type: 'series',

@@ -83,7 +83,7 @@ describe('Xtream get_series_info episode authorization', () => {
         info: { name: 'Provider Series', subtitle: '../subs/en.vtt', cover: 'https://provider.test/private.jpg', backdrop_path: ['https://provider.test/backdrop.jpg'] },
         episodes: {
           1: [
-            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'https://provider.test/episode.jpg', drm: { license_key: 'https://provider.test/episode-license' } } },
+            { id: 123, season: 1, episode_num: 1, title: 'Pilot', container_extension: 'mkv', added: '10', direct_source: 'https://provider.test/secret-stream', info: { movie_image: 'logo.png', drm: { license_key: 'https://provider.test/episode-license' } } },
             { id: 'invalid', title: 'Invalid' },
           ],
         },
@@ -98,7 +98,7 @@ describe('Xtream get_series_info episode authorization', () => {
     expect(payload.info.name).toBe('Custom Series');
     expect(await decryptClientGrant(payload.info.subtitle)).toMatchObject({ channelId: 42, url: 'https://cdn.example/subs/en.vtt' });
     expect(await decryptClientGrant(payload.info.backdrop_path[0])).toMatchObject({ channelId: 42, kind: 'image' });
-    expect(await decryptClientGrant(payload.episodes[1][0].info.movie_image)).toMatchObject({ channelId: 42, kind: 'image' });
+    expect(await decryptClientGrant(payload.episodes[1][0].info.movie_image)).toMatchObject({ channelId: 42, kind: 'image', url: 'https://cdn.example/details/logo.png' });
     expect(await decryptClientGrant(payload.episodes[1][0].info.drm.license_key)).toMatchObject({ channelId: 42, kind: 'license' });
     expect(JSON.stringify(payload)).not.toContain('https://provider.test');
     expect(payload.episodes[1][0].direct_source).toBe('');
@@ -107,7 +107,7 @@ describe('Xtream get_series_info episode authorization', () => {
     expect(Number(payload.episodes[1][0].id)).toBeLessThan(2 ** 31);
     expect(insertAlias.run).toHaveBeenCalledWith(42, 'source:http://panel.test', 555, 123);
     expect(upsertEpisode.run).toHaveBeenCalledWith(
-      'source:http://panel.test', 555, 123, 1, 1, 'Pilot', 'mkv', 'https://provider.test/episode.jpg', '10'
+      'source:http://panel.test', 555, 123, 1, 1, 'Pilot', 'mkv', 'https://cdn.example/details/logo.png', '10'
     );
     expect(mockDb.prepare.mock.calls.find(([sql]) => sql.includes('INSERT INTO provider_series_episodes'))[0])
       .toContain('ON CONFLICT(source_key, series_remote_id, remote_episode_id)');

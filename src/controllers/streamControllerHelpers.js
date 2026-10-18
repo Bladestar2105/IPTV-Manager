@@ -3,7 +3,8 @@ import ffmpegPath from 'ffmpeg-static';
 import db from '../database/db.js';
 import streamManager from '../services/streamManager.js';
 import { providerSourceKey, redactUrl } from '../utils/helpers.js';
-import { fetchSafe } from '../utils/network.js';
+import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
+import { validateClientTtml } from '../utils/clientTtml.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 import {
   decodeSeriesEpisodeId,
@@ -297,17 +298,50 @@ export function applyProviderToChannel(channel, provider) {
   channel.timeshift_timezone = provider.timeshift_timezone || null;
 }
 
+async function findActiveProvider(user, provider, req, sessionName) {
+  for (const candidate of getProviderCandidates(user.id, provider)) {
+    if (await streamManager.isSessionActive(user.id, req.ip, sessionName, candidate.id)) return candidate;
+  }
+  return null;
+}
+
+export async function sendPlaybackDocument(res, upstream) {
+  const type = upstream.headers.get('content-type') || '';
+  const ttml = /^application\/ttml\+xml(?:\s*;|$)/i.test(type);
+  if (!ttml && !/(?:html|xml|text\/css|(?:java|ecma)script|json)/i.test(type)) return false;
+  try {
+    if (!ttml) {
+      discardBody(upstream);
+      res.sendStatus(502);
+      return true;
+    }
+    const text = await readBodyWithLimit(upstream, { maxBytes: 4 * 1024 * 1024, timeoutMs: 30000 });
+    const safe = validateClientTtml(text);
+    res.setHeader('Content-Type', 'application/ttml+xml; charset=utf-8');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; img-src data:; style-src 'none'");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(safe);
+  } catch {
+    discardBody(upstream);
+    res.sendStatus(502);
+  }
+  return true;
+}
+
 export async function reserveChannelSession(connectionId, user, channel, req, res, sessionName, options = {}) {
-  if (options.cleanupUser) {
+  const activeProvider = options.dedupe === false ? await findActiveProvider(user, channel, req, sessionName) : null;
+  if (options.cleanupUser && !activeProvider) {
     await streamManager.cleanupUser(user.id, req.ip);
   }
 
-  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, channel.provider_id)) {
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, activeProvider?.id || channel.provider_id)) {
     res.status(403).send('Max connections reached');
     return false;
   }
 
-  const availableProvider = await findAvailableProvider(user.id, channel, req.ip, sessionName);
+  const availableProvider = activeProvider || await findAvailableProvider(user.id, channel, req.ip, sessionName);
   if (!availableProvider) {
     res.status(403).send('Provider max connections reached across all accounts');
     return false;
@@ -319,23 +353,26 @@ export async function reserveChannelSession(connectionId, user, channel, req, re
     await new Promise(resolve => setTimeout(resolve, options.delayMs));
   }
 
-  await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
+  if (options.dedupe === false) await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id, { dedupe: false });
+  else await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
   return true;
 }
 
-export async function reserveProviderSession(connectionId, user, provider, req, res, sessionName) {
-  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, provider.id)) {
+export async function reserveProviderSession(connectionId, user, provider, req, res, sessionName, options = {}) {
+  const activeProvider = options.dedupe === false ? await findActiveProvider(user, provider, req, sessionName) : null;
+  if (!await ensureUserConnectionAvailable(user, req.ip, sessionName, activeProvider?.id || provider.id)) {
     res.status(403).send('Max connections reached');
     return null;
   }
 
-  const availableProvider = await findAvailableProvider(user.id, provider, req.ip, sessionName);
+  const availableProvider = activeProvider || await findAvailableProvider(user.id, provider, req.ip, sessionName);
   if (!availableProvider) {
     res.status(403).send('Provider max connections reached across all accounts');
     return null;
   }
 
-  await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
+  if (options.dedupe === false) await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id, { dedupe: false });
+  else await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
   return availableProvider;
 }
 

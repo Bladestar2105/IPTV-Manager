@@ -100,7 +100,7 @@ async function refreshImage(url, headers, key, suppliedResponse, cookieJar, head
             const value = cached?.metadata?.[field];
             if (typeof value === 'string' && value.length <= 4096 && !/[\r\n]/.test(value)) conditional[header] = value;
         }
-        const response = suppliedResponse || await fetchSafe(url, { headers: conditional, cookieJar, headerOrigin, timeout: 30000 });
+        const response = suppliedResponse || await fetchSafe(url, { headers: conditional, cookieJar, headerOrigin, stripConditionalOnRedirect: true, timeout: 30000 });
         if (response.status === 304) {
             discardBody(response);
             if (!cached) throw new Error('Invalid revalidation');

@@ -338,6 +338,14 @@ export const playerApi = async (req, res) => {
                       originalId
                     );
                     if (!newId) return false;
+                    const artwork = ep.info?.movie_image || ep.movie_image || ep.cover || '';
+                    let episodeLogo = '';
+                    if (artwork) {
+                      try {
+                        const parsed = new URL(artwork, resp.url || `${baseUrl}/player_api.php`);
+                        if (/^https?:$/.test(parsed.protocol)) episodeLogo = parsed.href;
+                      } catch { /* Invalid upstream artwork has no usable URL. */ }
+                    }
                     upsertEpisode.run(
                       sourceKey,
                       remoteSeriesId,
@@ -346,7 +354,7 @@ export const playerApi = async (req, res) => {
                       Number(ep.episode_num) || 0,
                       ep.title || '',
                       normalizeContainerExtension(ep.container_extension),
-                      ep.info?.movie_image || ep.movie_image || ep.cover || '',
+                      episodeLogo,
                       ep.added || ''
                     );
                     ep.id = newId;

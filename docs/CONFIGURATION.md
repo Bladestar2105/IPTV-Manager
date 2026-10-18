@@ -219,12 +219,16 @@ policy allows YouTube, IMDb, TMDB and TVDB links/artwork to remain direct;
 credential-bearing URLs and DRM licenses remain proxied. YouTube trailers are
 direct and are not cached by Manager. Approved domains are maintained in
 `src/utils/clientResourcePolicy.js` and documented in `AGENTS.md`.
+Direct exceptions require no upstream authentication/custom request headers and
+no secrets or embedded provider URLs in query parameters or fragments.
 
 The image cache under `DATA_DIR/cache/picons` checks the provider on every
 request. It uses conditional requests where supported, atomically replaces
 changed images, and serves the last good file during upstream failures. A
 provider changing its icon URL is discovered by the normal catalog sync;
 changing image bytes at the same URL is discovered on the next image request.
+When a redirect changes its image target, the new target is fetched without the
+previous target's conditional validators.
 There is no permanent-file-hit mode or additional cache freshness setting.
 Upstream failure fallback can be identified through `X-Cache: STALE`.
 Images are limited to 5 MiB and a 30-second body-read budget. SVG is limited to

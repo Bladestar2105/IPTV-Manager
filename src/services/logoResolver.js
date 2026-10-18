@@ -10,9 +10,6 @@ let lastCacheUpdate = 0;
 let lastCacheVersion = null;
 const CACHE_TTL = 300000; // Check freshness every 5 minutes; unchanged data stays cached.
 
-// In-memory cache for provider icon mappings: Map<provider_id, Set<cache_hash>>
-const providerIconMemoryCache = new Map();
-
 /**
  * Load EPG logos from epg_channels table into memory cache
  */
@@ -93,16 +90,21 @@ export function getEpgLogo(epgChannelId, { absolute = false } = {}) {
     const epgLogos = loadEpgLogosCache();
     const logo = epgLogos.get(epgChannelId) || null;
     if (!absolute || !logo) return logo;
+    const source = epgLogoSources.get(epgLogos)?.get(epgChannelId);
+    return resolveEpgLogoUrl(logo, source?.type, source?.id);
+}
+
+export function resolveEpgLogoUrl(logo, sourceType, sourceId) {
+    if (!logo) return null;
     try {
         let parsed;
         try { parsed = new URL(logo); }
         catch {
-            const source = epgLogoSources.get(epgLogos)?.get(epgChannelId);
             let base;
-            if (source?.type === 'custom') {
-                base = db.prepare('SELECT url FROM epg_sources WHERE id = ?').get(source.id)?.url;
-            } else if (source?.type === 'provider') {
-                base = db.prepare("SELECT COALESCE(NULLIF(TRIM(epg_url), ''), url) AS url FROM providers WHERE id = ?").get(source.id)?.url;
+            if (sourceType === 'custom') {
+                base = db.prepare('SELECT url FROM epg_sources WHERE id = ?').get(sourceId)?.url;
+            } else if (sourceType === 'provider') {
+                base = db.prepare("SELECT COALESCE(NULLIF(TRIM(epg_url), ''), url) AS url FROM providers WHERE id = ?").get(sourceId)?.url;
             }
             if (!base) return null;
             parsed = new URL(logo, base);
@@ -119,19 +121,6 @@ export function getEpgLogo(epgChannelId, { absolute = false } = {}) {
 export function getLogoCacheHash(logoUrl) {
     if (!logoUrl) return null;
     return crypto.createHash('md5').update(logoUrl).digest('hex');
-}
-
-/**
- * Get a cache key for provider-specific logo caching
- * This ensures that channels from the same provider share the same cached logo
- * @param {number} providerId - Provider ID
- * @param {string} logoUrl - Original logo URL
- * @returns {string} - Cache key for the picon
- */
-export function getPiconCacheKey(providerId, logoUrl) {
-    if (!logoUrl) return null;
-    // Use MD5 hash of URL - this allows sharing across all users with same provider
-    return getLogoCacheHash(logoUrl);
 }
 
 /**
@@ -153,66 +142,8 @@ export function registerProviderCachedIcon(providerId, logoUrl, cacheHash) {
             access_count = provider_icon_cache.access_count + 1
         `).run(providerId, logoUrl, cacheHash);
 
-        // Update memory cache
-        if (!providerIconMemoryCache.has(providerId)) {
-            providerIconMemoryCache.set(providerId, new Set());
-        }
-        providerIconMemoryCache.get(providerId).add(cacheHash);
     } catch (e) {
         console.error('Failed to register provider cached icon:', e.message);
-    }
-}
-
-/**
- * Check if an icon is already cached for a provider
- * @param {number} providerId - Provider ID
- * @param {string} logoUrl - Logo URL to check
- * @returns {Object|null} - Cache info or null if not cached
- */
-export function getProviderCachedIcon(providerId, logoUrl) {
-    if (!providerId || !logoUrl) return null;
-
-    try {
-        const row = db.prepare(`
-            SELECT cache_hash, last_accessed, access_count
-            FROM provider_icon_cache
-            WHERE provider_id = ? AND logo_url = ?
-        `).get(providerId, logoUrl);
-
-        if (row) {
-            // Update last accessed time
-            db.prepare(`
-                UPDATE provider_icon_cache
-                SET last_accessed = strftime('%s', 'now'), access_count = access_count + 1
-                WHERE provider_id = ? AND logo_url = ?
-            `).run(providerId, logoUrl);
-        }
-
-        return row || null;
-    } catch (e) {
-        console.error('Failed to get provider cached icon:', e.message);
-        return null;
-    }
-}
-
-/**
- * Get all cached icons for a provider
- * @param {number} providerId - Provider ID
- * @returns {Array} - Array of cached icon info
- */
-export function getProviderCachedIcons(providerId) {
-    if (!providerId) return [];
-
-    try {
-        return db.prepare(`
-            SELECT logo_url, cache_hash, created_at, last_accessed, access_count
-            FROM provider_icon_cache
-            WHERE provider_id = ?
-            ORDER BY access_count DESC
-        `).all(providerId);
-    } catch (e) {
-        console.error('Failed to get provider cached icons:', e.message);
-        return [];
     }
 }
 
@@ -246,13 +177,11 @@ export function prePopulateProviderIconCache(providerId) {
               .map(row => row.logo_url)
         );
 
-        const allHashes = new Set();
         const liveUrls = new Set();
         const pending = [];
         for (const ch of channels) {
             if (!ch.logo) continue;
             liveUrls.add(ch.logo);
-            allHashes.add(getLogoCacheHash(ch.logo));
             if (cachedUrls.has(ch.logo)) continue;
             cachedUrls.add(ch.logo);
             pending.push(ch.logo);
@@ -298,7 +227,7 @@ export function prePopulateProviderIconCache(providerId) {
         //
         // Splitting one transaction into 238 also splits one chance of losing
         // the write lock into 238. Letting that escape to the catch below threw
-        // away every remaining batch, the memory cache update and the summary
+        // away every remaining batch and the summary
         // line, leaving the operator a bare "database is locked" — strictly
         // worse than the single transaction it replaced. So: the prune is
         // housekeeping over rows nothing can reach any more, and whatever is
@@ -340,10 +269,6 @@ export function prePopulateProviderIconCache(providerId) {
             }
         }
 
-        // Describes the live catalog, which the prune above does not affect, so
-        // it is set whether or not the prune finished.
-        providerIconMemoryCache.set(providerId, allHashes);
-
         if (count > 0 || pruned > 0) {
             console.log(`✅ Icon cache for provider ${providerId}: ${count} added, ${pruned} stale entries removed`);
         }
@@ -365,54 +290,10 @@ export function clearProviderIconCache(providerId) {
 
     try {
         db.prepare('DELETE FROM provider_icon_cache WHERE provider_id = ?').run(providerId);
-        providerIconMemoryCache.delete(providerId);
         console.log(`🗑️ Cleared icon cache entries for provider ${providerId}`);
     } catch (e) {
         console.error('Failed to clear provider icon cache:', e.message);
     }
-}
-
-/**
- * Get cache statistics
- * @returns {Object} - Cache statistics
- */
-export function getIconCacheStats() {
-    try {
-        const stats = db.prepare(`
-            SELECT
-                COUNT(DISTINCT provider_id) as provider_count,
-                COUNT(*) as total_entries,
-                SUM(access_count) as total_accesses
-            FROM provider_icon_cache
-        `).get();
-
-        return stats || { provider_count: 0, total_entries: 0, total_accesses: 0 };
-    } catch (e) {
-        console.error('Failed to get icon cache stats:', e.message);
-        return { provider_count: 0, total_entries: 0, total_accesses: 0 };
-    }
-}
-
-/**
- * Resolve logos for multiple channels efficiently
- * @param {Array} channels - Array of channel objects with logo, epg_channel_id, and optionally manual_epg_id
- * @param {boolean} useEpgLogo - Whether to prefer EPG logos
- * @returns {Array} - Channels with resolved logos
- */
-export function resolveLogosForChannels(channels, useEpgLogo = false) {
-    if (!useEpgLogo || channels.length === 0) {
-        return channels;
-    }
-
-    const epgLogos = loadEpgLogosCache();
-
-    return channels.map(ch => {
-        const epgId = ch.manual_epg_id || ch.epg_channel_id;
-        if (epgId && epgLogos.has(epgId)) {
-            return { ...ch, logo: epgLogos.get(epgId) };
-        }
-        return ch;
-    });
 }
 
 /**
@@ -422,7 +303,6 @@ export function invalidateEpgLogosCache() {
     epgLogosCache = null;
     lastCacheUpdate = 0;
     lastCacheVersion = null;
-    providerIconMemoryCache.clear();
     console.log('🔄 EPG logos cache invalidated');
 }
 
@@ -431,13 +311,8 @@ export default {
     resolveChannelLogo,
     getEpgLogo,
     getLogoCacheHash,
-    getPiconCacheKey,
     registerProviderCachedIcon,
-    getProviderCachedIcon,
-    getProviderCachedIcons,
     prePopulateProviderIconCache,
     clearProviderIconCache,
-    getIconCacheStats,
-    resolveLogosForChannels,
     invalidateEpgLogosCache
 };

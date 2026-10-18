@@ -46,10 +46,11 @@ EPG-logo cache and checkpoint regressions can be run with
 Client resource proxy regressions cover opaque grants and revocation, live
 catalog icon resolution, disk-cache revalidation/fallback, nested HLS/DASH,
 license relaying, scoped cookies/redirects, public metadata exceptions, safe
-TTML and frontend same-origin image handling:
+TTML, legacy HLS redirects, stream-session reuse and frontend same-origin image
+handling. The redirect-cache regression uses the actual SSRF-safe fetch path:
 
 ```bash
-npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js tests/client_resource_policy.test.js tests/client_cookies.test.js tests/client_ttml.test.js tests/client_playready.test.js
+npm test -- tests/services/clientResourceService.test.js tests/services/imageCacheService.test.js tests/services/image_cache_redirect.test.js tests/controllers/legacy_segment_privacy.test.js tests/proxy/picon_cache.test.js tests/client_manifests.test.js tests/client_resource_policy.test.js tests/client_cookies.test.js tests/client_ttml.test.js tests/client_playready.test.js
 ```
 
 The cache tests use independent module instances with real SQLite connections,

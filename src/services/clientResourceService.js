@@ -35,7 +35,7 @@ function context(req, user) {
     uid: Number(user.id),
     version: Number(user.token_version) || 0,
     admin: !!user.is_admin,
-    sourceToken: user.resource_token || req.query?.token || req.params?.token || null,
+    sourceToken: user.resource_token || (req.user ? null : req.query?.token || req.params?.token) || null,
   };
 }
 
@@ -75,13 +75,14 @@ export function createClientResourceUrl(req, user, url, options = {}) {
   if (!options.baseUrl && /^(?:\/)?logo\.png$/.test(url)) return `${base}/logo.png`;
   const kind = options.kind || 'image';
   if (!['image', 'resource', 'license'].includes(kind)) return '';
+  const upstreamContext = createUpstreamContext(options.headers || {}, options.headerOrigin || parsed.href, options.cookieJar, options.headerOrigin || parsed.href, true);
   if (kind !== 'license' && (kind === 'image' || options.allowDirectMetadata)) {
-    const direct = directMetadataUrl(parsed.href);
+    const direct = directMetadataUrl(parsed.href, undefined, upstreamContext);
     if (direct) return direct;
   }
   return resourceUrl(req, {
     ...context(req, user), kind, url: parsed.href,
-    ...createUpstreamContext(options.headers || {}, options.headerOrigin || parsed.href, options.cookieJar, options.headerOrigin || parsed.href, true),
+    ...upstreamContext,
     channelId: options.channelId || null,
     channelName: options.channelName || null,
     providerId: options.providerId || null,

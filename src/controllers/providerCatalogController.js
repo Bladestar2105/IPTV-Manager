@@ -1,3 +1,4 @@
+import { rewriteClientMetadata } from '../services/clientResourceService.js';
 import db from '../database/db.js';
 import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
@@ -8,8 +9,9 @@ export const getProviderChannels = (req, res) => {
     const { type, page, limit, search } = req.query;
     const providerId = Number(req.params.id);
 
+    let provider;
     if (!req.user.is_admin) {
-        const provider = db.prepare('SELECT user_id FROM providers WHERE id = ?').get(providerId);
+        provider = db.prepare('SELECT user_id, url FROM providers WHERE id = ?').get(providerId);
         if (!provider || provider.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
     }
 
@@ -17,6 +19,9 @@ export const getProviderChannels = (req, res) => {
     const channelFields = canViewChannelMetadata
       ? '*'
       : 'id, provider_id, remote_stream_id, name, original_category_id, logo, stream_type, epg_channel_id, original_sort_order, tv_archive, tv_archive_duration, mime_type, rating, rating_5based, added, plot, "cast", director, genre, releaseDate, youtube_trailer, episode_run_time';
+
+    const visibleChannels = rows => canViewChannelMetadata ? rows
+      : rewriteClientMetadata(req, req.user, rows, '', { baseUrl: provider.url, providerId });
 
     if (page || limit || search) {
       const pageNum = parseInt(page) || 1;
@@ -44,7 +49,7 @@ export const getProviderChannels = (req, res) => {
       const rows = db.prepare(dataQuery).all(...params, limitNum, offset);
 
       return res.json({
-        channels: rows,
+        channels: visibleChannels(rows),
         total: total,
         page: pageNum,
         limit: limitNum
@@ -62,7 +67,7 @@ export const getProviderChannels = (req, res) => {
     query += ' ORDER BY original_sort_order ASC, name ASC';
 
     const rows = db.prepare(query).all(...params);
-    res.json(rows);
+    res.json(visibleChannels(rows));
   } catch (e) { res.status(500).json({error: e.message}); }
 };
 

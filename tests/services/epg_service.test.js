@@ -191,4 +191,28 @@ describe('epgService XMLTV client icon mapping', () => {
         expect(xml).toContain('https://manager.test/icon?token=opaque&amp;v=1');
         expect(xml).not.toContain('provider.test');
     });
+
+    it('passes the selected duplicate XMLTV row provenance to its icon mapper', async () => {
+        const { default: Sqlite } = await vi.importActual('better-sqlite3');
+        const sourceDb = new Sqlite(':memory:');
+        try {
+            sourceDb.exec(`
+                CREATE TABLE epg_channels (id TEXT, name TEXT, logo TEXT, source_type TEXT, source_id INTEGER);
+                CREATE TABLE epg_programs (channel_id TEXT, start INTEGER, stop INTEGER, title TEXT, desc TEXT);
+                INSERT INTO epg_channels VALUES ('duplicate', 'Custom', 'icons/custom.png', 'custom', 3);
+                INSERT INTO epg_channels VALUES ('duplicate', 'Provider', 'icons/provider.png', 'provider', 9);
+            `);
+            db.prepare.mockImplementation(sql => sourceDb.prepare(sql));
+            const selected = [];
+            for await (const chunk of getEpgXmlForChannels(new Set(['duplicate']), (logo, row) => {
+                selected.push({ logo, type: row.source_type, sourceId: row.source_id });
+                return logo;
+            })) expect(chunk).toContain('<channel id="duplicate">');
+            expect(selected).toHaveLength(1);
+            expect(selected[0]).toEqual(selected[0].type === 'custom'
+                ? { logo: 'icons/custom.png', type: 'custom', sourceId: 3 }
+                : { logo: 'icons/provider.png', type: 'provider', sourceId: 9 });
+        } finally { sourceDb.close(); }
+    });
+
 });

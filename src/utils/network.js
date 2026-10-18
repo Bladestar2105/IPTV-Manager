@@ -95,6 +95,7 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
     allowSelfSigned = false,
     cookieJar,
     headerOrigin = url,
+    stripConditionalOnRedirect = false,
     ...fetchOptionOverrides
   } = options;
 
@@ -156,6 +157,10 @@ export async function fetchSafe(url, options = {}, redirectCount = 0, deadline =
       disarm();
       const nextContext = withUpstreamCookies(cookieContext.headers, response, url, cookieContext.cookieJar, cookieContext.headerOrigin);
       const nextOptions = { ...options, ...nextContext };
+      if (stripConditionalOnRedirect && nextUrl !== new URL(url).href) {
+        nextOptions.headers = Object.fromEntries(Object.entries(nextOptions.headers).filter(([name]) =>
+          !/^(?:if-none-match|if-modified-since)$/i.test(name)));
+      }
       const method = String(options.method || 'GET').toUpperCase();
       if (([301, 302].includes(response.status) && method === 'POST') ||
           (response.status === 303 && !['GET', 'HEAD'].includes(method))) {
