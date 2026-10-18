@@ -172,6 +172,13 @@ export function rewriteClientMetadata(req, user, value, key = '', options = {}) 
       .map(([field, item]) => [field, sourceFields.test(field) ? '' : rewriteClientMetadata(req, user, item, field, options)]));
   }
   if (typeof value !== 'string') return value;
+  if (/trailer/i.test(key)) {
+    const youtube = httpUrl(value, options.baseUrl || getBaseUrl(req));
+    if (youtube && /^(?:(?:[a-z\d-]+\.)*youtube(?:-nocookie)?\.com|(?:www\.)?youtu\.be)$/.test(youtube.hostname)) {
+      youtube.username = ''; youtube.password = '';
+      return youtube.href;
+    }
+  }
   const relative = options.baseUrl && value.trim() && !/^(?:[a-z][a-z\d+.-]*:|#)/i.test(value.trim()) &&
     (!/trailer/i.test(key) || /[./\\?#]/.test(value)) &&
     (imageFields.test(key) || resourceFields.test(key) || /^license_key$/i.test(key));

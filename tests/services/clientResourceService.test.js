@@ -158,6 +158,21 @@ describe('scoped client resource URLs', () => {
     expect(await resolveClientResource(resourceRequest(rewritten.drm.license_key))).toMatchObject({ url: 'https://cdn.example/license', kind: 'license', headers: { Authorization: 'Bearer secret' } });
     expect(await resolveClientResource(resourceRequest(rewritten.drm.licenseUrl))).toMatchObject({ url: 'https://cdn.example/metadata/alternate-license', kind: 'license' });
   });
+  it('keeps YouTube trailer links direct without exempting unrelated provider URLs', () => {
+    const value = {
+      youtube_trailer: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      trailer: 'https://youtu.be/dQw4w9WgXcQ',
+      nested: { trailer_url: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ' },
+      poster: 'https://provider.example/poster.jpg',
+      unrelated: { trailer: 'https://youtube.com.provider.example/video.mp4' },
+    };
+    const result = rewriteClientMetadata(request(), user, value, '', { baseUrl: 'https://provider.example/details.json' });
+    expect(result.youtube_trailer).toBe(value.youtube_trailer);
+    expect(result.trailer).toBe(value.trailer);
+    expect(result.nested.trailer_url).toBe(value.nested.trailer_url);
+    expect(result.poster).toContain('/api/proxy/resource/');
+    expect(result.unrelated.trailer).toContain('/api/proxy/resource/');
+  });
 
   it('does not wrap Manager URLs again and blocks unsafe schemes and protocol-relative bypasses', () => {
     const req = request();

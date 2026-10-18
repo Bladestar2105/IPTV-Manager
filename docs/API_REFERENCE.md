@@ -599,8 +599,9 @@ interactive license pages are removed. Malformed PlayReady data and embedded
 license stores are rejected. Media payload bytes are relayed unchanged.
 Existing HLS playlists issued before channel-scoped
 grants must be reloaded once after upgrading.
-Bare YouTube trailer IDs remain unchanged; URL/path-shaped trailer values are
-proxied. DASH representation IDs are encoded as URL components, retaining
+YouTube trailer IDs and official YouTube trailer links remain direct, without
+Manager proxying or caching. Other URL/path-shaped trailer values are proxied.
+DASH representation IDs are encoded as URL components, retaining
 valid punctuation and Unicode while rejecting traversal/control sequences.
 Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
 through with dependencies that clients could load directly.
