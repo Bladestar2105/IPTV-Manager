@@ -98,6 +98,59 @@ before `npm install`.
 
 ## Maintainer Documentation
 
+### Releases and GHCR retention
+
+The Docker workflow accepts `v*` and `Stable-YY.MM.DD[-hotfix.N]` tags.
+Stable releases receive the exact release tag as a Docker tag; existing semver
+tags remain supported. Only builds from `main` update `latest`. Both release
+archives and image publication remain gated by validation and container runtime
+verification.
+
+After successful Stable release publication, `Stable-Latest` points to the most
+recently published non-draft, non-prerelease `Stable-*` release, ordered by
+`published_at`. Rerunning an older release selects that same latest published
+release, so the alias cannot roll back to the rerun's tag. The alias is distinct
+from `latest`, which continues to track `main`. The manifest format is preserved
+with Docker's documented
+[`imagetools create --prefer-index=false`](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)
+option.
+
+Use the manual **Container release retention** workflow with `mode: dry-run`
+first. Download its `container-retention-plan` artifact and inspect the published
+release tags/commits, chosen image digests, retained IDs and deletion IDs. No
+registry mutation occurs during a dry-run. To apply that exact plan, dispatch
+again with `mode: apply` and the artifact's `container-retention-plan.sha256` value.
+Any inventory, release, or selection change invalidates the hash and requires a
+new reviewed dry-run. The artifact is retained for 30 days. Resolved releases and
+the inspected inventory are saved before planning in
+`container-retention-inventory.json`, including when a missing historical image
+mapping prevents a retention plan from being produced.
+
+The helper uses the repository's existing `GITHUB_TOKEN` with `contents: read`
+and `packages: write`; the linked GHCR package must grant this repository admin
+access. No PAT is needed. It resolves every published release's Git tag to its
+exact commit, matches actual image-config OCI revision labels, chooses an existing
+release-tagged root or the newest matching root, and creates missing release tags
+before deletion. Every published release must have a matching image; missing or
+unknown mappings stop cleanup rather than guessing by creation date. Prereleases
+are included; draft releases are excluded.
+
+Cleanup retains `latest`, selected release roots and their complete recursive
+platform/attestation/subject dependencies. Its reviewed plan also includes any
+`Stable-Latest` update needed to select the latest published stable release root;
+the alias is synchronized before deletion. Untagged child manifests can be required
+by a retained index and are preserved. Other versions, including duplicate builds
+and label-free orphan artifacts, are deletion candidates. The helper reads only
+manifests and config JSON, never media layers, and fails on unreadable or incomplete
+graphs. Publication and maintenance share a concurrency group; the helper also
+rechecks inventory/releases before mutation and `latest` before each write/delete.
+External registry writers must be paused during apply: GHCR offers no atomic
+transaction across tag creation and version deletion. A failure can leave a
+partially applied cleanup; rerun a dry-run before retrying.
+
+Run the planner's fixtures with
+`npm exec vitest run tests/container_release_retention.test.js`.
+
 - API route inventory: `docs/API_REFERENCE.md`.
 - Runtime environment and Docker configuration: `docs/CONFIGURATION.md`.
 - Share companion integration details: `docs/SHARE_COMPANION_INTEGRATION.md`.
