@@ -220,7 +220,13 @@ credential-bearing URLs and DRM licenses remain proxied. YouTube trailers are
 direct and are not cached by Manager. Approved domains are maintained in
 `src/utils/clientResourcePolicy.js` and documented in `AGENTS.md`.
 Direct exceptions require no upstream authentication/custom request headers and
-no secrets or embedded provider URLs in query parameters or fragments.
+no secrets or embedded provider URLs in paths, query parameters or fragments,
+including repeatedly encoded values.
+Optional DASH telemetry/callbacks and URL-query extensions are removed; required
+URL-query extensions fail closed. DASH TTML/stpp subtitle tracks are omitted to
+prevent unvalidated external image requests; audio, video and WebVTT remain.
+HLS manifests declaring TTML/stpp fail closed. Separately fetched static TTML
+remains supported with external dependencies rejected.
 
 The image cache under `DATA_DIR/cache/picons` checks the provider on every
 request. It uses conditional requests where supported, atomically replaces

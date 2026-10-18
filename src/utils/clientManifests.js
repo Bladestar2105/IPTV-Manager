@@ -23,6 +23,7 @@ function inlineHlsKey(uri, mapUrl) {
 }
 
 export function rewriteHlsManifest(text, baseUrl, mapUrl, inheritedVariables = {}) {
+  if ([...text.matchAll(/\bCODECS\s*=\s*(["'])(.*?)\1/gi)].some(match => /stpp|ttml/i.test(match[2]))) throw new Error('Unsupported HLS TTML');
   const variables = {};
   const expand = value => value.replace(/\{\$([\w-]+)\}/g, (_match, name) => {
     if (!Object.hasOwn(variables, name)) throw new Error('Undefined HLS variable');
@@ -97,7 +98,23 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
   };
   const render = (node, inheritedBase) => {
     if (typeof node === 'string') return node;
-    if (localName(node.name || '') === 'ContentSteering') return '';
+    const name = localName(node.name || '');
+    const scheme = decodeXml(node.open?.match(/\bschemeIdUri\s*=\s*(["'])(.*?)\1/)?.[2] || '').trim();
+    const codecs = decodeXml(node.open?.match(/\bcodecs\s*=\s*(["'])(.*?)\1/)?.[2] || '');
+    const mime = decodeXml(node.open?.match(/\bmimeType\s*=\s*(["'])(.*?)\1/)?.[2] || '');
+    if (/stpp|ttml/i.test(`${codecs} ${mime}`)) {
+      if (['AdaptationSet', 'Representation', 'SubRepresentation'].includes(name)) return '';
+      throw new Error('Unsupported DASH TTML declaration');
+    }
+    const httpTiming = /^urn:mpeg:dash:utc:http-(?:head|iso|xsdate):\d{4}$/.test(scheme);
+    if (name === 'UTCTiming' && scheme && !httpTiming && !/^urn:mpeg:dash:utc:direct:\d{4}$/.test(scheme)) return '';
+    if (['ContentSteering', 'Metrics', 'Reporting'].includes(name)) return '';
+    if (['EventStream', 'InbandEventStream'].includes(name) && scheme === 'urn:mpeg:dash:event:callback:2015') return '';
+    if (['EssentialProperty', 'SupplementalProperty'].includes(name) && /^urn:mpeg:dash:urlparam:201[46]$/.test(scheme)) {
+      if (name === 'EssentialProperty') throw new Error('Unsupported required DASH URL query extension');
+      return '';
+    }
+    if (['UrlQueryInfo', 'ExtUrlQueryInfo'].includes(name)) throw new Error('Unsupported DASH URL query extension');
     const xmlBase = node.open?.match(/\bxml:base\s*=\s*(["'])(.*?)\1/);
     const nodeBase = xmlBase ? resolveResource(decodeXml(xmlBase[2]), inheritedBase) : inheritedBase;
     const baseNode = node.children.find(child => typeof child !== 'string' && localName(child.name) === 'BaseURL');
@@ -107,12 +124,14 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
       if (attr === 'xml:base') return '';
       // DASH uses this XLink value to remove an element without a network fetch.
       if (attr === 'xlink:href' && decodeXml(value.trim()) === 'urn:mpeg:dash:resolve-to-zero:2013') return match;
-      if (['media', 'initialization', 'bitstreamSwitching', 'sourceURL', 'index', 'href', 'licenseUrl', 'licenseURL', 'licenseUri', 'licenseURI'].includes(localName(attr)) || (localName(node.name) === 'UTCTiming' && attr === 'value' && /^(?:https?:)?\/\//i.test(value))) {
+      if (name === 'UTCTiming' && attr === 'value' && (httpTiming || /^(?:https?:)?\/\//i.test(decodeXml(value.trim())))) {
+        return `${attr}=${quote}${encodeXml(decodeXml(value.trim()).split(/\s+/).map(url => rewrite(url, base)).join(' '))}${quote}`;
+      }
+      if (['media', 'initialization', 'bitstreamSwitching', 'sourceURL', 'index', 'href', 'licenseUrl', 'licenseURL', 'licenseUri', 'licenseURI'].includes(localName(attr)) || (scheme === 'urn:dvb:dash:fontdownload:2014' && localName(attr) === 'url')) {
         return `${attr}=${quote}${encodeXml(rewrite(value, base, attr === 'xlink:href' ? { manifestKind: 'dash' } : /^license(?:Url|URL|Uri|URI)$/.test(localName(attr)) ? { kind: 'license' } : {}))}${quote}`;
       }
       return match;
     });
-    const name = localName(node.name || '');
     if (name === 'pro' || name === 'pssh') {
       const value = node.children.filter(child => typeof child === 'string').join('');
       const rewriteDrm = name === 'pro' ? rewritePlayReadyObject : rewritePlayReadyPssh;
@@ -123,7 +142,10 @@ export function rewriteDashManifest(text, baseUrl, mapUrl) {
       if (!value.trim()) return node.open + node.close;
       return node.open + encodeXml(rewrite(value, nodeBase, /^(?:Laurl|laurl)$/.test(name) ? { kind: 'license' } : ['Location', 'PatchLocation'].includes(name) ? { manifestKind: 'dash' } : {})) + node.close;
     }
-    return (node.open || '') + node.children.map(child => render(child, typeof child !== 'string' && localName(child.name) === 'BaseURL' ? nodeBase : base)).join('') + (node.close || '');
+    const children = node.children.map(child => render(child, typeof child !== 'string' && localName(child.name) === 'BaseURL' ? nodeBase : base));
+    const representations = node.children.flatMap((child, index) => typeof child !== 'string' && localName(child.name) === 'Representation' ? [children[index]] : []);
+    if (name === 'AdaptationSet' && representations.length && !representations.some(Boolean)) return '';
+    return (node.open || '') + children.join('') + (node.close || '');
   };
   return render(root, baseUrl);
 }

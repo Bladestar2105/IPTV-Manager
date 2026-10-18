@@ -89,7 +89,14 @@ router.all('/resource/:data/:filename', async (req, res) => {
 
     const headers = resource.kind === 'resource' ? imageRequestHeaders(scopedHeaders) : { ...scopedHeaders };
     for (const name of ['range', 'if-range']) if (req.headers[name]) headers[name] = req.headers[name];
-    if (resource.kind === 'license' && req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'];
+    if (resource.kind === 'license' && req.method === 'POST') {
+      // CDMs generate these challenge headers after the encrypted grant is issued.
+      for (const name of ['content-type', 'soapaction']) {
+        if (!req.headers[name]) continue;
+        for (const existing of Object.keys(headers)) if (existing.toLowerCase() === name) delete headers[existing];
+        headers[name] = req.headers[name];
+      }
+    }
     upstream = await fetchSafe(resource.url, {
       method: req.method === 'HEAD' ? 'GET' : req.method,
       headers,
@@ -105,6 +112,11 @@ router.all('/resource/:data/:filename', async (req, res) => {
     protectResource(res);
     res.setHeader('Cache-Control', 'private, no-store');
     const type = upstream.headers.get('content-type') || 'application/octet-stream';
+    if (resource.kind !== 'license' && /^application\/ttml\+xml(?:\s*;|$)/i.test(type)) {
+      const text = await readBodyWithLimit(upstream, { maxBytes: 4 * 1024 * 1024, timeoutMs: 30000 });
+      res.setHeader('Content-Type', 'application/ttml+xml; charset=utf-8');
+      return res.send(validateClientTtml(text));
+    }
     const baseUrl = upstream.url || resource.url;
     const manifest = resource.kind === 'license' ? null : resource.manifestKind || isClientManifest(type, baseUrl);
     const nextContext = withUpstreamCookies(cookieContext.headers, upstream, resource.url, cookieContext.cookieJar, cookieContext.headerOrigin);
@@ -126,11 +138,6 @@ router.all('/resource/:data/:filename', async (req, res) => {
     }
     if (resource.kind !== 'license' && /^image\//i.test(type)) {
       return await sendImage(res, resource.url, scopedHeaders, resource.providerId, upstream, cookieContext);
-    }
-    if (resource.kind !== 'license' && /^application\/ttml\+xml(?:\s*;|$)/i.test(type)) {
-      const text = await readBodyWithLimit(upstream, { maxBytes: 4 * 1024 * 1024, timeoutMs: 30000 });
-      res.setHeader('Content-Type', 'application/ttml+xml; charset=utf-8');
-      return res.send(validateClientTtml(text));
     }
     // Unknown active document formats could contain dependencies we cannot
     // rewrite safely. Never delegate their network access to the client.

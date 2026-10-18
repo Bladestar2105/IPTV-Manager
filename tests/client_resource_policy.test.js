@@ -31,6 +31,16 @@ describe('public metadata resource policy', () => {
     'https://www.imdb.com/#token=secret',
     'https://www.imdb.com/#url=https%3A%2F%2Fprovider.example%2Fpassword',
     'https://www.imdb.com/#https%253A%252F%252Fprovider.example%252Fpassword',
+    'https://www.imdb.com/title/https%3A%2F%2Fprovider.example%2Flive%2Fuser%2Fpass',
+    'https://www.imdb.com/title/https%253A%252F%252Fprovider.example%252Flive%252Fuser%252Fpass',
+    'https://www.imdb.com/title/token%3Dsecret',
+    'https://www.imdb.com/title/https%3A%2F%2Fprovider.example%2Flive%2Fu%2Fp%ZZ',
+    'https://www.imdb.com/?https%3A%2F%2Fprovider.example%2Flive%2Fu%2Fp%ZZ',
+    'https://www.imdb.com/title/auth=abc123',
+    'https://www.imdb.com/title/auth%3Dabc123',
+    'https://www.imdb.com/title/username=upuser',
+    'https://www.imdb.com/title/pass=uppass',
+    'https://www.imdb.com/title/key=private',
     'javascript:alert(1)',
   ])('keeps unknown or credential-bearing URLs behind the Manager: %s', url => {
     expect(directMetadataUrl(url)).toBeNull();

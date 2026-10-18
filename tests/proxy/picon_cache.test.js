@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { Readable } from 'node:stream';
+import http from 'node:http';
+import * as helpers from '../../src/utils/helpers.js';
 
 const mocks = vi.hoisted(() => ({ db: { prepare: vi.fn(), exec: vi.fn() }, getXtreamUser: vi.fn(), getCachedImage: vi.fn(), clearImageCache: vi.fn(), fetchSafe: vi.fn(),
   manager: { add: vi.fn(async () => undefined), remove: vi.fn(), touch: vi.fn(), localStreams: new Map(),
@@ -125,6 +127,13 @@ describe('client resource and image proxy', () => {
     expect(res.headers['content-type']).toMatch(/^application\/ttml\+xml/);
     expect(res.text).toBe(xml);
   });
+  it('validates actual TTML before URL-based DASH manifest detection', async () => {
+    const url = createClientResourceUrl(reqForUrl, user, 'https://provider.example/subtitle.mpd', { kind: 'resource' });
+    const upstream = response('<tt><body><image src="https://provider.example/private.png"/></body></tt>', 'application/ttml+xml');
+    upstream.url = 'https://provider.example/subtitle.mpd';
+    mocks.fetchSafe.mockResolvedValue(upstream);
+    expect((await request(app).get(localPath(url))).status).toBe(502);
+  });
   it('blocks TTML external resources while keeping generic XML blocked', async () => {
     mocks.fetchSafe.mockResolvedValue(response('<tt><body><image src="https://tracker.example/image.png"/></body></tt>', 'application/ttml+xml'));
     expect((await request(app).get(grant('resource'))).status).toBe(502);
@@ -143,6 +152,87 @@ describe('client resource and image proxy', () => {
     expect(res.status).toBe(200);
     expect(mocks.fetchSafe.mock.calls[0][1]).toMatchObject({ method: 'POST', body: Buffer.from([0, 1, 255]), headers: expect.objectContaining({ Authorization: 'Bearer provider-secret' }) });
     expect(res.headers.authorization).toBeUndefined();
+  });
+  it('relays only supported license challenge headers without duplicating grant headers or replacing credentials', async () => {
+    const url = createClientResourceUrl(reqForUrl, user, 'https://drm.example/license', {
+      kind: 'license', headers: {
+        Authorization: 'Bearer provider-secret', Cookie: 'provider=session',
+        'content-type': 'outdated/type', 'CONTENT-TYPE': 'duplicate/type',
+        soapaction: 'outdated-action', SOAPAction: 'duplicate-action',
+      },
+    });
+    const action = '"http://schemas.microsoft.com/DRM/2007/03/protocols/AcquireLicense"';
+    mocks.fetchSafe.mockResolvedValue(response('license-response', 'application/octet-stream'));
+    const res = await request(app).post(localPath(url))
+      .set('Content-Type', 'text/xml; charset=utf-8').set('SOAPAction', action)
+      .set('Authorization', 'Bearer browser-secret').set('Cookie', 'browser=session')
+      .set('Origin', 'https://browser.example').set('Referer', 'https://browser.example/player')
+      .set('X-License-Token', 'untrusted-token').send(Buffer.from([0, 1, 255]));
+    expect(res.status).toBe(200);
+    const options = mocks.fetchSafe.mock.calls[0][1];
+    expect(options.body).toEqual(Buffer.from([0, 1, 255]));
+    const headers = new Headers(options.headers);
+    expect(headers.get('soapaction')).toBe(action);
+    expect(headers.get('content-type')).toBe('text/xml; charset=utf-8');
+    expect(headers.get('authorization')).toBe('Bearer provider-secret');
+    expect(headers.get('cookie')).toBe('provider=session');
+    for (const name of ['host', 'origin', 'referer', 'x-license-token']) expect(headers.has(name)).toBe(false);
+    for (const name of ['soapaction', 'content-type']) {
+      expect(Object.keys(options.headers).filter(key => key.toLowerCase() === name)).toHaveLength(1);
+    }
+  });
+  it.each(['resource', 'license'])('does not forward client challenge headers on %s GET requests', async kind => {
+    mocks.fetchSafe.mockResolvedValue(response('payload', 'application/octet-stream'));
+    const res = await request(app).get(grant(kind)).set('SOAPAction', 'browser-action').set('Content-Type', 'text/xml');
+    expect(res.status).toBe(200);
+    const headers = new Headers(mocks.fetchSafe.mock.calls[0][1].headers);
+    expect(headers.has('soapaction')).toBe(false);
+    expect(headers.has('content-type')).toBe(false);
+  });
+  it('keeps license challenge headers on same-origin redirects and scopes them away from foreign origins', async () => {
+    const hops = [];
+    const servers = [];
+    const safeUrl = vi.spyOn(helpers, 'isSafeUrl').mockResolvedValue(true);
+    try {
+      const listen = async handler => {
+        const server = http.createServer(handler);
+        servers.push(server);
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        return `http://127.0.0.1:${server.address().port}`;
+      };
+      const receive = next => async (req, res) => {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        hops.push({ path: req.url, method: req.method, headers: req.headers, body: Buffer.concat(chunks) });
+        if (next) res.writeHead(307, { Location: next(req) }).end();
+        else res.writeHead(200, { 'Content-Type': 'application/octet-stream' }).end('license-response');
+      };
+      const foreign = await listen(receive());
+      const origin = await listen(receive(req => req.url === '/start' ? '/same-origin' : `${foreign}/foreign`));
+      const { fetchSafe } = await vi.importActual('../../src/utils/network.js');
+      mocks.fetchSafe.mockImplementationOnce(fetchSafe);
+      const url = createClientResourceUrl(reqForUrl, user, `${origin}/start`, {
+        kind: 'license', headers: { Authorization: 'Bearer provider-secret', 'X-Provider-Token': 'provider-secret' },
+      });
+      const res = await request(app).post(localPath(url)).set('Content-Type', 'application/octet-stream')
+        .set('SOAPAction', 'challenge-action').set('Authorization', 'Bearer browser-secret').send(Buffer.from([0, 1, 255]));
+      expect(res.status).toBe(200);
+      expect(hops.map(hop => hop.path)).toEqual(['/start', '/same-origin', '/foreign']);
+      for (const hop of hops) {
+        expect(hop.method).toBe('POST');
+        expect(hop.body).toEqual(Buffer.from([0, 1, 255]));
+        expect(hop.headers['content-type']).toBe('application/octet-stream');
+      }
+      for (const hop of hops.slice(0, 2)) {
+        expect(hop.headers.soapaction).toBe('challenge-action');
+        expect(hop.headers.authorization).toBe('Bearer provider-secret');
+        expect(hop.headers['x-provider-token']).toBe('provider-secret');
+      }
+      for (const name of ['soapaction', 'authorization', 'x-provider-token']) expect(hops[2].headers[name]).toBeUndefined();
+    } finally {
+      safeUrl.mockRestore();
+      await Promise.all(servers.map(server => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); })));
+    }
   });
   it('carries cookies from a nested manifest into its dependent resource grants', async () => {
     const child = response('#EXTM3U\nsegment.ts\n', 'application/vnd.apple.mpegurl');

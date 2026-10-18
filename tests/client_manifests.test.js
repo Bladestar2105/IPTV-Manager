@@ -95,4 +95,54 @@ describe('client manifest resources', () => {
     expect(rewriteHlsManifest(`#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="${key}"\nsegment.ts`, 'https://origin/master', () => 'https://manager/resource')).toContain(key);
     expect(() => rewriteHlsManifest(`#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="${nested}"`, 'https://origin/master', url => url)).toThrow();
   });
+  it.each([
+    '<Metrics><Reporting schemeIdUri="urn:dvb:dash:reporting:2014" dvb:reportingUrl="https://provider.example/report?password=secret" dvb:probability="1000"/></Metrics>',
+    '<EventStream schemeIdUri="urn:mpeg:dash:event:callback:2015" value="1"><Event>https://provider.example/callback?token=secret</Event></EventStream>',
+    '<EventStream schemeIdUri="urn:mpeg:dash:event:callback:2015" value="1"><Event messageData="https://provider.example/callback?token=secret"/></EventStream>',
+    '<InbandEventStream schemeIdUri="urn:mpeg:dash:event:callback:2015" value="1"/>',
+  ])('removes automatic DASH telemetry and callback declarations: %s', extension => {
+    const result = rewriteDashManifest(`<MPD><Period>${extension}<EventStream schemeIdUri="urn:scte:scte35:2013:xml"><Event>cue</Event></EventStream><SegmentTemplate media="segment.m4s"/></Period></MPD>`, 'https://provider.example/master.mpd', () => 'https://manager/resource');
+    expect(result).not.toMatch(/provider\.example|secret|callback:2015|Metrics|Reporting/);
+    expect(result).toContain('urn:scte:scte35:2013:xml');
+    expect(result).toContain('https://manager/resource');
+  });
+  it.each([
+    ['2014', 'UrlQueryInfo'], ['2016', 'ExtUrlQueryInfo'],
+  ])('removes optional DASH URL query extensions and rejects required ones (%s)', (year, element) => {
+    const property = `<SupplementalProperty schemeIdUri="urn:mpeg:dash:urlparam:${year}"><up:${element} queryTemplate="$querypart$" queryString="username=upuser&amp;password=secret"/></SupplementalProperty>`;
+    const result = rewriteDashManifest(`<MPD>${property}<SegmentTemplate media="segment.m4s"/></MPD>`, 'https://provider.example/master', () => 'https://manager/resource');
+    expect(result).not.toMatch(/urlparam|QueryInfo|upuser|secret/);
+    expect(result).toContain('https://manager/resource');
+    expect(() => rewriteDashManifest(`<MPD>${property.replaceAll('SupplementalProperty', 'EssentialProperty')}</MPD>`, 'https://provider.example/master', url => url)).toThrow('Unsupported required DASH URL query extension');
+    expect(() => rewriteDashManifest(`<MPD><up:${element} queryString="password=secret"/></MPD>`, 'https://provider.example/master', url => url)).toThrow('Unsupported DASH URL query extension');
+  });
+  it.each(['SupplementalProperty', 'EssentialProperty'])('proxies DVB font dependencies in %s', property => {
+    const urls = [];
+    const result = rewriteDashManifest(`<MPD><${property} schemeIdUri="urn:dvb:dash:fontdownload:2014" value="1" dvb:url="https://provider.example/font.woff?token=secret" dvb:fontFamily="Font" dvb:mimeType="application/font-woff"/></MPD>`, 'https://provider.example/master', url => { urls.push(url); return 'https://manager/resource'; });
+    expect(urls).toEqual(['https://provider.example/font.woff?token=secret']);
+    expect(result).not.toMatch(/provider\.example|secret/);
+    expect(result).toContain('dvb:url="https://manager/resource"');
+  });
+  it('omits TTML tracks with inherited URLs/templates while retaining audio, video and WebVTT', () => {
+    const result = rewriteDashManifest('<MPD><BaseURL>https://provider.example/</BaseURL><Period><SegmentTemplate media="$Number$.mp4"/><AdaptationSet mimeType="application/ttml+xml"><Representation id="unsafe-ttml"/></AdaptationSet><AdaptationSet><Representation id="unsafe-codec" codecs="ttml"/></AdaptationSet><AdaptationSet><Representation id="video" codecs="avc1.4d401f"/></AdaptationSet><AdaptationSet><Representation id="audio" codecs="mp4a.40.2"/></AdaptationSet><AdaptationSet mimeType="text/vtt"><Representation id="webvtt"/></AdaptationSet></Period></MPD>', 'https://provider.example/master', () => 'https://manager/resource');
+    expect(result).not.toMatch(/unsafe|ttml|<AdaptationSet><\/AdaptationSet>/);
+    for (const id of ['video', 'audio', 'webvtt']) expect(result).toContain(`id="${id}"`);
+  });
+  it.each(['AdaptationSet', 'Representation', 'SubRepresentation'])('omits unsafe TTML declarations on %s', element => {
+    for (const attributes of ['codecs="stpp.ttml.im1t"', 'codecs="&#115;tpp"', 'codecs="application/mp4;codecs=stpp"', 'mimeType="application/ttml+xml"']) {
+      expect(rewriteDashManifest(`<MPD><${element} ${attributes}/></MPD>`, 'https://provider.example/master', url => url)).toBe('<MPD></MPD>');
+    }
+    expect(() => rewriteDashManifest('<MPD codecs="stpp"/>', 'https://provider.example/master', url => url)).toThrow('Unsupported DASH TTML declaration');
+  });
+  it('rejects HLS variants declaring fragmented TTML codecs', () => {
+    expect(() => rewriteHlsManifest('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000,CODECS="avc1.4d401f,stpp.ttml.im1t"\nchild.m3u8', 'https://provider.example/master', url => url)).toThrow('Unsupported HLS TTML');
+  });
+  it('proxies decoded HTTP UTC fallback URLs individually while retaining direct timestamps', () => {
+    const urls = [];
+    const result = rewriteDashManifest('<MPD><UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-iso:2014" value="https&#58;//provider.example/time?token=secret ../fallback"/><UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="2026-10-18T00:00:00Z"/><UTCTiming schemeIdUri="urn:mpeg:dash:utc:ntp:2014" value="provider.example"/></MPD>', 'https://provider.example/live/master', url => { urls.push(url); return `https://manager/time${urls.length}`; });
+    expect(urls).toEqual(['https://provider.example/time?token=secret', 'https://provider.example/fallback']);
+    expect(result).toContain('value="https://manager/time1 https://manager/time2"');
+    expect(result).toContain('2026-10-18T00:00:00Z');
+    expect(result).not.toMatch(/provider\.example|secret|ntp:2014/);
+  });
 });

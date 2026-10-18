@@ -559,7 +559,7 @@ policy is centralized in `src/utils/clientResourcePolicy.js`; unknown hosts,
 credential-bearing URLs and DRM license endpoints remain proxied. YouTube
 trailers are deliberately direct and are not cached by Manager.
 Public exceptions also require credential-free effective request headers and
-query/fragment data without embedded provider URLs or secrets. Restricted WebUI
+path/query/fragment data without embedded provider URLs or secrets. Restricted WebUI
 catalog, category and EPG mapping responses follow the same artwork policy;
 authorized provider-management responses retain their connection details.
 Resource grants encrypt the upstream URL
@@ -596,9 +596,11 @@ explicit upstream headers override those defaults case-insensitively.
 
 HLS and DASH resources, including nested manifests, keys, initialization data,
 subtitles and HTTP DRM license URLs, stay behind the Manager. License POST
-challenges and responses are relayed as bytes; upstream credentials remain
-inside the grant. Kodi challenge/response transform suffixes remain available
-to the client. Manifest cookies retain Domain, Path, Secure and expiry rules in
+challenges and responses are relayed as bytes. Only the client challenge
+headers `Content-Type` and `SOAPAction` are accepted on license POST requests;
+browser credentials and arbitrary client headers are not forwarded. Upstream
+credentials remain inside the grant. Kodi challenge/response transform suffixes
+remain available to the client. Manifest cookies retain Domain, Path, Secure and expiry rules in
 an encrypted cookie jar and are selected separately for every dependency and
 redirect. Authorization and custom provider headers are limited to their
 originating HTTP origin; only standard playback/negotiation headers cross origins.
@@ -615,8 +617,11 @@ license stores are rejected. Media payload bytes are relayed unchanged.
 HLS child playlists retain their manifest role even without an extension or a
 correct upstream MIME type. Inline AES keys and supported DRM PSSH keys remain
 supported; embedded data manifests and unsupported data dependencies fail closed.
-DASH bitstream-switching URLs are relayed, and XML stylesheet instructions are
-removed. Legacy HLS segment URLs redirect only to an authenticated Manager
+DASH bitstream-switching and DVB font URLs are relayed. XML stylesheets,
+optional telemetry, URL-query extensions and automatic event callbacks are
+removed; required URL-query extensions fail closed rather than exposing their
+credentials. HTTP UTC timing URLs, including encoded and fallback URLs, use
+Manager grants; unsupported timing schemes are removed. Legacy HLS segment URLs redirect only to an authenticated Manager
 resource URL and use the same content checks and connection limits.
 Existing HLS playlists issued before channel-scoped
 grants must be reloaded once after upgrading.
@@ -627,7 +632,12 @@ valid punctuation and Unicode while rejecting traversal/control sequences.
 Unrecognized active HTML/XML/CSS documents are rejected instead of being passed
 through with dependencies that clients could load directly.
 Static TTML captions (`application/ttml+xml`) are supported; external references,
-image/font/link extensions and malformed TTML remain rejected.
+image/font/link extensions and malformed TTML remain rejected. DASH tracks
+declaring TTML or fragmented MP4 TTML (`stpp`) are omitted while audio, video
+and WebVTT remain available: inherited declarations and binary subtitle samples
+can otherwise cause unvalidated external image requests. HLS manifests declaring
+these subtitle codecs are rejected. TTML declarations outside supported DASH
+track elements also fail closed.
 
 The legacy image route remains authenticated for WebUI/player compatibility.
 Cache pruning requires an administrator. Provider configuration and authorized
