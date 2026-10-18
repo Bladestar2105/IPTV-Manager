@@ -110,9 +110,10 @@ beforeAll(async () => {
     await readiness.refreshCodexReadiness({ force: true });
 });
 
-afterAll(() => {
+afterAll(async () => {
     runtime?.stopAllRuntimes();
     account?.releaseAllAttempts();
+    await runtime?.shutdownRuntimes({ timeoutMs: 10000 });
     db?.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
     fs.rmSync(binDir, { recursive: true, force: true });
