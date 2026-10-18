@@ -30,9 +30,16 @@ export function latestStableRelease(releases) {
     return stable[0] || null;
 }
 
-// Pure planner: no deletion is possible until every release and dependency resolves.
-export function planRetention(releases, versions) {
+// Pure planner: every dependency and non-exempt release must resolve before mutation.
+export function planRetention(releases, versions, allowMissing = []) {
     if (!releases.length) throw new Error('No published releases');
+    if (!Array.isArray(allowMissing)) throw new Error('Missing release allowances must be an array');
+    if (new Set(allowMissing).size !== allowMissing.length) throw new Error('Duplicate missing release allowance');
+    for (const tag of allowMissing) {
+        if (typeof tag !== 'string' || !releases.some(r => r.tag === tag)) throw new Error('Unknown missing release allowance');
+    }
+    const latestStable = latestStableRelease(releases);
+    const missingReleases = [];
     const byId = new Map(versions.map(v => [v.id, v]));
     if (byId.size !== versions.length || new Set(versions.map(v => v.digest)).size !== versions.length) {
         throw new Error('Duplicate package identities');
@@ -63,9 +70,15 @@ export function planRetention(releases, versions) {
         const candidates = roots.filter(v => v.revision === release.commit);
         const selected = tagged[0] || candidates.sort((a, b) =>
             b.createdAt.localeCompare(a.createdAt) || b.id - a.id)[0];
+        if (allowMissing.includes(release.tag)) {
+            if (versions.some(v => v.revision === release.commit)) throw new Error(`Image exists for missing release allowance: ${release.tag}`);
+            if (release.tag === latestStable?.tag) throw new Error('Cannot omit the latest stable release image');
+            missingReleases.push({ tag: release.tag, commit: release.commit });
+            return null;
+        }
         if (!selected) throw new Error(`No image for published release: ${release.tag}`);
         return { ...release, id: selected.id, digest: selected.digest };
-    });
+    }).filter(Boolean);
     const retained = new Set();
     function keep(id) {
         if (retained.has(id)) return;
@@ -81,6 +94,7 @@ export function planRetention(releases, versions) {
     if (stableLatest && !byId.get(stableLatest.id).tags.includes(stableLatest.tag)) tags.push(stableLatest);
     return {
         releases: selected,
+        missingReleases,
         latest: { id: latest[0].id, digest: latest[0].digest },
         stableLatest,
         retain: [...retained].sort((a, b) => a - b),
@@ -109,6 +123,7 @@ async function main() {
     const repository = process.env.GITHUB_REPOSITORY;
     const token = process.env.GH_TOKEN;
     const mode = process.env.RETENTION_MODE || 'dry-run';
+    const allowMissing = JSON.parse(process.env.RETENTION_MISSING_RELEASE_TAGS || '[]');
     if (!/^[\w.-]+\/[\w.-]+$/.test(repository || '') || !token || !['dry-run', 'apply'].includes(mode)) {
         throw new Error('Repository, token and valid retention mode required');
     }
@@ -231,13 +246,14 @@ async function main() {
         });
     }
     const published = await releases();
-    await writeFile('container-retention-inventory.json', JSON.stringify({ repository, inventory: versions, releases: published }, null, 2) + '\n');
-    const plan = { repository, inventory: versions, ...planRetention(published, versions) };
+    await writeFile('container-retention-inventory.json', JSON.stringify({ repository, inventory: versions, releases: published, missingReleaseTags: allowMissing }, null, 2) + '\n');
+    const plan = { repository, inventory: versions, ...planRetention(published, versions, allowMissing) };
     const json = JSON.stringify(plan, null, 2) + '\n';
     const hash = createHash('sha256').update(json).digest('hex');
     await writeFile('container-retention-plan.json', json);
     await writeFile('container-retention-plan.sha256', `${hash}\n`);
-    console.log(JSON.stringify({ planSha256: hash, releases: published, retain: plan.retain.length, remove: plan.remove.length }));
+    console.log(JSON.stringify({ planSha256: hash, releases: published, missingReleases: plan.missingReleases,
+        retain: plan.retain.length, remove: plan.remove.length }));
     if (mode !== 'apply') return;
     if (!/^[a-f0-9]{64}$/.test(process.env.RETENTION_PLAN_SHA256 || '') || process.env.RETENTION_PLAN_SHA256 !== hash) {
         throw new Error('Reviewed plan SHA256 does not match; run and inspect a new dry-run');

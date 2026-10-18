@@ -13,6 +13,10 @@ on:
         description: SHA256 from the reviewed dry-run artifact (apply only)
         type: string
         default: ''
+      missing_release_tags:
+        description: JSON array of explicitly acknowledged historical releases with no image (same value for dry-run/apply)
+        type: string
+        default: '[]'
 
 concurrency:
   group: ghcr-${{ github.repository }}
@@ -40,6 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RETENTION_MODE: ${{ inputs.mode }}
           RETENTION_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          RETENTION_MISSING_RELEASE_TAGS: ${{ inputs.missing_release_tags }}
         run: node scripts/container-release-retention.mjs
       - name: Preserve reviewable inventory and plan
         if: always()

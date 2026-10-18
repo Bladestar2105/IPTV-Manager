@@ -50,6 +50,7 @@ describe('container release retention', () => {
             version(6, other), version(7, null)];
         expect(planRetention([release], versions)).toEqual({
             releases: [{ ...release, id: 1, digest: versions[0].digest }],
+            missingReleases: [],
             latest: { id: 5, digest: versions[4].digest },
             stableLatest: { tag: 'Stable-Latest', id: 1, digest: versions[0].digest },
             retain: [1, 2, 3, 4, 5], remove: [6, 7],
@@ -68,6 +69,32 @@ describe('container release retention', () => {
     });
     it('refuses to delete anything when a published release has no image revision match', () => {
         expect(() => planRetention([release], [version(1, other, [], ['latest'])])).toThrow(/No image/);
+    });
+    it('reports an explicitly allowed missing historical release without inventing an image', () => {
+        const historical = { ...release, tag: 'Stable-26.01.29', commit: other, publishedAt: '2026-01-29T10:00:00Z' };
+        const versions = [version(1, sha, [], ['latest'])];
+        const plan = planRetention([historical, release], versions, [historical.tag]);
+        expect(plan.missingReleases).toEqual([{ tag: historical.tag, commit: other }]);
+        expect(plan.releases).toEqual([{ ...release, id: 1, digest: versions[0].digest }]);
+        expect(plan.stableLatest).toEqual({ tag: 'Stable-Latest', id: 1, digest: versions[0].digest });
+    });
+    it('rejects unknown, duplicate, malformed, and no-longer-missing allowances', () => {
+        const versions = [version(1, sha, [], ['latest'])];
+        expect(() => planRetention([release], versions, ['Stable-26.01.29'])).toThrow(/Unknown/);
+        expect(() => planRetention([release], versions, [release.tag, release.tag])).toThrow(/Duplicate/);
+        expect(() => planRetention([release], versions, release.tag)).toThrow(/array/);
+        expect(() => planRetention([release], versions, [null])).toThrow(/Unknown/);
+        expect(() => planRetention([release], versions, [release.tag])).toThrow(/exists/);
+    });
+    it('never permits an allowance to hide a missing latest stable image', () => {
+        const historical = { ...release, tag: 'Stable-26.01.29', commit: other, publishedAt: '2026-01-29T10:00:00Z' };
+        expect(() => planRetention([historical, release], [version(1, other, [], ['latest'])], [release.tag]))
+            .toThrow(/latest stable/);
+    });
+    it('never permits an allowance to hide a conflicting existing release tag', () => {
+        const historical = { ...release, tag: 'Stable-26.01.29', commit: other, publishedAt: '2026-01-29T10:00:00Z' };
+        expect(() => planRetention([historical, release], [version(1, sha, [], ['latest', historical.tag])], [historical.tag]))
+            .toThrow(/conflicts/);
     });
     it('refuses a release tag pointing at the wrong commit', () => {
         expect(() => planRetention([release], [version(1, sha), version(2, other, [], [release.tag, 'latest'])])).toThrow(/conflicts/);
