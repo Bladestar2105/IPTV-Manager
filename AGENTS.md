@@ -46,6 +46,9 @@ reliability, authentication behavior, and Docker upgrade compatibility.
   requests remain proxied even on approved public domains.
 - Inspect binary MP4 PlayReady metadata as well as manifests. Preserve media
   sample bytes and offsets while replacing provider license addresses.
+- Relay Matroska (MKV/MKA) media unchanged through Manager, including ranges
+  without validators. Its embedded metadata is not inspected for URLs; do not
+  apply the MP4 full-file inspection fallback to Matroska playback.
 - Revalidate provider-only grants against current ownership/admin access, and
   channel-bound grants against current channel and provider-pool authorization.
 - Every fixed provider URL grant must carry its selected `providerId`. Category

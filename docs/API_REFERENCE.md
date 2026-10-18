@@ -656,9 +656,13 @@ a separate playback. Continuous MPEG-TS responses keep their original connection
 Partial MP4 requests inspect complete metadata using strong-ETag-pinned range
 reads, skipping media payload boxes. Without reliable range validation, Manager
 reads from byte zero and streams only the requested interval; distant seeks can
-therefore require extra upstream traffic. This also applies to non-MP4 binary
-ranges when the provider supplies no trustworthy representation validator:
-Manager cannot safely infer the format of a partial response. A late seek in a
+therefore require extra upstream traffic. Matroska (`video/audio/application/x-matroska`,
+or `.mkv`/`.mka` with an absent or generic binary MIME type) is streamed unchanged
+through Manager, including range requests without validators. Its embedded metadata
+is not rewritten or checked for URLs. Explicit MP4 MIME types still receive MP4
+inspection even under a `.mkv` filename. Other unclassified binary ranges also
+require inspection when the provider supplies no trustworthy representation
+validator: Manager cannot safely infer their format. A late seek in a
 large file may need to read all preceding bytes and fail if it cannot reach the
 requested position within the 30-second preparation budget. Cancellation stops
 upstream reads.

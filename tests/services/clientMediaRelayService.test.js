@@ -35,6 +35,25 @@ function provider(data, etag = '"v1"') {
 }
 beforeEach(() => { fetchSafe.mockReset(); });
 describe('client media relay', () => {
+  it.each(['video/x-matroska', 'application/octet-stream', null])('streams a late MKV range without rereading the whole movie (%s)', async type => {
+    const total = 1693044896, length = 29174, start = total-length;
+    const bytes = Buffer.alloc(length, 7);
+    const response = new Response(Readable.from([bytes]), { status: 206, headers: {
+      'content-length': String(length), 'content-range': `bytes ${start}-${total-1}/${total}`,
+      ...(type ? { 'content-type': type } : {}),
+    } });
+    fetchSafe.mockRejectedValue(new Error('Unexpected whole-movie download'));
+    const result = await prepareClientMediaResponse(response, { url: 'https://provider.example/movie.mkv', mapUrl: () => target });
+    expect(result.status).toBe(206);
+    expect(result.headers.get('content-range')).toBe(`bytes ${start}-${total-1}/${total}`);
+    expect(await collect(result.body)).toEqual(bytes);
+    expect(fetchSafe).not.toHaveBeenCalled();
+  });
+  it('still inspects explicit MP4 content served under a MKV filename', async () => {
+    const data = fixture(); provider(data, null);
+    const result = await prepareClientMediaResponse(upstream(data,80,230,null), { url: 'https://provider.example/movie.mkv', mapUrl: () => target });
+    expect(await collect(result.body)).toEqual(rewriteMp4Metadata(data, () => target).subarray(80,231));
+  });
   it('starts metadata parsing only after the caller can attach an error handler', async () => {
     const invalid=Buffer.alloc(8); invalid.writeUInt32BE(7); invalid.write('moov',4);
     let read=false;

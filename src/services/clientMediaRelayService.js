@@ -8,6 +8,11 @@ function knownMp4(response, url) {
   return /^(?:video|audio|application)\/mp4(?:;|$)/i.test(type) ||
     ((!type || /^application\/octet-stream(?:;|$)/i.test(type)) && /\.(?:mp4|m4s|m4a|m4v|cmfv|cmfa)(?:[?#]|$)/i.test(url || ''));
 }
+function knownMatroska(response, url) {
+  const type = response.headers.get('content-type') || '';
+  return /^(?:video|audio|application)\/x-matroska(?:;|$)/i.test(type) ||
+    ((!type || /^application\/octet-stream(?:;|$)/i.test(type)) && /\.(?:mkv|mka)(?:[?#]|$)/i.test(url || ''));
+}
 const METADATA = new Set(['moov', 'moof', 'pssh', 'meta', 'dref', 'stsd', 'hdlr', 'rmra', 'rmda', 'rdrf', 'cmov']);
 const unsafe = () => new Error('Unable to inspect upstream media range safely');
 function contentRange(response) {
@@ -88,6 +93,8 @@ function overlayStream(source, range, replacements) {
  */
 export async function prepareClientMediaResponse(upstream, { url = upstream.url, fetchOptions = {}, mapUrl, inspectMp4 = true } = {}) {
   if (!inspectMp4 || !upstream.body || ![200, 206].includes(upstream.status)) return upstream;
+  // Matroska is relayed unchanged; MP4 DRM inspection must not turn MKV seeks into full downloads.
+  if (knownMatroska(upstream, url)) return upstream;
   if (upstream.status === 200) {
     const headers = new Headers(upstream.headers);
     if (/^(?:gzip|deflate|br)$/i.test(headers.get('content-encoding') || '')) {
