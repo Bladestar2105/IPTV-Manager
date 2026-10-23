@@ -21,12 +21,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
+          check-latest: true
           cache: npm
 
       - name: Validate release tag format
@@ -66,7 +67,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Log in to the Container registry
         if: github.event_name != 'pull_request'
@@ -91,8 +92,25 @@ jobs:
         with:
           context: .
           load: true
+          pull: true
           tags: iptv-manager:runtime-check
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify SQLite temporary storage as the runtime user
+        run: |
+          docker run --rm --network none --tmpfs /data iptv-manager:runtime-check \
+            node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { openSqliteConnection } from "./src/database/sqliteConnection.js";
+            assert.notEqual(process.getuid(), 0);
+            const db = openSqliteConnection(":memory:");
+            try {
+              assert.equal(process.env.SQLITE_TMPDIR, "/data/sqlite-tmp");
+              db.pragma("temp_store=FILE");
+              db.pragma("temp.cache_size=-64");
+              db.exec("CREATE TEMP TABLE probe(v BLOB); WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t WHERE n<5000) INSERT INTO probe SELECT zeroblob(1024) FROM t");
+              assert.equal(db.prepare("SELECT COUNT(*) AS count FROM probe").get().count, 5000);
+            } finally { db.close(); }'
 
       - name: Verify a standalone Portainer-style Compose stack
         shell: bash
@@ -139,19 +157,20 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
+          check-latest: true
 
       - name: Install Dependencies
         run: npm ci
 
       - name: Create Zip Archive
         run: |
-          zip -r iptv-manager.zip . -x "node_modules/*" ".git/*" ".github/*" "docker_data/*" "data/*" "temp_check_data/*"
+          zip -r iptv-manager.zip . -x "node_modules/*" ".git/*" ".github/*" "docker_data/*" "data/*" "temp_check_data/*" "sqlite-tmp/*"
 
       - name: Release
         uses: softprops/action-gh-release@v3

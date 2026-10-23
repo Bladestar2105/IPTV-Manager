@@ -17,17 +17,20 @@ async function withEpgUpdateLock(type, id, update) {
     finally { lock.release(); }
 }
 
-export async function updateEpgSource(sourceId, skipPrune = false) {
+export async function updateEpgSource(sourceId, skipPrune = false, { scheduled = false } = {}) {
     return withEpgUpdateLock('custom', sourceId, async () => {
         const source = mainDb.prepare('SELECT * FROM epg_sources WHERE id = ?').get(sourceId);
         if (!source) throw new Error('EPG source not found');
+        // Scheduler snapshots can predate a manual refresh, so recheck under the source lock.
+        if (scheduled && (!source.enabled || Math.max(source.last_update || 0, source.last_attempt || 0)
+            + source.update_interval > Math.floor(Date.now() / 1000))) return;
 
         await importEpgFromUrl(source.url, 'custom', sourceId);
         if (!skipPrune) pruneOldEpgData();
     });
 }
 
-export async function updateProviderEpg(providerId, skipPrune = false) {
+export async function updateProviderEpg(providerId, skipPrune = false, { scheduled = false } = {}) {
     return withEpgUpdateLock('provider', providerId, async () => {
         const provider = mainDb.prepare('SELECT * FROM providers WHERE id = ?').get(providerId);
         if (!provider) throw new Error('Provider not found');
@@ -39,6 +42,8 @@ export async function updateProviderEpg(providerId, skipPrune = false) {
         }
 
         const now = Math.floor(Date.now() / 1000);
+        if (scheduled && Math.max(provider.last_epg_update || 0, provider.last_epg_attempt || 0)
+            + (provider.epg_update_interval || 86400) > now) return;
 
         try {
             if (provider.epg_url && provider.epg_url.trim() !== '') {

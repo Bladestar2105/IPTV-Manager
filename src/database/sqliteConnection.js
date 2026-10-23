@@ -1,5 +1,24 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { DATA_DIR } from '../config/constants.js';
 import { resolveBudget } from '../utils/env.js';
+
+let tempDirectoryReady = false;
+
+function prepareTempDirectory() {
+  if (tempDirectoryReady) return;
+  const directory = path.resolve(process.env.SQLITE_TMPDIR || path.join(DATA_DIR, 'sqlite-tmp'));
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  // Access checks can succeed even when a damaged container directory rejects new files.
+  const probe = path.join(directory, `.sqlite-probe-${randomUUID()}`);
+  const fd = fs.openSync(probe, 'wx', 0o600);
+  try { fs.closeSync(fd); }
+  finally { fs.unlinkSync(probe); }
+  process.env.SQLITE_TMPDIR = directory;
+  tempDirectoryReady = true;
+}
 
 // Every SQLite connection in the process has to agree on how long a statement
 // waits for a lock. `new Database(path)` without an explicit timeout leaves
@@ -53,6 +72,7 @@ export function resolveJournalSizeLimit(raw = process.env.SQLITE_WAL_SIZE_LIMIT_
  *        worker's event loop for the batch timeout
  */
 export function openSqliteConnection(filePath, options = {}) {
+  prepareTempDirectory();
   const { readonly = false, foreignKeys = true, walMode = true, fileMustExist = false, latency = false } = options;
   const busyTimeout = latency ? resolveLatencyBusyTimeoutMs() : resolveBusyTimeoutMs();
 

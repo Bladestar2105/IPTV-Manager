@@ -71,7 +71,7 @@ export function startSyncScheduler() {
 
 export function startEpgScheduler() {
   if (epgInterval) clearInterval(epgInterval);
-  // ponytail: worker-local cooldowns reset on restart; persist only if restart churn defeats them.
+  // Pre-download failures use a short cooldown; download attempts are persisted separately.
   const failedUpdates = new Map();
 
   // Check every minute
@@ -82,14 +82,15 @@ export function startEpgScheduler() {
     try {
       const sources = db.prepare('SELECT * FROM epg_sources WHERE enabled = 1 AND is_updating = 0').all();
       for (const source of sources) {
-        if (source.last_update + source.update_interval <= now) {
+        const lastDownload = Math.max(source.last_update || 0, source.last_attempt || 0);
+        if (lastDownload + source.update_interval <= now) {
           const updateKey = `custom:${source.id}`;
           const lastFail = failedUpdates.get(updateKey) || 0;
           if (lastFail && lastFail + EPG_RETRY_DELAY_SECONDS > now) continue;
           if (runningEpgUpdates.has(updateKey)) continue;
           runningEpgUpdates.add(updateKey);
           try {
-            await updateEpgSource(source.id);
+            await updateEpgSource(source.id, false, { scheduled: true });
             failedUpdates.delete(updateKey);
           } catch (e) {
             failedUpdates.set(updateKey, Math.floor(Date.now() / 1000));
@@ -112,7 +113,7 @@ export function startEpgScheduler() {
         const lastFail = failedUpdates.get(updateKey) || 0;
         if (lastFail && (lastFail + EPG_RETRY_DELAY_SECONDS > now)) continue;
 
-        const lastUpdate = provider.last_epg_update || 0;
+        const lastUpdate = Math.max(provider.last_epg_update || 0, provider.last_epg_attempt || 0);
 
         if (lastUpdate + interval <= now) {
           if (runningEpgUpdates.has(updateKey)) continue;
@@ -128,7 +129,7 @@ export function startEpgScheduler() {
               }
             }
 
-            await updateProviderEpg(provider.id);
+            await updateProviderEpg(provider.id, false, { scheduled: true });
             failedUpdates.delete(updateKey);
 
           } catch (e) {

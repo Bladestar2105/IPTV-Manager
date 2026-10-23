@@ -36,6 +36,17 @@ never have to infer a typo from the symptom.
 
 ## SQLite
 
+Before opening its first SQLite connection, every application process sets
+`SQLITE_TMPDIR` to `${DATA_DIR}/sqlite-tmp` (normally `/data/sqlite-tmp` in Docker),
+creates the directory as its runtime user and verifies actual file creation.
+This applies to Docker/Compose/Portainer, bare-metal/systemd, Proxmox and manual
+`npm start` installations, including existing service definitions after an update.
+SQLite retains file-backed sort/import temporary storage independent of broken
+`/tmp` or `/var/tmp` paths. An explicit `SQLITE_TMPDIR` overrides the default;
+its parent must be writable by the runtime user. Startup stops before opening
+SQLite if the directory cannot be used. Do not include `sqlite-tmp` in backups
+or source/build archives.
+
 Every SQLite connection in the process is opened through
 `src/database/sqliteConnection.js` so the lock behavior is identical in the
 request path, the schedulers, and the EPG import. Both databases run in WAL
@@ -375,13 +386,24 @@ lock.
 
 ## EPG Downloads
 
-Failed scheduled EPG updates wait at least 15 minutes after the failure before
-retrying, for both custom sources and providers. Their cooldowns are separate
-even when the numeric IDs match. Other sources continue normally; manual
-updates remain available. Failed imports retain the previous data and do not
-advance the last-success timestamp. Cooldowns are kept in the scheduler worker
-and reset when it restarts; upstream access errors still require fixing at the
-source.
+Every EPG download attempt is recorded in the main database immediately before
+the upstream request, including attempts that receive HTTP errors or fail during
+local parsing/import. Automatic updates wait the configured source/provider
+interval after the later of the last attempt and last successful import. A
+six-hour interval therefore also applies after failures and scheduler/container
+restarts. Custom sources and providers have independent attempt timestamps.
+Scheduling rechecks the interval under the source lock, so an older scheduler
+snapshot cannot immediately repeat a manual refresh performed by another worker.
+
+Failures before a download starts retain a minimum 15-minute worker-local retry
+cooldown. Failed imports preserve previous EPG data and the last-success
+timestamp. Other sources continue normally. Explicit manual updates remain
+available and bypass the automatic interval, but also record their attempts so
+the scheduler will not immediately download again. There is no daily quota
+counter; configure the interval to match the upstream allowance and avoid
+repeated manual refreshes. Upstream account/IP quotas can include other clients.
+Clearing EPG data does not reset the download cooldown; use an explicit manual
+refresh if an immediate refill is required.
 
 - `EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES`: How many consecutive *upstream*
   failures stop an episode sync for one provider account. Defaults to `25`,
