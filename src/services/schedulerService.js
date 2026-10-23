@@ -90,7 +90,7 @@ export function startEpgScheduler() {
           if (runningEpgUpdates.has(updateKey)) continue;
           runningEpgUpdates.add(updateKey);
           try {
-            await updateEpgSource(source.id);
+            await updateEpgSource(source.id, false, { scheduled: true });
             failedUpdates.delete(updateKey);
           } catch (e) {
             failedUpdates.set(updateKey, Math.floor(Date.now() / 1000));
@@ -129,7 +129,7 @@ export function startEpgScheduler() {
               }
             }
 
-            await updateProviderEpg(provider.id);
+            await updateProviderEpg(provider.id, false, { scheduled: true });
             failedUpdates.delete(updateKey);
 
           } catch (e) {

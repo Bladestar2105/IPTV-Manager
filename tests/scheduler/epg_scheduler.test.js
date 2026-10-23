@@ -71,6 +71,7 @@ describe('EPG Scheduler', () => {
     expect(update).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync((21600 - 16 * 60) * 1000);
     expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenLastCalledWith(8, false, { scheduled: true });
   });
 
   it('does not overlap a source and releases it after success', async () => {

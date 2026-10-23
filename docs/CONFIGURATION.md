@@ -392,6 +392,8 @@ local parsing/import. Automatic updates wait the configured source/provider
 interval after the later of the last attempt and last successful import. A
 six-hour interval therefore also applies after failures and scheduler/container
 restarts. Custom sources and providers have independent attempt timestamps.
+Scheduling rechecks the interval under the source lock, so an older scheduler
+snapshot cannot immediately repeat a manual refresh performed by another worker.
 
 Failures before a download starts retain a minimum 15-minute worker-local retry
 cooldown. Failed imports preserve previous EPG data and the last-success

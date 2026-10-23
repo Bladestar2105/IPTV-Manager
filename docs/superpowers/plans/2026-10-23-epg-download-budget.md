@@ -23,3 +23,7 @@ use supported action majors and test SQLite spill storage before publication.
 - [x] Update scheduler and shared SQLite startup, preserving non-root execution.
 - [x] Update configuration/development documentation and validate targeted
   regressions, full tests, lint and build. Review the final connected change.
+
+- [x] Recheck download eligibility under the existing cross-worker source lock.
+- [x] Patch reported Vite, Vitest and ip-address vulnerabilities without adding
+  dependencies or changing major versions; retain the CI security audit.

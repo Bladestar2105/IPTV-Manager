@@ -46,3 +46,24 @@ it.each(['updateEpgSource','updateProviderEpg'])('%s serializes queued and sched
   expect(importer).toHaveBeenCalledTimes(2);
   expect(secondDb.prepare('SELECT COUNT(*) n FROM provider_locks').get().n).toBe(0);
 });
+
+it.each(['updateEpgSource', 'updateProviderEpg'])('%s rechecks the download interval under its lock after another worker refreshed it', async method => {
+  const custom = method === 'updateEpgSource';
+  if (custom) firstDb.exec(`ALTER TABLE epg_sources ADD COLUMN last_update INTEGER DEFAULT 0;
+    ALTER TABLE epg_sources ADD COLUMN last_attempt INTEGER DEFAULT 0;
+    ALTER TABLE epg_sources ADD COLUMN update_interval INTEGER DEFAULT 21600;
+    ALTER TABLE epg_sources ADD COLUMN enabled INTEGER DEFAULT 1;`);
+  else firstDb.exec(`ALTER TABLE providers ADD COLUMN last_epg_attempt INTEGER DEFAULT 0;
+    ALTER TABLE providers ADD COLUMN epg_update_interval INTEGER DEFAULT 21600;`);
+  currentDb = firstDb;
+  vi.resetModules();
+  const service = await import('../src/services/epgService.js');
+  const now = Math.floor(Date.now() / 1000);
+  secondDb.prepare(custom ? 'UPDATE epg_sources SET last_attempt=?' : 'UPDATE providers SET last_epg_attempt=?').run(now);
+
+  await service[method](1, true, { scheduled: true });
+  expect(importer).not.toHaveBeenCalled();
+  expect(firstDb.prepare('SELECT COUNT(*) n FROM provider_locks').get().n).toBe(0);
+  await service[method](1, true);
+  expect(importer).toHaveBeenCalledTimes(1);
+});

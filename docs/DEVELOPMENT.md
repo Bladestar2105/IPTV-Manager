@@ -27,6 +27,8 @@ are idempotent. `tests/sqlite_temp_directory.test.js` starts fresh Node processe
 with file-backed SQLite temporary tables and verifies explicit overrides and
 unusable temp paths. The shared connection factory runs this setup for every
 installation variant before SQLite opens.
+`tests/epg_update_lock.test.js` also uses independent database connections to
+verify a fresh attempt suppresses a stale scheduled update under the source lock.
 
 ## Pull Request Validation
 
