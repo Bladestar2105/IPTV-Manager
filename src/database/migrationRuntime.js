@@ -207,6 +207,14 @@ export function migrateCurrentStreamsLastActivity(db) {
   }
 }
 
+export function migrateEpgDownloadAttempts(db) {
+  for (const [table, column] of [['epg_sources', 'last_attempt'], ['providers', 'last_epg_attempt']]) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+    }
+  }
+}
+
 export function migrateProviderLastEpgUpdate(db) {
   try {
     const tableInfo = db.prepare("PRAGMA table_info(providers)").all();

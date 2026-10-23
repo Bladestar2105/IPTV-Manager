@@ -12,8 +12,21 @@
   - `npm run test:playwright:smoke` (starts an ephemeral app server and requires
     a Playwright browser runtime; not part of the default CI validation job)
 
-The Docker image and release workflow use `package-lock.json` and `npm ci`.
+The Docker image, production installers/updater and release workflow use
+`package-lock.json` and `npm ci`; production installations omit dev dependencies. GitHub Actions use the current
+Node 24 patch release (`check-latest`), refresh the Docker base image (`pull`)
+and verify file-backed SQLite temporary tables as the container runtime user
+before publication. The release archive excludes `sqlite-tmp/`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
+
+EPG download scheduling regressions are covered by
+`tests/epg_download_attempts.test.js` and `tests/scheduler/epg_scheduler.test.js`:
+HTTP/import failures persist the attempt before fetching, retain last-success
+state and delay automatic retries across scheduler restarts. Timestamp migrations
+are idempotent. `tests/sqlite_temp_directory.test.js` starts fresh Node processes
+with file-backed SQLite temporary tables and verifies explicit overrides and
+unusable temp paths. The shared connection factory runs this setup for every
+installation variant before SQLite opens.
 
 ## Pull Request Validation
 

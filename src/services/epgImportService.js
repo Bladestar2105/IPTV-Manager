@@ -362,6 +362,13 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         const runSeq = claimPromotionSequence(importDb, sourceType, sourceId);
         stage = stagingTableNames(sourceType, sourceId);
 
+        // Budget network attempts independently of whether the local import succeeds.
+        const attemptedAt = Math.floor(Date.now() / 1000);
+        if (sourceType === 'custom') {
+            mainDb.prepare('UPDATE epg_sources SET last_attempt = ? WHERE id = ?').run(attemptedAt, sourceId);
+        } else if (sourceType === 'provider') {
+            mainDb.prepare('UPDATE providers SET last_epg_attempt = ? WHERE id = ?').run(attemptedAt, sourceId);
+        }
         console.debug(`📡 Fetching EPG for ${sourceType} ${sourceId} from: ${redactUrl(url)}`);
         // fetchSafe performs isSafeUrl check
         const response = await fetchSafe(url, { allowSelfSigned: true });

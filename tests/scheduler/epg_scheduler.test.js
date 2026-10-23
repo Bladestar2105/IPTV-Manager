@@ -56,6 +56,23 @@ describe('EPG Scheduler', () => {
     expect(mockEpg.updateEpgSource).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['custom', 'provider'])('honors a persisted %s download attempt after scheduler restart', async type => {
+    vi.setSystemTime(new Date('2026-10-23T00:00:00Z'));
+    const attempted = Math.floor(Date.now() / 1000);
+    const update = type === 'custom' ? mockEpg.updateEpgSource : mockEpg.updateProviderEpg;
+    update.mockResolvedValue(undefined);
+    if (type === 'custom') state.sources = [{ id: 8, last_update: 0, last_attempt: attempted, update_interval: 21600 }];
+    else state.providers = [{ id: 8, last_epg_update: 0, last_epg_attempt: attempted, epg_update_interval: 21600 }];
+
+    startEpgScheduler();
+    await vi.advanceTimersByTimeAsync(60000);
+    startEpgScheduler();
+    await vi.advanceTimersByTimeAsync(15 * 60000);
+    expect(update).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync((21600 - 16 * 60) * 1000);
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
   it('does not overlap a source and releases it after success', async () => {
     state.sources = [{ id: 7, last_update: 0, update_interval: 1 }];
     let resolveUpdate;

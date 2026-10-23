@@ -54,7 +54,7 @@ sudo -u iptv-manager git fetch origin main
 sudo -u iptv-manager git pull origin main
 
 echo ">> Updating application dependencies..."
-sudo -u iptv-manager npm install
+sudo -u iptv-manager npm ci --omit=dev
 if ! bash scripts/install-ai-runtime.sh; then
     echo ">> WARNING: ChatGPT setup could not be completed; continuing the IPTV-Manager update. Review the errors above."
 fi

@@ -97,6 +97,7 @@ describe('AI runtime installers', () => {
     if (failure !== 'apt') expect(h.commands()).toContain('npm install --global @openai/codex@0.154.0');
     expect(fs.readFileSync(path.join(install, '.env'), 'utf8')).toBe(setting ? before : `${before}\nAI_CODEX_ENABLED=true\n`);
     expect(fs.readFileSync(service, 'utf8')).toContain('User=iptv-manager\n');
+    expect(h.commands()).toContain('npm ci --omit=dev');
     expect(h.commands()).toContain('systemctl start iptv-manager');
     expect(h.commands()).toContain('runuser -u iptv-manager -- node scripts/check-ai-runtime.mjs --if-enabled');
     expect(h.commands().indexOf('runuser ')).toBeLessThan(h.commands().indexOf('systemctl start'));
@@ -139,6 +140,7 @@ describe('AI runtime installers', () => {
     if (failure !== 'apt') expect(h.commands()).toContain('npm install --global @openai/codex@0.154.0');
     expect(fs.readFileSync(path.join(install, '.env'), 'utf8')).toBe(setting ? before : `${before}\nAI_CODEX_ENABLED=true\n`);
     expect(fs.readFileSync(path.join(install, 'db.sqlite'), 'utf8')).toBe('existing data');
+    expect(h.commands()).toContain('npm ci --omit=dev');
     expect(h.commands().trim().endsWith('systemctl start iptv-manager')).toBe(true);
     expect(h.commands()).toContain('runuser -u iptv-manager -- node scripts/check-ai-runtime.mjs --if-enabled');
     if (failure) {

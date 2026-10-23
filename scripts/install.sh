@@ -49,7 +49,7 @@ cd "$INSTALL_DIR"
 
 # Install application dependencies
 echo ">> Installing application dependencies..."
-npm install
+npm ci --omit=dev
 if ! bash scripts/install-ai-runtime.sh; then
     echo ">> WARNING: ChatGPT setup could not be completed; continuing the IPTV-Manager installation. Review the errors above."
 fi

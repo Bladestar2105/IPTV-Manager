@@ -40,6 +40,7 @@ describe('repository smoke checks', () => {
       '.env',
       'data',
       'cache',
+      'sqlite-tmp',
       'temp_*',
       'temp_uploads',
       'db.sqlite*',
@@ -65,6 +66,7 @@ describe('repository smoke checks', () => {
       'secret.key',
       'jwt.secret',
       'cache/',
+      'sqlite-tmp/',
       'temp_*/',
       'temp_uploads/',
     ]));

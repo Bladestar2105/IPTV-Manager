@@ -5,6 +5,7 @@ node_modules
 .env
 data
 cache
+sqlite-tmp
 temp_*
 temp_uploads
 ai-codex

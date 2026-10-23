@@ -31,10 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
+          check-latest: true
       - name: Validate planner
         run: |
           npm ci
@@ -48,7 +49,7 @@ jobs:
         run: node scripts/container-release-retention.mjs
       - name: Preserve reviewable inventory and plan
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: container-retention-plan
           path: |

@@ -45,7 +45,8 @@ export function initDb(isPrimary) {
       epg_enabled INTEGER DEFAULT 1,
       max_connections INTEGER DEFAULT 0,
       timeshift_timezone TEXT,
-      last_epg_update INTEGER DEFAULT 0
+      last_epg_update INTEGER DEFAULT 0,
+      last_epg_attempt INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS provider_channels (
@@ -224,6 +225,7 @@ export function initDb(isPrimary) {
       url TEXT NOT NULL,
       enabled INTEGER DEFAULT 1,
       last_update INTEGER DEFAULT 0,
+      last_attempt INTEGER NOT NULL DEFAULT 0,
       update_interval INTEGER DEFAULT 86400,
       source_type TEXT DEFAULT 'custom',
       is_updating INTEGER DEFAULT 0,
@@ -351,6 +353,7 @@ export function initDb(isPrimary) {
             migrations.migrateCurrentStreamsProviderId(db);
             migrations.migrateCurrentStreamsLastActivity(db);
             migrations.migrateProviderLastEpgUpdate(db);
+            migrations.migrateEpgDownloadAttempts(db);
             migrations.migrateUserPlainPassword(db);
             migrations.migrateUserBackupsTable(db);
             migrations.migrateUserExpiryDate(db);
