@@ -18,6 +18,8 @@ Node 24 patch release (`check-latest`), refresh the Docker base image (`pull`)
 and verify file-backed SQLite temporary tables as the container runtime user
 before publication. The release archive excludes `sqlite-tmp/`.
 If dependencies change, keep `package.json` and `package-lock.json` in sync.
+Do not commit a separate `pnpm-lock.yaml`: npm is the supported package manager,
+and a second lockfile can retain vulnerable versions that deployments do not use.
 
 EPG download scheduling regressions are covered by
 `tests/epg_download_attempts.test.js` and `tests/scheduler/epg_scheduler.test.js`:
