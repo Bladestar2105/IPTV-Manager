@@ -36,7 +36,7 @@
     "otplib": "^13.4.1",
     "qrcode": "^1.5.4",
     "redis": "^6.0.0",
-    "systeminformation": "^5.31.7",
+    "systeminformation": "^5.33.16",
     "to-numbers": "^1.1.0",
     "tough-cookie": "^6.0.2"
   },
