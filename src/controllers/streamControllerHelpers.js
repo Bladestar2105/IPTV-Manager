@@ -571,7 +571,7 @@ export function buildFfmpegHeaderArgs(headers) {
 }
 
 export async function sendTrackInfo(res, remoteUrl, backupStreamUrls, headers) {
-  const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' });
+  const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' }, { res });
   try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
   const tracks = await probeTracksWithFfmpeg(result.successfulUrl || remoteUrl, headers);
   res.json(tracks);
@@ -584,7 +584,7 @@ export async function sendSubtitleTrack(res, remoteUrl, backupStreamUrls, header
     return;
   }
 
-  const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' });
+  const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' }, { req, res });
   try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
   await new Promise((resolve, reject) => {
@@ -676,8 +676,46 @@ export function attachStreamHeartbeat(upstreamBody, connectionId) {
   });
 }
 
+async function waitForPlaybackData(upstream, { timeout, signal }, { req, res }) {
+    const body = upstream.body;
+    if (!body || upstream.headers.get('content-length') === '0') {
+        discardBody(upstream);
+        throw new Error('Empty playback response');
+    }
+    if (typeof body.read !== 'function') return;
+
+    await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = error => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            for (const [target, event, listener] of listeners) target?.off?.(event, listener);
+            signal?.removeEventListener('abort', aborted);
+            if (error) { discardBody(upstream); reject(error); }
+            else resolve();
+        };
+        const empty = () => finish(new Error('Empty playback response'));
+        const failed = () => finish(new Error('Playback response body failed before data'));
+        const aborted = () => finish(Object.assign(new Error('Playback request aborted'), { name: 'AbortError' }));
+        const inspect = () => {
+            if (body.readableLength > 0) finish();
+            else if (body.readableEnded || body.destroyed) empty();
+            else body.read(0); // Start reading without consuming or replacing any media bytes.
+        };
+        const listeners = [[body, 'readable', inspect], [body, 'end', empty], [body, 'close', empty],
+            [body, 'error', failed], [req, 'aborted', aborted], [res, 'close', aborted]];
+        const timer = setTimeout(() => finish(new Error('Playback response body timed out')), timeout || 15000);
+        timer.unref?.();
+        for (const [target, event, listener] of listeners) target?.on?.(event, listener);
+        signal?.addEventListener('abort', aborted, { once: true });
+        if (signal?.aborted || req?.aborted || res?.destroyed) aborted();
+        else inspect();
+    });
+}
+
 // Helper for failover fetching
-export async function fetchWithBackups(primaryUrl, backupUrls, options) {
+export async function fetchWithBackups(primaryUrl, backupUrls, options, { req, res } = {}) {
     const urls = [primaryUrl, ...(backupUrls || [])];
     let lastError = null;
 
@@ -690,26 +728,31 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options) {
 
     for (const u of urls) {
         if (!u) continue;
+        if (req?.aborted || res?.destroyed) throw new Error('Media client disconnected');
         try {
-            const res = await fetchSafe(u, fetchOptions);
-            if (res.ok) {
-                return { response: res, successfulUrl: res.url || u, selectedUrl: u };
+            const upstream = await fetchSafe(u, fetchOptions);
+            if (upstream.ok) {
+                if (upstream.status === 200 && fetchOptions.method?.toUpperCase() !== 'HEAD') {
+                    await waitForPlaybackData(upstream, fetchOptions, { req, res });
+                }
+                return { response: upstream, successfulUrl: upstream.url || u, selectedUrl: u };
             }
-            res.body?.destroy?.();
+            upstream.body?.destroy?.();
             // If 404/403/407/etc, we might want to try backup? Yes.
-            console.warn(`Connection failed to ${redactUrl(u)}: ${res.status}`);
+            console.warn(`Connection failed to ${redactUrl(u)}: ${upstream.status}`);
 
-            if (res.status === 407) {
-                const authHeader = res.headers.get('proxy-authenticate') || res.headers.get('www-authenticate');
+            if (upstream.status === 407) {
+                const authHeader = upstream.headers.get('proxy-authenticate') || upstream.headers.get('www-authenticate');
                 console.warn(`Stream proxy error: HTTP 407 for ${redactUrl(u)}`);
                 if (authHeader) {
                     console.warn(`Upstream requested authentication: ${authHeader}`);
                 }
             }
 
-            lastError = new Error(`HTTP ${res.status}`);
+            lastError = new Error(`HTTP ${upstream.status}`);
         } catch (e) {
-            if (e.name === 'AbortError') throw e;
+            // Header timeouts advance failover; only caller cancellation stops it.
+            if (req?.aborted || res?.destroyed || (e.name === 'AbortError' && fetchOptions.signal?.aborted)) throw e;
             console.warn(`Connection error to ${redactUrl(u)}: ${e.message}`);
             lastError = e;
         }

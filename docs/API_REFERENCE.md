@@ -227,6 +227,21 @@ SQLite foreign-key enforcement enabled while preventing orphaned user data.
 - `POST /api/providers/:providerId/import-category`
 - `POST /api/providers/:providerId/import-categories`
 
+Provider create/update payloads accept `backup_urls` as an ordered array of
+alternative base URLs for the same account and catalog. In the Web UI, enter one
+base URL per line under **Backup URLs**. For playback requests using these
+alternatives, Manager tries the primary URL first, then each backup in order on
+HTTP errors, connection errors or response-header timeouts (normally 15 seconds
+per redirect hop). Empty HTTP 200 bodies and responses that end, fail or send no
+initial body data within 15 seconds also advance to the next address. This check
+preserves every media byte and does not limit a stream after data starts arriving.
+A caller cancellation stops further attempts. The same credentials
+and stream IDs are used at each address; the selected backup does not replace the
+saved primary URL. This is playback failover, not timed rotation or a post-sync
+URL change; catalog synchronization still uses the primary URL. A nonempty body
+ends this fallback; invalid media or failures after initial data do not try the
+next address.
+
 Deleting a provider removes dependent channel assignments, EPG mappings, stream
 stats, sync data, category mappings, and provider icon cache entries before the
 provider row is deleted.
