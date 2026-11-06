@@ -113,7 +113,7 @@ export const proxyMovie = async (req, res) => {
             const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
                 redirect: 'follow'
-            });
+            }, { req, res });
             const successfulUrl = result.successfulUrl || remoteUrl;
 
             // Release the initial probe connection immediately so it doesn't count against provider limits
@@ -164,7 +164,7 @@ export const proxyMovie = async (req, res) => {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
-        });
+        }, { req, res });
         let upstream = result.response;
         if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
           channelName: sessionName, providerId: channel.provider_id, channelId: channel.user_channel_id || channel.id,
@@ -298,7 +298,7 @@ export const proxySeries = async (req, res) => {
             const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
                 headers: transcodeHeaders,
                 redirect: 'follow'
-            });
+            }, { req, res });
             const successfulUrl = result.successfulUrl || remoteUrl;
 
             // Release the initial probe connection immediately so it doesn't count against provider limits
@@ -348,7 +348,7 @@ export const proxySeries = async (req, res) => {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
-        });
+        }, { req, res });
         let upstream = result.response;
         if (await sendVodManifest(req, res, upstream, result.selectedUrl || remoteUrl, user, headers, {
           channelName: sessionName, providerId: availableProvider.id, channelId: seriesEpisode.user_channel_id,

@@ -105,7 +105,7 @@ export const proxyMpd = async (req, res) => {
         const result = await fetchWithBackups(upstreamUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
-        });
+        }, { req, res });
         upstream = result.response;
         selectedUrl = result.selectedUrl;
     } catch (e) {
@@ -221,7 +221,7 @@ export const proxyLive = async (req, res) => {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
           headers: fetchHeaders,
           redirect: 'follow'
-        });
+        }, { req, res });
         const upstream = result.response;
 
         const isMp4 = (reqExt === 'mp4');
@@ -281,7 +281,7 @@ export const proxyLive = async (req, res) => {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers: fetchHeaders,
             redirect: 'follow'
-        });
+        }, { req, res });
         upstream = result.response;
         successfulUrl = result.successfulUrl;
         selectedUrl = result.selectedUrl;
@@ -500,7 +500,7 @@ export const proxyTimeshift = async (req, res) => {
         const result = await fetchWithBackups(remoteUrl, backupStreamUrls, {
             headers,
             redirect: 'follow'
-        });
+        }, { req, res });
         upstream = result.response;
         successfulUrl = result.successfulUrl;
         selectedUrl = result.selectedUrl;
