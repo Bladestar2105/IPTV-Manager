@@ -229,8 +229,17 @@ environment variables:
 Each limit also has a matching `*_WINDOW_MS` variable documented in
 `docs/CONFIGURATION.md`.
 
-### Stream Session Cleanup (Live / VOD / Series)
-To prevent stale sessions from blocking new playback with false `Max connections reached` / `HTTP 403` responses, stream session cleanup is applied across **Live TV, Movies, and Series**.
+### Stream Session Cleanup (Live / VOD / Series / Catch-up)
+To prevent stale sessions from blocking new playback with false `Max connections reached` / `HTTP 403` responses, stream session cleanup is applied across **Live TV, Movies, Series, and Catch-up**.
+
+User and provider capacity are reserved atomically in SQLite or Redis. When a
+stream belongs to another worker, Manager asks its owner to close the resource
+and waits for acknowledgement before freeing capacity. An unreachable remote
+owner retains its slot rather than allowing an unconfirmed replacement.
+The web player offers **Load more** for live, movie and series catalogs.
+It loads each catalog when its tab is first opened, then reuses it. Series are
+shown as folders; their episodes load when opened, so the default live list
+does not wait for the entire series catalog to expand.
 
 Optional tuning via environment variables:
 

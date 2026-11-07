@@ -1,5 +1,5 @@
 import db from '../database/db.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { enqueueMaintenanceJobs, listMaintenanceJobs } from '../services/maintenanceQueueService.js';
@@ -30,11 +30,8 @@ const fetchProviderDetails = async (url, username, password) => {
     const baseUrl = url.trim().replace(/\/+$/, '');
     const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username.trim())}&password=${encodeURIComponent(password.trim())}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-
-    const resp = await fetchSafe(apiUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    const resp = await fetchSafe(apiUrl, { timeout: 10000 });
+    if (!resp.ok) { discardBody(resp); return null; }
 
     if (resp.ok) {
       // The AbortController above stops covering anything once the headers are
@@ -533,6 +530,7 @@ export const deleteProvider = (req, res) => {
       }
     })();
 
+    clearChannelsCache(undefined, { epg: true });
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});

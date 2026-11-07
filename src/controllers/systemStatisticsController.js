@@ -150,26 +150,16 @@ export const terminateActiveStream = async (req, res) => {
     const stream = allStreams.find(s => s.id === streamId);
     if (!stream) return res.status(404).json({ error: 'Stream not found' });
 
-    // If the stream belongs to this worker, terminate directly.
-    if (!stream.worker_pid || stream.worker_pid === process.pid) {
-      await streamManager.remove(streamId);
-      return res.json({ success: true });
+    if (await streamManager.remove(streamId) === false) {
+      const expectedOwner = stream.owner_id || `legacy:${stream.worker_pid}`;
+      if (req.body?.confirm_owner_stopped === true && req.body.owner_id === expectedOwner &&
+          await streamManager.recoverStoppedOwner(streamId, expectedOwner)) {
+        return res.json({ success: true, recovered: true });
+      }
+      return res.status(503).json({ error: 'Stream owner did not confirm termination' });
     }
-
-    // In cluster mode, ask primary process to forward the terminate command
-    // to the worker that owns this stream resource.
-    if (typeof process.send === 'function') {
-      process.send({
-        type: 'terminate_stream',
-        streamId,
-        targetPid: stream.worker_pid
-      });
-      return res.json({ success: true, forwarded: true });
-    }
-
-    // Single-process fallback.
-    await streamManager.remove(streamId);
-    res.json({ success: true });
+    const forwarded = stream.owner_id ? stream.owner_id !== streamManager.ownerId : stream.worker_pid && stream.worker_pid !== process.pid;
+    res.json({ success: true, ...(forwarded ? { forwarded: true } : {}) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

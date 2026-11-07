@@ -285,20 +285,32 @@ export const xmltv = async (req, res) => {
   }
 };
 
+const CHANNELS_JSON_CACHE_ENTRIES = 32;
+const CHANNELS_JSON_CACHE_BYTES = 16 * 1024 * 1024;
+const CHANNELS_JSON_CACHE_TTL_MS = 60000;
+
 export const playerChannelsJson = async (req, res) => {
   try {
     const user = await getXtreamUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    const catalogType = req.query.type || '';
+    if (!['', 'live', 'movie', 'series'].includes(catalogType)) return res.status(400).json({ error: 'Invalid catalog type' });
+    const seriesSummary = req.query.series === 'summary';
+    const catalogParams = catalogType ? [user.id, catalogType] : [user.id];
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
+      const username = (req.query.username || '').trim();
+      const password = (req.query.password || '').trim();
+      const playbackAuthPath = username && password ? `${encodeURIComponent(username)}/${encodeURIComponent(password)}` : 'token/auth';
     const host = getBaseUrl(req);
-    // Cache key incorporates whether it's a guest, the user ID, the host string, and token
-    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${user.token_version || 0}_${host}_${tokenParam}`;
+      const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${user.token_version || 0}_${host}_${playbackAuthPath}_${tokenParam}_${catalogType || 'all'}_${seriesSummary ? 'summary' : 'expanded'}`;
 
-    if (channelsJsonCache.has(cacheKey)) {
+    const cached = !user.is_share_guest && channelsJsonCache.get(cacheKey);
+    if (cached?.expiresAt > Date.now()) {
       res.setHeader('Content-Type', 'application/json');
-      return res.send(channelsJsonCache.get(cacheKey));
+      return res.send(cached.json);
     }
+    channelsJsonCache.delete(cacheKey);
 
     const stmt = db.prepare(`
       SELECT
@@ -326,7 +338,7 @@ export const playerChannelsJson = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
-      WHERE cat.user_id = ? AND uc.is_hidden = 0
+      WHERE cat.user_id = ? AND uc.is_hidden = 0${catalogType ? " AND COALESCE(NULLIF(pc.stream_type, ''), 'live') = ?" : ''}
       -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `);
@@ -372,10 +384,10 @@ export const playerChannelsJson = async (req, res) => {
 
     if (!isExpired) {
         // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
-        const livePrefix = `${host}/live/token/auth/`;
-        const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
-        const moviePrefix = `${host}/movie/token/auth/`;
-        const seriesPrefix = `${host}/series/token/auth/`;
+          const livePrefix = `${host}/live/${playbackAuthPath}/`;
+          const liveMpdPrefix = `${host}/live/mpd/${playbackAuthPath}/`;
+          const moviePrefix = `${host}/movie/${playbackAuthPath}/`;
+          const seriesPrefix = `${host}/series/${playbackAuthPath}/`;
         const episodesStmt = db.prepare(`
           SELECT remote_episode_id, season, episode_num, container_extension, logo
           FROM provider_series_episodes
@@ -383,11 +395,11 @@ export const playerChannelsJson = async (req, res) => {
           ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
         `);
         const seriesEpisodesCache = new Map();
-        const episodeAliasDb = openDbConnection();
-        const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
+        const episodeAliasDb = !seriesSummary && (!catalogType || catalogType === 'series') ? openDbConnection() : null;
+        const episodeAliases = episodeAliasDb ? prepareSeriesEpisodeAliases(episodeAliasDb) : null;
 
         try {
-        for (const ch of stmt.iterate(user.id)) {
+        for (const ch of stmt.iterate(...catalogParams)) {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
@@ -410,7 +422,7 @@ export const playerChannelsJson = async (req, res) => {
           if (ch.stream_type === 'movie') {
              type = 'movie';
              streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
-          } else if (ch.stream_type === 'series') {
+          } else if (ch.stream_type === 'series' && !seriesSummary) {
              const sourceKey = providerSourceKey(ch.provider_url);
              let episodesBySeries = seriesEpisodesCache.get(sourceKey);
              if (!episodesBySeries) {
@@ -446,6 +458,9 @@ export const playerChannelsJson = async (req, res) => {
                }, ch);
              }
              continue;
+          } else if (ch.stream_type === 'series') {
+             type = 'series';
+             streamUrl = '';
           } else {
              if (isDashStream) {
                  streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
@@ -466,15 +481,28 @@ export const playerChannelsJson = async (req, res) => {
             tv_archive_duration: ch.tv_archive_duration || 0
           };
 
+          if (type === 'series') item.series_id = Number(ch.user_channel_id);
           appendItem(item, ch);
         }
         } finally {
-          episodeAliasDb.close();
+          episodeAliasDb?.close();
         }
     }
     jsonOutput += ']';
 
-    channelsJsonCache.set(cacheKey, jsonOutput);
+    const bytes = Buffer.byteLength(jsonOutput);
+    if (!user.is_share_guest && bytes <= CHANNELS_JSON_CACHE_BYTES) {
+      for (const [key, entry] of channelsJsonCache) {
+        if (entry.expiresAt <= Date.now()) channelsJsonCache.delete(key);
+      }
+      let retainedBytes = [...channelsJsonCache.values()].reduce((sum, entry) => sum + entry.bytes, 0);
+      while (retainedBytes + bytes > CHANNELS_JSON_CACHE_BYTES || channelsJsonCache.size >= CHANNELS_JSON_CACHE_ENTRIES) {
+        const oldest = channelsJsonCache.keys().next().value;
+        retainedBytes -= channelsJsonCache.get(oldest).bytes;
+        channelsJsonCache.delete(oldest);
+      }
+      channelsJsonCache.set(cacheKey, { json: jsonOutput, bytes, expiresAt: Date.now() + CHANNELS_JSON_CACHE_TTL_MS });
+    }
 
     res.setHeader('Content-Type', 'application/json');
     res.send(jsonOutput);

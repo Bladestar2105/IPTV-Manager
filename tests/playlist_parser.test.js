@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseM3u, parseM3uStream } from '../src/utils/playlistParser.js';
 import { Readable } from 'stream';
+import { spawnSync } from 'node:child_process';
 
 const sampleM3u = `#EXTM3U
 #EXTINF:-1 tvg-id="CNN.us" tvg-name="CNN" tvg-logo="http://logo.com/cnn.png" group-title="News",CNN US
@@ -50,4 +51,17 @@ describe('Playlist Parser', () => {
     expect(resultInvalid.isM3u).toBe(false);
     expect(resultInvalid.channels.length).toBe(1);
   });
+  it('rejects malformed encoded headers without crashing the importing process', () => {
+    const parserUrl = new URL('../src/utils/playlistParser.js', import.meta.url).href;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { parseM3uStream } from ${JSON.stringify(parserUrl)};
+      import { Readable } from 'node:stream';
+      const body = Readable.from(['#EXTM3U\\n#KODIPROP:inputstream.adaptive.manifest_headers=Authorization=%ZZ\\n']);
+      try { await parseM3uStream(body); process.exitCode = 2; }
+      catch (error) { console.log(error.name, body.destroyed); }
+    `], { encoding: 'utf8', timeout: 5000 });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe('URIError true');
+  });
+
 });

@@ -92,25 +92,18 @@ describe('stream activity throttle', () => {
   });
 
   it('does not let concurrent progress events pile up behind a slow Redis write', async () => {
-    // The Redis path awaits two round trips, and every caller is
-    // fire-and-forget. Claiming the window only after the write meant that a
-    // round trip slower than ffmpeg's ~1s progress cadence turned one heartbeat
-    // into one pair of Redis commands per progress event, per stream, per
-    // worker — applied exactly when the store is already struggling.
-    const record = JSON.stringify({ id: 'r1', last_activity: 1 });
-    const calls = { hGet: 0, hSet: 0 };
+    // Claim the window before awaiting the atomic Redis update.
+    const calls = { eval: 0 };
     const slow = value => new Promise(resolve => setTimeout(() => resolve(value), 30));
     const redis = {
-      hGet: () => { calls.hGet++; return slow(record); },
-      hSet: () => { calls.hSet++; return slow('OK'); },
+      eval: () => { calls.eval++; return slow(1); },
     };
     streamManager.init(null, redis);
     try {
       streamManager.lastTouchAt.delete('r1');
       await Promise.all(Array.from({ length: 10 }, () => streamManager.touch('r1')));
 
-      expect(calls.hGet).toBe(1);
-      expect(calls.hSet).toBe(1);
+      expect(calls.eval).toBe(1);
     } finally {
       streamManager.lastTouchAt.delete('r1');
       streamManager.init(memDb, null);

@@ -511,18 +511,17 @@ export const updateUser = async (req, res) => {
 
     // Security Enhancement: Terminate active streams if security credentials/access changed
     if (password || expiry_date !== undefined || webui_access !== undefined || hdhr_enabled !== undefined || max_connections !== undefined || allowed_countries !== undefined) {
+        // Apply new credentials and limits before waiting for remote stream owners.
+        invalidateUserTokens(id);
+        invalidateUserCache(id);
         try {
-            const activeStreams = db.prepare('SELECT id FROM current_streams WHERE user_id = ?').all(id);
+            const activeStreams = (await streamManager.getAll()).filter(stream => Number(stream.user_id) === Number(id));
             for (const stream of activeStreams) {
-                streamManager.remove(stream.id);
+                await streamManager.remove(stream.id);
             }
         } catch (streamErr) {
             console.error(`Error terminating streams for user ${id}:`, streamErr);
         }
-
-        // Ensure cache is fully cleared so new settings (like region lock) apply immediately
-        invalidateUserTokens(id);
-        invalidateUserCache(id);
     }
 
     clearChannelsCache(id);
@@ -544,6 +543,13 @@ export const deleteUser = async (req, res) => {
     // kept so a failed deletion does not leave the account present but disabled.
     previousActive = db.prepare('SELECT is_active FROM users WHERE id = ?').get(id)?.is_active;
     db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(id);
+    invalidateUserTokens(id);
+    invalidateUserCache(id);
+    for (const stream of await streamManager.getAll({ strict: true })) {
+      if (Number(stream.user_id) === id && await streamManager.remove(stream.id) === false) {
+        throw Object.assign(new Error('A stream owner did not confirm termination. The account was not deleted.'), { status: 409 });
+      }
+    }
     // A personal ChatGPT runtime keeps using this account's credential until it
     // is told to stop, so it is ended and acknowledged before anything is
     // removed. Deletion must not return while that use is still in progress.

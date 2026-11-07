@@ -53,8 +53,9 @@ app.use(securityHeaders);
 // representation must reach the upstream server unchanged.
 app.use(['/api/proxy/resource', '/r'], express.raw({ type: () => true, limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(origin => origin.trim()).filter(Boolean);
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : false,
+  origin: allowedOrigins.includes('*') ? true : allowedOrigins.length ? allowedOrigins : false,
   credentials: true
 }));
 

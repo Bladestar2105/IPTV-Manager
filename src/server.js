@@ -86,10 +86,12 @@ let redisClient = null;
   // connection so a contended lock cannot block this worker's event loop, and
   // with it every stream the worker is pumping.
   streamManager.init(db, redisClient, redisClient ? null : openLatencyDbConnection());
+  await streamManager.redisControlReady;
 
   startChannelsCacheInvalidation(invalidateEpgLogosCache);
 
   if (cluster.isPrimary) {
+    process.env.IPTV_STREAM_INSTANCE_ID = streamManager.instanceId;
     // Create default admin
     await createDefaultAdmin();
 
@@ -185,23 +187,33 @@ let redisClient = null;
       process.on(signal, handler);
     }
 
-    // Forward stream termination requests to the worker that owns the stream.
-    cluster.on('message', (worker, message) => {
-      if (!message || message.type !== 'terminate_stream' || !message.targetPid || !message.streamId) return;
+    // Forward requests and acknowledgements; accounting stays owned until termination.
+    const forwardTermination = message => {
+      if (!message || !['terminate_stream', 'stream_terminated'].includes(message.type) || !message.targetPid) return;
+      if (message.targetPid === process.pid && message.type === 'stream_terminated') {
+        streamManager.handleTerminationReply(message);
+        return;
+      }
       const targetWorker = Object.values(cluster.workers).find(w => w && w.process && w.process.pid === message.targetPid);
       if (!targetWorker) return;
-      targetWorker.send({
-        type: 'terminate_stream',
-        streamId: message.streamId
-      });
-    });
+      targetWorker.send(message);
+    };
+    streamManager.forwardTermination = forwardTermination;
+    cluster.on('message', (_worker, message) => forwardTermination(message));
   } else {
     // Worker Process
 
     process.on('message', async (message) => {
+      if (message?.type === 'stream_terminated') {
+        streamManager.handleTerminationReply(message);
+        return;
+      }
       if (!message || message.type !== 'terminate_stream' || !message.streamId) return;
       try {
-        await streamManager.remove(message.streamId);
+        const success = await streamManager.remove(message.streamId, { localOnly: true });
+        if (message.requestId && typeof process.send === 'function') process.send({
+          type: 'stream_terminated', requestId: message.requestId, targetPid: message.replyPid, success
+        });
       } catch (e) {
         console.error('Failed to terminate forwarded stream:', e.message);
       }

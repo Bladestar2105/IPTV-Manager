@@ -47,6 +47,7 @@ describe('repository smoke checks', () => {
       'epg.db*',
       'secret.key',
       'jwt.secret',
+      '.update.*',
       'test-results',
       'playwright-report',
     ]));
@@ -65,6 +66,7 @@ describe('repository smoke checks', () => {
       '*.sqlite-wal',
       'secret.key',
       'jwt.secret',
+      '.update.*',
       'cache/',
       'sqlite-tmp/',
       'temp_*/',

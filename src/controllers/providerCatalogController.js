@@ -1,6 +1,6 @@
 import { rewriteClientMetadata } from '../services/clientResourceService.js';
 import db from '../database/db.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory } from '../utils/helpers.js';
 
@@ -100,7 +100,7 @@ export const getProviderCategories = async (req, res) => {
         // fetchSafe bounds only the wait for the headers; a panel that answers
         // and then stalls its body would otherwise hang this request forever.
         categories = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 60000, maxBytes: 64 * 1024 * 1024 });
-      }
+      } else { discardBody(resp); }
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     }

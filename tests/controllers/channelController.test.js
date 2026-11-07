@@ -946,4 +946,19 @@ describe('Channel Controller - createUserCategory', () => {
         expect(db.prepare('SELECT is_hidden FROM user_channels WHERE id = ?').get(own.assignmentId)).toEqual({ is_hidden: 0 });
         expect(channelsJsonCache.has('user_2_live')).toBe(true);
     });
+    it.each([false, true])('invalidates the actual owner catalog after a channel rename (admin=%s)', isAdmin => {
+        const category = db.prepare("INSERT INTO user_categories(user_id,name) VALUES(2,'Rename')").run().lastInsertRowid;
+        const provider = db.prepare("INSERT INTO providers(name,url,username,password,user_id) VALUES('P','https://panel.test','u','p',2)").run().lastInsertRowid;
+        const channel = db.prepare("INSERT INTO provider_channels(provider_id,remote_stream_id,name) VALUES(?,123,'Old')").run(provider).lastInsertRowid;
+        const assignment = db.prepare('INSERT INTO user_channels(user_category_id,provider_channel_id) VALUES(?,?)').run(category, channel).lastInsertRowid;
+        channelsJsonCache.clear();
+        channelsJsonCache.set('user_2_cached', 'Old');
+        channelsJsonCache.set('user_3_cached', 'Other');
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+        channelController.updateUserChannel({ params: { id: String(assignment) }, body: { custom_name: 'New' }, user: { id: isAdmin ? 1 : 2, is_admin: isAdmin } }, res);
+        expect(res.json).toHaveBeenCalledWith({ success: true });
+        expect(channelsJsonCache.has('user_2_cached')).toBe(false);
+        expect(channelsJsonCache.has('user_3_cached')).toBe(true);
+    });
+
 });

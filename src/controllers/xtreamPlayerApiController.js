@@ -5,10 +5,10 @@ import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms } from '../services/epgService.js';
 import { streamBatchEpgResponse } from './xtreamBatchEpgResponse.js';
 import { decrypt } from '../utils/crypto.js';
-import { providerSourceKey } from '../utils/helpers.js';
+import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
-import { PORT } from '../config/constants.js';
+import { expiryEpoch } from '../utils/stalker.js';
 import { episodeNameCache } from '../services/episodeCache.js';
 import {
   getOrCreateSeriesEpisodeAlias,
@@ -51,10 +51,14 @@ export const playerApi = async (req, res) => {
       });
     }
 
-    if (!action || action === '') {
+    if (!action || action === 'get_profile' || action === 'get_server_info') {
       const { default: streamManager } = await import('../services/streamManager.js');
       const activeCons = await streamManager.getUserConnectionCount(user.id);
       const shareValidity = getShareValidityInfo(user, now);
+      const origin = new URL(getBaseUrl(req));
+      const protocol = origin.protocol.slice(0, -1);
+      const port = origin.port || (protocol === 'https' ? '443' : '80');
+      const expires = expiryEpoch(user.expiry_date);
 
       return res.json({
         user_info: {
@@ -63,7 +67,7 @@ export const playerApi = async (req, res) => {
           message: '',
           auth: 1,
           status: 'Active',
-          exp_date: user.expiry_date ? Math.floor(new Date(user.expiry_date).getTime() / 1000).toString() : '1773864593',
+          exp_date: expires ? String(expires) : null,
           is_trial: '0',
           active_cons: activeCons,
           created_at: now.toString(),
@@ -72,12 +76,12 @@ export const playerApi = async (req, res) => {
           ...shareValidity
         },
         server_info: {
-          url: req.hostname,
-          port: String(PORT),
-          https_port: '',
-          server_protocol: req.secure ? 'https' : 'http',
+          url: origin.hostname,
+          port: port,
+          https_port: protocol === 'https' ? port : '',
+          server_protocol: protocol,
           rtmp_port: '',
-          timezone: 'Europe/Berlin',
+          timezone: 'UTC',
           timestamp_now: now,
           time_now: new Date(now * 1000).toISOString().slice(0, 19).replace('T', ' '),
           process: true
@@ -223,6 +227,7 @@ export const playerApi = async (req, res) => {
       let query = `
         SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.provider_id, pc.name, pc.logo, pc.plot, pc."cast", pc.director, pc.genre, pc.releaseDate, pc.added, pc.rating, pc.rating_5based, pc.youtube_trailer, pc.episode_run_time,
                json_extract(pc.metadata, '$.backdrop_path') as backdrop_path,
+               json_extract(pc.metadata, '$.last_modified') as last_modified,
                cat.is_adult as category_is_adult
         FROM user_categories cat
         JOIN authorized_user_channels uc ON cat.id = uc.user_category_id
@@ -244,7 +249,6 @@ export const playerApi = async (req, res) => {
       // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
       const stmt = db.prepare(query);
 
-      const nowStr = now.toString();
       return streamJsonResponse(res, stmt, params, (ch, i) => {
         let backdrop_path = [];
         if (ch.backdrop_path) {
@@ -266,7 +270,7 @@ export const playerApi = async (req, res) => {
           director: ch.director || '',
           genre: ch.genre || '',
           releaseDate: ch.releaseDate || '',
-          last_modified: ch.added || nowStr,
+          last_modified: String(ch.last_modified ?? ch.added ?? ''),
           rating: ch.rating || '',
           rating_5based: ch.rating_5based || 0,
           backdrop_path: rewriteClientMetadata(req, user, { backdrop_path }, '', { channelId: ch.user_channel_id, providerId: ch.provider_id }).backdrop_path,
@@ -282,7 +286,7 @@ export const playerApi = async (req, res) => {
       if (!seriesId) return res.json({});
 
       const channel = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, p.url, p.username, p.password
         FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
@@ -371,6 +375,11 @@ export const playerApi = async (req, res) => {
            })();
         }
 
+        for (const section of [data?.info, data?.movie_data]) {
+          if (!section) continue;
+          if ('category_id' in section) section.category_id = String(channel.user_category_id);
+          if ('category_ids' in section) section.category_ids = [Number(channel.user_category_id)];
+        }
         if (data?.info) {
           for (const key of ['cover', 'movie_image', 'stream_icon']) {
             if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);
@@ -389,12 +398,12 @@ export const playerApi = async (req, res) => {
       if (!vodId) return res.json({});
 
       const channel = db.prepare(`
-        SELECT uc.id as user_channel_id, uc.custom_name, pc.*, p.url, p.username, p.password
+        SELECT uc.id as user_channel_id, uc.custom_name, uc.user_category_id, pc.*, p.url, p.username, p.password
         FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN providers p ON p.id = pc.provider_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
-        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
+        WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0 AND pc.stream_type = 'movie'
       `).get(vodId, user.id);
 
       if (!channel) return res.json({});
@@ -413,8 +422,9 @@ export const playerApi = async (req, res) => {
         const data = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 30000, maxBytes: 64 * 1024 * 1024 });
 
         // Ensure stream_id matches our user_channel_id
-        if (data && data.movie_data && data.movie_data.stream_id) {
+        if (data?.movie_data) {
            data.movie_data.stream_id = Number(channel.user_channel_id);
+           data.movie_data.container_extension = normalizeContainerExtension(data.movie_data.container_extension, channel.mime_type);
            if (channel.custom_name) {
                data.movie_data.name = channel.custom_name;
            }
@@ -424,6 +434,11 @@ export const playerApi = async (req, res) => {
             data.info.name = channel.custom_name;
         }
 
+        for (const section of [data?.info, data?.movie_data]) {
+          if (!section) continue;
+          if ('category_id' in section) section.category_id = String(channel.user_category_id);
+          if ('category_ids' in section) section.category_ids = [Number(channel.user_category_id)];
+        }
         if (data?.info) {
           for (const key of ['cover', 'movie_image', 'stream_icon']) {
             if (key in data.info) data.info[key] = createChannelIconUrl(req, user, channel.user_channel_id);

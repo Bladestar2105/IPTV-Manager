@@ -83,7 +83,7 @@ vi.mock('../../src/services/authService.js', () => ({
 // Mock stream manager
 vi.mock('../../src/services/streamManager.js', () => ({
     default: {
-        add: vi.fn(),
+        reserve: vi.fn(async (_id, _user, _name, _ip, _res, providers) => ({ provider: providers[0] })),
         remove: vi.fn(),
         cleanupUser: vi.fn(),
         isSessionActive: vi.fn().mockResolvedValue(false),
@@ -138,7 +138,7 @@ describe('User Connection Limit', () => {
 
         expect(streamManager.getUserConnectionCount).not.toHaveBeenCalled(); // Should assume check skipped or count called but ignored?
         // Wait, logic is: if (max > 0) check. So if max=0, it should NOT call getCount.
-        expect(streamManager.add).toHaveBeenCalled();
+        expect(streamManager.reserve).toHaveBeenCalled();
     });
 
     it('should allow stream if active < max_connections', async () => {
@@ -162,7 +162,7 @@ describe('User Connection Limit', () => {
         await streamController.proxyLive(req, res);
 
         expect(streamManager.getUserConnectionCount).toHaveBeenCalledWith(1);
-        expect(streamManager.add).toHaveBeenCalled();
+        expect(streamManager.reserve).toHaveBeenCalled();
     });
 
     it('should block stream if active >= max_connections', async () => {
@@ -187,7 +187,7 @@ describe('User Connection Limit', () => {
         expect(streamManager.getUserConnectionCount).toHaveBeenCalledWith(1);
         expect(res.status).toHaveBeenCalledWith(403);
         expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Max connections'));
-        expect(streamManager.add).not.toHaveBeenCalled();
+        expect(streamManager.reserve).not.toHaveBeenCalled();
     });
 
     it('should cleanup user before checking limit for live streams', async () => {
@@ -221,6 +221,6 @@ describe('User Connection Limit', () => {
         expect(streamManager.cleanupUser).toHaveBeenCalledWith(1, '127.0.0.1');
 
         // Verify count check passed
-        expect(streamManager.add).toHaveBeenCalled();
+        expect(streamManager.reserve).toHaveBeenCalled();
     });
 });

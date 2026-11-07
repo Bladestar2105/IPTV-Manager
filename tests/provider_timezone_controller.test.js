@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeEach, afterAll, vi } from 'vitest';
 import fs from 'fs';
+import { Readable } from 'node:stream';
+import { fetchSafe } from '../src/utils/network.js';
 
 const { TEST_DB_DIR } = vi.hoisted(() => {
   const fsModule = require('fs');
@@ -121,4 +123,18 @@ describe('provider timeshift timezone API', () => {
     expect(db.prepare('SELECT timeshift_timezone FROM providers WHERE id = ?').get(providerId))
       .toEqual({ timeshift_timezone: null });
   });
+  it.each(['details', 'categories'])('discards a failed upstream %s response without waiting for its body', async mode => {
+    const body = new Readable({ read() {} });
+    body.push('error body that never ends');
+    fetchSafe.mockResolvedValueOnce({ ok: false, status: 502, body });
+    const res = response();
+    if (mode === 'details') {
+      await providerController.createProvider({ body: { ...providerBody(), max_connections: '' }, user: { id: 1, is_admin: true } }, res);
+    } else {
+      const id = db.prepare("INSERT INTO providers(name,url,username,password,user_id) VALUES('P','https://panel.test','u','p',2)").run().lastInsertRowid;
+      await providerController.getProviderCategories({ params: { id }, query: {}, user: { id: 1, is_admin: true } }, res);
+    }
+    expect(body.destroyed).toBe(true);
+  });
+
 });

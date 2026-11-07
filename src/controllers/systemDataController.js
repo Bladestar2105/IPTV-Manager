@@ -31,6 +31,7 @@ export const exportData = (req, res) => {
     const exportData = {
       version: 2,
       assignment_provenance_version: 1,
+      otp_secret_encoding: 'plaintext-v1',
       timestamp: Date.now(),
       users: [],
       providers: [],
@@ -49,7 +50,11 @@ export const exportData = (req, res) => {
       usersToExport = db.prepare('SELECT * FROM users').all();
     }
 
-    exportData.users = usersToExport;
+    exportData.users = usersToExport.map(user => {
+      const otpSecret = decrypt(user.otp_secret);
+      if (user.otp_enabled && !otpSecret) throw new Error('Cannot export an enabled OTP secret that cannot be decrypted');
+      return { ...user, otp_secret: otpSecret || null };
+    });
 
     if (usersToExport.length > 0) {
        const userIds = usersToExport.map(u => u.id);
@@ -244,6 +249,9 @@ export const importData = async (req, res) => {
     if (!Array.isArray(importData.users)) {
       return res.status(400).json({error: 'Invalid export file format'});
     }
+    if (importData.otp_secret_encoding !== undefined && importData.otp_secret_encoding !== 'plaintext-v1') {
+      return res.status(400).json({error: 'Unsupported OTP secret encoding'});
+    }
     const trustedModernFormat = Number(importData.version) === 2 &&
       Number(importData.assignment_provenance_version) === 1;
 
@@ -300,7 +308,14 @@ export const importData = async (req, res) => {
         const webuiAccess = user.webui_access !== undefined ? (user.webui_access ? 1 : 0) : 1;
         const providerAccess = user.provider_access ? 1 : 0;
         const otpEnabled = user.otp_enabled ? 1 : 0;
-        const otpSecret = user.otp_secret || null;
+        const plaintextOtp = importData.otp_secret_encoding === 'plaintext-v1'
+          ? user.otp_secret : decrypt(user.otp_secret);
+        if (otpEnabled && (typeof plaintextOtp !== 'string' || !plaintextOtp.trim())) {
+          const error = new Error('OTP secret cannot be decrypted. Re-export from the source installation with the current version.');
+          error.code = 'otp_secret_unavailable';
+          throw error;
+        }
+        const otpSecret = plaintextOtp ? encrypt(plaintextOtp) : null;
         const isActive = user.is_active !== undefined ? (user.is_active ? 1 : 0) : 1;
 
         const info = insertUserStmt.run(
@@ -580,6 +595,7 @@ export const importData = async (req, res) => {
 
   } catch (e) {
     console.error('Import error:', e);
+    if (e.code === 'otp_secret_unavailable') return res.status(400).json({ error: e.code, message: e.message });
     res.status(500).json({error: e.message});
   } finally {
     if (tempPath) {

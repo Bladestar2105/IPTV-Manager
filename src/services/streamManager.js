@@ -1,13 +1,76 @@
 import { formatDbError } from '../database/sqliteWrites.js';
 import { resolveBudget } from '../utils/env.js';
+import { randomUUID } from 'node:crypto';
+import { expiryEpoch } from '../utils/stalker.js';
 
 const REDIS_KEY_STREAMS = 'iptv:streams';
 const REDIS_PREFIX_USER = 'iptv:user_idx:';
+const REDIS_PREFIX_CONTROL = 'iptv:stream_control:';
+const REDIS_TOUCH_SCRIPT = `
+local json = redis.call('HGET', KEYS[1], ARGV[1])
+if not json then return 0 end
+local data = cjson.decode(json)
+data.last_activity = tonumber(ARGV[2])
+redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(data))
+return 1`;
+const REDIS_RESERVE_SCRIPT = `
+local data = cjson.decode(ARGV[1])
+local providers = cjson.decode(ARGV[2])
+local userMax = tonumber(ARGV[3]) or 0
+local streams = redis.call('HVALS', KEYS[1])
+local userSessions = {}
+local providerSessions = {}
+local active = {}
+local userCount = 0
+for _, json in ipairs(streams) do
+  local stream = cjson.decode(json)
+  if stream.user_id == data.user_id then
+    local key = cjson.encode({stream.channel_name, stream.ip, stream.provider_id})
+    if not userSessions[key] then userCount = userCount + 1; userSessions[key] = true end
+    if stream.channel_name == data.channel_name and stream.ip == data.ip then active[tostring(stream.provider_id)] = true end
+  end
+  local providerKey = tostring(stream.provider_id)
+  if not providerSessions[providerKey] then providerSessions[providerKey] = {} end
+  providerSessions[providerKey][cjson.encode({stream.channel_name, stream.ip, stream.user_id})] = true
+end
+local userFull = false
+for _, provider in ipairs(providers) do
+  local id = tostring(provider.id)
+  local providerMax = tonumber(provider.max_connections) or 0
+  local count = 0
+  for _ in pairs(providerSessions[id] or {}) do count = count + 1 end
+  if active[id] or userMax <= 0 or userCount < userMax then
+    if active[id] or providerMax <= 0 or count < providerMax then
+      data.provider_id = provider.id
+      redis.call('HSET', KEYS[1], data.id, cjson.encode(data))
+      redis.call('SET', KEYS[2], data.id)
+      local result = {id}
+      for _, json in ipairs(streams) do
+        local stream = cjson.decode(json)
+        if stream.user_id == data.user_id and stream.channel_name == data.channel_name and stream.ip == data.ip and tostring(stream.provider_id) == id then
+          table.insert(result, stream.id)
+        end
+      end
+      return result
+    end
+  else userFull = true end
+end
+if userFull then return 'user' end
+return 'provider'`;
 const REDIS_DELETE_INDEX_IF_MATCH_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
 return 0`;
+const REDIS_RECOVER_OWNER_SCRIPT = `
+local json = redis.call('HGET', KEYS[1], ARGV[1])
+if not json then return 0 end
+local stream = cjson.decode(json)
+local owner = stream.owner_id or ('legacy:' .. tostring(stream.worker_pid))
+if owner ~= ARGV[2] or stream.owner_id == ARGV[3] then return 0 end
+local index = ARGV[4] .. stream.user_id .. ':' .. stream.ip
+if redis.call('GET', index) == ARGV[1] then redis.call('DEL', index) end
+return redis.call('HDEL', KEYS[1], ARGV[1])`;
 // `Number(raw || default)` let a value with a unit — the shape operators keep
 // writing — through as NaN, and every comparison against NaN is false: the
 // inactivity sweep switched itself off, the touch throttle stopped throttling
@@ -69,6 +132,11 @@ class StreamManager {
     this.db = null;
     this.redis = null;
     this.pid = process.pid;
+    this.ownerId = randomUUID();
+    this.instanceId = process.env.IPTV_STREAM_INSTANCE_ID || this.ownerId;
+    this.pendingTerminations = new Map();
+    this.unreachableTerminations = new Map();
+    this.sessionPredecessors = new Map();
     this.localStreams = new Map();
     this.lastTouchAt = new Map();
   }
@@ -85,6 +153,7 @@ class StreamManager {
     this.db = db;
     this.latencyDb = latencyDb || db;
     this.redis = redisClient;
+    this.redisControlReady = this.redis?.duplicate ? this.startRedisControl() : Promise.resolve();
     if (this.redis) {
       console.info(`⚡ StreamManager using Redis (Worker ${this.pid})`);
     } else {
@@ -112,6 +181,79 @@ class StreamManager {
     }
   }
 
+  async startRedisControl() {
+    this.redisSubscriber = this.redis.duplicate();
+    this.redisSubscriber.on('error', error => console.error('Redis stream control error:', error.message));
+    await this.redisSubscriber.connect();
+    await this.redisSubscriber.subscribe(`${REDIS_PREFIX_CONTROL}${this.ownerId}`, async json => {
+      try {
+        const message = JSON.parse(json);
+        if (message.type === 'stream_terminated') this.handleTerminationReply(message);
+        else if (message.type === 'terminate_stream') {
+          const success = await this.remove(message.streamId, { localOnly: true });
+          await this.redis.publish(`${REDIS_PREFIX_CONTROL}${message.replyOwner}`, JSON.stringify({
+            type: 'stream_terminated', requestId: message.requestId, success
+          }));
+        }
+      } catch (error) { console.error('Redis stream termination error:', error.message); }
+    });
+  }
+
+  async reserve(id, user, channelName, ip, resource, providers, options = {}) {
+    await this.cleanupStaleStreams();
+    const data = { id, user_id: user.id, username: user.username, channel_name: channelName,
+      start_time: Date.now(), last_activity: Date.now(), ip, worker_pid: this.pid, owner_id: this.ownerId, instance_id: this.instanceId };
+    let provider;
+    let predecessors = [];
+    let error = 'provider';
+    if (this.redis) {
+      await this.redisControlReady;
+      if (resource) this.localStreams.set(id, resource);
+      const selected = await this.redis.eval(REDIS_RESERVE_SCRIPT, {
+        keys: [REDIS_KEY_STREAMS, `${REDIS_PREFIX_USER}${user.id}:${ip}`],
+        arguments: [JSON.stringify(data), JSON.stringify(providers), String(user.max_connections || 0)]
+      });
+      provider = providers.find(candidate => String(candidate.id) === String(selected?.[0]));
+      if (Array.isArray(selected)) predecessors = selected.slice(1);
+      if (!provider) error = selected;
+    } else if (this.db) {
+      this.db.transaction(() => {
+        const userCount = this.stmtCountUser.get(user.id).count;
+        for (const candidate of providers) {
+          const active = this.stmtIsActive.get(user.id, ip, channelName, candidate.id);
+          if (!active && user.max_connections > 0 && userCount >= user.max_connections) { error = 'user'; continue; }
+          if (!active && candidate.max_connections > 0 && this.stmtCountProvider.get(candidate.id).count >= candidate.max_connections) continue;
+          predecessors = this.stmtFindSameSession.all(user.id, ip, channelName, candidate.id, id).map(stream => stream.id);
+          this.stmtAdd.run(id, user.id, user.username ?? null, channelName, data.start_time, data.last_activity, ip, this.pid, candidate.id);
+          provider = candidate;
+          break;
+        }
+      }).immediate();
+    } else throw new Error('Stream accounting is unavailable');
+    if (!provider) { this.localStreams.delete(id); return { error }; }
+    if (resource && !this.redis) this.localStreams.set(id, resource);
+    this.sessionPredecessors.set(id, predecessors);
+    this.lastTouchAt.set(id, data.last_activity);
+    if (options.dedupe !== false) await this.cleanupSession(user.id, ip, channelName, provider.id, id);
+    const current = this.db.prepare(`SELECT * FROM ${user.is_admin ? 'admin_users' : 'users'} WHERE id = ?`).get(user.id);
+    const expires = expiryEpoch(current?.expiry_date);
+    let authorized = current?.is_active && (!expires || expires > Date.now() / 1000) &&
+      Number(current.token_version || 0) === Number(user.token_version || 0);
+    if (authorized && user.is_share_guest) {
+      const share = this.db.prepare('SELECT * FROM shared_links WHERE token = ? AND user_id = ?').get(user.resource_token || options.sourceToken, user.id);
+      const now = Date.now() / 1000;
+      let channels;
+      try { channels = JSON.parse(share?.channels); } catch { channels = []; }
+      authorized = share && (!share.start_time || now >= share.start_time) && (!share.end_time || now <= share.end_time) &&
+        Array.isArray(channels) && channels.some(id => Number(id) === Number(options.channelId));
+    }
+    if (!authorized || resource?.destroyed) {
+      await this.remove(id);
+      return { error: 'cancelled' };
+    }
+    return { provider };
+  }
+
   async add(id, user, channelName, ip, resource = null, providerId = 0, options = {}) {
     const { dedupe = true } = options;
     const data = {
@@ -123,6 +265,8 @@ class StreamManager {
       last_activity: Date.now(),
       ip,
       worker_pid: this.pid,
+      owner_id: this.ownerId,
+      instance_id: this.instanceId,
       provider_id: providerId
     };
 
@@ -132,6 +276,7 @@ class StreamManager {
 
     if (this.redis) {
       try {
+        await this.redisControlReady;
         const json = JSON.stringify(data);
         await this.redis.hSet(REDIS_KEY_STREAMS, id, json);
         // Set User Index for fast cleanup
@@ -159,6 +304,10 @@ class StreamManager {
 
   async cleanupSession(userId, ip, channelName, providerId = 0, excludeId = null) {
     if (!userId || !ip || !channelName) return;
+    if (excludeId && this.sessionPredecessors.has(excludeId)) {
+      for (const id of this.sessionPredecessors.get(excludeId)) await this.remove(id);
+      return;
+    }
 
     if (this.redis) {
       try {
@@ -194,17 +343,65 @@ class StreamManager {
     }
   }
 
-  async remove(id) {
-    // Kill local resource if exists
-    const resource = this.localStreams.get(id);
-    if (resource) {
-      try {
-        if (typeof resource.destroy === 'function') resource.destroy();
-        else if (typeof resource.end === 'function') resource.end();
-        else if (typeof resource.kill === 'function') resource.kill('SIGKILL');
-      } catch (e) { console.error('Error killing stream resource:', e); }
-      this.localStreams.delete(id);
+  handleTerminationReply(message) {
+    this.pendingTerminations.get(message.requestId)?.(message.success === true);
+  }
+
+  async requestOwnerTermination(stream) {
+    const requestId = randomUUID();
+    let acknowledged = false;
+    let timer;
+    const reply = new Promise(resolve => {
+      this.pendingTerminations.set(requestId, success => { acknowledged = true; resolve(success); });
+      timer = setTimeout(() => resolve(false), 5000);
+      timer.unref?.();
+    });
+    try {
+      const message = { type: 'terminate_stream', requestId, streamId: stream.id, targetPid: stream.worker_pid, replyPid: this.pid, replyOwner: this.ownerId };
+      if (this.redis && stream.owner_id) {
+        await this.redisControlReady;
+        await this.redis.publish(`${REDIS_PREFIX_CONTROL}${stream.owner_id}`, JSON.stringify(message));
+      } else if (this.forwardTermination) await this.forwardTermination(message);
+      else if (typeof process.send === 'function') process.send(message);
+      else return false;
+      return await reply;
+    } finally {
+      clearTimeout(timer);
+      this.pendingTerminations.delete(requestId);
+      if (!acknowledged) this.unreachableTerminations.set(stream.id, stream.owner_id || `legacy:${stream.worker_pid}`);
+      else this.unreachableTerminations.delete(stream.id);
+      if (this.unreachableTerminations.size > STREAM_TOUCH_MAP_LIMIT) this.unreachableTerminations.clear();
     }
+  }
+
+  async recoverStoppedOwner(id, expectedOwner) {
+    if (this.unreachableTerminations.get(id) !== expectedOwner || this.localStreams.has(id) || expectedOwner === this.ownerId) return false;
+    if (!this.redis) return false;
+    const json = await this.redis.hGet(REDIS_KEY_STREAMS, id);
+    const stream = json && JSON.parse(json);
+    if (!stream || (stream.instance_id === this.instanceId && this.isWorkerAlive(stream.worker_pid))) return false;
+    const removed = await this.redis.eval(REDIS_RECOVER_OWNER_SCRIPT, {
+      keys: [REDIS_KEY_STREAMS], arguments: [id, expectedOwner, this.ownerId, REDIS_PREFIX_USER]
+    });
+    if (removed) this.unreachableTerminations.delete(id);
+    return Boolean(removed);
+  }
+
+  async remove(id, { localOnly = false, ownerStopped = false } = {}) {
+    const json = this.redis ? await this.redis.hGet(REDIS_KEY_STREAMS, id) : null;
+    const stream = this.redis ? (json ? JSON.parse(json) : null) : this.stmtGetById?.get(id);
+    const unknownLegacy = this.redis && stream && !stream.owner_id && !this.localStreams.has(id);
+    if (unknownLegacy && !ownerStopped) {
+      if (!localOnly) this.unreachableTerminations.set(id, `legacy:${stream.worker_pid}`);
+      return false;
+    }
+    const foreign = stream && (this.redis ? Boolean(stream.owner_id && stream.owner_id !== this.ownerId) : stream.worker_pid && stream.worker_pid !== this.pid);
+    if (foreign && !ownerStopped && (this.redis || this.isWorkerAlive(stream.worker_pid))) {
+      if (localOnly) return false;
+      return this.requestOwnerTermination(stream);
+    }
+    // Kill local resource if exists
+    this.destroyLocalStream(id);
 
     if (this.redis) {
       try {
@@ -220,14 +417,30 @@ class StreamManager {
         await this.redis.hDel(REDIS_KEY_STREAMS, id);
       } catch (e) {
         console.error('Redis Remove Error:', e);
+        return false;
       }
     } else if (this.db) {
       try {
         this.stmtRemove.run(id);
-      } catch { /* ignore */ }
+      } catch { return false; }
     }
 
     this.lastTouchAt.delete(id);
+    this.sessionPredecessors.delete(id);
+    return true;
+  }
+
+  destroyLocalStream(id) {
+    const resource = this.localStreams.get(id);
+    if (resource) {
+      this.localStreams.delete(id);
+      try {
+        if (typeof resource.destroy === 'function') resource.destroy();
+        else if (typeof resource.end === 'function') resource.end();
+        else if (typeof resource.kill === 'function') resource.kill('SIGKILL');
+      } catch (e) { console.error('Error killing stream resource:', e); }
+    }
+
   }
 
   async cleanupUser(userId, ip) {
@@ -276,13 +489,7 @@ class StreamManager {
     let written = true;
     if (this.redis) {
       try {
-        const json = await this.redis.hGet(REDIS_KEY_STREAMS, id);
-        // Not in the ledger: there is nothing to refresh and nothing to retry.
-        if (json) {
-          const data = JSON.parse(json);
-          data.last_activity = now;
-          await this.redis.hSet(REDIS_KEY_STREAMS, id, JSON.stringify(data));
-        }
+        await this.redis.eval(REDIS_TOUCH_SCRIPT, { keys: [REDIS_KEY_STREAMS], arguments: [id, String(now)] });
       } catch (e) {
         written = false;
         console.error('Redis Touch Error:', e);
@@ -343,8 +550,9 @@ class StreamManager {
 
   isStale(stream, now = Date.now()) {
     if (!stream) return false;
-    if (!this.isWorkerAlive(stream.worker_pid)) return true;
-    if (stream.worker_pid === this.pid && this.hasActiveLocalResource(stream.id)) return false;
+    const local = this.redis && stream.owner_id ? stream.owner_id === this.ownerId : stream.worker_pid === this.pid;
+    if (!this.redis && !this.isWorkerAlive(stream.worker_pid)) return true;
+    if (local && this.hasActiveLocalResource(stream.id)) return false;
 
     const startTime = Number(stream.start_time || 0);
     const lastActivity = Number(stream.last_activity || startTime || 0);
@@ -391,8 +599,9 @@ class StreamManager {
       try {
         const all = await this.getAll();
         for (const stream of all) {
-          if (stream.worker_pid === workerPid) {
-            await this.remove(stream.id);
+          if (stream.worker_pid === workerPid && stream.instance_id === this.instanceId) {
+            // The primary can prove its own exited worker is dead, including in Redis mode.
+            await this.remove(stream.id, { ownerStopped: !this.isWorkerAlive(workerPid) });
           }
         }
       } catch (e) {
@@ -410,7 +619,7 @@ class StreamManager {
     }
   }
 
-  async getAll() {
+  async getAll({ strict = false } = {}) {
     if (this.redis) {
       try {
         const all = await this.redis.hGetAll(REDIS_KEY_STREAMS);
@@ -418,18 +627,19 @@ class StreamManager {
         const now = Date.now();
         const active = [];
         for (const stream of parsed) {
-          if (this.isStale(stream, now)) await this.remove(stream.id);
-          else active.push(stream);
+          if (!this.isStale(stream, now) || !await this.remove(stream.id)) active.push(stream);
         }
         return active;
       } catch (e) {
         console.error('Redis GetAll Error:', e);
+        if (strict) throw e;
         return [];
       }
     } else if (this.db) {
       try {
         return this.stmtGetAll.all();
-      } catch {
+      } catch (e) {
+        if (strict) throw e;
         return [];
       }
     }

@@ -30,18 +30,23 @@ export const sanitizeMetadata = (val) => {
 
 export const encodeXtreamEpgText = (val) => val ? Buffer.from(String(val)).toString('base64') : '';
 
-export const formatXtreamEpgListing = (program, epgId) => ({
-  id: String(program.start),
-  epg_id: epgId,
-  title: encodeXtreamEpgText(program.title),
-  lang: program.lang || '',
-  start: program.start_fmt || new Date(Number(program.start) * 1000).toISOString().slice(0, 19).replace('T', ' '),
-  end: program.stop_fmt || new Date(Number(program.stop) * 1000).toISOString().slice(0, 19).replace('T', ' '),
-  description: encodeXtreamEpgText(program.desc),
-  channel_id: epgId,
-  start_timestamp: String(program.start),
-  stop_timestamp: String(program.stop)
-});
+export const formatXtreamEpgListing = (program, epgId) => {
+  const now = Date.now() / 1000;
+  return {
+    id: String(program.start),
+    epg_id: epgId,
+    title: encodeXtreamEpgText(program.title),
+    lang: program.lang || '',
+    start: program.start_fmt || new Date(Number(program.start) * 1000).toISOString().slice(0, 19).replace('T', ' '),
+    end: program.stop_fmt || new Date(Number(program.stop) * 1000).toISOString().slice(0, 19).replace('T', ' '),
+    description: encodeXtreamEpgText(program.desc),
+    channel_id: epgId,
+    start_timestamp: String(program.start),
+    stop_timestamp: String(program.stop),
+    now_playing: now >= Number(program.start) && now < Number(program.stop) ? 1 : 0,
+    has_archive: 0
+  };
+};
 
 export const parseBatchStreamIds = (value) => {
   const raw = Array.isArray(value) ? value.join(',') : String(value || '');

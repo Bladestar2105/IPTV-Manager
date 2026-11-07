@@ -1,3 +1,4 @@
+import streamManager from '../src/services/streamManager.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import fs from 'node:fs';
@@ -39,7 +40,7 @@ describe('series across two upstream DNS panels', () => {
   };
 
   beforeAll(() => {
-    initDb(true);
+    initDb(true); streamManager.init(db, null);
     const userId = db.prepare(`
       INSERT INTO users (username, password, plain_password, is_active)
       VALUES (?, ?, ?, 1)

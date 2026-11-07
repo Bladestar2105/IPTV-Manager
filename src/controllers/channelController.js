@@ -194,17 +194,16 @@ export const updateUserChannel = (req, res) => {
     const id = Number(req.params.id);
     const { custom_name } = req.body;
 
-    if (!req.user.is_admin) {
-        const uc = db.prepare(`
-          SELECT c.user_id
-          FROM user_channels uc
-          JOIN user_categories c ON uc.user_category_id = c.id
-          WHERE uc.id = ?
-        `).get(id);
-        if (!uc || uc.user_id !== req.user.id) return res.status(403).json({error: 'Access denied'});
-    }
+    const uc = db.prepare(`
+      SELECT c.user_id
+      FROM user_channels uc
+      JOIN user_categories c ON uc.user_category_id = c.id
+      WHERE uc.id = ?
+    `).get(id);
+    if (!req.user.is_admin && (!uc || uc.user_id !== req.user.id)) return res.status(403).json({error: 'Access denied'});
 
     db.prepare("UPDATE user_channels SET custom_name = ? WHERE id = ?").run(custom_name || '', id);
+    if (uc) clearChannelsCache(uc.user_id);
     res.json({success: true});
   } catch (err) {
     console.error('Update user channel error:', err);

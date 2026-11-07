@@ -54,6 +54,7 @@ test.each([
   [401, 'No token provided'],
   [401, 'User is inactive or deleted'],
   [403, 'Invalid or expired token'],
+  [403, 'Account expired'],
   [403, 'WebUI access revoked'],
   [403, 'Access denied from your region']
 ])('an unusable session can still be cleared locally (%s %s)', async (status, error) => {

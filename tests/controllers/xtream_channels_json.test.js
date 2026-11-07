@@ -62,6 +62,7 @@ vi.mock('../../src/config/constants.js', () => ({
 // Import the controller after mocking
 import { playerChannelsJson } from '../../src/controllers/xtreamController.js';
 import { getXtreamUser } from '../../src/services/authService.js';
+import { getBaseUrl } from '../../src/utils/helpers.js';
 import { channelsJsonCache } from '../../src/services/cacheService.js';
 
 describe('xtreamController - playerChannelsJson', () => {
@@ -265,4 +266,41 @@ describe('xtreamController - playerChannelsJson', () => {
     expect(JSON.stringify(output)).not.toContain('/42.');
     expect(JSON.stringify(output)).not.toContain('/43.');
   });
+  it('applies current share scope and time validity even after a previous catalog request', async () => {
+    req.query.token = 'edited-share';
+    const user = { id: 1, is_share_guest: true, allowed_channels: [100, 101] };
+    getXtreamUser.mockResolvedValue(user);
+    mockDb.prepare.mockReturnValue({ iterate: () => [100, 101].map(id => ({ user_channel_id: id, name: `Channel ${id}`, stream_type: 'live' })) });
+    await playerChannelsJson(req, res);
+    expect(JSON.parse(res.send.mock.calls.at(-1)[0])).toHaveLength(2);
+    user.allowed_channels = [100];
+    await playerChannelsJson(req, res);
+    expect(JSON.parse(res.send.mock.calls.at(-1)[0])).toHaveLength(1);
+    user.share_end = Date.now() / 1000 - 1;
+    await playerChannelsJson(req, res);
+    expect(JSON.parse(res.send.mock.calls.at(-1)[0])).toEqual([]);
+  });
+
+  it('bounds retained catalog bytes across request-controlled hosts and expires old entries', async () => {
+    getXtreamUser.mockResolvedValue({ id: 1 });
+    mockDb.prepare.mockReturnValue({ iterate: () => [{ user_channel_id: 100, name: 'x'.repeat(1024 * 1024), stream_type: 'live' }] });
+    for (let i = 0; i < 20; i++) {
+      getBaseUrl.mockReturnValue(`http://manager${i}.test`);
+      await playerChannelsJson(req, res);
+    }
+    expect(channelsJsonCache.size).toBeLessThan(20);
+    expect([...channelsJsonCache.values()].reduce((sum, item) => sum + item.bytes, 0)).toBeLessThanOrEqual(16 * 1024 * 1024);
+    const lastKey = [...channelsJsonCache.keys()].at(-1);
+    channelsJsonCache.get(lastKey).expiresAt = 0;
+    mockDb.prepare.mockReturnValue({ iterate: () => [] });
+    await playerChannelsJson(req, res);
+    expect(JSON.parse(res.send.mock.calls.at(-1)[0])).toEqual([]);
+    for (let i = 0; i < 40; i++) {
+      getBaseUrl.mockReturnValue(`http://empty${i}.test`);
+      await playerChannelsJson(req, res);
+    }
+    expect(channelsJsonCache.size).toBeLessThanOrEqual(32);
+    getBaseUrl.mockReturnValue('http://localhost');
+  });
+
 });

@@ -6,10 +6,12 @@ import { encrypt } from '../../src/utils/crypto.js';
 // Mock the network calls inside syncService
 vi.mock('../../src/utils/network.js', async importOriginal => ({
   ...(await importOriginal()),
-  fetchSafe: vi.fn().mockResolvedValue({
+  fetchSafe: vi.fn().mockImplementation(async url => ({
     ok: true,
-    json: () => Promise.resolve({ user_info: { exp_date: 'null' } })
-  })
+    json: async () => String(url).includes('action=get_live_streams')
+      ? [{ num: 1, name: 'DE RTL', stream_id: 1234, stream_icon: 'logo.png', epg_channel_id: 'rtl', category_id: '10' }]
+      : String(url).includes('action=') ? [] : { user_info: { exp_date: 'null' } }
+  }))
 }));
 
 // Mock the Xtream client to return a predictable set of channels

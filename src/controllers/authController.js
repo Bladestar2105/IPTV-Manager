@@ -8,6 +8,7 @@ import { generateToken, preventTimingAttack, invalidateUserTokens, invalidateUse
 import { isIpAllowedForUser } from '../services/geoIpService.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { getSetting } from '../utils/helpers.js';
+import { expiryEpoch } from '../utils/stalker.js';
 import { JWT_EXPIRES_IN, BCRYPT_ROUNDS } from '../config/constants.js';
 
 // Allow one 30-second TOTP step of clock drift, matching the previous otplib window=1 behavior.
@@ -59,6 +60,10 @@ export const login = async (req, res) => {
     }
 
     if (user) {
+      const expires = expiryEpoch(user.expiry_date);
+      if (!user.is_admin && expires && expires <= now) {
+        return res.status(403).json({ error: 'account_expired' });
+      }
       // Check WebUI Access for normal users
       if (!user.is_admin && user.webui_access === 0) {
           // Log Attempt

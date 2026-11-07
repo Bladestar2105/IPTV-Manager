@@ -4,13 +4,15 @@ import path from 'path';
 import { DATA_DIR } from '../config/constants.js';
 
 let JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
+if (!JWT_SECRET?.trim() || JWT_SECRET.trim() === 'your_jwt_secret_here') {
   const jwtFile = path.join(DATA_DIR, 'jwt.secret');
   if (fs.existsSync(jwtFile)) {
     JWT_SECRET = fs.readFileSync(jwtFile, 'utf8').trim();
-  } else {
+  }
+  if (!JWT_SECRET?.trim() || JWT_SECRET.trim() === 'your_jwt_secret_here') {
     JWT_SECRET = crypto.randomBytes(32).toString('hex');
     fs.writeFileSync(jwtFile, JWT_SECRET, { mode: 0o600 });
+    fs.chmodSync(jwtFile, 0o600);
     console.log('🔐 Generated new unique JWT secret and saved to jwt.secret');
   }
 }

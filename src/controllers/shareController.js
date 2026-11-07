@@ -52,7 +52,7 @@ export const createShare = (req, res) => {
     const link = `${baseUrl}/player.html?token=${encodeURIComponent(token)}`;
     const shortLink = `${baseUrl}/share/${slug}`;
 
-    clearChannelsCache(req.user.id);
+    clearChannelsCache(user_id);
     res.json({ success: true, token, link, short_link: shortLink, slug });
   } catch (e) {
     console.error('Create share error:', e);
@@ -75,6 +75,8 @@ export const updateShare = (req, res) => {
     // Note: We don't currently support updating the slug to avoid breaking existing links
     // If user wants a new slug, they can recreate the share.
 
+    const share = db.prepare('SELECT user_id FROM shared_links WHERE token = ?').get(token);
+    if (!share) return res.status(404).json({ error: 'Share not found' });
     let info;
     if (req.user.is_admin) {
         info = db.prepare('UPDATE shared_links SET channels = ?, name = ?, start_time = ?, end_time = ? WHERE token = ?')
@@ -86,7 +88,7 @@ export const updateShare = (req, res) => {
 
     if (info.changes === 0) return res.status(404).json({ error: 'Share not found' });
 
-    clearChannelsCache(req.user.id);
+    clearChannelsCache(share.user_id);
     res.json({ success: true, token });
   } catch (e) {
     console.error('Update share error:', e);
@@ -98,6 +100,8 @@ export const deleteShare = (req, res) => {
   try {
     const token = req.params.token;
 
+    const share = db.prepare('SELECT user_id FROM shared_links WHERE token = ?').get(token);
+    if (!share) return res.status(404).json({ error: 'Share not found' });
     let info;
     if (req.user.is_admin) {
         info = db.prepare('DELETE FROM shared_links WHERE token = ?').run(token);
@@ -107,7 +111,7 @@ export const deleteShare = (req, res) => {
 
     if (info.changes === 0) return res.status(404).json({ error: 'Share not found' });
 
-    clearChannelsCache(req.user.id);
+    clearChannelsCache(share.user_id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -488,6 +488,9 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         let currentChannel = null;
         let currentProgram = null;
         let currentText = '';
+        let rootOpened = false;
+        let rootClosed = false;
+        let invalidXml = false;
 
         await new Promise((settleResolve, settleReject) => {
             // Total budget for receiving and parsing the feed. Without it the
@@ -521,6 +524,11 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             });
 
             parser.on('opentag', function (name, attrs) {
+                if (/^tv(?:\s|\/?$)/.test(name)) {
+                    if (rootOpened || rootClosed) invalidXml = true;
+                    rootOpened = true;
+                    rootClosed = name.trim().endsWith('/');
+                }
                 currentTag = name;
 
                 if (currentTag === 'display-name' || currentTag === 'title' || currentTag === 'desc') {
@@ -579,6 +587,10 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             parser.on('cdata', appendText);
 
             parser.on('closetag', function (name) {
+                if (name === 'tv') {
+                    if (!rootOpened || rootClosed || currentChannel || currentProgram) invalidXml = true;
+                    rootClosed = true;
+                }
                 if (currentChannel && name === 'display-name') {
                     if (!currentChannel.hasName) {
                         currentChannel.name = decodeXmlIfNeeded(currentText);
@@ -608,6 +620,10 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
 
             parser.on('finish', function () {
                 try {
+                    // node-xml-stream finishes even when the socket ends inside an XML record.
+                    if (invalidXml || !rootClosed || currentChannel || currentProgram) {
+                        throw new Error('EPG XML was incomplete or invalid; keeping the previous data');
+                    }
                     processBatches();
                     resolve({ success: true });
                 } catch (err) {

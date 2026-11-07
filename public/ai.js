@@ -796,10 +796,13 @@ window.aiUI = (() => {
     }
     return result;
   }
+  function newIdempotencyKey() {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
   async function startJob() {
     if (submittingJob || jobId || submittingLink || login?.status === 'pending' || pendingContextWrites.size) return;
     if (!settings.enabled || !preferences.enabled) { status('off'); return; }
-    const input = payload(); input.idempotency_key = crypto.randomUUID();
+    const input = payload(); input.idempotency_key = newIdempotencyKey();
     const resultStamp = beginResult(), stamp = generation;
     submittingJob = true;
     status('queued');
@@ -919,7 +922,7 @@ window.aiUI = (() => {
       if (!actionIds.length) throw {code: 'AI_INVALID_INPUT'};
       if (!confirm(tr('confirm'))) return;
       const selection = actionIds.slice().sort().join(',');
-      if (confirmation?.selection !== selection) confirmation = {selection, key: crypto.randomUUID()};
+      if (confirmation?.selection !== selection) confirmation = {selection, key: newIdempotencyKey()};
       const result = await api(`/proposals/${encodeURIComponent(activeProposal.id)}/apply`, 'POST', {action_ids: actionIds, idempotency_key: confirmation.key}, resultStamp);
       if (resultStamp !== resultGeneration) return;
       changeId = result.change_id;

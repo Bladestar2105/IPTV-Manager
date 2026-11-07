@@ -414,7 +414,9 @@ this endpoint for timeline data after rendering the channel list.
 Poll `GET /api/mapping/jobs/:id` for `status`, `progress`, and `matched`.
 The web UI resumes polling an accepted job after a reload in the same browser
 tab. The job runs independently of the HTTP request; a reload does not cancel
-it. Running jobs are retained even during long matching phases; completed and
+it. A delayed automatic result is saved only if the mapping still matches its
+starting state, so a newer manual correction is preserved. Running jobs are
+retained even during long matching phases; completed and
 failed job records expire after 30 minutes. This does not resume execution after
 a server restart.
 Admins may pass `all_providers: true` to auto-map or reset EPG mappings across
@@ -429,6 +431,11 @@ Category-scoped EPG mapping remains available to normal users without
 channels. This also applies to manual mapping, reset, auto-mapping, and
 category-mapping edits.
 
+XMLTV imports replace existing guide data only after the `tv` root closes and
+no channel or retained programme is left unfinished. Truncated downloads and
+import errors retain the previous guide. Catalog synchronization uses the safe HTTP transport with
+response-header and body deadlines and a bounded response size.
+
 ## User Backups
 
 - `GET /api/users/:userId/backups`
@@ -437,7 +444,10 @@ category-mapping edits.
 - `DELETE /api/users/:userId/backups/:id`
 
 Restore recalculates channel authorization from current category and provider
-ownership. A normal user's backup cannot recreate a historical administrator
+ownership. An existing, currently authorized administrator grant is retained
+for the same assignment identity; unchanged assignments also retain their
+series episode aliases. A grant present only in the backup is not trusted.
+A normal user's backup cannot recreate a historical administrator
 grant: cross-owner rows are restored with `authorization_revoked = 1`, while
 their user-selected `is_hidden` value remains separate and missing references
 are skipped. An authenticated admin restore may deliberately create a current
@@ -525,6 +535,11 @@ assignments are merged with the same deterministic policy as backup restore;
 `stats.channels` counts unique inserted assignments and `channels_merged` and
 `channels_skipped` report the corresponding outcomes.
 
+New exports include portable OTP data inside the password-encrypted archive.
+Imports re-encrypt it for the destination. Legacy enabled OTP that cannot be
+decrypted rejects the entire import with HTTP 400 `otp_secret_unavailable`;
+re-export on the source installation after upgrading.
+
 Full-system imports retain each user's connection limit, expiry date, country
 restrictions, and notes. Older exports without these fields use the existing
 defaults.
@@ -539,6 +554,17 @@ user-facing mapping has its own `user_channels` assignment.
 - `GET /api/statistics`
 - `POST /api/statistics/streams/:streamId/terminate`
 - `POST /api/statistics/reset`
+
+Terminating a foreign stream waits for its owner's acknowledgement. An
+unreachable owner keeps its slot and returns HTTP 503. After an operator has
+confirmed that the entire old instance and its child playback processes have
+stopped, an administrator may recover that one orphan with the same terminate
+endpoint and JSON `{"confirm_owner_stopped":true,"owner_id":"<recorded-owner-id>"}`.
+For pre-upgrade rows without `owner_id`, use `"legacy:<worker_pid>"` from the
+statistics record. A mismatched owner, a negative reply, or a known live/local
+owner cannot be bypassed. This removes stale accounting; it cannot stop an
+unreachable process. Never use it for a paused or partitioned live instance.
+
 - `POST /api/geoip/update`
 
 `POST /api/geoip/update` stores a provided `license_key` when present, checks
@@ -547,6 +573,13 @@ local GeoIP database is stale. It returns `up_to_date: true` when no download is
 needed. Pass `force: true` to force the underlying updater.
 
 ## Shares
+
+Share edits and deletion apply on the next authenticated request, including
+requests handled by other workers. Shared player catalogs are rebuilt from
+current scope; ordinary player JSON cache is bounded to 32 entries / 16 MiB per
+worker and expires after 60 seconds. Account expiry, deactivation and password
+revocation are also rechecked when credentials were cached. Expiry accepts ISO
+dates, Unix seconds or Unix milliseconds; an unset expiry means unlimited.
 
 - `POST /api/shares`
 - `PUT /api/shares/:token`
@@ -735,6 +768,16 @@ administrative import/export remain management data, not client playback URLs.
 
 ## Xtream and Player Compatibility
 
+The authentication response is also available through `action=get_profile` and
+`action=get_server_info`. `user_info.exp_date` is a Unix-seconds string or `null`
+for unlimited accounts. `server_info` uses the request's public host, port and
+protocol (forwarded origin requires the configured trusted proxy). Its clock
+and timezone are UTC. Series `last_modified` preserves the stored upstream
+value, with a stable stored/empty fallback. VOD and series detail category IDs
+refer to Manager categories; VOD extensions use the same normalized value as
+catalog/playback responses. Movie detail and playback URLs require a movie
+assignment.
+
 - `GET /cpp`
 - `GET /player_api.php`
 - `GET /player_api.php?action=get_live_categories`
@@ -751,6 +794,24 @@ administrative import/export remain management data, not client playback URLs.
 - `GET /xmltv.php`
 - `GET /api/player/playlist`
 - `GET /api/player/channels.json`
+
+`GET /api/player/channels.json` accepts optional `type=live|movie|series` to
+build only that catalog. `series=summary` returns one series folder with the
+local assignment `series_id` and an empty playback `url`; open its episodes via
+`get_series_info`. The default response still includes all types and expands
+series into managed episode aliases for existing companion clients. Cache
+entries distinguish these modes; all ownership and current-share filters apply.
+The web player loads the selected catalog on demand and reuses already loaded
+tabs, so opening Live does not expand unrelated series episodes. Playback URLs
+preserve the supplied authentication mode: encoded Manager credential paths
+for username/password login, or the supplied token for token login. These
+authentication modes have separate cache entries.
+
+Xtream EPG listings from `get_short_epg`, `get_simple_date_table`,
+`get_simple_data_table` and `get_epg_batch` include numeric `now_playing`
+and `has_archive` flags. `now_playing` is `1` from the programme's start
+until (but not including) its stop time, otherwise `0`. `has_archive` is
+currently `0`; these listings do not advertise catch-up playback.
 
 `get_epg_batch` returns all requested distinct positive stream IDs that have
 an EPG mapping and are visible to the authenticated user or share. There is no

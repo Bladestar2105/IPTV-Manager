@@ -15,6 +15,13 @@
   // ─── State ───
   let currentType = 'live';
   let allChannels = [];
+  const loadedCatalogTypes = new Set();
+  const catalogRequests = new Map();
+  let catalogViewGeneration = 0;
+  let seriesDetailGeneration = 0;
+  let epgStarted = false;
+  let catalogLimit = 0;
+  let catalogFilter = '';
   let currentChannels = [];
   let epgSchedule = {};
   let activeStream = null;
@@ -28,6 +35,7 @@
   const MAX_RETRIES = 3;
   const MANUAL_TRANSCODE_KEY = 'transcode_enabled';
   const AUTO_TRANSCODE_KEY = 'player_auto_transcode_streams';
+  const programTimeFormatter = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit' });
 
   const video = document.getElementById('video');
 
@@ -175,8 +183,8 @@ function escapeHtml(unsafe) {
     var fullUrl = new URL(url, window.location.href).href;
 
     var contentType = 'application/x-mpegurl';
-    if (fullUrl.includes('.mpd')) contentType = 'application/dash+xml';
-    else if (fullUrl.includes('.mp4')) contentType = 'video/mp4';
+    if (isMpdStream(stream, fullUrl)) contentType = 'application/dash+xml';
+    else if (getMediaExtension(fullUrl) === 'mp4') contentType = 'video/mp4';
 
     var mediaInfo = new chrome.cast.media.MediaInfo(fullUrl, contentType);
     mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
@@ -558,52 +566,89 @@ function escapeHtml(unsafe) {
     }
   }
 
-  // ─── Init ───
-  async function init() {
+  async function loadCatalog(type) {
+    if (loadedCatalogTypes.has(type)) return;
+    if (!catalogRequests.has(type)) {
+      var url = '/api/player/channels.json?' + getAuthParams() + '&type=' + encodeURIComponent(type);
+      if (type === 'series') url += '&series=summary';
+      var request = fetch(url).then(async function(res) {
+        if (!res.ok) throw new Error(t('channelsFetchError') + ': ' + res.status);
+        var channels = await res.json();
+        allChannels = allChannels.filter(function(ch) { return ch.type !== type; }).concat(channels);
+        loadedCatalogTypes.add(type);
+        if (type === 'live') {
+          var maxCatchupDays = 0;
+          channels.forEach(function(ch) {
+            var days = ch.tv_archive ? parseInt(ch.tv_archive_duration, 10) : 0;
+            if (days > maxCatchupDays) maxCatchupDays = days;
+          });
+          window.maxCatchupHours = Math.max(24, maxCatchupDays * 24);
+        }
+      }).finally(function() { catalogRequests.delete(type); });
+      catalogRequests.set(type, request);
+    }
+    await catalogRequests.get(type);
+  }
+
+  async function showCatalog(type) {
+    var generation = ++catalogViewGeneration;
+    seriesDetailGeneration++;
+    currentType = type;
+    catSelect.value = '';
+    searchInput.value = '';
+    updateClearBtnVisibility();
+    var pendingCatalog = !loadedCatalogTypes.has(type);
+    catSelect.disabled = pendingCatalog;
+    searchInput.disabled = pendingCatalog;
+    if (pendingCatalog) {
+      updateCategories();
+      renderView();
+      if (type !== 'live') listView.innerHTML = '<div class="text-center p-4" role="status">' + t('loadingChannels') + '</div>';
+    }
     loadingEl.style.display = 'flex';
     loadingEl.classList.remove('d-none');
     var loadingTextSpan = loadingEl.querySelector('span');
     if (loadingTextSpan) loadingTextSpan.textContent = t('loadingChannels') || 'Loading Channels...';
     try {
-      // 1. Fetch Channels
-      var res = await fetch('/api/player/channels.json?' + getAuthParams());
-      if (!res.ok) throw new Error(t('channelsFetchError') + ': ' + res.status);
-      allChannels = await res.json();
-      var maxCatchupDays = 0;
-      allChannels.forEach(function(ch) {
-         if (ch.tv_archive && ch.tv_archive_duration) {
-             var days = parseInt(ch.tv_archive_duration, 10);
-             if (!isNaN(days) && days > maxCatchupDays) maxCatchupDays = days;
-         }
-      });
-      // Allow navigation into past up to max CatchUp days, or default 1 day if none
-      window.maxCatchupHours = Math.max(24, maxCatchupDays * 24);
-      console.log('Loaded ' + allChannels.length + ' channels');
-
+      await loadCatalog(type);
+      if (generation !== catalogViewGeneration || currentType !== type) return;
       updateCategories();
       renderView();
-      loadEpgSchedule().then(function(loaded) {
-        if (loaded && currentType === 'live') {
-          renderView();
-          updateNowPlayingInfo();
-        }
-      });
-
-      // Scroll to current time
-      if (currentType === 'live') {
-        requestAnimationFrame(function() {
-          var now = Math.floor(Date.now() / 1000);
-          var offset = ((now - timelineStart) / 60) * PIXELS_PER_MINUTE;
-          epgGridEl.scrollLeft = Math.max(0, offset - (epgGridEl.clientWidth / 3));
-          updateCurrentTimeLine();
+      if (type === 'live' && !epgStarted) {
+        epgStarted = true;
+        loadEpgSchedule().then(function(loaded) {
+          epgStarted = loaded;
+          if (loaded && currentType === 'live') {
+            renderView();
+            updateNowPlayingInfo();
+          }
         });
       }
     } catch (e) {
+      if (generation !== catalogViewGeneration || currentType !== type) return;
+      renderView();
       console.error('Init error:', e);
       showToast(t('errorLoadingData') + ': ' + escapeHtml(e.message), 'danger', 10000);
     } finally {
-      loadingEl.style.display = 'none';
-      loadingEl.classList.add('d-none');
+      if (generation === catalogViewGeneration && currentType === type) {
+        catSelect.disabled = false;
+        searchInput.disabled = false;
+        loadingEl.style.display = 'none';
+        loadingEl.classList.add('d-none');
+      }
+    }
+  }
+
+  // ─── Init ───
+  async function init() {
+    await showCatalog(currentType);
+    if (currentType === 'live') {
+      requestAnimationFrame(function() {
+        var now = Math.floor(Date.now() / 1000);
+        var offset = ((now - timelineStart) / 60) * PIXELS_PER_MINUTE;
+        epgGridEl.scrollLeft = Math.max(0, offset - (epgGridEl.clientWidth / 3));
+        updateCurrentTimeLine();
+      });
     }
   }
 
@@ -650,8 +695,33 @@ function escapeHtml(unsafe) {
     }
   }
 
+  function getCatalogRenderLimit(pageSize) {
+    var filter = JSON.stringify([currentType, catSelect.value, searchInput.value.toLowerCase()]);
+    if (filter !== catalogFilter) {
+      catalogFilter = filter;
+      catalogLimit = pageSize;
+    }
+    return catalogLimit;
+  }
+
+  function appendCatalogContinuation(container, shown, total, pageSize) {
+    if (shown >= total) return;
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-outline-light w-100';
+    button.style.height = ROW_HEIGHT + 'px';
+    button.textContent = t('loadMore') + ' (' + shown + '/' + total + ')';
+    button.onclick = function() {
+      catalogLimit += pageSize;
+      renderView();
+      container.children[shown]?.focus();
+    };
+    container.appendChild(button);
+  }
+
   // ─── VOD/Series List Renderer ───
   function renderList() {
+    seriesDetailGeneration++;
     var catId = catSelect.value;
     var search = searchInput.value.toLowerCase();
 
@@ -667,7 +737,8 @@ function escapeHtml(unsafe) {
     }
 
     var frag = document.createDocumentFragment();
-    filtered.slice(0, 150).forEach(function(s) {
+    var renderLimit = getCatalogRenderLimit(150);
+    filtered.slice(0, renderLimit).forEach(function(s) {
       var a = document.createElement('a');
       a.className = 'list-group-item list-group-item-action vod-item bg-dark text-light';
 
@@ -736,17 +807,21 @@ function escapeHtml(unsafe) {
       frag.appendChild(a);
     });
     listView.appendChild(frag);
+    appendCatalogContinuation(listView, renderLimit, filtered.length, 150);
   }
 
   // ─── Series Episodes Renderer ───
   async function renderSeriesEpisodes(series) {
+    var generation = ++seriesDetailGeneration;
     listView.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary" role="status" aria-hidden="true"></div><div class="mt-2">' + (t('loading') || 'Loading...') + '</div></div>';
 
     try {
-      var url = '/player_api.php?action=get_series_info&series_id=' + series.url.split('/').slice(-1)[0].split('.')[0] + '&' + getAuthParams();
+      var seriesId = series.series_id || series.url.split('/').slice(-1)[0].split('.')[0];
+      var url = '/player_api.php?action=get_series_info&series_id=' + encodeURIComponent(seriesId) + '&' + getAuthParams();
       var res = await fetch(url);
       if (!res.ok) throw new Error(t('seriesInfoFetchError') + ': ' + res.status);
       var data = await res.json();
+      if (generation !== seriesDetailGeneration || currentType !== 'series') return;
 
       listView.innerHTML = '';
 
@@ -839,10 +914,10 @@ function escapeHtml(unsafe) {
 
                // Construct stream object for player
                var epExt = episode.container_extension || 'mp4';
-               var urlParts = series.url.split('/');
-               // url is /series/username/password/seriesid.ext, we replace the last part
-               urlParts[urlParts.length - 1] = episode.id + '.' + epExt;
-               var epUrl = urlParts.join('/');
+               var prefix = series.url ? series.url.slice(0, series.url.lastIndexOf('/') + 1)
+                 : token ? '/series/token/auth/' : '/series/' + encodeURIComponent(username) + '/' + encodeURIComponent(password) + '/';
+               var epUrl = prefix + encodeURIComponent(episode.id) + '.' + epExt;
+               if (token) epUrl += '?token=' + encodeURIComponent(token);
 
                var epStream = {
                  name: ep.title || series.name + ' S' + seasonKey + 'E' + ep.episode_num,
@@ -861,6 +936,7 @@ function escapeHtml(unsafe) {
       listView.appendChild(frag);
 
     } catch (e) {
+      if (generation !== seriesDetailGeneration || currentType !== 'series') return;
       console.error('Render series error', e);
       listView.innerHTML = '<div class="alert alert-danger m-3">' + t('errorLoadingData') + ': ' + escapeHtml(e.message) + '</div>';
     }
@@ -891,7 +967,7 @@ function escapeHtml(unsafe) {
       marker.className = 'time-marker';
       marker.style.left = (i * 30 * PIXELS_PER_MINUTE) + 'px';
       if (i % 2 === 0) {
-        var timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        var timeStr = programTimeFormatter.format(date);
         if (i === 0 || (date.getHours() === 0 && date.getMinutes() === 0)) {
            var dateStr = date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
            marker.textContent = dateStr + ', ' + timeStr;
@@ -905,7 +981,7 @@ function escapeHtml(unsafe) {
     var fragSidebar = document.createDocumentFragment();
     var fragRows = document.createDocumentFragment();
     var now = Math.floor(Date.now() / 1000);
-    var renderLimit = 200;
+    var renderLimit = getCatalogRenderLimit(200);
 
     currentChannels.slice(0, renderLimit).forEach(function(ch) {
       // Sidebar channel entry
@@ -998,7 +1074,7 @@ function escapeHtml(unsafe) {
         bar.style.left = left + 'px';
         bar.style.width = Math.max(2, width - 2) + 'px';
 
-        var timeStr = new Date(prog.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        var timeStr = programTimeFormatter.format(new Date(prog.start * 1000));
         var timeSpan = document.createElement('span');
         timeSpan.className = 'program-time';
         timeSpan.textContent = timeStr;
@@ -1021,7 +1097,7 @@ function escapeHtml(unsafe) {
             var startDate = new Date(program.start * 1000);
             var stopDate = new Date(program.stop * 1000);
             var dateStr = startDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-            ttTime.textContent = dateStr + ', ' + startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' \u2013 ' + stopDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            ttTime.textContent = dateStr + ', ' + programTimeFormatter.format(startDate) + ' \u2013 ' + programTimeFormatter.format(stopDate);
             ttDesc.textContent = program.desc || '';
             if (ttCatchup) {
               var nowSec = Math.floor(Date.now() / 1000);
@@ -1062,13 +1138,12 @@ function escapeHtml(unsafe) {
               var catchupUrl = channel.url;
               if (isTokenAuth) {
                   catchupUrl = channel.url.replace('/live/token/auth/', '/timeshift/token/auth/' + catchupDuration + '/' + startTime + '/');
-                  catchupUrl = catchupUrl.replace(/\.ts($|\?)/, '.m3u8$1');
               } else {
                   var parts = channel.url.split('?')[0].split('/');
                   var filename = parts.pop();
                   catchupUrl = channel.url.replace('/live/', '/timeshift/').replace(filename, catchupDuration + '/' + startTime + '/' + filename);
-                  catchupUrl = catchupUrl.replace(/\.ts($|\?)/, '.m3u8$1');
               }
+              if (getMediaExtension(catchupUrl) === 'ts') catchupUrl = catchupUrl.replace(/\.ts($|[?#])/i, '.m3u8$1');
 
               var targetChannel = Object.assign({}, channel, {
                 url: catchupUrl,
@@ -1108,6 +1183,12 @@ function escapeHtml(unsafe) {
 
     sidebarEl.appendChild(fragSidebar);
     epgRowsEl.appendChild(fragRows);
+    appendCatalogContinuation(sidebarEl, renderLimit, currentChannels.length, 200);
+    if (renderLimit < currentChannels.length) {
+      var continuationRow = document.createElement('div');
+      continuationRow.style.height = ROW_HEIGHT + 'px';
+      epgRowsEl.appendChild(continuationRow);
+    }
 
     // Sync sidebar scroll with EPG grid (two-way)
     let isSyncingLeft = false;
@@ -1236,25 +1317,26 @@ function escapeHtml(unsafe) {
 
   function buildTranscodeUrl(url) {
     var targetUrl = url;
-    if (targetUrl.includes('.ts')) {
-      targetUrl = targetUrl.replace(/\.ts($|\?)/, '.mp4$1');
-    } else if (targetUrl.includes('/live/') && targetUrl.includes('.m3u8')) {
-      targetUrl = targetUrl.replace(/\.m3u8($|\?)/, '.mp4$1');
+    var extension = getMediaExtension(targetUrl);
+    if (extension === 'ts') {
+      targetUrl = targetUrl.replace(/\.ts($|[?#])/i, '.mp4$1');
+    } else if (getMediaPath(targetUrl).indexOf('/live/') === 0 && extension === 'm3u8') {
+      targetUrl = targetUrl.replace(/\.m3u8($|[?#])/i, '.mp4$1');
     }
     return withQueryParam(targetUrl, 'transcode', 'true');
   }
 
   function buildMpegtsTranscodeUrl(url) {
     var targetUrl = url;
-    if (targetUrl.includes('/live/') && targetUrl.includes('.m3u8')) {
-      targetUrl = targetUrl.replace(/\.m3u8($|\?)/, '.ts$1');
+    if (getMediaPath(targetUrl).indexOf('/live/') === 0 && getMediaExtension(targetUrl) === 'm3u8') {
+      targetUrl = targetUrl.replace(/\.m3u8($|[?#])/i, '.ts$1');
     }
     return withQueryParam(targetUrl, 'transcode', 'true');
   }
 
   function shouldUseMpegtsTranscode(url, streamType) {
     return streamType === 'live' &&
-      url.includes('/live/') &&
+      getMediaPath(url).indexOf('/live/') === 0 &&
       isFirefox &&
       !isIOS &&
       typeof mpegts !== 'undefined' &&
@@ -1309,12 +1391,20 @@ function escapeHtml(unsafe) {
     return unsupportedAudio.some(function(c) { return codecLower.includes(c); });
   }
 
+  function getMediaPath(url) {
+    try { return new URL(url, window.location.href).pathname; }
+    catch (e) { return ''; }
+  }
+
+  function getMediaExtension(url) {
+    var match = getMediaPath(url).match(/\.([a-z0-9]+)$/i);
+    return match ? match[1].toLowerCase() : '';
+  }
+
   function isMpdStream(stream, url) {
     var ext = String((stream && (stream.container_extension || stream.mime_type)) || '').trim().toLowerCase();
-    url = String(url || '');
     return ext === 'mpd' || ext === 'dash' || ext === 'application/dash+xml' ||
-      /\.mpd($|\?)/i.test(url) ||
-      url.indexOf('/live/mpd/') !== -1;
+      getMediaExtension(url) === 'mpd';
   }
 
   function applyServerTrackParams(stream, url) {
@@ -1350,6 +1440,7 @@ function escapeHtml(unsafe) {
     var wantTranscode = shouldTranscodeStream(stream);
     transcodeSwitch.checked = wantTranscode;
     var streamType = stream.type || 'live';
+    var extension = getMediaExtension(url);
 
     // Store DRM info
     if (stream.drm) {
@@ -1361,21 +1452,21 @@ function escapeHtml(unsafe) {
     // ─── Playback Strategy ───
     if (isMpdStream(stream, url)) {
       initDashPlayer(url);
-    } else if (url.includes('.ts')) {
+    } else if (extension === 'ts') {
       if (wantTranscode) {
         initTranscodedPlayer(url, streamType);
       } else if (isIOS) {
-        var hlsUrl2 = url.replace(/\.ts($|\?)/, '.m3u8$1');
+        var hlsUrl2 = url.replace(/\.ts($|[?#])/i, '.m3u8$1');
         initNativePlayer(hlsUrl2, streamType);
       } else if (typeof mpegts !== 'undefined' && mpegts.isSupported()) {
         initMpegtsPlayer(url, streamType);
       } else if (hasNativeHLS) {
-        var hlsUrl4 = url.replace(/\.ts($|\?)/, '.m3u8$1');
+        var hlsUrl4 = url.replace(/\.ts($|[?#])/i, '.m3u8$1');
         initNativePlayer(hlsUrl4, streamType);
       } else {
         initNativePlayer(url, streamType);
       }
-    } else if (url.includes('.m3u8')) {
+    } else if (extension === 'm3u8') {
       if (wantTranscode) {
         initTranscodedPlayer(url, streamType);
       } else if (isIOS) {
@@ -1385,7 +1476,7 @@ function escapeHtml(unsafe) {
       } else {
         initNativePlayer(url, streamType);
       }
-    } else if (url.match(/\.(mkv|avi|mp4|mov|wmv)($|\?)/i)) {
+    } else if (['mkv', 'avi', 'mp4', 'mov', 'wmv'].includes(extension)) {
       if (wantTranscode) {
         initTranscodedPlayer(url, streamType);
       } else {
@@ -1394,7 +1485,7 @@ function escapeHtml(unsafe) {
     } else {
       initNativePlayer(url, streamType);
     }
-    if ((streamType === 'movie' || streamType === 'series') && !isMpdStream(stream, url) && !url.includes('.m3u8')) {
+    if ((streamType === 'movie' || streamType === 'series') && !isMpdStream(stream, url) && extension !== 'm3u8') {
       loadServerTrackControls(stream, url);
     }
   }
@@ -1786,14 +1877,9 @@ function escapeHtml(unsafe) {
         l.classList.remove('active');
         l.setAttribute('aria-selected', 'false');
       });
-      e.target.classList.add('active');
-      e.target.setAttribute('aria-selected', 'true');
-      currentType = e.target.dataset.type;
-      catSelect.value = '';
-      searchInput.value = '';
-      updateClearBtnVisibility();
-      updateCategories();
-      renderView();
+      e.currentTarget.classList.add('active');
+      e.currentTarget.setAttribute('aria-selected', 'true');
+      void showCatalog(e.currentTarget.dataset.type);
     });
   });
 

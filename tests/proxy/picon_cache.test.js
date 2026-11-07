@@ -6,7 +6,7 @@ import http from 'node:http';
 import * as helpers from '../../src/utils/helpers.js';
 
 const mocks = vi.hoisted(() => ({ db: { prepare: vi.fn(), exec: vi.fn(), transaction: callback => ({ immediate: callback }) }, getXtreamUser: vi.fn(), getCachedImage: vi.fn(), clearImageCache: vi.fn(), fetchSafe: vi.fn(),
-  manager: { add: vi.fn(async () => undefined), remove: vi.fn(), touch: vi.fn(), localStreams: new Map(),
+  manager: { reserve: vi.fn(), remove: vi.fn(), touch: vi.fn(), localStreams: new Map(),
     isSessionActive: vi.fn(), getUserConnectionCount: vi.fn(), getProviderConnectionCount: vi.fn() } }));
 vi.mock('../../src/services/streamManager.js', () => ({ default: mocks.manager }));
 vi.mock('../../src/database/db.js', () => ({ default: mocks.db }));
@@ -67,7 +67,7 @@ describe('client resource and image proxy', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.manager.localStreams.clear();
-    mocks.manager.add.mockResolvedValue(undefined);
+    mocks.manager.reserve.mockImplementation(async (_id, _user, _name, _ip, _res, providers) => ({ provider: providers[0] }));
     activeUser = { ...user };
     providerPool = [{ id: 3, url: channel.provider_url, max_connections: 1 }];
     mocks.db.prepare.mockImplementation(sql => {
@@ -353,7 +353,7 @@ describe('client resource and image proxy', () => {
     expect((await request(app).post(grant()).send('bad')).status).toBe(405);
     expect(mocks.getCachedImage).not.toHaveBeenCalled();
   });
-  it('streams tracked media when add returns undefined and cleans up its heartbeat/session', async () => {
+  it('streams reserved media and cleans up its heartbeat/session', async () => {
     const url = createClientResourceUrl(reqForUrl, user, 'https://provider.example/segment.m4s', {
       kind: 'resource', channelId: 5, channelName: 'Channel', providerId: 3
     });
@@ -361,7 +361,7 @@ describe('client resource and image proxy', () => {
     const res = await request(app).get(localPath(url));
     expect(res.status).toBe(200);
     expect(res.body).toEqual(trackedMedia);
-    expect(mocks.manager.add).toHaveBeenCalledOnce();
+    expect(mocks.manager.reserve).toHaveBeenCalledOnce();
     expect(mocks.manager.touch).toHaveBeenCalled();
     expect(mocks.manager.remove).toHaveBeenCalledOnce();
     expect(mocks.manager.localStreams.size).toBe(0);
@@ -375,7 +375,7 @@ describe('client resource and image proxy', () => {
     mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant())).status).toBe(403);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
-    expect(mocks.manager.add).not.toHaveBeenCalled();
+    expect(mocks.manager.reserve).not.toHaveBeenCalled();
   });
   it('denies a full bound provider instead of silently switching the grant to a sibling account', async () => {
     providerPool.push({ id: 4, url: channel.provider_url, max_connections: 10 });
@@ -383,7 +383,7 @@ describe('client resource and image proxy', () => {
     mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant())).status).toBe(403);
     expect(mocks.fetchSafe).not.toHaveBeenCalled();
-    expect(mocks.manager.add).not.toHaveBeenCalled();
+    expect(mocks.manager.reserve).not.toHaveBeenCalled();
   });
   it('reuses the same active session at both limits for parallel segments', async () => {
     activeUser.max_connections = 1;
@@ -398,7 +398,7 @@ describe('client resource and image proxy', () => {
     providerPool.push({ id: 4, url: channel.provider_url, max_connections: 2 });
     mocks.fetchSafe.mockResolvedValue(response(trackedMedia, 'video/mp4'));
     expect((await request(app).get(mediaGrant(4))).status).toBe(200);
-    expect(mocks.manager.add.mock.calls[0][5]).toBe(4);
+    expect(mocks.manager.reserve.mock.calls[0][5][0].id).toBe(4);
     expect(mocks.manager.getProviderConnectionCount).toHaveBeenCalledWith(4);
   });
   it('rejects a grant if its provider account is no longer an authorized candidate', async () => {

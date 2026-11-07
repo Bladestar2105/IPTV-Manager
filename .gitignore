@@ -18,3 +18,6 @@ playwright-report/
 *.log
 .DS_Store
 .worktrees/
+
+# Private bare-metal update staging and retained recovery dependencies
+.update.*

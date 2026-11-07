@@ -72,17 +72,8 @@ export const proxyMpd = async (req, res) => {
     const usesOriginalUrl = meta && meta.original_url;
 
     if (meta && meta.original_url) {
-        if (relativePath === 'manifest.mpd' || relativePath === '') {
-            upstreamUrl = meta.original_url;
-        } else {
-            try {
-              const urlObj = new URL(meta.original_url);
-              const basePath = urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1);
-              upstreamUrl = new URL(relativePath, urlObj.origin + basePath).toString();
-            } catch {
-              return res.sendStatus(400);
-            }
-        }
+        if (relativePath !== 'manifest.mpd' && relativePath !== '') return res.sendStatus(400);
+        upstreamUrl = meta.original_url;
     } else {
         if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: false })) return;
 
@@ -550,6 +541,7 @@ export const proxyTimeshift = async (req, res) => {
     }
 
     upstream.body.pipe(res);
+    attachStreamHeartbeat(upstream.body, connectionId);
 
     streamManager.localStreams.set(connectionId, {
       destroy: () => {

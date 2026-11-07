@@ -1,5 +1,5 @@
 import { Writable } from 'node:stream';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockDb } = vi.hoisted(() => ({
   mockDb: {
@@ -48,12 +48,14 @@ vi.mock('../../src/config/constants.js', () => ({
 import { getXtreamUser } from '../../src/services/authService.js';
 import { getEpgPrograms, getEpgProgramsForChannels, getEpgProgramsPage } from '../../src/services/epgService.js';
 import { playerApi } from '../../src/controllers/xtreamController.js';
+import { formatXtreamEpgListing } from '../../src/controllers/xtreamControllerUtils.js';
 
 describe('xtreamController get_epg_batch', () => {
   let req, res;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(Date, 'now').mockReturnValue(1777707000000);
     req = {
       query: {
         username: 'alice',
@@ -76,6 +78,20 @@ describe('xtreamController get_epg_batch', () => {
     getEpgProgramsPage.mockImplementation((id, _start, _end, size, offset) => (
       (getEpgProgramsForChannels().get(id) || []).slice(offset, offset + size)
     ));
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ['ended at the current time', 1777701600, 1777707000, 0],
+    ['starting now', '1777707000', '1777710600', 1],
+    ['in progress', 1777705200, 1777708800, 1],
+    ['in the future', '1777707001', '1777710601', 0],
+  ])('includes numeric Xtream flags for a programme %s', (_name, start, stop, nowPlaying) => {
+    expect(formatXtreamEpgListing({ start, stop, title: 'News' }, 'news.epg')).toMatchObject({
+      now_playing: nowPlaying,
+      has_archive: 0,
+    });
   });
 
   it('returns Xtream EPG listings for multiple stream IDs and a UTC day', async () => {
@@ -126,6 +142,8 @@ describe('xtreamController get_epg_batch', () => {
           description: Buffer.from('Headlines').toString('base64'),
           start_timestamp: '1777705200',
           stop_timestamp: '1777708800',
+          now_playing: 1,
+          has_archive: 0,
         })],
       },
       102: {
@@ -133,6 +151,8 @@ describe('xtreamController get_epg_batch', () => {
           epg_id: 'sports.manual',
           title: Buffer.from('Matchday').toString('base64'),
           description: '',
+          now_playing: 0,
+          has_archive: 0,
         })],
       },
     });
@@ -226,7 +246,7 @@ describe('xtreamController get_epg_batch', () => {
     });
   });
 
-  it.each(['get_simple_date_table', 'get_simple_data_table'])('returns full stream EPG for %s', async (action) => {
+  it.each(['get_short_epg', 'get_simple_date_table', 'get_simple_data_table'])('returns compatible stream EPG for %s', async (action) => {
     req.query = {
       username: 'alice',
       password: 'secret',
@@ -254,13 +274,19 @@ describe('xtreamController get_epg_batch', () => {
 
     await playerApi(req, res);
 
-    expect(getEpgPrograms).toHaveBeenCalledWith('news.epg', 5000, { includePast: true });
+    if (action === 'get_short_epg') {
+      expect(getEpgPrograms).toHaveBeenCalledWith('news.epg', 1);
+    } else {
+      expect(getEpgPrograms).toHaveBeenCalledWith('news.epg', 5000, { includePast: true });
+    }
     expect(res.json).toHaveBeenCalledWith({
       epg_listings: [expect.objectContaining({
         epg_id: 'news.epg',
         channel_id: 'news.epg',
         title: Buffer.from('Morning News').toString('base64'),
         description: Buffer.from('Headlines').toString('base64'),
+        now_playing: 1,
+        has_archive: 0,
       })],
     });
   });

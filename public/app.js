@@ -68,6 +68,7 @@ function isTokenExpired() {
 function isAuthenticationFailure(status, error) {
   return status === 401 || (status === 403 && [
     'Invalid or expired token',
+    'Account expired',
     'User is inactive or deleted',
     'Token revoked (password changed)',
     'WebUI access revoked',
@@ -78,6 +79,10 @@ function isAuthenticationFailure(status, error) {
 async function fetchJSON(url, options = {}) {
   // Add JWT token to requests
   const token = getToken();
+  const requestGeneration = sessionGeneration;
+  const ensureCurrentSession = () => {
+    if (requestGeneration !== sessionGeneration || getToken() !== token) throw new Error('Session changed');
+  };
   if (token && !isTokenExpired()) {
     options.headers = {
       ...options.headers,
@@ -86,6 +91,7 @@ async function fetchJSON(url, options = {}) {
   }
   
   const res = await fetch(url, options);
+  ensureCurrentSession();
   
   // Handle expired sessions separately from permission denials.
   if (res.status === 401 || res.status === 403) {
@@ -93,9 +99,11 @@ async function fetchJSON(url, options = {}) {
     try {
       errorData = await res.clone().json();
     } catch {}
+    ensureCurrentSession();
 
     if (isAuthenticationFailure(res.status, errorData?.error)) {
       clearSessionSensitiveState();
+      currentUser = null;
       removeToken();
       showLoginModal();
       throw new Error('Authentication required');
@@ -112,6 +120,7 @@ async function fetchJSON(url, options = {}) {
     // Try to parse error response
     try {
       const errorData = await res.json();
+      ensureCurrentSession();
       const error = new Error(errorData.message || errorData.error || 'HTTP ' + res.status);
       error.response = errorData;
       throw error;
@@ -120,7 +129,9 @@ async function fetchJSON(url, options = {}) {
       throw new Error('HTTP ' + res.status);
     }
   }
-  return res.json();
+  const data = await res.json();
+  ensureCurrentSession();
+  return data;
 }
 
 async function refreshCurrentUserPermissions() {
@@ -561,13 +572,14 @@ function copyAllXtreamCredentials(btnElement) {
 }
 
 async function loadStalkerDevices(userId) {
+    const requestGeneration = sessionGeneration;
     const list = document.getElementById('stalker-device-list');
     if (!list || !userId) return;
     list.innerHTML = `<li class="list-group-item text-muted">${escapeHtml(t('stalkerLoadingDevices'))}</li>`;
 
     try {
         const devices = await fetchJSON(`/api/users/${userId}/stalker-devices`);
-        if (selectedUserId !== userId) return;
+        if (requestGeneration !== sessionGeneration || selectedUserId !== userId || !currentUser) return;
         list.innerHTML = '';
 
         if (devices.length === 0) {
@@ -671,6 +683,7 @@ async function loadStalkerDevices(userId) {
             list.appendChild(item);
         });
     } catch (error) {
+        if (requestGeneration !== sessionGeneration) return;
         list.innerHTML = `<li class="list-group-item text-danger">${escapeHtml(t('stalkerDeviceError', { error: error.message }))}</li>`;
     }
 }
@@ -1181,7 +1194,7 @@ async function loadProviders(filterUserId = null) {
     const epgStatus = p.epg_enabled ? '<i class="bi bi-check-circle" aria-hidden="true"></i>' : '<i class="bi bi-x-circle" aria-hidden="true"></i>';
     const lastUpdate = p.epg_last_updated ? new Date(p.epg_last_updated * 1000).toLocaleString() : t('never');
     const epgInfo = p.epg_url ? `<br><small class="text-muted">EPG: ${epgStatus} (${p.epg_update_interval/3600}h) | ${t('lastEpgUpdate')}: ${lastUpdate}</small>` : '';
-    const ownerInfo = p.owner_name ? `<br><small class="text-primary">${t('owner')}: ${p.owner_name}</small>` : '';
+    const ownerInfo = p.owner_name ? `<br><small class="text-primary">${t('owner')}: ${escapeHtml(p.owner_name)}</small>` : '';
 
     let expiryInfo = '';
     if (p.expiry_date) {
@@ -1620,11 +1633,56 @@ function initCategorySortable() {
 // === Provider Category Import ===
 let providerCategories = [];
 
+function clearAdminSensitiveState() {
+  for (const id of ['security-logs-tbody', 'client-logs-tbody', 'blocked-ip-list', 'whitelisted-ip-list',
+    'active-streams-tbody', 'top-channels-tbody', 'epg-sources-list', 'available-epg-sources-list', 'user-list', 'export-user-select', 'copy-user-select']) {
+    const element = document.getElementById(id);
+    if (element) element.innerHTML = '';
+  }
+  const license = document.getElementById('setting-geoip-license-key');
+  if (license) license.value = '';
+  document.querySelectorAll('#view-security input, #view-import-export input, #user-form input, #edit-user-form input, #edit-user-form textarea').forEach(input => {
+    if (input.type === 'checkbox' || input.type === 'radio') input.checked = false;
+    else input.value = '';
+  });
+  if (['security', 'statistics', 'import-export'].some(view => !document.getElementById(`view-${view}`)?.classList.contains('d-none'))) switchView('dashboard');
+}
+
 function clearSessionSensitiveState({preserveUserState = false} = {}) {
   stopMaintenancePolling();
   window.aiUI?.clear();
+  clearAdminSensitiveState();
   if (!preserveUserState) {
     sessionGeneration += 1;
+    switchView('dashboard');
+    if (globalStatsInterval) clearInterval(globalStatsInterval);
+    globalStatsInterval = null;
+    selectedUser = null;
+    selectedUserId = null;
+    currentSyncConfig = null;
+    availableEpgSources = [];
+    editingShareToken = null;
+    globalSelectedChannels.clear();
+    for (const id of ['shares-list-tbody', 'stalker-device-list', 'backups-tbody', 'sync-logs-tbody', 'epg-select-list', 'selected-user-label', 'otp-secret-text', 'editing-share-name-display']) {
+      const element = document.getElementById(id);
+      if (element) element.innerHTML = '';
+    }
+    document.querySelectorAll('form').forEach(form => form.reset());
+    document.querySelectorAll('input[type="password"], input[name="password"], input[id$="-password"], input[autocomplete="one-time-code"]').forEach(input => { input.value = ''; });
+    for (const id of ['xtream-url', 'xtream-user', 'xtream-pass', 'epg-url', 'm3u-link', 'hdhr-url', 'stalker-portal-url', 'share-link-output']) {
+      const element = document.getElementById(id);
+      if (element) element.value = '';
+    }
+    const qr = document.getElementById('otp-qr-code');
+    if (qr) qr.removeAttribute('src');
+    const otpModal = document.getElementById('otp-modal');
+    if (otpModal) delete otpModal.dataset.secret;
+    document.getElementById('editing-share-banner')?.classList.add('d-none');
+    document.getElementById('user-details-content')?.classList.add('d-none');
+    document.getElementById('user-details-empty')?.classList.remove('d-none');
+    document.getElementById('main-navbar')?.classList.add('d-none');
+    document.getElementById('main-content')?.classList.add('d-none');
+    document.querySelectorAll('.modal.show').forEach(element => bootstrap.Modal.getInstance(element)?.hide());
     userCategoryChannelsData = [];
     userChannelSearch = '';
     selectedCategoryId = null;
@@ -2563,8 +2621,10 @@ document.getElementById('user-channel-search').addEventListener('input', debounc
 let currentSyncConfig = null;
 
 async function loadSyncConfig(providerId, userId) {
+  const requestGeneration = sessionGeneration;
   try {
     const config = await fetchJSON(`/api/sync-configs/${providerId}/${userId}`);
+    if (requestGeneration !== sessionGeneration || !currentUser) return null;
     currentSyncConfig = config;
     return config;
   } catch (e) {
@@ -2574,12 +2634,14 @@ async function loadSyncConfig(providerId, userId) {
 }
 
 async function showSyncConfigModal(providerId) {
+  const requestGeneration = sessionGeneration;
   if (!selectedUserId) {
     alert(t('pleaseSelectUserFirst'));
     return;
   }
   
   const config = await loadSyncConfig(providerId, selectedUserId);
+  if (requestGeneration !== sessionGeneration || !currentUser) return;
   
   const modal = document.getElementById('sync-config-modal');
   const form = document.getElementById('sync-config-form');
@@ -2660,6 +2722,7 @@ async function saveSyncConfig(e) {
 }
 
 async function showSyncLogs(providerId) {
+  const requestGeneration = sessionGeneration;
   if (!selectedUserId) {
     alert(t('pleaseSelectUserFirst'));
     return;
@@ -2667,6 +2730,7 @@ async function showSyncLogs(providerId) {
   
   try {
     const logs = await fetchJSON(`/api/sync-logs?provider_id=${providerId}&user_id=${selectedUserId}&limit=20`);
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
     
     const tbody = document.getElementById('sync-logs-tbody');
     tbody.innerHTML = '';
@@ -2707,9 +2771,11 @@ let availableEpgSources = [];
 
 async function loadEpgSources() {
   if (!currentUser || !currentUser.is_admin) return;
+  const requestGeneration = sessionGeneration;
 
   try {
     const sources = await fetchJSON('/api/epg-sources');
+    if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
     updateStatsCounters('epg', sources.length);
     const list = document.getElementById('epg-sources-list');
     list.innerHTML = '';
@@ -2881,6 +2947,7 @@ async function addEpgSource(e) {
 }
 
 async function showBrowseEpgSourcesModal() {
+  const requestGeneration = sessionGeneration;
   const modal = new bootstrap.Modal(document.getElementById('browse-epg-sources-modal'));
   modal.show();
   
@@ -2888,10 +2955,12 @@ async function showBrowseEpgSourcesModal() {
   list.innerHTML = `<li class="list-group-item text-muted">${t('loading')}</li>`;
   
   try {
-    availableEpgSources = await fetchJSON('/api/epg-sources/available');
+    const sources = await fetchJSON('/api/epg-sources/available');
+    if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
+    availableEpgSources = sources;
     renderAvailableEpgSources();
   } catch (e) {
-    list.innerHTML = `<li class="list-group-item text-danger">${t('failedToLoadSources')}</li>`;
+    if (requestGeneration === sessionGeneration) list.innerHTML = `<li class="list-group-item text-danger">${t('failedToLoadSources')}</li>`;
   }
 }
 
@@ -2952,6 +3021,7 @@ function renderAvailableEpgSources() {
 
 // === Import/Export Handlers ===
 async function handleExport(e) {
+    const requestGeneration = sessionGeneration;
     e.preventDefault();
     const f = e.target;
     const userId = f.user_id.value;
@@ -2985,6 +3055,7 @@ async function handleExport(e) {
         }
 
         const blob = await response.blob();
+        if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
         const downloadUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = downloadUrl;
@@ -3009,6 +3080,7 @@ async function handleExport(e) {
 }
 
 async function handleImport(e) {
+    const requestGeneration = sessionGeneration;
     e.preventDefault();
     const f = e.target;
     const file = f.file.files[0];
@@ -3036,6 +3108,7 @@ async function handleImport(e) {
         });
 
         const res = await response.json();
+        if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
         if (!response.ok) throw new Error(res.error || 'Import failed');
 
         const stats = res.stats;
@@ -3688,6 +3761,7 @@ let statsInterval = null;
 let globalStatsInterval = null;
 
 async function updateDashboardCounters() {
+    const requestGeneration = sessionGeneration;
     // Only update if statistics tab is NOT active (to avoid double fetching)
     if (document.getElementById('view-statistics') && !document.getElementById('view-statistics').classList.contains('d-none')) {
         return;
@@ -3697,6 +3771,7 @@ async function updateDashboardCounters() {
 
     try {
         const data = await fetchJSON('/api/statistics');
+        if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
         updateStatsCounters('streams', data.active_streams.length);
     } catch(e) {
         console.error('Failed to update dashboard counters', e);
@@ -3704,6 +3779,7 @@ async function updateDashboardCounters() {
 }
 
 function switchView(viewName) {
+  if (['statistics', 'security', 'import-export'].includes(viewName) && !currentUser?.is_admin) viewName = 'dashboard';
   // Hide all views
   document.getElementById('view-dashboard').classList.add('d-none');
   document.getElementById('view-epg-mapping').classList.add('d-none');
@@ -3759,6 +3835,8 @@ function switchView(viewName) {
 }
 
 async function loadSecurity() {
+  if (!currentUser?.is_admin) return;
+  const requestGeneration = sessionGeneration;
   try {
     const [logs, blocked, whitelist, settings, clientLogs] = await Promise.all([
       fetchJSON('/api/security/logs'),
@@ -3767,6 +3845,7 @@ async function loadSecurity() {
       fetchJSON('/api/settings'),
       fetchJSON('/api/client-logs')
     ]);
+    if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
 
     // Render Settings
     if (document.getElementById('setting-admin-threshold')) {
@@ -3977,8 +4056,11 @@ function formatBytes(bytes, decimals = 2) {
 }
 
 async function loadStatistics() {
+  if (!currentUser?.is_admin) return;
+  const requestGeneration = sessionGeneration;
   try {
     const data = await fetchJSON('/api/statistics');
+    if (requestGeneration !== sessionGeneration || !currentUser?.is_admin) return;
     updateStatsCounters('streams', data.active_streams.length);
 
     // System Information
@@ -4035,7 +4117,7 @@ async function loadStatistics() {
             const tr = document.createElement('tr');
             let logoHtml = '';
             if (s.logo) {
-                logoHtml = `<img src="${getProxiedUrl(s.logo)}" alt="Logo" width="20" class="me-1" data-on-error="hide">`;
+                logoHtml = `<img src="${escapeHtml(getProxiedUrl(s.logo))}" alt="Logo" width="20" class="me-1" data-on-error="hide">`;
             }
             const actionLabel = t('terminateStream');
             tr.innerHTML = `
@@ -4445,7 +4527,7 @@ function renderEpgMappingChannels() {
       <td class="d-none d-md-table-cell">${idx + 1}</td>
       <td class="text-break">
         <div class="d-flex align-items-center">
-          ${ch.logo ? `<img src="${getProxiedUrl(ch.logo)}" alt="${safeName}" width="24" height="24" class="me-2 flex-shrink-0" data-on-error="hide">` : ''}
+          ${ch.logo ? `<img src="${escapeHtml(getProxiedUrl(ch.logo))}" alt="${safeName}" width="24" height="24" class="me-2 flex-shrink-0" data-on-error="hide">` : ''}
           <span title="${safeName}">${safeName}</span>
         </div>
       </td>
@@ -4723,7 +4805,7 @@ async function loadEpgSuggestions(channelId) {
             <br>
             <small class="text-muted">${safeId}</small>
           </div>
-          ${sug.epgChannel.logo ? `<img src="${getProxiedUrl(sug.epgChannel.logo)}" alt="${safeName}" height="30" data-on-error="hide">` : ''}
+          ${sug.epgChannel.logo ? `<img src="${escapeHtml(getProxiedUrl(sug.epgChannel.logo))}" alt="${safeName}" height="30" data-on-error="hide">` : ''}
         </div>
       `;
 
@@ -4779,7 +4861,7 @@ function filterEpgSelectionList() {
           <strong>${safeName}</strong> ${safeSource} <br>
           <small class="text-muted">${safeId}</small>
         </div>
-        ${epg.logo ? `<img src="${getProxiedUrl(epg.logo)}" alt="${safeName}" height="30" data-on-error="hide">` : ''}
+        ${epg.logo ? `<img src="${escapeHtml(getProxiedUrl(epg.logo))}" alt="${safeName}" height="30" data-on-error="hide">` : ''}
       </div>
     `;
 
@@ -4838,6 +4920,7 @@ function hideLoginModal() {
 
 async function checkAuthentication() {
   const token = getToken();
+  const requestGeneration = sessionGeneration;
   
   if (!token || isTokenExpired()) {
     showLoginModal();
@@ -4872,6 +4955,7 @@ async function checkAuthentication() {
 
     return true;
   } catch {
+    if (requestGeneration !== sessionGeneration || getToken() !== token) return false;
     removeToken();
     showLoginModal();
     return false;
@@ -4884,6 +4968,7 @@ function applyPermissions({preserveUserState = false} = {}) {
     window.aiUI?.syncActor();
     if (!currentUser) return;
     const isAdmin = currentUser.is_admin;
+    if (!isAdmin) clearAdminSensitiveState();
     const userSection = document.getElementById('user-section');
     if (userSection) userSection.classList.toggle('d-none', !isAdmin);
 
@@ -4944,6 +5029,7 @@ function applyPermissions({preserveUserState = false} = {}) {
 
 async function handleLogin(event) {
   event.preventDefault();
+  const requestGeneration = sessionGeneration;
   
   const username = document.getElementById('login-username').value;
   const password = document.getElementById('login-password').value;
@@ -4972,6 +5058,7 @@ async function handleLogin(event) {
     });
     
     const data = await response.json();
+    if (requestGeneration !== sessionGeneration) return;
 
     if (response.status === 401 && data.require_otp) {
         // Show OTP field
@@ -4987,6 +5074,7 @@ async function handleLogin(event) {
       throw new Error(data.error || 'login_failed');
     }
     
+    clearSessionSensitiveState();
     setToken(data.token);
     currentUser = data.user;
     
@@ -5033,6 +5121,7 @@ async function handleLogin(event) {
 
 // === OTP Functions ===
 async function showOtpModal() {
+    const requestGeneration = sessionGeneration;
     const modal = new bootstrap.Modal(document.getElementById('otp-modal'));
     modal.show();
 
@@ -5048,6 +5137,7 @@ async function showOtpModal() {
         // Generate new secret
         try {
             const res = await fetchJSON('/api/auth/otp/generate', { method: 'POST' });
+            if (requestGeneration !== sessionGeneration || !currentUser) return;
             const img = document.getElementById('otp-qr-code');
             img.src = res.qrCodeUrl;
             img.classList.remove('d-none');
@@ -5160,6 +5250,7 @@ function showChangePasswordModal() {
 
 async function handleChangePassword(event) {
   event.preventDefault();
+  const requestGeneration = sessionGeneration;
   
   const oldPassword = document.getElementById('old-password').value;
   const newPassword = document.getElementById('new-password').value;
@@ -5203,6 +5294,7 @@ async function handleChangePassword(event) {
     });
     
     const data = await response.json();
+    if (requestGeneration !== sessionGeneration || !currentUser) return;
     
     if (!response.ok) {
       throw new Error(data.error || 'change_password_failed');
@@ -5219,6 +5311,7 @@ async function handleChangePassword(event) {
     
     // Close modal after 2 seconds
     setTimeout(() => {
+      if (requestGeneration !== sessionGeneration || !currentUser) return;
       const modal = bootstrap.Modal.getInstance(document.getElementById('change-password-modal'));
       if (modal) modal.hide();
 
@@ -5435,6 +5528,7 @@ async function showSharesList() {
 }
 
 async function loadSharesList() {
+    const requestGeneration = sessionGeneration;
     const tbody = document.getElementById('shares-list-tbody');
     tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">${t('loading')}</td></tr>`;
 
@@ -5443,6 +5537,7 @@ async function loadSharesList() {
         if (selectedUserId) url += `?user_id=${selectedUserId}`;
 
         const shares = await fetchJSON(url);
+        if (requestGeneration !== sessionGeneration || !currentUser) return;
         tbody.innerHTML = '';
 
         if (shares.length === 0) {
@@ -5456,24 +5551,25 @@ async function loadSharesList() {
             const endStr = s.end_time ? new Date(s.end_time * 1000).toLocaleString() : 'Never';
 
             tr.innerHTML = `
-                <td>${s.name || '-'}</td>
-                <td>${s.channel_count}</td>
-                <td>${startStr}<br>↓<br>${endStr}</td>
+                <td>${escapeHtml(s.name || '-')}</td>
+                <td>${escapeHtml(String(s.channel_count))}</td>
+                <td>${escapeHtml(startStr)}<br>↓<br>${escapeHtml(endStr)}</td>
                 <td>
                     <div class="input-group input-group-sm" style="max-width: 200px;">
-                       <input class="form-control" value="${s.short_link || s.link}" readonly>
-                       <button class="btn btn-outline-secondary" data-copy-text="${s.short_link || s.link}" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
+                       <input class="form-control" value="${escapeHtml(s.short_link || s.link)}" readonly>
+                       <button class="btn btn-outline-secondary" data-copy-text="${escapeHtml(s.short_link || s.link)}" title="${t('copyToClipboardAction')}" aria-label="${t('copyToClipboardAction')}"><i class="bi bi-clipboard" aria-hidden="true"></i></button>
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline-secondary me-1" data-action="action-edit-share" data-share='${JSON.stringify(s).replace(/'/g, "&#39;")}' title="${t('updateShare')}" aria-label="${t('updateShare')}"><i class="bi bi-pencil" aria-hidden="true"></i></button>
-                    <button class="btn btn-sm btn-outline-danger" data-action="action-delete-share" data-token="${s.token}" title="${t('deleteAction')}" aria-label="${t('deleteAction')}"><i class="bi bi-trash" aria-hidden="true"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary me-1" data-action="action-edit-share" data-share='${escapeHtml(JSON.stringify(s))}' title="${t('updateShare')}" aria-label="${t('updateShare')}"><i class="bi bi-pencil" aria-hidden="true"></i></button>
+                    <button class="btn btn-sm btn-outline-danger" data-action="action-delete-share" data-token="${escapeHtml(s.token)}" title="${t('deleteAction')}" aria-label="${t('deleteAction')}"><i class="bi bi-trash" aria-hidden="true"></i></button>
                 </td>
             `;
             tbody.appendChild(tr);
         });
 
     } catch(e) {
+        if (requestGeneration !== sessionGeneration) return;
         tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${escapeHtml(e.message)}</td></tr>`;
     }
 }
@@ -5563,12 +5659,14 @@ window.deleteShare = async function(token) {
 };
 
 async function loadUserBackups() {
+    const requestGeneration = sessionGeneration;
     if (!selectedUserId) return;
     const tbody = document.getElementById('backups-tbody');
     if (!tbody) return;
 
     try {
         const backups = await fetchJSON(`/api/users/${selectedUserId}/backups`);
+        if (requestGeneration !== sessionGeneration || !currentUser) return;
         tbody.innerHTML = '';
 
         if (backups.length === 0) {
@@ -5615,6 +5713,7 @@ async function loadUserBackups() {
         });
 
     } catch (e) {
+        if (requestGeneration !== sessionGeneration) return;
         tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${t('errorPrefix')} ${escapeHtml(e.message)}</td></tr>`;
         showToast(t('errorPrefix') + ' ' + e.message, 'danger');
     }

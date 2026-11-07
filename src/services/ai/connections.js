@@ -1,3 +1,4 @@
+import { expiryEpoch } from '../../utils/stalker.js';
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
 import { encrypt } from '../../utils/crypto.js';
@@ -26,7 +27,8 @@ const ownerKey = actor => `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
 function freshActor(actor) {
     if (!actor || !Number.isSafeInteger(actor.id) || actor.id < 1 || typeof actor.is_admin !== 'boolean') throw aiError('AI_FORBIDDEN',403);
     const row = db.prepare(`SELECT * FROM ${actor.is_admin ? 'admin_users' : 'users'} WHERE id=?`).get(actor.id);
-    if (!row?.is_active || (!actor.is_admin && (row.webui_access === 0 || (row.expiry_date && row.expiry_date < Date.now()/1000)))) throw aiError('AI_FORBIDDEN',403);
+    const expires = expiryEpoch(row?.expiry_date);
+    if (!row?.is_active || (!actor.is_admin && (row.webui_access === 0 || (expires && expires <= Date.now()/1000)))) throw aiError('AI_FORBIDDEN',403);
     // A password reset advances the token version, which authentication treats as
     // a revoked session. A long-running request rechecks it here for the same
     // reason, so work authorized before the reset cannot continue past it.

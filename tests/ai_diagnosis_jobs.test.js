@@ -147,6 +147,7 @@ describe('local diagnosis through authenticated persisted jobs',()=>{
   it('discards local findings when the owner cancels a running diagnosis',async()=>{
     mode='hold';const create=await createJob();await waitFor(()=>pending.length===1);
     const cancelled=await request(app).post('/api/ai/jobs/'+create.body.id+'/cancel').set('Authorization',bearer()).send({});
+    expect(cancelled.status,JSON.stringify(cancelled.body)).toBe(200);
     expect(cancelled.body.status).toBe('cancelled');mode='ok';release();
     await waitFor(()=>!db.prepare("SELECT 1 FROM ai_usage WHERE status='running'").get());
     const response=await getJob(create.body.id);
@@ -184,7 +185,7 @@ describe('completed job access without model setup',()=>{
   it.each(['server','preference','feature','allowlist','inactive','webui','source revoked','source changed','foreign owner'])('still rejects %s after setup deletion',async change=>{
     api.updateAiSettings(admin,{functions:['cleanup','diagnose','search']});
     db.prepare('UPDATE user_channels SET is_hidden=0 WHERE id=997').run();
-    const create=await createJob('cleanup');expect(create.status).toBe(200);
+    const create=await createJob('cleanup');expect(create.status,JSON.stringify(create.body)).toBe(200);
     await waitFor(()=>db.prepare('SELECT status FROM ai_jobs WHERE id=?').get(create.body.id).status==='completed');
     api.deleteConnection(admin,connection.id);
     if(change==='server')api.updateAiSettings(admin,{enabled:false});

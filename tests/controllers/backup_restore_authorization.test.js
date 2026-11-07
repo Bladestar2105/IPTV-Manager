@@ -40,7 +40,7 @@ describe('user backup restore authorization', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db.pragma('foreign_keys = OFF');
-    for (const table of ['user_backups', 'user_channels', 'user_categories', 'provider_channels', 'providers', 'users']) {
+    for (const table of ['series_episode_aliases', 'user_backups', 'user_channels', 'user_categories', 'provider_channels', 'providers', 'users']) {
       db.prepare(`DELETE FROM ${table}`).run();
     }
     db.pragma('foreign_keys = ON');
@@ -119,6 +119,72 @@ describe('user backup restore authorization', () => {
     });
     expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toBeUndefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ channels_hidden: 1 }));
+  });
+
+  it('keeps a current administrator grant when its owner restores a backup', () => {
+    const providerChannelId = addProviderChannel(2);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    db.prepare(`INSERT INTO user_channels (id, user_category_id, provider_channel_id, granted_by_admin)
+      VALUES (200, 100, ?, 1)`).run(providerChannelId);
+    const backupId = addBackup(backupData(1, { provider_channel_id: providerChannelId, granted_by_admin: 1 }));
+    restore(backupId);
+    expect(db.prepare('SELECT id, granted_by_admin, authorization_revoked FROM authorized_user_channels WHERE id = 200').get())
+      .toEqual({ id: 200, granted_by_admin: 1, authorization_revoked: 0 });
+  });
+
+  it.each([0, 1])('preserves a hidden current administrator grant when restoring hidden=%i', hidden => {
+    const providerChannelId = addProviderChannel(2);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    db.prepare(`INSERT INTO user_channels (id,user_category_id,provider_channel_id,granted_by_admin,is_hidden)
+      VALUES (200,100,?,1,1)`).run(providerChannelId);
+    restore(addBackup(backupData(1, { provider_channel_id: providerChannelId, granted_by_admin: 1, is_hidden: hidden })));
+    expect(db.prepare('SELECT is_hidden,granted_by_admin,authorization_revoked FROM user_channels WHERE id=200').get())
+      .toEqual({ is_hidden: hidden, granted_by_admin: 1, authorization_revoked: 0 });
+  });
+
+  it('does not transfer a current administrator grant to a different category', () => {
+    const providerChannelId = addProviderChannel(2);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (101, 1, 'Other', 'series')").run();
+    db.prepare(`INSERT INTO user_channels (id, user_category_id, provider_channel_id, granted_by_admin)
+      VALUES (200, 101, ?, 1)`).run(providerChannelId);
+    restore(addBackup(backupData(1, { provider_channel_id: providerChannelId, granted_by_admin: 1 })));
+    expect(db.prepare('SELECT id FROM authorized_user_channels WHERE id = 200').get()).toBeUndefined();
+  });
+
+  it('preserves episode aliases only for a surviving assignment with the same upstream identity', () => {
+    const providerChannelId = addProviderChannel(1);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    db.prepare('INSERT INTO user_channels (id, user_category_id, provider_channel_id) VALUES (200, 100, ?)').run(providerChannelId);
+    const insert = db.prepare(`INSERT INTO series_episode_aliases
+      (id, user_channel_id, source_key, series_remote_id, remote_episode_id) VALUES (?, 200, ?, ?, 1)`);
+    insert.run(900000010, 'http://provider.example:80', 10);
+    insert.run(900000011, 'http://old-provider.example', 10);
+    insert.run(900000012, 'http://provider.example:80', 11);
+    restore(addBackup(backupData(1, { provider_channel_id: providerChannelId })));
+    expect(db.prepare('SELECT id, user_channel_id FROM series_episode_aliases').all())
+      .toEqual([{ id: 900000010, user_channel_id: 200 }]);
+  });
+
+  it('does not preserve aliases when a backup reuses an assignment ID for another series', () => {
+    const providerChannelId = addProviderChannel(1);
+    const otherId = addProviderChannel(1);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (100, 1, 'Series', 'series')").run();
+    db.prepare('INSERT INTO user_channels (id, user_category_id, provider_channel_id) VALUES (200, 100, ?)').run(providerChannelId);
+    db.prepare(`INSERT INTO series_episode_aliases (id, user_channel_id, source_key, series_remote_id, remote_episode_id)
+      VALUES (900000010, 200, 'http://provider.example', 10, 1)`).run();
+    restore(addBackup(backupData(1, { provider_channel_id: otherId })));
+    expect(db.prepare('SELECT id FROM series_episode_aliases').all()).toEqual([]);
+  });
+
+  it('preserves aliases for a surviving series assignment restored into its former category', () => {
+    const providerChannelId = addProviderChannel(1);
+    db.prepare("INSERT INTO user_categories (id, user_id, name, type) VALUES (101, 1, 'Moved category', 'series')").run();
+    db.prepare('INSERT INTO user_channels (id, user_category_id, provider_channel_id) VALUES (200, 101, ?)').run(providerChannelId);
+    db.prepare(`INSERT INTO series_episode_aliases (id, user_channel_id, source_key, series_remote_id, remote_episode_id)
+      VALUES (900000010, 200, 'http://provider.example:80', 10, 1)`).run();
+    restore(addBackup(backupData(1, { provider_channel_id: providerChannelId })));
+    expect(db.prepare('SELECT id, user_channel_id FROM series_episode_aliases').all())
+      .toEqual([{ id: 900000010, user_channel_id: 200 }]);
   });
 
   it('keeps a source revocation for a same-owner restore without a valid admin grant', () => {

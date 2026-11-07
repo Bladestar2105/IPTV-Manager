@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
+import { gzipSync } from 'node:zlib';
 
 const { fetchSafe } = vi.hoisted(() => ({ fetchSafe: vi.fn() }));
 // Keep the real module's other exports: epgImportService derives its staging
@@ -139,10 +140,54 @@ describe('staged EPG import', () => {
     expect(liveCounts().channels).toBe(1);
   });
 
+  it.each([
+    ['plain', false], ['gzip', true],
+  ])('preserves the guide when a %s transport ends with unfinished XML', async (_type, gzip) => {
+    seedExisting();
+    const before = liveCounts();
+    for (const partial of [
+      '<tv><channel id="partial"><display-name>Partial</display-name></channel>',
+      '<tv><channel id="partial"><display-name>Partial</display-name></channel><programme channel="partial">',
+      '<tv><channel id="partial"><display-name>Partial</display-name></channel><programme',
+    ]) {
+      const payload = Buffer.from(partial);
+      fetchSafe.mockResolvedValue({ ok: true, body: Readable.from([gzip ? gzipSync(payload) : payload]) });
+      await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+        .rejects.toThrow(/incomplete|XML/i);
+      expect(liveCounts()).toEqual(before);
+      expect(epgDb.prepare('SELECT id FROM epg_channels WHERE source_type = ? AND source_id = ?').get(SOURCE_TYPE, SOURCE_ID).id).toBe('old-ch');
+      expect(stagingTableCount()).toBe(0);
+    }
+  });
+
+  it('accepts a complete gzip XMLTV feed with declarations, comments and self-closing elements', async () => {
+    const complete = '<?xml version="1.0"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv><!-- feed --><channel id="ch"><display-name>Channel</display-name><icon src="https://logo.example/a.png"/></channel></tv>';
+    fetchSafe.mockResolvedValue({ ok: true, body: Readable.from([gzipSync(complete)]) });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml.gz', SOURCE_TYPE, SOURCE_ID))
+      .resolves.toMatchObject({ success: true, channels: 1 });
+  });
+
   it('accepts an empty feed when the source has no data yet', async () => {
     fetchSafe.mockResolvedValue({ ok: true, body: Readable.from(['<?xml version="1.0"?><tv></tv>']) });
     await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID)).resolves.toMatchObject({ success: true });
     expect(liveCounts()).toEqual({ channels: 0, programs: 0 });
+  });
+
+  it('accepts a self-closing empty XMLTV root when the source has no data yet', async () => {
+    fetchSafe.mockResolvedValue({ ok: true, body: Readable.from(['<?xml version="1.0"?><tv/>']) });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID))
+      .resolves.toMatchObject({ success: true });
+  });
+
+  it('preserves the guide when the gzip trailer is truncated after complete XML', async () => {
+    seedExisting();
+    const before = liveCounts();
+    const compressed = gzipSync(xml([{ start: future(1), stop: future(2), title: 'Unverified transport' }]));
+    fetchSafe.mockResolvedValue({ ok: true, body: Readable.from([compressed.subarray(0, -8)]) });
+    await expect(importEpgFromUrl('https://epg.example/guide.xml.gz', SOURCE_TYPE, SOURCE_ID))
+      .rejects.toThrow(/incomplete|unexpected/i);
+    expect(liveCounts()).toEqual(before);
+    expect(stagingTableCount()).toBe(0);
   });
 
   it('bounds the import body and keeps the stale threshold above it', () => {

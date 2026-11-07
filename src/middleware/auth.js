@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../utils/crypto.js';
 import db from '../database/db.js';
+import { expiryEpoch } from '../utils/stalker.js';
 import { isIpAllowedForUser } from '../services/geoIpService.js';
 
 export function authenticateToken(req, res, next) {
@@ -28,6 +29,11 @@ export function authenticateToken(req, res, next) {
 
       if (!dbUser || !dbUser.is_active) {
         return res.status(401).json({ error: 'User is inactive or deleted' });
+      }
+
+      const expires = expiryEpoch(dbUser.expiry_date);
+      if (!user.is_admin && expires && expires <= Date.now() / 1000) {
+        return res.status(403).json({ error: 'Account expired' });
       }
 
       // Token version check

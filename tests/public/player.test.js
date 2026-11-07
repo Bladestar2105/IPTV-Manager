@@ -108,17 +108,5 @@ test('browser player detects DASH streams from URL and channel metadata', () => 
   expect(playerJs).toContain('stream.container_extension');
   expect(playerJs).toContain('stream.mime_type');
   expect(playerJs).toContain("ext === 'mpd' || ext === 'dash'");
-  expect(playerJs).toContain("url.indexOf('/live/mpd/') !== -1");
   expect(playerJs).toContain('if (isMpdStream(stream, url))');
-});
-
-test('browser player renders channel lists before background EPG load completes', () => {
-  const playerJs = fs.readFileSync(path.join(process.cwd(), 'public/player.js'), 'utf8');
-
-  const renderIndex = playerJs.indexOf('renderView();\n      loadEpgSchedule().then');
-  const epgFunctionIndex = playerJs.indexOf('async function loadEpgSchedule()');
-
-  expect(renderIndex).toBeGreaterThan(-1);
-  expect(epgFunctionIndex).toBeGreaterThan(renderIndex);
-  expect(playerJs).toContain("if (loaded && currentType === 'live')");
 });

@@ -1,3 +1,4 @@
+import streamManager from '../src/services/streamManager.js';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
@@ -72,7 +73,7 @@ describe('Stalker/MAG portal flow', () => {
   }
 
   beforeAll(async () => {
-    initDb(true);
+    initDb(true); streamManager.init(db, null);
     await new Promise((resolve, reject) => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', () => {
