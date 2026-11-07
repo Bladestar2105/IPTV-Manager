@@ -7,7 +7,7 @@ import { fetchSafe, discardBody, readBodyWithLimit } from '../utils/network.js';
 import { isMp4Prefix, isTransportStreamPrefix, TRANSPORT_PREFIX_BYTES } from '../utils/clientMp4.js';
 import { validateClientTtml } from '../utils/clientTtml.js';
 import { createClientResourceUrl } from '../services/clientResourceService.js';
-import { withUpstreamCookies } from '../utils/clientCookies.js';
+import { upstreamRequestHeaders, withUpstreamCookies } from '../utils/clientCookies.js';
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 import {
   decodeSeriesEpisodeId,
@@ -38,6 +38,7 @@ export function getChannel(streamId, userId) {
         pc.id as provider_channel_id,
         pc.remote_stream_id,
         pc.name,
+        pc.stream_type,
         pc.metadata,
         pc.mime_type,
         p.id as provider_id,
@@ -161,11 +162,11 @@ export function getSeriesEpisode(encodedId, userId) {
 
 export function getProviderPool(userId, providerUrl) {
     const base = providerUrl.replace(/\/+$/, '');
-    // ⚡ Bolt: Cache prepared statement to eliminate SQLite compilation overhead on hot paths
+    // Reuse the statement across provider-pool lookups.
     if (!stmts.getProviderPool) {
         stmts.getProviderPool = db.prepare('SELECT * FROM providers WHERE user_id = ? AND url LIKE ?');
     }
-    // Fetch all providers for the same user with the same base url
+    // Narrow the candidate set before comparing normalized panel identities.
     const providers = stmts.getProviderPool.all(userId, `${base}%`);
     // Filter strictly by normalized base URL in case of LIKE edge cases
     const sourceKey = providerSourceKey(providerUrl);
@@ -223,11 +224,11 @@ export async function findAvailableProvider(userId, originalProvider, reqIp, ses
     for (const p of pool) {
         let isSessionActive = false;
 
-        // Handle provider object structure differences (from getChannel vs getProvider)
+        // Candidates already use the normalized provider shape.
         const pId = p.id;
         const pMaxConnections = p.max_connections;
 
-        // If the session is already active on this provider with this IP, it's free to use
+        // Requests for the same user/IP/channel session share one capacity slot.
         isSessionActive = await streamManager.isSessionActive(userId, reqIp, sessionName, pId);
         if (isSessionActive) {
             return p;
@@ -286,8 +287,11 @@ export async function reserveGrantedResourceSession(connectionId, user, channelI
     return false;
   }
   if (res.destroyed) return false;
-  await streamManager.add(connectionId, user, sessionName, req.ip, res, provider.id, { dedupe: false });
-  return true;
+  const reservation = await streamManager.reserve(connectionId, user, sessionName, req.ip, res, [provider], { dedupe: false,
+    ...(user.is_share_guest ? { sourceToken: user.resource_token || req.query?.token || req.params?.token, channelId } : {}) });
+  if (reservation.provider) return true;
+  if (reservation.error !== 'cancelled') res.status(403).send(reservation.error === 'user' ? 'Max connections reached' : 'Provider max connections reached');
+  return false;
 }
 
 export function applyProviderToChannel(channel, provider) {
@@ -423,14 +427,19 @@ export async function reserveChannelSession(connectionId, user, channel, req, re
     return false;
   }
 
-  applyProviderToChannel(channel, availableProvider);
-
   if (options.delayMs) {
     await new Promise(resolve => setTimeout(resolve, options.delayMs));
   }
 
-  if (options.dedupe === false) await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id, { dedupe: false });
-  else await streamManager.add(connectionId, user, sessionName, req.ip, res, channel.provider_id);
+  if (req.aborted || res.destroyed) return false;
+  const candidates = [availableProvider, ...getProviderCandidates(user.id, channel).filter(provider => provider.id !== availableProvider.id)];
+  const reservation = await streamManager.reserve(connectionId, user, sessionName, req.ip, res, candidates, { ...options,
+    ...(user.is_share_guest ? { sourceToken: user.resource_token || req.query?.token || req.params?.token, channelId: channel.user_channel_id } : {}) });
+  if (!reservation.provider) {
+    if (reservation.error !== 'cancelled') res.status(403).send(reservation.error === 'user' ? 'Max connections reached' : 'Provider max connections reached across all accounts');
+    return false;
+  }
+  applyProviderToChannel(channel, reservation.provider);
   return true;
 }
 
@@ -447,9 +456,13 @@ export async function reserveProviderSession(connectionId, user, provider, req, 
     return null;
   }
 
-  if (options.dedupe === false) await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id, { dedupe: false });
-  else await streamManager.add(connectionId, user, sessionName, req.ip, res, availableProvider.id);
-  return availableProvider;
+  if (req.aborted || res.destroyed) return null;
+  const candidates = [availableProvider, ...getProviderCandidates(user.id, provider).filter(candidate => candidate.id !== availableProvider.id)];
+  const reservation = await streamManager.reserve(connectionId, user, sessionName, req.ip, res, candidates, { ...options,
+    ...(user.is_share_guest ? { sourceToken: user.resource_token || req.query?.token || req.params?.token, channelId: provider.user_channel_id } : {}) });
+  if (reservation.provider) return reservation.provider;
+  if (reservation.error !== 'cancelled') res.status(403).send(reservation.error === 'user' ? 'Max connections reached' : 'Provider max connections reached across all accounts');
+  return null;
 }
 
 export function recordStreamStat(channelId, label) {
@@ -532,7 +545,7 @@ export function parseFfmpegTracks(output) {
   return tracks;
 }
 
-export function probeTracksWithFfmpeg(url, headers) {
+export function probeTracksWithFfmpeg(url, headers, res = null) {
   return new Promise((resolve, reject) => {
     const binary = ffmpegPath || 'ffmpeg';
     const args = ['-hide_banner', ...buildFfmpegHeaderArgs(headers)];
@@ -540,6 +553,11 @@ export function probeTracksWithFfmpeg(url, headers) {
 
     const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
+    const disconnected = () => {
+      clearTimeout(timeout);
+      try { child.kill('SIGKILL'); } catch {}
+      reject(new Error('Media client disconnected'));
+    };
     const timeout = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch {}
       reject(new Error('ffmpeg probe timeout'));
@@ -551,10 +569,12 @@ export function probeTracksWithFfmpeg(url, headers) {
     });
     child.on('error', (err) => {
       clearTimeout(timeout);
+      res?.off?.('close', disconnected);
       reject(err);
     });
     child.on('close', (code) => {
       clearTimeout(timeout);
+      res?.off?.('close', disconnected);
       const tracks = parseFfmpegTracks(stderr);
       if (code !== 0 && tracks.audio.length === 0 && tracks.subtitles.length === 0) {
         reject(new Error('ffmpeg probe failed'));
@@ -562,6 +582,8 @@ export function probeTracksWithFfmpeg(url, headers) {
       }
       resolve(tracks);
     });
+    res?.once?.('close', disconnected);
+    if (res?.destroyed) disconnected();
   });
 }
 
@@ -570,10 +592,15 @@ export function buildFfmpegHeaderArgs(headers) {
   return headerStr.trim() ? ['-headers', headerStr] : [];
 }
 
+export function ffmpegUpstreamHeaders(result, headers, sourceUrl) {
+  const targetUrl = result.response.url || result.successfulUrl || sourceUrl;
+  return upstreamRequestHeaders(withUpstreamCookies(headers, result.response, result.selectedUrl || sourceUrl), targetUrl);
+}
+
 export async function sendTrackInfo(res, remoteUrl, backupStreamUrls, headers) {
   const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' }, { res });
   try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
-  const tracks = await probeTracksWithFfmpeg(result.successfulUrl || remoteUrl, headers);
+  const tracks = await probeTracksWithFfmpeg(result.response.url || result.successfulUrl || remoteUrl, ffmpegUpstreamHeaders(result, headers, remoteUrl), res);
   res.json(tracks);
 }
 
@@ -586,10 +613,11 @@ export async function sendSubtitleTrack(res, remoteUrl, backupStreamUrls, header
 
   const result = await fetchWithBackups(remoteUrl, backupStreamUrls, { headers, redirect: 'follow' }, { req, res });
   try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
+  if (req.aborted || res.destroyed || res.writableFinished) throw new Error('Media client disconnected');
 
   await new Promise((resolve, reject) => {
     const binary = ffmpegPath || 'ffmpeg';
-    const args = ['-hide_banner', ...buildFfmpegHeaderArgs(headers), '-i', result.successfulUrl || remoteUrl, '-map', `0:${subtitleTrack}`, '-f', 'webvtt', '-'];
+    const args = ['-hide_banner', ...buildFfmpegHeaderArgs(ffmpegUpstreamHeaders(result, headers, remoteUrl)), '-i', result.response.url || result.successfulUrl || remoteUrl, '-map', `0:${subtitleTrack}`, '-f', 'webvtt', '-'];
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
 
@@ -738,7 +766,7 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options, { req, r
                 return { response: upstream, successfulUrl: upstream.url || u, selectedUrl: u };
             }
             upstream.body?.destroy?.();
-            // If 404/403/407/etc, we might want to try backup? Yes.
+            // Non-success responses advance to the next backup.
             console.warn(`Connection failed to ${redactUrl(u)}: ${upstream.status}`);
 
             if (upstream.status === 407) {

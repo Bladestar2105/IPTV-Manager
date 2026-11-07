@@ -9,9 +9,7 @@ if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
 
 const db = new Database(DB_PATH);
 
-// Create table WITHOUT indexes first (simulating the "issue" state described, if we assume migrations didn't run or we want to show the diff)
-// Actually, let's replicate the EXACT structure in db.js (without migrations) to establish a "no index" baseline.
-// Then we can apply the fix (adding indexes) and measure.
+// Compare lookup indexes on a minimal fixture, not the full production schema.
 
 function setupDb(useIndexes) {
     if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
@@ -45,7 +43,6 @@ function runBenchmark(useIndexes) {
     const CATEGORIES = 100;
     const PROVIDER_CHANNELS = 50000;
 
-    // console.log(`Inserting ${TOTAL_ROWS} rows...`);
     const startInsert = performance.now();
     db.transaction(() => {
         for (let i = 0; i < TOTAL_ROWS; i++) {
@@ -57,7 +54,6 @@ function runBenchmark(useIndexes) {
         }
     })();
     const endInsert = performance.now();
-    // console.log(`Insert took ${(endInsert - startInsert).toFixed(2)}ms`);
 
     // Benchmark Queries
 

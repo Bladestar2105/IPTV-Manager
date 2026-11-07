@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { Readable, PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
+import streamManager from '../../src/services/streamManager.js';
 import { preparePlaybackMedia } from '../../src/controllers/streamControllerHelpers.js';
 import { playreadyMp4 } from '../fixtures/playreadyMp4.js';
 
@@ -15,7 +16,7 @@ vi.mock('../../src/utils/crypto.js', () => ({ decrypt: value => value, encrypt: 
 vi.mock('../../src/utils/network.js', async original => ({ ...(await original()), fetchSafe: state.fetchSafe }));
 vi.mock('../../src/controllers/streamControllerHelpers.js', async original => ({
   ...(await original()),
-  getChannel: () => ({ user_channel_id: 1, provider_id: 3, provider_url: 'https://provider.example', provider_user: 'u', provider_pass: 'p', remote_stream_id: 99, name: 'Channel', mime_type: 'mp4' }),
+  getChannel: () => ({ user_channel_id: 1, stream_type: 'movie', provider_id: 3, provider_url: 'https://provider.example', provider_user: 'u', provider_pass: 'p', remote_stream_id: 99, name: 'Channel', mime_type: 'mp4' }),
   getSeriesEpisode: () => ({ id: 3, url: 'https://provider.example', username: 'u', password: 'p', user_channel_id: 1, remote_episode_id: 99, series_name: 'Series', container_extension: 'mp4' }),
   buildStreamHeaders: () => ({ headers: {}, meta: {} }), buildBackupUrls: () => [],
   reserveChannelSession: async () => true,
@@ -34,6 +35,13 @@ const paths = ['/live/1.ts', '/mpd/1/chunk.bin', '/timeshift/60/2026-10-18:10-00
 const response = (body, type, status = 200) => ({ url: 'https://provider.example/raw', status, ok: true,
   headers: new Headers({ 'content-type': type }), body: Readable.from([body]) });
 beforeEach(() => { state.fetchSafe.mockReset(); state.createClientResourceUrl.mockReset().mockReturnValue('http://manager.example/r/abcdefghijklmnopqrstuv'); });
+
+it('refreshes raw catch-up activity while forwarding media bytes', async () => {
+  streamManager.touch.mockClear();
+  state.fetchSafe.mockResolvedValue(response(Buffer.from([0x47, 0x40, 0, 0x10, 0, 0, 0, 0, 0xff]), 'video/mp2t'));
+  expect((await request(app).get('/timeshift/60/2026-10-18:10-00/1')).status).toBe(200);
+  expect(streamManager.touch).toHaveBeenCalled();
+});
 
 describe.each(paths)('initial stream privacy for %s', url => {
   it.each(['moov', 'moof'])('starts an isolated protected playback for binary PlayReady %s metadata', async container => {

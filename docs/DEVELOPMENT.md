@@ -102,6 +102,8 @@ the same preflight in the built image with the supplied restricted profiles
 before publishing. Neither check signs in or submits a model request. This
 prevents a missing/blocked real sandbox from being mistaken for passing mock
 tests. A real Proxmox host remains a separate manual acceptance requirement.
+The package workflow pins Ubuntu 24.04 so a rolling `ubuntu-latest` image
+change cannot silently replace the native sandbox validation environment.
 
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
@@ -522,3 +524,46 @@ The browser player renders the channel list before EPG schedule data is loaded.
 Keep `/api/epg/schedule` scoped to the authenticated user's visible EPG channel
 IDs so large global EPG imports do not block player startup or send unrelated
 programme data to the browser.
+
+## Production audit regressions
+
+The 2026-11 audit regression suites exercise real SQLite account expiry and
+catalog assignment contracts, cross-installation OTP archives, XMLTV truncation,
+a delayed auto-map/manual-edit race, atomic stream reservations, final redirect
+headers, and browser session/catalog behavior. Use an isolated `DATA_DIR` for
+aggregate runs. `tests/controllers/stream_reservations_atomic.test.js` uses
+independent connections for shared accounting; optional Redis integration tests
+accept `REDIS_TEST_BINARY` pointing to a local `redis-server` and create their
+own isolated socket/server. No upstream credentials or production Redis are
+needed. Browser smoke tests retain their temporary-data isolation.
+
+The whole-source Ponytail follow-up also exercises malformed M3U headers in a
+child process, M3U body limits/fallback promotion, hidden current grants, current
+JWT schedule access, share-scope changes, cache byte/entry budgets and expiry,
+actual owner invalidation, escaped administrator markup, wildcard CORS, and
+updater rollback with real temporary Git repositories. Redis cleanup never
+infers process death from a missing reply; explicit administrative orphan
+recovery requires the exact recorded identity and prior operator confirmation
+that the instance stopped. Redis accounting reads never wait for remote owner
+acknowledgements; stale-owner termination attempts run in a bounded background
+batch with a retry pause while unacknowledged rows remain counted.
+
+### Web-player catalog loading
+
+`xtream_player_contract.test.js` checks typed catalogs, series summaries with
+local assignment IDs, zero eager episode-alias writes, unchanged expanded
+companion defaults, cache-mode isolation and current share scope. Frontend
+coverage exercises lazy tab loading, in-flight request reuse, failed-request
+retry, stale-response isolation and series detail navigation. Credential/token
+URL tests authenticate generated live/movie/DASH/series paths with the real
+auth service; reserved credentials and query/fragment format lookalikes cannot
+change playback or Cast format selection.
+
+A local synthetic benchmark used real controller/auth/grant code and temporary
+SQLite WAL/NORMAL on Node 26.8.2: 5,000 live channels plus 150 series with 100
+episodes each. The old full cold catalog generated 20,000 rows / 10.93 MB and
+15,000 aliases in 4,502 ms. The actual typed Live request generated 5,000 rows /
+2.71 MB in 145 ms with no episode aliases; opening the 150 series folders took
+5 ms / 72.5 kB. These measure catalog generation, not real-provider or browser
+network latency. Timing is diagnostic; regression tests assert work avoided
+and complete output rather than machine-dependent time thresholds.

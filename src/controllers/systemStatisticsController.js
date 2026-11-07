@@ -45,8 +45,7 @@ export const getStatistics = async (req, res) => {
 
     const allStreams = await streamManager.getAll();
 
-    // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
-    // This provides a massive speedup without the memory overhead of fetching tens of thousands of channels.
+    // Reuse the logo lookup statement for active streams.
     const getChannelStmt = db.prepare(`
       SELECT pc.logo, pc.epg_channel_id, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
       FROM provider_channels pc
@@ -96,7 +95,7 @@ export const getStatistics = async (req, res) => {
     const primaryFs = fsSize.find(fs => fs.mount === '/') || fsSize[0] || {};
     const primaryNet = netStats.find(net => net.operstate === 'up') || netStats[0] || {};
 
-    // Calculate total bandwidth since app start
+    // Subtract the startup network-counter sample when it is available.
     let rxTotal = primaryNet.rx_bytes || 0;
     let txTotal = primaryNet.tx_bytes || 0;
     if (initialNetStats) {
@@ -150,26 +149,16 @@ export const terminateActiveStream = async (req, res) => {
     const stream = allStreams.find(s => s.id === streamId);
     if (!stream) return res.status(404).json({ error: 'Stream not found' });
 
-    // If the stream belongs to this worker, terminate directly.
-    if (!stream.worker_pid || stream.worker_pid === process.pid) {
-      await streamManager.remove(streamId);
-      return res.json({ success: true });
+    if (await streamManager.remove(streamId) === false) {
+      const expectedOwner = stream.owner_id || `legacy:${stream.worker_pid}`;
+      if (req.body?.confirm_owner_stopped === true && req.body.owner_id === expectedOwner &&
+          await streamManager.recoverStoppedOwner(streamId, expectedOwner)) {
+        return res.json({ success: true, recovered: true });
+      }
+      return res.status(503).json({ error: 'Stream owner did not confirm termination' });
     }
-
-    // In cluster mode, ask primary process to forward the terminate command
-    // to the worker that owns this stream resource.
-    if (typeof process.send === 'function') {
-      process.send({
-        type: 'terminate_stream',
-        streamId,
-        targetPid: stream.worker_pid
-      });
-      return res.json({ success: true, forwarded: true });
-    }
-
-    // Single-process fallback.
-    await streamManager.remove(streamId);
-    res.json({ success: true });
+    const forwarded = stream.owner_id ? stream.owner_id !== streamManager.ownerId : stream.worker_pid && stream.worker_pid !== process.pid;
+    res.json({ success: true, ...(forwarded ? { forwarded: true } : {}) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

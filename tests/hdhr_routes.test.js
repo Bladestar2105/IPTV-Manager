@@ -24,8 +24,7 @@ vi.mock('../src/services/authService.js', () => ({
 }));
 
 // Import the router under test
-// We need to use dynamic import or ensure mocks are set up before this import resolves if we were not using vitest.
-// But vitest hoists mocks, so static import is fine.
+// Vitest hoists the mocks before these static imports.
 import hdhrRouter from '../src/routes/hdhr.js';
 
 const app = express();

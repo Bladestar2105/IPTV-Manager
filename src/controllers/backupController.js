@@ -1,7 +1,7 @@
 import db from '../database/db.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 import { clearChannelsCache } from '../services/cacheService.js';
-import { resolveAssignmentGrant } from '../utils/helpers.js';
+import { providerSourceKey, resolveAssignmentGrant } from '../utils/helpers.js';
 import {
   normalizeAssignmentOrigin,
   mergeAssignmentGroups,
@@ -49,7 +49,6 @@ export const createBackup = (req, res) => {
     let categoryMappings = [];
 
     if (categoryIds.length > 0) {
-      // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
       const placeholders = Array(categoryIds.length).fill('?').join(',');
       userChannels = db.prepare(`SELECT * FROM user_channels WHERE user_category_id IN (${placeholders})`).all(...categoryIds);
       categoryMappings = db.prepare(`SELECT * FROM category_mappings WHERE user_category_id IN (${placeholders})`).all(...categoryIds);
@@ -102,12 +101,28 @@ export const restoreBackup = (req, res) => {
     const stats = { channels_restored: 0, channels_hidden: 0, channels_skipped: 0 };
 
     immediateTransaction(db, () => {
+      const currentGrants = new Set(db.prepare(`
+        SELECT uc.user_category_id, uc.provider_channel_id
+        FROM user_channels uc
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        WHERE cat.user_id = ? AND uc.granted_by_admin = 1 AND uc.authorization_revoked = 0
+      `).all(userId).map(row => `${row.user_category_id}:${row.provider_channel_id}`));
+      // Deleting assignments cascades aliases; retain only current, matching episode identities.
+      const currentAliases = db.prepare(`
+        SELECT a.*, uc.user_category_id, uc.provider_channel_id, pc.remote_stream_id, p.url
+        FROM series_episode_aliases a
+        JOIN user_channels uc ON uc.id = a.user_channel_id
+        JOIN user_categories cat ON cat.id = uc.user_category_id
+        JOIN provider_channels pc ON pc.id = uc.provider_channel_id
+        JOIN providers p ON p.id = pc.provider_id
+        WHERE cat.user_id = ? AND pc.stream_type = 'series'
+      `).all(userId).filter(alias => alias.source_key === providerSourceKey(alias.url) &&
+        Number(alias.series_remote_id) === Number(alias.remote_stream_id));
       // Get current category ids for user
       const currentCategories = db.prepare('SELECT id FROM user_categories WHERE user_id = ?').all(userId);
       const currentCategoryIds = currentCategories.map(c => c.id);
 
       if (currentCategoryIds.length > 0) {
-        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
         const placeholders = Array(currentCategoryIds.length).fill('?').join(',');
         db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...currentCategoryIds);
         db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...currentCategoryIds);
@@ -168,7 +183,7 @@ export const restoreBackup = (req, res) => {
           continue;
         }
 
-        const grant = resolveAssignmentGrant({
+        const grant = currentGrants.has(`${categoryId}:${providerChannelId}`) && Number(provider.provider_owner_id) !== userId ? 1 : resolveAssignmentGrant({
           categoryOwnerId: userId,
           providerOwnerId: provider.provider_owner_id,
           isAdmin: req.user.is_admin,
@@ -229,6 +244,11 @@ export const restoreBackup = (req, res) => {
 
       const grouped = mergeAssignmentGroups(candidates, { preserveLowestId: true });
       const getAssignmentById = db.prepare('SELECT id FROM user_channels WHERE id = ?');
+      const restoreAlias = db.prepare(`
+        INSERT INTO series_episode_aliases (id, user_channel_id, source_key, series_remote_id, remote_episode_id)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      const aliasesByAssignment = Map.groupBy(currentAliases, alias => Number(alias.user_channel_id));
       for (const group of grouped.groups) {
         const candidate = { ...group.candidate };
         candidate.id = group.validIds.find(id => !getAssignmentById.get(id)) || null;
@@ -242,7 +262,15 @@ export const restoreBackup = (req, res) => {
           })
         });
         if (result.skipped) stats.channels_skipped++;
-        else stats.channels_merged = (stats.channels_merged || 0) + group.duplicateCount + result.merged;
+        else {
+          stats.channels_merged = (stats.channels_merged || 0) + group.duplicateCount + result.merged;
+          for (const sourceId of new Set(group.validIds)) {
+            for (const alias of aliasesByAssignment.get(sourceId) || []) {
+              if (Number(alias.provider_channel_id) !== candidate.provider_channel_id) continue;
+              restoreAlias.run(alias.id, result.id, alias.source_key, alias.series_remote_id, alias.remote_episode_id);
+            }
+          }
+        }
       }
 
       const categoryPlaceholders = [...restoredCategoryIds].map(() => '?').join(',');

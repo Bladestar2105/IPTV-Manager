@@ -4,17 +4,11 @@ import epgDb from '../database/epgDb.js';
 import { EPG_DB_PATH } from '../config/constants.js';
 import { resolveBudget } from '../utils/env.js';
 
-// SQLite only auto-checkpoints at the end of a write transaction, and a passive
-// checkpoint can never reclaim frames that an active reader still needs. With a
-// dozen workers constantly reading, the write-ahead log can therefore keep
-// growing until it dwarfs the database itself — the affected deployment reached
-// a 6.27 GB WAL next to a 4.83 GB database.
-//
-// A periodic PASSIVE checkpoint gives SQLite a chance to drain the log outside
-// the write path. PASSIVE never waits for a reader, so it cannot stall a worker
-// the way TRUNCATE or RESTART would. A checkpointed log can remain allocated;
-// journal_size_limit lets SQLite shrink it when a later writer can restart the
-// log after readers release their snapshots.
+// Long-lived readers can prevent WAL reuse even when automatic checkpoints run.
+// Periodic PASSIVE checkpoints do not wait for readers, but copying pages is
+// synchronous, so the primary owns this work. A checkpointed WAL may remain
+// allocated until readers release their snapshots and a writer restarts the log;
+// journal_size_limit then bounds the retained allocation.
 const DEFAULT_INTERVAL_MS = 300000;
 const MIN_INTERVAL_MS = 30000;
 const WARN_WAL_BYTES = 512 * 1024 * 1024;

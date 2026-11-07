@@ -82,7 +82,6 @@ export function migrateSharedLinksSchema(db) {
         FOREIGN KEY (user_id) REFERENCES users(id)
       );
     `);
-    // Check if index exists? PK implies index.
   } catch (e) {
     console.error('Shared Links Schema migration error:', e);
   }

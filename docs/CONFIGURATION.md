@@ -24,8 +24,11 @@ never have to infer a typo from the symptom.
   below the default is honoured and weakens every password hash, so set it
   only deliberately; anything that is not a plain integer is refused and
   logged, because a typo here is invisible in the resulting hashes.
-- `JWT_SECRET`: Optional static JWT secret. If omitted, `jwt.secret` is created
-  under `DATA_DIR`.
+- `JWT_SECRET`: Optional static JWT secret. If empty or set to the old sample
+  `your_jwt_secret_here`, Manager uses a private persistent `jwt.secret` under
+  `DATA_DIR`. Empty/sample signing-key files are replaced. Existing sessions
+  signed with the sample key become invalid on upgrade; sign in again.
+  Other configured keys and the encryption key are preserved.
 - `ENCRYPTION_KEY`: Optional static encryption key. If omitted, `secret.key` is
   created under `DATA_DIR`.
 - `INITIAL_ADMIN_PASSWORD`: Optional first admin password. If omitted, a random
@@ -475,3 +478,21 @@ Keep runtime files out of Git and Docker build context:
 - `cache/`
 - `temp_*`
 - `temp_uploads/`
+
+## Backup OTP portability
+
+New password-encrypted system exports carry portable OTP secrets inside the
+archive and encrypt them with the destination installation key on import.
+Keep the archive password private. Older exports with enabled OTP are accepted
+only if their OTP ciphertext can be decrypted on the importing installation;
+otherwise import returns `otp_secret_unavailable` and rolls back. Re-export on
+the source installation after upgrading to move those accounts to another key.
+OTP is never silently disabled to make an import succeed.
+
+Bare-metal installation and update keep `.env` private (mode `0600`). The updater
+uses `runuser` without requiring `sudo`, fetches before stopping the service,
+and prepares dependencies for the exact fetched commit before stopping the
+service. This requires space for a second dependency copy. Local tracked edits
+or diverged history abort before stopping. Failed staging leaves the running
+version intact; failed swaps restore previous dependencies. If restarting fails,
+private `.update.*` recovery files are retained and the path is reported.

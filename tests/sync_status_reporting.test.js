@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 
@@ -51,6 +52,9 @@ const jsonResponse = payload => ({
 function routeFetch(routes) {
   fetchSafe.mockImplementation(async url => {
     const action = new URL(url).searchParams.get('action') || 'base';
+    if (action === 'get_live_streams' && xtreamState.channels !== null && !xtreamState.error) {
+      return jsonResponse(xtreamState.channels.map(channel => ({ ...channel })));
+    }
     if (action === 'get_series' && hooks.beforeSeries) hooks.beforeSeries();
     const route = routes[action];
     if (!route) throw aborted();
@@ -298,12 +302,15 @@ describe('sync status reporting', () => {
     xtreamState.error = aborted();
     fetchSafe.mockImplementation(async url => {
       if (url.includes('player_api.php')) throw new Error('should not be called for an M3U provider');
-      return { ok: true, status: 200, headers: { get: () => 'application/x-mpegurl' }, body: null };
+      return { ok: true, status: 200, headers: { get: () => 'application/x-mpegurl' }, body: Readable.from(['#EXTM3U\n']) };
     });
-    parseM3uStream.mockResolvedValue({
+    parseM3uStream.mockImplementation(async stream => {
+      for await (const chunk of stream) void chunk;
+      return {
       isM3u: true,
       channels: [{ name: 'Ch', url: 'http://panel.example/a.ts', stream_type: 'live', category_id: 1 }],
       categories: [{ category_id: 1, category_name: 'News', category_type: 'live' }],
+      };
     });
 
     const result = await performSync(7, 1, { mode: 'manual', actor });

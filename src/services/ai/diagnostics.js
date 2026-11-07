@@ -13,7 +13,7 @@ async function userConnections(userId,limit) {
   const observedAt=Date.now();
   try {
     let rows,backend;
-    // The usual StreamManager readers clean up stale sessions. Diagnosis must only observe.
+    // Read the ledger without invoking the connection prechecks that reap stale sessions.
     if(streamManager.redis) {
       backend='redis';
       rows=Object.values(await streamManager.redis.hGetAll('iptv:streams')).map(value=>JSON.parse(value)).filter(row=>Number(row.user_id)===userId);

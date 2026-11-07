@@ -1,3 +1,4 @@
+import { expiryEpoch } from '../../utils/stalker.js';
 import { createHash } from 'node:crypto';
 import db from '../../database/db.js';
 import epgDb from '../../database/epgDb.js';
@@ -36,7 +37,8 @@ export function targetUser(actor, userId) {
   const id = positiveId(userId ?? (actor.is_admin ? null : actor.id));
   if (!actor.is_admin && id !== Number(actor.id)) fail('AI_FORBIDDEN', 403);
   const user = db.prepare('SELECT id,is_active,expiry_date FROM users WHERE id=?').get(id);
-  if (!user || !user.is_active || user.expiry_date && user.expiry_date < Date.now()/1000) fail('AI_FORBIDDEN', 403);
+  const expires = expiryEpoch(user?.expiry_date);
+  if (!user || !user.is_active || expires && expires <= Date.now()/1000) fail('AI_FORBIDDEN', 403);
   return id;
 }
 

@@ -1,5 +1,5 @@
 import db from '../database/db.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { isSafeUrl, redactUrl, providerSourceKey } from '../utils/helpers.js';
 import { enqueueMaintenanceJobs, listMaintenanceJobs } from '../services/maintenanceQueueService.js';
@@ -30,11 +30,8 @@ const fetchProviderDetails = async (url, username, password) => {
     const baseUrl = url.trim().replace(/\/+$/, '');
     const apiUrl = `${baseUrl}/player_api.php?username=${encodeURIComponent(username.trim())}&password=${encodeURIComponent(password.trim())}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-
-    const resp = await fetchSafe(apiUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    const resp = await fetchSafe(apiUrl, { timeout: 10000 });
+    if (!resp.ok) { discardBody(resp); return null; }
 
     if (resp.ok) {
       // The AbortController above stops covering anything once the headers are
@@ -317,15 +314,12 @@ export const updateProvider = async (req, res) => {
        } catch {}
     }
 
-    // Auto-fetch max_connections if not provided or 0
     let finalMaxConnections = max_connections ? Number(max_connections) : (existing.max_connections || 0);
 
-    // If current limit is 0 (unlimited) or we are updating credentials, try to fetch
-    // Use the password we are about to save (or existing if not changed)
+    // Use the password being saved, retaining the stored one for masked input.
     const pwdForFetch = password.trim() === '********' ? decrypt(existing.password) : password.trim();
 
-    // Only attempt fetch if we don't have a specific override in the request (i.e., user sent 0 or nothing)
-    // AND if we have credentials
+    // An absent or zero override allows refreshing the limit from the provider.
     if ((!max_connections || Number(max_connections) === 0) && pwdForFetch) {
         const fetchedLimit = await fetchProviderDetails(url, username, pwdForFetch);
         if (fetchedLimit !== null) {
@@ -500,9 +494,8 @@ export const deleteProvider = (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({error: 'Invalid provider id'});
 
-  // Deleting a provider while its own sync is still running made the sync's
-  // sync_logs insert fail with SQLITE_CONSTRAINT_FOREIGNKEY. The lock is shared
-  // with performSync and spans cluster workers.
+    // Share the sync lock across workers so deletion cannot remove a provider
+    // before a running sync writes its foreign-keyed log.
   const lock = acquireProviderLock(id, 'delete');
   if (!lock) {
     return res.status(409).json({ error: `${describeLockConflict(id)}; try again once it finished` });
@@ -533,6 +526,7 @@ export const deleteProvider = (req, res) => {
       }
     })();
 
+    clearChannelsCache(undefined, { epg: true });
     res.json({success: true});
   } catch (e) {
     res.status(500).json({error: e.message});
@@ -556,8 +550,7 @@ export const syncProvider = async (req, res) => {
         return res.status(403).json({error: 'Access denied'});
     }
 
-    // sync_logs references providers(id) and users(id). Accepting an id that no
-    // longer exists turned into a FOREIGN KEY error deep inside performSync.
+    // Reject a missing user before performSync writes its foreign-keyed log.
     if (!db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').get(targetUserId)) {
       return res.status(404).json({error: 'User not found'});
     }

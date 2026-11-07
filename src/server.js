@@ -71,9 +71,7 @@ let redisClient = null;
     const revivedSources = resetAbandonedEpgImports(epgDb);
     if (revivedSources > 0) console.info(`🧹 Re-enabled ${revivedSources} EPG source(s) whose import had died`);
 
-    // The checkpoint is synchronous and can copy a large WAL. The primary serves
-    // no HTTP and pumps no streams, so it is the only process where that stall
-    // costs nothing.
+    // Keep synchronous WAL checkpoint work off the workers that serve streams.
     startWalMaintenance();
 
     // Imports run in a worker and the stale threshold is hours, so a worker
@@ -82,14 +80,15 @@ let redisClient = null;
     startEpgStageMaintenance(epgDb);
   }
 
-  // Initialize Stream Manager (Redis or SQLite). The heartbeat gets its own
-  // connection so a contended lock cannot block this worker's event loop, and
-  // with it every stream the worker is pumping.
+  // Heartbeats use a separate SQLite connection with a short lock wait to
+  // limit event-loop stalls while this worker pumps streams.
   streamManager.init(db, redisClient, redisClient ? null : openLatencyDbConnection());
+  await streamManager.redisControlReady;
 
   startChannelsCacheInvalidation(invalidateEpgLogosCache);
 
   if (cluster.isPrimary) {
+    process.env.IPTV_STREAM_INSTANCE_ID = streamManager.instanceId;
     // Create default admin
     await createDefaultAdmin();
 
@@ -106,14 +105,8 @@ let redisClient = null;
       sweepOrphans();
     } catch { /* An unavailable optional runtime never blocks startup. */ }
 
-    // Every worker opens its own SQLite connections and competes for the single
-    // write lock, so this number is the most direct control an operator has over
-    // the contention everything else here works around. It was not a control at
-    // all: os.cpus() reports the *host's* cores, which in a container with a CPU
-    // quota is not what this process may use — twelve workers on a fraction of a
-    // CPU multiply the lock contention without adding throughput.
-    // availableParallelism() at least respects the affinity mask; neither it nor
-    // os.cpus() reads a cgroup quota, which is why the override exists.
+    // Workers share SQLite's single writer lock. Allow an explicit worker count
+    // when the runtime's parallelism estimate exceeds the deployment's budget.
     const numCPUs = resolveBudget(process.env.CLUSTER_WORKERS, os.availableParallelism(), 1, 64, 'CLUSTER_WORKERS');
     console.info(`Primary ${process.pid} is running ${numCPUs} worker(s)`);
 
@@ -185,23 +178,33 @@ let redisClient = null;
       process.on(signal, handler);
     }
 
-    // Forward stream termination requests to the worker that owns the stream.
-    cluster.on('message', (worker, message) => {
-      if (!message || message.type !== 'terminate_stream' || !message.targetPid || !message.streamId) return;
+    // Forward requests and acknowledgements; accounting stays owned until termination.
+    const forwardTermination = message => {
+      if (!message || !['terminate_stream', 'stream_terminated'].includes(message.type) || !message.targetPid) return;
+      if (message.targetPid === process.pid && message.type === 'stream_terminated') {
+        streamManager.handleTerminationReply(message);
+        return;
+      }
       const targetWorker = Object.values(cluster.workers).find(w => w && w.process && w.process.pid === message.targetPid);
       if (!targetWorker) return;
-      targetWorker.send({
-        type: 'terminate_stream',
-        streamId: message.streamId
-      });
-    });
+      targetWorker.send(message);
+    };
+    streamManager.forwardTermination = forwardTermination;
+    cluster.on('message', (_worker, message) => forwardTermination(message));
   } else {
     // Worker Process
 
     process.on('message', async (message) => {
+      if (message?.type === 'stream_terminated') {
+        streamManager.handleTerminationReply(message);
+        return;
+      }
       if (!message || message.type !== 'terminate_stream' || !message.streamId) return;
       try {
-        await streamManager.remove(message.streamId);
+        const success = await streamManager.remove(message.streamId, { localOnly: true });
+        if (message.requestId && typeof process.send === 'function') process.send({
+          type: 'stream_terminated', requestId: message.requestId, targetPid: message.replyPid, success
+        });
       } catch (e) {
         console.error('Failed to terminate forwarded stream:', e.message);
       }

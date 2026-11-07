@@ -69,7 +69,6 @@ export const getPlaylist = async (req, res) => {
     let params = [user.id];
     ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
     query += `
-      -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `;
     const stmt = db.prepare(query);
@@ -89,15 +88,11 @@ export const getPlaylist = async (req, res) => {
     res.setHeader('Content-Type', 'audio/x-mpegurl');
     res.setHeader('Content-Disposition', `attachment; filename="playlist.m3u"`);
 
-    // ⚡ Bolt: Stream playlist generation to reduce V8 memory pressure for massive lists
-    // 🎯 Why: Storing 50,000+ channel strings in a massive array before joining them exhausts heap memory
-    // 📊 Impact: Significantly lowers RAM usage and event loop blocking overhead
+    // Flush playlist text in chunks instead of retaining the complete playlist.
     let buffer = header + '\n';
     const FLUSH_LIMIT = 65536;
 
-    // ⚡ Bolt: Pre-encode credentials and pre-construct URL prefixes outside of the tight loop.
-    // 🎯 Why: Calling encodeURIComponent and interpolating complex templates 50,000+ times per request wastes massive CPU cycles.
-    // 📊 Impact: Significantly speeds up playlist generation loop and reduces V8 garbage collection pressure.
+    // Reuse encoded credentials and URL prefixes across playlist entries.
     const useTokenAuth = shareScope.isShareGuest && !!req.query.token;
     const encUser = encodeURIComponent(username);
     const encPass = encodeURIComponent(password);
@@ -105,10 +100,8 @@ export const getPlaylist = async (req, res) => {
     const moviePrefix = useTokenAuth ? `${baseUrl}/movie/token/auth/` : `${baseUrl}/movie/${encUser}/${encPass}/`;
     const seriesPrefix = useTokenAuth ? `${baseUrl}/series/token/auth/` : `${baseUrl}/series/${encUser}/${encPass}/`;
 
-    // Episodes synced from the provider (see syncSeriesEpisodes). Series are
-    // expanded into one entry per episode like a native Xtream panel does.
-    // Episodes are stored per upstream panel (source_key), shared between
-    // provider rows that point at the same panel with different credentials.
+    // Expand synced episodes into playable entries; source_key shares episode
+    // metadata between provider accounts on the same upstream panel.
     const episodesStmt = db.prepare(`
       SELECT remote_episode_id, season, episode_num, container_extension, logo
       FROM provider_series_episodes
@@ -121,9 +114,7 @@ export const getPlaylist = async (req, res) => {
     const providerSources = new Map(
       db.prepare('SELECT id, url FROM providers').all().map(p => [p.id, { key: providerSourceKey(p.url), baseUrl: `${p.url.replace(/\/+$/, '')}/player_api.php` }])
     );
-    // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-    // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
-    // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
+    // Iterate channel rows without retaining the complete query result.
     try {
     for (const ch of stmt.iterate(...params)) {
       const epgId = sanitizeM3uTag(ch.manual_epg_id || ch.epg_channel_id || '');
@@ -251,9 +242,7 @@ export const xmltv = async (req, res) => {
     ({ query, params } = appendAllowedChannelFilter(query, params, shareScope.allowedChannelIds));
     const stmt = db.prepare(query);
 
-    // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-    // 🎯 Why: Using .all().map() creates massive intermediate arrays in V8 memory.
-    // 📊 Impact: Significantly reduces peak garbage collection pressure and memory usage for large EPGs.
+    // Collect only EPG IDs, without retaining the complete query result.
     for (const r of stmt.iterate(...params)) {
         if (r.epg_id) allowedIds.add(r.epg_id);
     }
@@ -285,20 +274,32 @@ export const xmltv = async (req, res) => {
   }
 };
 
+const CHANNELS_JSON_CACHE_ENTRIES = 32;
+const CHANNELS_JSON_CACHE_BYTES = 16 * 1024 * 1024;
+const CHANNELS_JSON_CACHE_TTL_MS = 60000;
+
 export const playerChannelsJson = async (req, res) => {
   try {
     const user = await getXtreamUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    const catalogType = req.query.type || '';
+    if (!['', 'live', 'movie', 'series'].includes(catalogType)) return res.status(400).json({ error: 'Invalid catalog type' });
+    const seriesSummary = req.query.series === 'summary';
+    const catalogParams = catalogType ? [user.id, catalogType] : [user.id];
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
+      const username = (req.query.username || '').trim();
+      const password = (req.query.password || '').trim();
+      const playbackAuthPath = username && password ? `${encodeURIComponent(username)}/${encodeURIComponent(password)}` : 'token/auth';
     const host = getBaseUrl(req);
-    // Cache key incorporates whether it's a guest, the user ID, the host string, and token
-    const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${user.token_version || 0}_${host}_${tokenParam}`;
+      const cacheKey = `${user.is_share_guest ? 'guest' : 'user'}_${user.id}_${user.token_version || 0}_${host}_${playbackAuthPath}_${tokenParam}_${catalogType || 'all'}_${seriesSummary ? 'summary' : 'expanded'}`;
 
-    if (channelsJsonCache.has(cacheKey)) {
+    const cached = !user.is_share_guest && channelsJsonCache.get(cacheKey);
+    if (cached?.expiresAt > Date.now()) {
       res.setHeader('Content-Type', 'application/json');
-      return res.send(channelsJsonCache.get(cacheKey));
+      return res.send(cached.json);
     }
+    channelsJsonCache.delete(cacheKey);
 
     const stmt = db.prepare(`
       SELECT
@@ -326,8 +327,7 @@ export const playerChannelsJson = async (req, res) => {
       JOIN provider_channels pc ON pc.id = uc.provider_channel_id
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
-      WHERE cat.user_id = ? AND uc.is_hidden = 0
-      -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
+      WHERE cat.user_id = ? AND uc.is_hidden = 0${catalogType ? " AND COALESCE(NULLIF(pc.stream_type, ''), 'live') = ?" : ''}
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `);
 
@@ -342,9 +342,7 @@ export const playerChannelsJson = async (req, res) => {
         }
     }
 
-    // ⚡ Bolt: Build JSON string iteratively instead of allocating a massive intermediate array
-    // 🎯 Why: JSON.stringify on an array of 50,000+ objects consumes significant V8 heap memory and blocks event loop.
-    // 📊 Impact: Significantly lowers RAM usage and speeds up response generation for player JSON payload.
+    // Serialize rows without an intermediate item array; the complete JSON is still buffered.
     let jsonOutput = '[';
     let isFirst = true;
     const appendItem = (item, ch) => {
@@ -371,11 +369,11 @@ export const playerChannelsJson = async (req, res) => {
     };
 
     if (!isExpired) {
-        // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
-        const livePrefix = `${host}/live/token/auth/`;
-        const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
-        const moviePrefix = `${host}/movie/token/auth/`;
-        const seriesPrefix = `${host}/series/token/auth/`;
+        // Reuse URL prefixes across catalog entries.
+          const livePrefix = `${host}/live/${playbackAuthPath}/`;
+          const liveMpdPrefix = `${host}/live/mpd/${playbackAuthPath}/`;
+          const moviePrefix = `${host}/movie/${playbackAuthPath}/`;
+          const seriesPrefix = `${host}/series/${playbackAuthPath}/`;
         const episodesStmt = db.prepare(`
           SELECT remote_episode_id, season, episode_num, container_extension, logo
           FROM provider_series_episodes
@@ -383,11 +381,11 @@ export const playerChannelsJson = async (req, res) => {
           ORDER BY season ASC, episode_num ASC, remote_episode_id ASC
         `);
         const seriesEpisodesCache = new Map();
-        const episodeAliasDb = openDbConnection();
-        const episodeAliases = prepareSeriesEpisodeAliases(episodeAliasDb);
+        const episodeAliasDb = !seriesSummary && (!catalogType || catalogType === 'series') ? openDbConnection() : null;
+        const episodeAliases = episodeAliasDb ? prepareSeriesEpisodeAliases(episodeAliasDb) : null;
 
         try {
-        for (const ch of stmt.iterate(user.id)) {
+        for (const ch of stmt.iterate(...catalogParams)) {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
           const group = ch.category_name || 'Uncategorized';
@@ -410,7 +408,7 @@ export const playerChannelsJson = async (req, res) => {
           if (ch.stream_type === 'movie') {
              type = 'movie';
              streamUrl = moviePrefix + ch.user_channel_id + '.' + containerExtension + tokenParam;
-          } else if (ch.stream_type === 'series') {
+          } else if (ch.stream_type === 'series' && !seriesSummary) {
              const sourceKey = providerSourceKey(ch.provider_url);
              let episodesBySeries = seriesEpisodesCache.get(sourceKey);
              if (!episodesBySeries) {
@@ -446,6 +444,9 @@ export const playerChannelsJson = async (req, res) => {
                }, ch);
              }
              continue;
+          } else if (ch.stream_type === 'series') {
+             type = 'series';
+             streamUrl = '';
           } else {
              if (isDashStream) {
                  streamUrl = liveMpdPrefix + ch.user_channel_id + '/manifest.mpd' + tokenParam;
@@ -466,15 +467,28 @@ export const playerChannelsJson = async (req, res) => {
             tv_archive_duration: ch.tv_archive_duration || 0
           };
 
+          if (type === 'series') item.series_id = Number(ch.user_channel_id);
           appendItem(item, ch);
         }
         } finally {
-          episodeAliasDb.close();
+          episodeAliasDb?.close();
         }
     }
     jsonOutput += ']';
 
-    channelsJsonCache.set(cacheKey, jsonOutput);
+    const bytes = Buffer.byteLength(jsonOutput);
+    if (!user.is_share_guest && bytes <= CHANNELS_JSON_CACHE_BYTES) {
+      for (const [key, entry] of channelsJsonCache) {
+        if (entry.expiresAt <= Date.now()) channelsJsonCache.delete(key);
+      }
+      let retainedBytes = [...channelsJsonCache.values()].reduce((sum, entry) => sum + entry.bytes, 0);
+      while (retainedBytes + bytes > CHANNELS_JSON_CACHE_BYTES || channelsJsonCache.size >= CHANNELS_JSON_CACHE_ENTRIES) {
+        const oldest = channelsJsonCache.keys().next().value;
+        retainedBytes -= channelsJsonCache.get(oldest).bytes;
+        channelsJsonCache.delete(oldest);
+      }
+      channelsJsonCache.set(cacheKey, { json: jsonOutput, bytes, expiresAt: Date.now() + CHANNELS_JSON_CACHE_TTL_MS });
+    }
 
     res.setHeader('Content-Type', 'application/json');
     res.send(jsonOutput);
@@ -515,7 +529,6 @@ export const playerPlaylist = async (req, res) => {
       LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
       LEFT JOIN providers p ON p.id = pc.provider_id
       WHERE cat.user_id = ? AND pc.stream_type != 'series' AND uc.is_hidden = 0
-      -- ⚡ Bolt: Optimize ORDER BY clause using composite index to remove temporary B-tree allocation
       ORDER BY cat.sort_order ASC, uc.sort_order ASC
     `);
 
@@ -533,9 +546,7 @@ export const playerPlaylist = async (req, res) => {
 
     res.setHeader('Content-Type', 'audio/x-mpegurl');
 
-    // ⚡ Bolt: Stream playlist generation to reduce V8 memory pressure for massive lists
-    // 🎯 Why: Storing 50,000+ channel strings in a massive array before joining them exhausts heap memory
-    // 📊 Impact: Significantly lowers RAM usage and event loop blocking overhead
+    // Flush playlist text in chunks instead of retaining the complete playlist.
     let buffer = '#EXTM3U\n';
     const FLUSH_LIMIT = 65536;
 
@@ -543,16 +554,12 @@ export const playerPlaylist = async (req, res) => {
     const tokenParam = req.query.token ? `?token=${encodeURIComponent(req.query.token)}` : '';
 
     if (!isExpired) {
-        // ⚡ Bolt: Pre-construct URL prefixes outside of the tight loop.
-        // 🎯 Why: Generating the prefix repeatedly for 50,000+ items consumes unnecessary CPU cycles.
-        // 📊 Impact: Optimizes the M3U playlist generation loop.
+        // Reuse URL prefixes across playlist entries.
         const livePrefix = `${host}/live/token/auth/`;
         const liveMpdPrefix = `${host}/live/mpd/token/auth/`;
         const moviePrefix = `${host}/movie/token/auth/`;
 
-        // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-        // 🎯 Why: Loading 50,000+ channel objects into V8 memory at once can cause memory spikes and block the event loop.
-        // 📊 Impact: Drastically reduces peak memory usage and improves response time for massive playlists.
+        // Iterate channel rows without retaining the complete query result.
         for (const ch of stmt.iterate(user.id)) {
           if (allowedSet && !allowedSet.has(ch.user_channel_id)) continue;
 
@@ -593,7 +600,7 @@ export const playerPlaylist = async (req, res) => {
       const extra = extraParts.length > 0 ? ' ' + extraParts.join(' ') : '';
       const groupId = ch.user_category_id || '';
 
-      // Also sanitize the raw name at the end, just in case (though it's outside quotes, newlines are deadly)
+      // A newline in the unquoted display name would create another playlist line.
       let finalName = String(name);
       if (finalName.indexOf('\n') !== -1 || finalName.indexOf('\r') !== -1) {
           finalName = finalName.replace(/[\r\n]+/g, ' ');
@@ -619,7 +626,7 @@ export const playerPlaylist = async (req, res) => {
     if (buffer.length > 0) {
         res.write(buffer);
     }
-    res.end(); // Add final newline equivalent implicitly or via logic above
+    res.end();
 
   } catch (e) {
     console.error('Playlist generation error:', e);

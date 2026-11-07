@@ -502,7 +502,6 @@ const translations = {
     selectCategoryPlaceholder: '-- Select Category --',
     selectUserFirst: 'Please select a user first',
     select_options_to_load: 'Select options above to load channels',
-    // New
     days: 'days',
     providers: 'Providers',
     skipped: 'Skipped',
@@ -550,7 +549,6 @@ const translations = {
     cancel: 'Cancel',
     cancelEdit: 'Cancel Edit',
 
-    // Missing
     enableHDHomeRun: 'Enable HDHomeRun',
     useUrlToConfigurePlex: 'Use the URL below to configure Plex DVR or Emby Live TV.',
     note: 'Note:',
@@ -1098,7 +1096,6 @@ const translations = {
     selectCategoryPlaceholder: '-- Kategorie wählen --',
     selectUserFirst: 'Bitte zuerst einen Benutzer wählen',
     select_options_to_load: 'Bitte Optionen wählen',
-    // New
     days: 'Tage',
     providers: 'Provider',
     skipped: 'Übersprungen',
@@ -1146,7 +1143,6 @@ const translations = {
     cancel: 'Abbrechen',
     cancelEdit: 'Bearbeiten abbrechen',
 
-    // Missing
     enableHDHomeRun: 'HDHomeRun aktivieren',
     useUrlToConfigurePlex: 'Verwenden Sie die folgende URL, um Plex DVR oder Emby Live TV zu konfigurieren.',
     note: 'Hinweis:',
@@ -1694,7 +1690,6 @@ const translations = {
     selectCategoryPlaceholder: '-- Sélectionner Catégorie --',
     selectUserFirst: 'Veuillez d\'abord sélectionner un utilisateur',
     select_options_to_load: 'Sélectionnez les options pour charger',
-    // New
     days: 'jours',
     providers: 'Fournisseurs',
     skipped: 'Ignoré',
@@ -1742,7 +1737,6 @@ const translations = {
     cancel: 'Annuler',
     cancelEdit: 'Annuler la modification',
 
-    // Missing
     enableHDHomeRun: 'Activer HDHomeRun',
     useUrlToConfigurePlex: 'Utilisez l\'URL ci-dessous pour configurer Plex DVR ou Emby Live TV.',
     note: 'Note :',
@@ -2290,7 +2284,6 @@ const translations = {
     selectCategoryPlaceholder: '-- Επιλέξτε Κατηγορία --',
     selectUserFirst: 'Παρακαλώ επιλέξτε πρώτα έναν χρήστη',
     select_options_to_load: 'Επιλέξτε επιλογές για φόρτωση',
-    // New
     days: 'ημέρες',
     providers: 'Πάροχοι',
     skipped: 'Παραλείφθηκαν',
@@ -2338,7 +2331,6 @@ const translations = {
     cancel: 'Ακύρωση',
     cancelEdit: 'Ακύρωση Επεξεργασίας',
 
-    // Missing
     enableHDHomeRun: 'Ενεργοποίηση HDHomeRun',
     useUrlToConfigurePlex: 'Χρησιμοποιήστε το παρακάτω URL για να ρυθμίσετε το Plex DVR ή το Emby Live TV.',
     note: 'Σημείωση:',
@@ -2428,7 +2420,7 @@ if (savedLang && translations[savedLang]) {
   currentLang = savedLang;
 }
 
-// Export für ES6 Module
+// Globale Funktionen für die übrigen Browser-Skripte bereitstellen.
 window.t = t;
 window.setLanguage = setLanguage;
 window.currentLang = currentLang;

@@ -9,9 +9,9 @@ describe('ChannelMatcher', () => {
     epgChannels.push({ id: `sports_${i}`, name: `Sports Channel ${i} [UK]` });
     epgChannels.push({ id: `movie_${i}`, name: `Movie Network ${i} (US)` });
   }
-  // Add many channels without numbers to stress test fallback
+  // Exercise digit-free matching with repeated provider variants.
   for (let i = 0; i < 1000; i++) {
-     epgChannels.push({ id: `news_${i}`, name: `Breaking News Network` }); // Duplicate names to fill bucket
+     epgChannels.push({ id: `news_${i}`, name: `Breaking News Network` }); // Repeated names share one fuzzy representative.
      epgChannels.push({ id: `music_${i}`, name: `Music TV` });
      epgChannels.push({ id: `docu_${i}`, name: `Documentary Channel` });
   }

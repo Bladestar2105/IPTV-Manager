@@ -119,12 +119,13 @@ describe('sync authorization regression', () => {
       name: 'Channel', stream_id: 101, category_id: 10,
       stream_icon: '', epg_channel_id: '', stream_type: 'live',
     }];
-    fetchSafe.mockResolvedValue({
+    fetchSafe.mockImplementation(async url => ({
       ok: true,
       status: 200,
       headers: { get: () => 'application/json' },
-      json: async () => [],
-    });
+      json: async () => String(url).includes('action=get_live_streams')
+        ? xtreamState.channels.map(channel => ({ ...channel })) : [],
+    }));
     memDb.prepare("INSERT INTO user_categories (id, user_id, name, type, sort_order) VALUES (10, 1, 'Live', 'live', 0)").run();
     memDb.prepare(`
       INSERT INTO category_mappings

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { updateShare } from '../src/controllers/shareController.js';
+import { updateShare, deleteShare } from '../src/controllers/shareController.js';
 
+const { clearChannelsCache } = vi.hoisted(() => ({ clearChannelsCache: vi.fn() }));
+vi.mock('../src/services/cacheService.js', () => ({ clearChannelsCache }));
 const mockRun = vi.fn();
 const mockGet = vi.fn();
 const mockAll = vi.fn();
@@ -20,6 +22,7 @@ vi.mock('../src/database/db.js', () => ({
 describe('Share Controller - updateShare', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockGet.mockReturnValue({ user_id: 1 });
     });
 
     it('should update share successfully', () => {
@@ -72,4 +75,12 @@ describe('Share Controller - updateShare', () => {
         expect(res.status).toHaveBeenCalledWith(404);
         expect(res.json).toHaveBeenCalledWith({ error: 'Share not found' });
     });
+    it.each([updateShare, deleteShare])('invalidates the share owner when an administrator modifies a foreign share', handler => {
+        mockGet.mockReturnValue({ user_id: 42 });
+        mockRun.mockReturnValue({ changes: 1 });
+        const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+        handler({ params: { token: 'foreign-share' }, body: { channels: [1] }, user: { id: 1, is_admin: true } }, res);
+        expect(clearChannelsCache).toHaveBeenCalledWith(42);
+    });
+
 });

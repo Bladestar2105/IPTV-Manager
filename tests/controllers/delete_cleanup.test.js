@@ -24,6 +24,7 @@ vi.mock('../../src/services/authService.js', () => ({
 
 vi.mock('../../src/services/streamManager.js', () => ({
   default: {
+    getAll: vi.fn(async () => []),
     remove: vi.fn()
   }
 }));
@@ -112,6 +113,7 @@ describe('delete cleanup regressions', () => {
 
     expect(iconCacheIndex).toBeGreaterThanOrEqual(0);
     expect(providerIndex).toBeGreaterThan(iconCacheIndex);
+    expect(mocks.clearChannelsCache).toHaveBeenCalledWith(undefined, { epg: true });
     expect(res.json).toHaveBeenCalledWith({ success: true });
   });
 

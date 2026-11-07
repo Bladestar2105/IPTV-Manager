@@ -25,9 +25,7 @@ const getClonedProviderChannelName = (channel) => {
 export const getUsers = (req, res) => {
   try {
     if (!req.user.is_admin) return res.status(403).json({error: 'Access denied'});
-    // ⚡ Bolt: Replace .all().map() with .iterate() to eliminate intermediate V8 array allocation
-    // 🎯 Why: Loading a massive list of users into memory, only to map it into another array, causes double memory allocation and GC pressure.
-    // 📊 Impact: Lowers peak memory usage and garbage collection overhead, especially on instances with many users.
+    // Build the response without retaining a second array of database rows.
     const stmt = db.prepare('SELECT id, username, password, plain_password, is_active, webui_access, provider_access, hdhr_enabled, hdhr_token, max_connections, expiry_date, allowed_countries, notes FROM users ORDER BY id');
     const result = [];
 
@@ -198,7 +196,7 @@ export const createUser = async (req, res) => {
 
                 // 2. Copy Sync Configs
                 if (oldProviderIdsForSync.length > 0) {
-                    // Optimization: Use IN clause with provider_id (indexed) instead of user_id (not indexed)
+                    // Copy sync configurations only for providers cloned above.
                     const placeholders = Array(oldProviderIdsForSync.length).fill('?').join(',');
                     const sourceSyncs = db.prepare(`SELECT * FROM sync_configs WHERE provider_id IN (${placeholders})`).all(...oldProviderIdsForSync);
                     const insertSync = db.prepare(`
@@ -269,13 +267,12 @@ export const createUser = async (req, res) => {
 
                 // 3b. Copy EPG Channel Mappings
                 const insertEpgMap = db.prepare('INSERT OR IGNORE INTO epg_channel_mappings (provider_channel_id, epg_channel_id) VALUES (?, ?)');
-                // Optimization: Replace O(N) database queries with a single set-based lookup to avoid N+1 bottleneck
+                // Fetch EPG mappings in batches rather than once per channel.
                 const oldChannelIds = Object.keys(channelMap);
                 if (oldChannelIds.length > 0) {
-                    const BATCH_SIZE = 900; // SQLite limit for IN clause
+                    const BATCH_SIZE = 900; // Stay below older SQLite builds' 999-bind limit.
                     for (let i = 0; i < oldChannelIds.length; i += BATCH_SIZE) {
                         const batch = oldChannelIds.slice(i, i + BATCH_SIZE);
-                        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
                         const placeholders = Array(batch.length).fill('?').join(',');
                         const mappings = db.prepare(`
                             SELECT provider_channel_id, epg_channel_id
@@ -511,18 +508,17 @@ export const updateUser = async (req, res) => {
 
     // Security Enhancement: Terminate active streams if security credentials/access changed
     if (password || expiry_date !== undefined || webui_access !== undefined || hdhr_enabled !== undefined || max_connections !== undefined || allowed_countries !== undefined) {
+        // Apply new credentials and limits before waiting for remote stream owners.
+        invalidateUserTokens(id);
+        invalidateUserCache(id);
         try {
-            const activeStreams = db.prepare('SELECT id FROM current_streams WHERE user_id = ?').all(id);
+            const activeStreams = (await streamManager.getAll()).filter(stream => Number(stream.user_id) === Number(id));
             for (const stream of activeStreams) {
-                streamManager.remove(stream.id);
+                await streamManager.remove(stream.id);
             }
         } catch (streamErr) {
             console.error(`Error terminating streams for user ${id}:`, streamErr);
         }
-
-        // Ensure cache is fully cleared so new settings (like region lock) apply immediately
-        invalidateUserTokens(id);
-        invalidateUserCache(id);
     }
 
     clearChannelsCache(id);
@@ -544,6 +540,13 @@ export const deleteUser = async (req, res) => {
     // kept so a failed deletion does not leave the account present but disabled.
     previousActive = db.prepare('SELECT is_active FROM users WHERE id = ?').get(id)?.is_active;
     db.prepare('UPDATE users SET is_active = 0, token_version = token_version + 1 WHERE id = ?').run(id);
+    invalidateUserTokens(id);
+    invalidateUserCache(id);
+    for (const stream of await streamManager.getAll({ strict: true })) {
+      if (Number(stream.user_id) === id && await streamManager.remove(stream.id) === false) {
+        throw Object.assign(new Error('A stream owner did not confirm termination. The account was not deleted.'), { status: 409 });
+      }
+    }
     // A personal ChatGPT runtime keeps using this account's credential until it
     // is told to stop, so it is ended and acknowledged before anything is
     // removed. Deletion must not return while that use is still in progress.

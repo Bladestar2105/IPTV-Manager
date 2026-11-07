@@ -5,7 +5,10 @@ import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 router.get('/epg/now', authenticateToken, epgController.getEpgNow);
-router.get('/epg/schedule', epgController.getEpgSchedule); // Custom auth logic inside
+router.get('/epg/schedule', (req, res, next) => {
+  if (/^Bearer\s/i.test(req.headers.authorization || '')) return authenticateToken(req, res, next);
+  next();
+}, epgController.getEpgSchedule);
 router.get('/epg/channels', authenticateToken, epgController.getEpgChannels);
 
 router.get('/epg-sources', authenticateToken, epgController.getEpgSources);

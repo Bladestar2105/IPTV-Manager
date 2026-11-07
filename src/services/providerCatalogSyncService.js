@@ -1,4 +1,5 @@
-import { Xtream } from '@iptv/xtream-api';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { armStreamDeadline, discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { resolveBudget } from '../utils/env.js';
 import { parseM3uStream } from '../utils/playlistParser.js';
@@ -17,13 +18,6 @@ const CATALOG_BODY_MAX_BYTES = resolveBudget(process.env.CATALOG_BODY_MAX_BYTES,
 const readCatalogJson = response => readBodyWithLimit(response, {
   as: 'json', timeoutMs: CATALOG_BODY_TIMEOUT_MS, maxBytes: CATALOG_BODY_MAX_BYTES,
 });
-
-export function createXtreamClient(provider) {
-  let baseUrl = (provider.url || '').trim();
-  if (!/^https?:\/\//i.test(baseUrl)) baseUrl = 'http://' + baseUrl;
-  baseUrl = baseUrl.replace(/\/+$/, '');
-  return new Xtream({ url: baseUrl, username: provider.username, password: provider.password });
-}
 
 /**
  * Human readable summary of the sections a catalog fetch could not deliver.
@@ -52,7 +46,7 @@ export function describeCatalogFailures(failures) {
  * its categories were retrieved. Everything that failed is reported in
  * `failures`; callers must not treat an empty catalog as a successful sync.
  */
-export async function fetchProviderCatalog(provider, xtream) {
+export async function fetchProviderCatalog(provider) {
   const baseUrl = provider.url.replace(/\/+$/, '');
   const authParams = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
   const allChannels = [];
@@ -89,30 +83,20 @@ export async function fetchProviderCatalog(provider, xtream) {
   let liveChans = [];
   let liveFetchComplete = false;
   try {
-    // Try Xtream API
     let apiError = null;
     try {
-      liveChans = await xtream.getChannels();
-      liveFetchComplete = Array.isArray(liveChans);
-    } catch (e) {
-      apiError = e;
-      try {
-        const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`, { timeout: CATALOG_TIMEOUT_MS });
-        if (resp.ok) {
-          const contentType = resp.headers?.get?.('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            liveChans = await readCatalogJson(resp);
-            liveFetchComplete = Array.isArray(liveChans);
-          } else {
-            discardBody(resp);
-            apiError = new Error(`unexpected content-type ${contentType || 'none'}`);
-          }
-        } else {
-          discardBody(resp);
-          apiError = new Error(`HTTP ${resp.status}`);
-        }
-      } catch (e2) { apiError = e2; }
-    }
+      const resp = await fetchSafe(`${baseUrl}/player_api.php?${authParams}&action=get_live_streams`, { timeout: CATALOG_TIMEOUT_MS });
+      if (!resp.ok) { discardBody(resp); throw new Error(`HTTP ${resp.status}`); }
+      const contentType = resp.headers?.get?.('content-type');
+      if (contentType && contentType.includes('text/html')) {
+        discardBody(resp);
+        throw new Error(`unexpected content-type ${contentType}`);
+      }
+      const rows = await readCatalogJson(resp);
+      if (!Array.isArray(rows)) throw new Error('unexpected live stream payload');
+      liveChans = rows;
+      liveFetchComplete = true;
+    } catch (error) { apiError = error; }
 
     // M3U Fallback if Xtream failed or empty
     if (!Array.isArray(liveChans) || liveChans.length === 0) {
@@ -133,18 +117,22 @@ export async function fetchProviderCatalog(provider, xtream) {
             `M3U download exceeded ${CATALOG_BODY_TIMEOUT_MS}ms`
           );
           let parsed;
+          let bytes = 0;
+          const bounded = new Transform({
+            transform(chunk, encoding, callback) {
+              bytes += chunk.length;
+              callback(bytes > CATALOG_BODY_MAX_BYTES ? new Error('M3U body exceeds catalog size limit') : null, chunk);
+            }
+          });
           try {
-            parsed = await parseM3uStream(m3uResp.body);
+            [parsed] = await Promise.all([parseM3uStream(bounded), pipeline(m3uResp.body, bounded)]);
           } finally {
             disarm();
           }
           if (parsed.isM3u) {
             console.debug('  📂 Detected M3U Playlist');
-            m3uMode = true;
-            liveFetchComplete = true;
-
             // Map to Xtream format
-            parsed.channels.forEach((ch, idx) => {
+            liveChans = parsed.channels.map((ch, idx) => {
               // Generate a stable integer ID from URL
               let hash = 0;
               for (let i = 0; i < ch.url.length; i++) {
@@ -153,7 +141,7 @@ export async function fetchProviderCatalog(provider, xtream) {
               }
               const streamId = Math.abs(hash);
 
-              liveChans.push({
+              return {
                 num: idx + 1,
                 name: ch.name,
                 stream_type: ch.stream_type || 'live',
@@ -162,10 +150,10 @@ export async function fetchProviderCatalog(provider, xtream) {
                 epg_channel_id: ch.epg_id,
                 category_id: ch.category_id,
                 category_type: ch.stream_type || 'live',
-                metadata: ch.metadata || {}, // Store parsed headers/drm (Optimization: avoid double stringify)
+                metadata: ch.metadata || {}, // Keep headers and DRM metadata parsed until persistence.
                 container_extension: ch.url.includes('.mpd') ? 'mpd' : 'ts',
-                original_url: ch.url // Pass original URL for proxying later?
-              });
+                original_url: ch.url // Preserve the M3U playback URL for the Manager proxy.
+              };
             });
 
             parsed.categories.forEach(cat => {
@@ -175,11 +163,13 @@ export async function fetchProviderCatalog(provider, xtream) {
                 category_type: cat.category_type
               });
             });
+            m3uMode = true;
+            liveFetchComplete = true;
           }
         } else {
           discardBody(m3uResp);
         }
-      } catch (e) { console.error('M3U fallback error:', sanitizeErrorMessage(e)); }
+      } catch (e) { apiError = e; console.error('M3U fallback error:', sanitizeErrorMessage(e)); }
       if (!liveFetchComplete && apiFetchComplete) liveFetchComplete = true;
     }
 

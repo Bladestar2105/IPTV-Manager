@@ -80,9 +80,7 @@ async function main() {
     setup();
     console.log('\nRunning Sync Deletion...');
 
-    // Measure lag during sync operation?
-    // Since it's sync, we can't really "measure" lag during it easily without external process,
-    // but effectively lag is 100% of the execution time.
+    // Synchronous deletion keeps this event loop busy until it returns.
     const syncStart = performance.now();
     runSync();
     const syncTime = performance.now() - syncStart;

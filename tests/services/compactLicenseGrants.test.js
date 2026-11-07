@@ -1,3 +1,4 @@
+import streamManager from '../../src/services/streamManager.js';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
@@ -22,7 +23,7 @@ const user = { id: 919191, token_version: 0, is_active: 1 };
 const req = () => ({ protocol: 'https', get: name => name === 'host' ? 'manager.test' : undefined, app: { get: () => false }, query: {}, params: {}, ip: '203.0.113.1' });
 const issue = (options = {}, source = req()) => createClientResourceUrl(source, user, 'https://provider.test/license?secret=private', { kind: 'license', compact: true, headers: { Authorization: 'Bearer upstream-secret', Cookie: 'session=private' }, ...options });
 const resolve = url => resolveCompactLicenseResource({ ...req(), params: { id: new URL(url).pathname.split('/').pop() } });
-beforeAll(() => { initDb(true); });
+beforeAll(() => { initDb(true); streamManager.init(db, null); });
 beforeEach(() => {
   vi.useRealTimers();
   db.prepare('DELETE FROM client_license_grants').run();

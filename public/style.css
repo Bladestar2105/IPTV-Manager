@@ -560,7 +560,7 @@ span {
    background-color: rgba(239, 68, 68, 0.4) !important;
 }
 
-/* Extracted from index.html */
+/* Drag-and-drop feedback and handles */
 .sortable-ghost {
   opacity: 0.4;
   background: #f0f0f0;
@@ -592,7 +592,7 @@ span {
   z-index: 1000;
 }
 
-/* Helper Classes to remove inline styles */
+/* Shared layout utilities */
 .w-150px { width: 150px; }
 .w-250px { width: 250px; }
 .flex-grow-1 { flex-grow: 1; }
@@ -634,7 +634,7 @@ select:focus-visible,
   content: " *";
   color: var(--tv-red);
 }
-/* AI results may contain long source text, but never executable markup. */
+/* Keep long AI response text within the view. */
 #view-ai { max-width: 1100px; margin-inline: auto; }
 #view-ai pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; }
 #view-ai summary { cursor: pointer; }

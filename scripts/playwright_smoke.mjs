@@ -298,9 +298,30 @@ async function run() {
     await adminPage.waitForFunction(() => !Object.keys(sessionStorage).some(key => key.startsWith('epg-mapping-job:')));
     await adminPage.unroute('**/api/mapping/auto');
     await adminPage.unroute('**/api/mapping/jobs/reload-proof');
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('geoip_license_key', 'playwright-private-license');
+    await adminPage.locator('#nav-security').click();
+    await adminPage.waitForFunction(() => document.getElementById('setting-geoip-license-key').value === 'playwright-private-license');
+    let releaseSettings, settingsStarted;
+    const heldSettings = new Promise(resolve => { releaseSettings = resolve; });
+    const startedSettings = new Promise(resolve => { settingsStarted = resolve; });
+    await adminPage.route('**/api/settings', async route => {
+      const response = await route.fetch();
+      settingsStarted();
+      await heldSettings;
+      await route.fulfill({response});
+    });
+    await adminPage.evaluate(() => { window.privacyPendingLoad = loadSecurity(); });
+    await startedSettings;
     await adminPage.locator('[data-action="action-logout"]').click();
     await waitForLoginModal(adminPage);
     await login(adminPage, baseUrl, userUsername, userPassword, {reload: false});
+    releaseSettings();
+    await adminPage.evaluate(() => window.privacyPendingLoad);
+    await adminPage.unroute('**/api/settings');
+    await assertHidden(adminPage.locator('#view-security'), 'Logout must hide the previous privileged view');
+    await assertVisible(adminPage.locator('#view-dashboard'), 'The next account must start on the dashboard');
+    if (await adminPage.locator('#setting-geoip-license-key').inputValue()) throw new Error('Prior-session license key leaked into the next session');
+    if (await adminPage.locator('#security-logs-tbody tr, #client-logs-tbody tr').count()) throw new Error('Prior-session logs leaked into the next session');
     await assertHidden(adminPage.locator('#provider-section'), 'Logout must clear provider access UI');
     await assertHidden(adminPage.locator('#epg-mapping-provider-container'), 'Logout must clear provider EPG UI');
     if (await adminPage.locator(`#epg-mapping-provider-select option[value="${providerId}"]`).count()) {

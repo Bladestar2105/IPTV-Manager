@@ -152,18 +152,23 @@ export function parseM3uStream(readableStream) {
 
     const parser = new M3uParser();
 
-    rl.on('line', (rawLine) => {
-        const line = rawLine.replace(/^\uFEFF/, '').trim();
-        parser.processLine(line);
+    const fail = error => {
+      reject(error);
+      rl.close();
+      readableStream.destroy();
+    };
+    rl.on('line', rawLine => {
+      try {
+        parser.processLine(rawLine.replace(/^\uFEFF/, '').trim());
+      } catch (error) { fail(error); }
     });
 
     rl.on('close', () => {
         resolve(parser.getResult());
     });
 
-    rl.on('error', (err) => {
-        reject(err);
-    });
+    rl.on('error', fail);
+    readableStream.on('error', fail);
   });
 }
 

@@ -5,7 +5,7 @@ import { normalizeContainerExtension } from '../utils/containerExtension.js';
 
 export const discover = async (req, res) => {
   try {
-    // getXtreamUser now supports req.params.token (checking hdhr_token)
+    // Authenticate the HDHomeRun token from the route parameter.
     const user = await getXtreamUser(req);
     if (!user) {
       return res.status(401).json({ error: 'Unauthorized' });

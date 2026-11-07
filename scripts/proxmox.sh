@@ -42,7 +42,7 @@ MEMORY=2048
 msg_info "Updating Proxmox LXC templates..."
 pveam update >/dev/null
 
-# Find latest Ubuntu 22.04 template
+# Select an available Ubuntu 22.04 template
 TEMPLATE_NAME=$(pveam available -section system | grep "ubuntu-22.04" | awk '{print $2}' | head -n 1)
 
 if [ -z "$TEMPLATE_NAME" ]; then

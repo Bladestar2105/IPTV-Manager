@@ -8,7 +8,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 const mocks = vi.hoisted(() => ({ fetchSafe: vi.fn(), getXtreamUser: vi.fn(), prepare: vi.fn(), cacheDir: '',
-  manager: { localStreams: new Map(), add: vi.fn(), remove: vi.fn(), touch: vi.fn(), cleanupUser: vi.fn(), cleanupSession: vi.fn(),
+  manager: { localStreams: new Map(), reserve: vi.fn(), add: vi.fn(), remove: vi.fn(), touch: vi.fn(), cleanupUser: vi.fn(), cleanupSession: vi.fn(),
     isSessionActive: vi.fn(), getUserConnectionCount: vi.fn(), getProviderConnectionCount: vi.fn() } }));
 vi.mock('../../src/database/db.js', () => ({ default: { prepare: mocks.prepare } }));
 vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: mocks.getXtreamUser }));
@@ -25,7 +25,7 @@ const { default: router } = await import('../../src/routes/proxy.js');
 const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), 'legacy-segment-'));
 afterAll(() => fs.rm(cacheDir, { recursive: true, force: true }));
 const user = { id: 1, is_active: 1, token_version: 0, max_connections: 2 };
-const channel = { user_channel_id: 1, provider_id: 3, name: 'Channel', provider_url: 'https://provider.example',
+const channel = { user_channel_id: 1, stream_type: 'movie', provider_id: 3, name: 'Channel', provider_url: 'https://provider.example',
   provider_user: 'provider-user', provider_pass: encrypt('provider-pass'), remote_stream_id: 99,
   provider_max_connections: 2, provider_owner_id: 1, category_owner_id: 1, granted_by_admin: 0 };
 const app = express();
@@ -49,6 +49,10 @@ beforeEach(() => {
   user.token_version = 0;
   mocks.manager.localStreams.clear();
   mocks.manager.add.mockReset();
+  mocks.manager.reserve.mockReset().mockImplementation(async (id, user, name, ip, res, providers, options) => {
+    await mocks.manager.add(id, user, name, ip, res, providers[0].id, options);
+    return { provider: providers[0] };
+  });
   mocks.manager.remove.mockReset();
   mocks.manager.cleanupUser.mockReset();
   mocks.manager.cleanupSession.mockReset();
@@ -166,12 +170,14 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
     const { default: manager } = await vi.importActual('../../src/services/streamManager.js');
     const db = new Database(':memory:');
     db.exec('CREATE TABLE current_streams (id TEXT PRIMARY KEY,user_id INTEGER,username TEXT,channel_name TEXT,start_time INTEGER,last_activity INTEGER,ip TEXT,worker_pid INTEGER,provider_id INTEGER)');
+    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER, expiry_date TEXT); INSERT INTO users VALUES (1, 1, 0, NULL)');
     manager.init(db, null);
     const destroyed = vi.fn();
     try {
       user.max_connections = 1;
       await manager.add('active-child', user, name, '::ffff:127.0.0.1', { destroy: destroyed }, 3, { dedupe: false });
       mocks.manager.add.mockImplementation((...args) => manager.add(...args));
+      mocks.manager.reserve.mockImplementation((...args) => manager.reserve(...args));
       mocks.manager.remove.mockImplementation(id => manager.remove(id));
       mocks.manager.cleanupUser.mockImplementation((...args) => manager.cleanupUser(...args));
       mocks.manager.isSessionActive.mockImplementation((...args) => manager.isSessionActive(...args));
@@ -195,11 +201,12 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
     const { default: manager } = await vi.importActual('../../src/services/streamManager.js');
     const db = new Database(':memory:');
     db.exec('CREATE TABLE current_streams (id TEXT PRIMARY KEY,user_id INTEGER,username TEXT,channel_name TEXT,start_time INTEGER,last_activity INTEGER,ip TEXT,worker_pid INTEGER,provider_id INTEGER)');
+    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER, expiry_date TEXT); INSERT INTO users VALUES (1, 1, 0, NULL)');
     manager.init(db, null);
     const destroyed = vi.fn();
     try {
       await manager.add('old-stream', user, name, '::ffff:127.0.0.1', { destroy: destroyed }, 3, { dedupe: false });
-      for (const method of ['add', 'remove', 'cleanupUser', 'cleanupSession', 'isSessionActive']) {
+      for (const method of ['reserve', 'add', 'remove', 'cleanupUser', 'cleanupSession', 'isSessionActive']) {
         mocks.manager[method].mockImplementation((...args) => manager[method](...args));
       }
       mocks.fetchSafe.mockImplementation(async () => {
@@ -224,12 +231,13 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
     const { default: manager } = await vi.importActual('../../src/services/streamManager.js');
     const db = new Database(':memory:');
     db.exec('CREATE TABLE current_streams (id TEXT PRIMARY KEY,user_id INTEGER,username TEXT,channel_name TEXT,start_time INTEGER,last_activity INTEGER,ip TEXT,worker_pid INTEGER,provider_id INTEGER)');
+    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER, expiry_date TEXT); INSERT INTO users VALUES (1, 1, 0, NULL)');
     manager.init(db, null);
     const destroyed = vi.fn();
     try {
       user.max_connections = 1;
       await manager.add('active-playback', user, name, '::ffff:127.0.0.1', { destroy: destroyed }, 3, { dedupe: false });
-      for (const method of ['add', 'remove', 'cleanupUser', 'cleanupSession', 'isSessionActive', 'getUserConnectionCount', 'getProviderConnectionCount']) {
+      for (const method of ['reserve', 'add', 'remove', 'cleanupUser', 'cleanupSession', 'isSessionActive', 'getUserConnectionCount', 'getProviderConnectionCount']) {
         mocks.manager[method].mockImplementation((...args) => manager[method](...args));
       }
       // Both the accounting implementation and its resource map must be real.
@@ -253,12 +261,13 @@ describe('legacy HLS segments reuse the protected resource relay', () => {
     const { default: manager } = await vi.importActual('../../src/services/streamManager.js');
     const db = new Database(':memory:');
     db.exec('CREATE TABLE current_streams (id TEXT PRIMARY KEY,user_id INTEGER,username TEXT,channel_name TEXT,start_time INTEGER,last_activity INTEGER,ip TEXT,worker_pid INTEGER,provider_id INTEGER)');
+    db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, is_active INTEGER, token_version INTEGER, expiry_date TEXT); INSERT INTO users VALUES (1, 1, 0, NULL)');
     manager.init(db, null);
     const destroyed = vi.fn();
     try {
       const provider = { id: 3, url: channel.provider_url, max_connections: 2 };
       await manager.add('episode-child', user, 'Series S1 E1', '127.0.0.1', { destroy: destroyed }, 3, { dedupe: false });
-      for (const method of ['add', 'remove', 'isSessionActive']) mocks.manager[method].mockImplementation((...args) => manager[method](...args));
+      for (const method of ['reserve', 'add', 'remove', 'isSessionActive']) mocks.manager[method].mockImplementation((...args) => manager[method](...args));
       expect(await reserveProviderSession('manifest', user, provider, { ip: '127.0.0.1' }, {}, 'Series S1 E1', { dedupe: false })).toMatchObject({ id: 3 });
       expect(destroyed).not.toHaveBeenCalled();
     } finally {

@@ -283,18 +283,19 @@ const runAutoMapping = async ({ body, user, ip, onProgress }) => {
   if (!result.success) throw new Error(result.error || 'Worker failed');
   if (result.epgEmpty) throw httpError('EPG data empty. Please update EPG sources.', 503);
 
-  const { updates, matched } = result;
+  const { updates } = result;
+  let matched = 0;
 
   if (updates && updates.length > 0) {
     const insert = db.prepare(`
       INSERT INTO epg_channel_mappings (provider_channel_id, epg_channel_id)
       VALUES (?, ?)
-      ON CONFLICT(provider_channel_id) DO UPDATE SET epg_channel_id = excluded.epg_channel_id
+      ON CONFLICT(provider_channel_id) DO NOTHING
     `);
 
     immediateTransaction(db, () => {
       for (const u of updates) {
-        insert.run(u.pid, u.eid);
+        matched += insert.run(u.pid, u.eid).changes;
       }
     })();
   }

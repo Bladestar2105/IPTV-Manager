@@ -130,7 +130,7 @@ export function safeLookup(hostname, options, callback) {
   });
 }
 
-// ⚡ Bolt: Hoist regex patterns to module level to avoid redundant compilation in every call.
+// Reuse the category keyword patterns across catalog rows.
 const wordKeywords = [
   'adult', 'adults', 'adulting', 'xxx', 'porn', 'porno', 'pornography',
   'erotic', 'erotica', 'sex', 'sexual', 'nsfw', 'for adults',
@@ -145,8 +145,6 @@ const wordPattern = new RegExp(`(?:\\b|_|\\W|^)(${wordKeywords.join('|')})(?:\\b
 const specialPattern = new RegExp(`(?:^|\\s|\\W)(${specialKeywords.join('|')})(?:\\s|$|\\W)`, 'i');
 
 export function isAdultCategory(name) {
-  // ⚡ Bolt: Removed .toLowerCase() before regex test. RegExp with 'i' flag ignores case natively.
-  // 🎯 Why: .toLowerCase() creates a new string in memory. Avoiding it reduces V8 allocations and GC pressure.
   return wordPattern.test(name) || specialPattern.test(name);
 }
 

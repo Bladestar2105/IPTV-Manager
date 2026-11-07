@@ -109,7 +109,7 @@ vi.mock('../../src/services/authService.js', () => ({
 // Mock stream manager
 vi.mock('../../src/services/streamManager.js', () => ({
     default: {
-        add: vi.fn(),
+        reserve: vi.fn(async (_id, _user, _name, _ip, _res, providers) => ({ provider: providers[0] })),
         remove: vi.fn(),
         cleanupUser: vi.fn(),
         isSessionActive: vi.fn().mockResolvedValue(false),
@@ -158,7 +158,7 @@ describe('Provider Connection Limit', () => {
         await streamController.proxyLive(req, res);
 
         expect(streamManager.getProviderConnectionCount).not.toHaveBeenCalled();
-        expect(streamManager.add).toHaveBeenCalled();
+        expect(streamManager.reserve).toHaveBeenCalled();
     });
 
     it('should block stream if provider active >= provider max_connections', async () => {
@@ -185,7 +185,7 @@ describe('Provider Connection Limit', () => {
         expect(streamManager.getProviderConnectionCount).toHaveBeenCalledWith(101);
         expect(res.status).toHaveBeenCalledWith(403);
         expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Provider max connections'));
-        expect(streamManager.add).not.toHaveBeenCalled();
+        expect(streamManager.reserve).not.toHaveBeenCalled();
     });
 
     it('should allow stream if provider active < provider max_connections', async () => {
@@ -205,7 +205,7 @@ describe('Provider Connection Limit', () => {
         await streamController.proxyLive(req, res);
 
         expect(streamManager.getProviderConnectionCount).toHaveBeenCalledWith(101);
-        expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), 101);
+        expect(streamManager.reserve).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.arrayContaining([expect.objectContaining({ id: 101 })]), expect.anything());
     });
 
     it('should fetch MPD streams with the available provider credentials', async () => {
@@ -228,6 +228,6 @@ describe('Provider Connection Limit', () => {
             expect.stringContaining('/live/pool/poolpass/123.mpd'),
             expect.anything()
         );
-        expect(streamManager.add).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'Test Channel (DASH)', expect.anything(), expect.anything(), 102, { dedupe: false });
+        expect(streamManager.reserve).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'Test Channel (DASH)', expect.anything(), expect.anything(), expect.arrayContaining([expect.objectContaining({ id: 102 })]), { dedupe: false });
     });
 });

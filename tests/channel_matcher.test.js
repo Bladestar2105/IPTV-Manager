@@ -104,11 +104,7 @@ describe('ChannelMatcher', () => {
 
     it('matches fuzzy names', () => {
         const result = matcher.match('Sky Cin. Action');
-        // Matcher now removes spaces. 'skycinaction' vs 'skycinemaaction'
-        // Popcounts: 11 vs 15. The similarity might be lower or require different fuzzy match.
-        // We ensure it still finds the correct ID if it exceeds threshold.
-        // Because of the strong penalty logic or threshold in global fallback,
-        // it may fall to no_match. Let's adjust the test string to be a better fuzzy match.
+        // The shorter abbreviation can fall below the fuzzy threshold.
         const result2 = matcher.match('Sky Cinema Act');
         expect(result2.epgChannel.id).toBe('10');
     });
@@ -168,25 +164,8 @@ describe('ChannelMatcher', () => {
         ];
         const sparseMatcher = new ChannelMatcher(sparseChannels);
 
-        // "Super Long Search Term That Is Dense" should not match "A B" unless similar
-        // But if we search for "A B Long Term...", it might match "A B"
-
         const result = sparseMatcher.match('A B Super Long Search Term That Is Dense');
-        // It should match 'A B' if the similarity logic works correctly (even if low score)
-        // logic: bigrams of "A B" are subset of search term.
-        // Dice = 2*intersection / (lenA + lenB).
-        // A="A B" (len ~3), B="A B Super..." (len ~30).
-        // Intersection ~3.
-        // Dice = 6 / 33 ~ 0.18.
-
-        // Wait, match() filters by threshold 0.8?
-        // findBestSimilarity uses threshold passed.
-        // match() uses 0.8 threshold for global fuzzy.
-
-        // So this won't match.
-
-        // But we want to verify that the scoring *calculation* is correct, not necessarily that it passes the threshold.
-        // We can call findBestSimilarity directly.
+        // Score candidates directly without the global matcher's acceptance threshold.
 
         const parsed = sparseMatcher.parseChannelName('A B Super Long Search Term That Is Dense');
         const best = sparseMatcher.findBestSimilarity(parsed, sparseMatcher.parsedEpgChannels);

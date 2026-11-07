@@ -7,7 +7,7 @@ import { isAdultCategory, sanitizeErrorMessage } from '../utils/helpers.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { prePopulateProviderIconCache } from './logoResolver.js';
 import { isTrustedMappingAssignment } from './userChannelAssignmentService.js';
-import { createXtreamClient, describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
+import { describeCatalogFailures, fetchProviderCatalog } from './providerCatalogSyncService.js';
 import { captureSyncSnapshot, recordSyncSnapshot, scheduleSyncFollowups } from './ai/syncHistory.js';
 import { acquireProviderLock, describeLockConflict } from './providerLockService.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
@@ -520,7 +520,7 @@ export async function performSync(providerId, userId, options = {}) {
       return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'error' };
     }
 
-    // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
+    // Refresh provider expiry before fetching its catalog.
     await checkProviderExpiry(providerId);
 
     // Decrypt password for usage
@@ -529,9 +529,8 @@ export async function performSync(providerId, userId, options = {}) {
     console.info(`🔄 Starting sync for provider ${provider.name} (user ${userId})`);
 
     // Fetch and normalize the provider catalog before applying local mappings.
-    const xtream = createXtreamClient(fetchProvider);
     const { allChannels, allCategories, completeStreamTypes, snapshotStates, failures } =
-      await fetchProviderCatalog(fetchProvider, xtream);
+      await fetchProviderCatalog(fetchProvider);
     catalogFailures = failures || [];
 
     const applyStartedAt = Date.now();

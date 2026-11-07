@@ -15,8 +15,6 @@ import {
 } from '../services/epgService.js';
 import { getXtreamUser } from '../services/authService.js';
 import { isSafeUrl } from '../utils/helpers.js';
-import jwt from 'jsonwebtoken';
-import { JWT_SECRET } from '../utils/crypto.js';
 import {
   manualMapping,
   deleteMapping,
@@ -72,17 +70,7 @@ const getUserEpgChannelIds = (user) => {
 
 export const getEpgNow = async (req, res) => {
   try {
-    let user = null;
-    const authHeader = req.headers['authorization'];
-    if (authHeader) {
-       try {
-         const token = authHeader.split(' ')[1];
-         user = jwt.verify(token, JWT_SECRET);
-       } catch {}
-    }
-    if (!user) {
-       user = await getXtreamUser(req);
-    }
+    const user = req.user || await getXtreamUser(req);
     if (!user) return res.status(401).json({error: 'Unauthorized'});
 
     const row = getProgramsNow();
@@ -99,17 +87,7 @@ export const getEpgNow = async (req, res) => {
 
 export const getEpgSchedule = async (req, res) => {
   try {
-    let user = null;
-    const authHeader = req.headers['authorization'];
-    if (authHeader) {
-       try {
-         const token = authHeader.split(' ')[1];
-         user = jwt.verify(token, JWT_SECRET);
-       } catch {}
-    }
-    if (!user) {
-       user = await getXtreamUser(req);
-    }
+    const user = req.user || await getXtreamUser(req);
     if (!user) return res.status(401).json({error: 'Unauthorized'});
 
     const start = parseInt(req.query.start) || (Math.floor(Date.now() / 1000) - 7200);

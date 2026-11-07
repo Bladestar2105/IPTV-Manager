@@ -24,7 +24,7 @@ vi.mock('child_process', () => ({
 }));
 vi.mock('../../src/services/streamManager.js', () => ({
   default: {
-    add: vi.fn(),
+    reserve: vi.fn(async (_id, _user, _name, _ip, _res, providers) => ({ provider: providers[0] })),
     remove: vi.fn(),
     cleanupUser: vi.fn(),
     cleanupSession: vi.fn(),
@@ -93,6 +93,7 @@ vi.mock('../../src/database/db.js', () => {
               name: 'Test Channel',
               metadata: '{}',
               mime_type: 'mkv',
+              stream_type: 'movie',
               provider_url: 'http://upstream.com',
               provider_user: 'puser',
               provider_pass: 'ppass',
@@ -140,9 +141,7 @@ vi.mock('../../src/utils/helpers.js', async importOriginal => ({
   providerSourceKey: vi.fn((url) => String(url || '').replace(/\/+$/, '')),
 }));
 
-// We don't mock ffmpeg here because it's not strictly needed for m3u8 logic test,
-// but for transcode test it might fail if ffmpeg-static is missing.
-// Ideally we should mock fluent-ffmpeg too.
+// Exercise transcode setup without starting FFmpeg.
 vi.mock('fluent-ffmpeg', () => {
     return {
         default: vi.fn(() => ({
@@ -189,7 +188,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    streamManager.add.mockReset();
+    streamManager.reserve.mockClear();
     streamManager.remove.mockReset();
     streamManager.localStreams.set.mockReset();
     streamDbState.channelOverrides = {};
@@ -430,7 +429,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect((await decryptClientGrant(refreshed)).playbackId).not.toBe(first.playbackId);
   });
 
-  it('should NOT call streamManager.add/cleanupUser/remove for standard .m3u8 requests', async () => {
+  it('should NOT call streamManager.reserve/cleanupUser/remove for standard .m3u8 requests', async () => {
     vi.useFakeTimers(); // Intercept setTimeout
 
     await streamController.proxyLive(req, res);
@@ -439,17 +438,15 @@ describe('Stream Controller Performance (proxyLive)', () => {
     await vi.runAllTimersAsync();
 
     expect(streamManager.cleanupUser).not.toHaveBeenCalled();
-    expect(streamManager.add).not.toHaveBeenCalled();
+    expect(streamManager.reserve).not.toHaveBeenCalled();
 
-    // We DO call remove for .m3u8 explicitly just before early return to ensure cleanup
-    // We can check if remove was called, or just ignore it if it doesn't hurt.
+    // Finishing the manifest still runs idempotent session cleanup.
     expect(streamManager.remove).toHaveBeenCalled();
-    // The main assertion is that add/cleanupUser are not called to save overhead.
 
     vi.useRealTimers();
   });
 
-  it('should CALL streamManager.add/cleanupUser for .m3u8 requests with transcode=true', async () => {
+  it('should CALL streamManager.reserve/cleanupUser for .m3u8 requests with transcode=true', async () => {
     req.query.transcode = 'true';
     vi.useFakeTimers();
 
@@ -458,12 +455,12 @@ describe('Stream Controller Performance (proxyLive)', () => {
     await promise;
 
     expect(streamManager.cleanupUser).toHaveBeenCalled();
-    expect(streamManager.add).toHaveBeenCalled();
+    expect(streamManager.reserve).toHaveBeenCalled();
 
     vi.useRealTimers();
   });
 
-  it('should CALL streamManager.add/cleanupUser for .ts requests', async () => {
+  it('should CALL streamManager.reserve/cleanupUser for .ts requests', async () => {
     req.path = '/live/user/pass/1.ts';
     vi.useFakeTimers();
 
@@ -472,14 +469,17 @@ describe('Stream Controller Performance (proxyLive)', () => {
     await promise;
 
     expect(streamManager.cleanupUser).toHaveBeenCalled();
-    expect(streamManager.add).toHaveBeenCalled();
+    expect(streamManager.reserve).toHaveBeenCalled();
 
     vi.useRealTimers();
   });
 
   it('releases an upstream that arrives after the client disconnects', async () => {
     const { default: actualManager } = await vi.importActual('../../src/services/streamManager.js');
-    vi.spyOn(streamManager, 'add').mockImplementation(actualManager.add.bind(actualManager));
+    streamManager.reserve.mockImplementation(async (id, _user, _name, _ip, res, providers) => {
+      actualManager.localStreams.set(id, res);
+      return { provider: providers[0] };
+    });
     vi.spyOn(streamManager, 'remove').mockImplementation(actualManager.remove.bind(actualManager));
     vi.spyOn(streamManager.localStreams, 'set').mockImplementation(actualManager.localStreams.set.bind(actualManager.localStreams));
     const upstream = new PassThrough();
@@ -743,7 +743,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(res.sendStatus).toHaveBeenCalledWith(404);
     expect(fetch).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
-    expect(streamManager.add).not.toHaveBeenCalled();
+    expect(streamManager.reserve).not.toHaveBeenCalled();
   });
 
   it('rejects an episode identifier for another user assignment', async () => {
@@ -791,7 +791,7 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('should return probed VOD tracks without opening a stream session', async () => {
+  it('reserves and releases a temporary VOD track-probing session', async () => {
     req.params.ext = 'mkv';
     req.query.tracks = 'true';
     req.path = '/movie/user/pass/1.mkv';
@@ -813,7 +813,8 @@ Input #0, matroska,webm, from 'movie.mkv':
 
     await streamController.proxyMovie(req, res);
 
-    expect(streamManager.add).not.toHaveBeenCalled();
+    expect(streamManager.reserve).toHaveBeenCalledOnce();
+    expect(streamManager.remove).toHaveBeenCalledOnce();
     expect(spawn).toHaveBeenCalled();
     expect(spawn.mock.calls[0][1]).toContain('http://upstream.com/movie/puser/ppass/remote1.mkv');
     expect(res.json).toHaveBeenCalledWith({
@@ -827,7 +828,7 @@ Input #0, matroska,webm, from 'movie.mkv':
     });
   });
 
-  it('should return selected VOD subtitles as WebVTT without opening a stream session', async () => {
+  it('reserves and releases a temporary VOD subtitle extraction session', async () => {
     req.params.ext = 'mkv';
     req.query.subtitle_track = '3';
     req.query.subtitle_format = 'vtt';
@@ -855,7 +856,8 @@ Input #0, matroska,webm, from 'movie.mkv':
 
     await streamController.proxyMovie(req, res);
 
-    expect(streamManager.add).not.toHaveBeenCalled();
+    expect(streamManager.reserve).toHaveBeenCalledOnce();
+    expect(streamManager.remove).toHaveBeenCalledOnce();
     expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/vtt; charset=utf-8');
     expect(spawn.mock.calls[0][1]).toContain('http://upstream.com/movie/puser/ppass/remote1.mkv');
     expect(spawn).toHaveBeenCalledWith(
@@ -888,6 +890,20 @@ Input #0, matroska,webm, from 'movie.mkv':
     await streamController[method](req, res);
     expect(res.send).toHaveBeenCalledWith(expect.stringContaining('/api/proxy/resource/'));
     expect(streamManager.remove).toHaveBeenCalled();
+  });
+
+
+  it.each(['proxyMovie', 'proxySeries'].flatMap(method => [
+    [method, { tracks: 'true' }], [method, { subtitle_format: 'vtt', subtitle_track: '2' }],
+  ]))('enforces connection capacity before %s helper requests %j', async (method, query) => {
+    req.query = query;
+    req.params.episode_id = '900000321';
+    authService.getXtreamUser.mockResolvedValue({ id: 1, max_connections: 1 });
+    streamManager.getUserConnectionCount.mockResolvedValue(1);
+    await streamController[method](req, res);
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
   });
 
 

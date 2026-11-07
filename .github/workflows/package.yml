@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -62,7 +62,7 @@ jobs:
 
   build-docker:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -152,7 +152,7 @@ jobs:
       - validate
       - build-docker
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/Stable-')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       packages: write

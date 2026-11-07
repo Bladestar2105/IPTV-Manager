@@ -6,13 +6,8 @@ import { isSafeUrl } from '../utils/helpers.js';
 import { resolveBudget } from '../utils/env.js';
 import { deleteInBatches } from '../database/sqliteWrites.js';
 
-// Reading a provider catalog holds the response bytes, the decoded string and
-// the parsed object graph in the heap at the same time, several times the wire
-// size of a list that can itself be hundreds of megabytes. The scheduler used to
-// start every due config in one un-awaited loop, so configs whose next_sync
-// happens to cluster — after a restart, or after a shared upstream failed them
-// together — parsed their catalogs concurrently. Configs above the cap keep
-// their next_sync and are simply picked up by a later tick.
+// Bound concurrent catalog downloads and parsing to limit peak heap usage.
+// Deferred configs retain next_sync and are picked up by a later tick.
 const MAX_CONCURRENT_SYNCS = resolveBudget(process.env.SYNC_MAX_CONCURRENT, 2, 1, 64, 'SYNC_MAX_CONCURRENT');
 // A backlog is normal for a tick or two. Saying so on every tick would be noise,
 // so it is reported at most this often.

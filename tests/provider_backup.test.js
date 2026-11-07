@@ -38,6 +38,7 @@ vi.mock('../src/services/streamManager.js', () => ({
         getUserConnectionCount: vi.fn().mockResolvedValue(0),
         getProviderConnectionCount: vi.fn().mockResolvedValue(0),
         add: vi.fn(),
+        reserve: vi.fn(async (_id, _user, _name, _ip, _res, providers) => ({ provider: providers[0] })),
         remove: vi.fn(),
         touch: vi.fn(),
         cleanupUser: vi.fn(),

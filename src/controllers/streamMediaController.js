@@ -19,6 +19,7 @@ import {
   buildVodOutputOptions,
   createSafeCleanup,
   fetchWithBackups,
+  ffmpegUpstreamHeaders,
   getChannel,
   getSeriesEpisode,
   hasSelectedVodTracks,
@@ -65,43 +66,33 @@ export const proxyMovie = async (req, res) => {
 
     const channel = getChannel(streamId, user.id);
 
-    if (!channel) return res.sendStatus(404);
+    if (!channel || channel.stream_type !== 'movie') return res.sendStatus(404);
 
     if (!shareGuestAllowed(user, channel)) return res.sendStatus(403);
     const ext = normalizeContainerExtension(channel.mime_type, 'mp4');
 
     const sessionName = `${channel.name} (VOD)`;
 
-    const sourcePassword = decrypt(channel.provider_pass);
-    let base = channel.provider_url.replace(/\/+$/, '');
-    let remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(sourcePassword)}/${channel.remote_stream_id}.${ext}`;
-
-    let backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
-        return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(sourcePassword)}/${channel.remote_stream_id}.${ext}`;
-    }, 'Movie');
-
-    let { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
-
-    if (req.query.subtitle_format === 'vtt') {
-      await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
-      return;
-    }
-
-    if (req.query.tracks === 'true') {
-      await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
-      return;
-    }
-
+    const isProbe = req.query.tracks === 'true' || req.query.subtitle_format === 'vtt';
     const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
-    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: shouldTranscode })) return;
+    if (!await reserveChannelSession(connectionId, user, channel, req, res, sessionName, { dedupe: !isProbe && shouldTranscode })) return;
 
     channel.provider_pass = decrypt(channel.provider_pass);
-    base = channel.provider_url.replace(/\/+$/, '');
-    remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
-    backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
+    const base = channel.provider_url.replace(/\/+$/, '');
+    const remoteUrl = `${base}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
+    const backupStreamUrls = buildBackupUrls(channel.backup_urls, (bBase) => {
         return `${bBase}/movie/${encodeURIComponent(channel.provider_user)}/${encodeURIComponent(channel.provider_pass)}/${channel.remote_stream_id}.${ext}`;
     }, 'Movie');
-    ({ headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie'));
+    const { headers } = buildStreamHeaders(channel.user_agent, channel.metadata, 'Movie');
+
+    if (isProbe) {
+      attachResponseCleanup(req, res, cleanup);
+      try {
+        if (req.query.subtitle_format === 'vtt') await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
+        else await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
+      } finally { await cleanup(); }
+      return;
+    }
 
     recordStreamStat(channel.provider_channel_id, 'Movie');
 
@@ -114,14 +105,13 @@ export const proxyMovie = async (req, res) => {
                 headers: transcodeHeaders,
                 redirect: 'follow'
             }, { req, res });
-            const successfulUrl = result.successfulUrl || remoteUrl;
+            const successfulUrl = result.response.url || result.successfulUrl || remoteUrl;
 
-            // Release the initial probe connection immediately so it doesn't count against provider limits
+            // Close the probe response before FFmpeg opens its own upstream connection.
             try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
-            // For VOD/MKV, ffmpeg needs to probe. It is much more reliable to let ffmpeg read the URL natively.
-            // Convert headers object to an array of strings for FFmpeg -headers option
-            const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+            // Native URL input lets FFmpeg seek while probing container metadata.
+            const headerStr = Object.entries(ffmpegUpstreamHeaders(result, transcodeHeaders, remoteUrl)).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');
@@ -253,42 +243,31 @@ export const proxySeries = async (req, res) => {
       sessionName = `${seriesEpisode.series_name || 'Series'} ${epCode}${seriesEpisode.title ? ` - ${seriesEpisode.title}` : ''}`;
     }
 
-    const sourceProvider = { ...provider, password: decrypt(provider.password) };
-    let base = sourceProvider.url.replace(/\/+$/, '');
-    let remoteUrl = `${base}/series/${encodeURIComponent(sourceProvider.username)}/${encodeURIComponent(sourceProvider.password)}/${remoteEpisodeId}.${ext}`;
-    let backupStreamUrls = buildBackupUrls(sourceProvider.backup_urls, (bBase) => {
-        return `${bBase}/series/${encodeURIComponent(sourceProvider.username)}/${encodeURIComponent(sourceProvider.password)}/${remoteEpisodeId}.${ext}`;
-    }, 'Series');
-    let headers = {
-      'User-Agent': sourceProvider.user_agent || DEFAULT_USER_AGENT,
-      'Connection': 'keep-alive'
-    };
-
-    if (req.query.subtitle_format === 'vtt') {
-      await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
-      return;
-    }
-
-    if (req.query.tracks === 'true') {
-      await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
-      return;
-    }
-
+    const isProbe = req.query.tracks === 'true' || req.query.subtitle_format === 'vtt';
     const shouldTranscode = req.query.transcode === 'true' || hasSelectedVodTracks(req);
-    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName, { dedupe: shouldTranscode });
+    const availableProvider = await reserveProviderSession(connectionId, user, provider, req, res, sessionName, { dedupe: !isProbe && shouldTranscode });
     if (!availableProvider) return;
 
     availableProvider.password = decrypt(availableProvider.password);
 
-    base = availableProvider.url.replace(/\/+$/, '');
-    remoteUrl = `${base}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
-    backupStreamUrls = buildBackupUrls(availableProvider.backup_urls, (bBase) => {
+    const base = availableProvider.url.replace(/\/+$/, '');
+    const remoteUrl = `${base}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
+    const backupStreamUrls = buildBackupUrls(availableProvider.backup_urls, (bBase) => {
         return `${bBase}/series/${encodeURIComponent(availableProvider.username)}/${encodeURIComponent(availableProvider.password)}/${remoteEpisodeId}.${ext}`;
     }, 'Series');
-    headers = {
+    const headers = {
       'User-Agent': availableProvider.user_agent || DEFAULT_USER_AGENT,
       'Connection': 'keep-alive'
     };
+
+    if (isProbe) {
+      attachResponseCleanup(req, res, cleanup);
+      try {
+        if (req.query.subtitle_format === 'vtt') await sendSubtitleTrack(res, remoteUrl, backupStreamUrls, headers, req);
+        else await sendTrackInfo(res, remoteUrl, backupStreamUrls, headers);
+      } finally { await cleanup(); }
+      return;
+    }
 
     if (shouldTranscode) {
         const transcodeHeaders = { ...headers };
@@ -299,13 +278,13 @@ export const proxySeries = async (req, res) => {
                 headers: transcodeHeaders,
                 redirect: 'follow'
             }, { req, res });
-            const successfulUrl = result.successfulUrl || remoteUrl;
+            const successfulUrl = result.response.url || result.successfulUrl || remoteUrl;
 
-            // Release the initial probe connection immediately so it doesn't count against provider limits
+            // Close the probe response before FFmpeg opens its own upstream connection.
             try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
-            // For Series/MKV, ffmpeg needs to probe. Let ffmpeg read the URL natively.
-            const headerStr = Object.entries(transcodeHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+            // Native URL input lets FFmpeg seek while probing container metadata.
+            const headerStr = Object.entries(ffmpegUpstreamHeaders(result, transcodeHeaders, remoteUrl)).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
             res.setHeader('Connection', 'keep-alive');

@@ -1,3 +1,4 @@
+import streamManager from '../../src/services/streamManager.js';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
 import { Readable } from 'node:stream';
@@ -25,7 +26,7 @@ describe('SSRF protection after legacy segment grant upgrade', () => {
         fetch.mockImplementation(async url => mediaResponse(url));
     });
     beforeAll(() => {
-        initDb(true);
+        initDb(true); streamManager.init(db, null);
         userId = Number(db.prepare('INSERT INTO users (username,password,is_active,webui_access,max_connections) VALUES (?,?,1,1,0)').run(username, 'password').lastInsertRowid);
         providerId = Number(db.prepare('INSERT INTO providers (name,url,username,password,user_id) VALUES (?,?,?,?,?)').run(username, 'http://example.com', 'provider-user', encrypt('provider-pass'), userId).lastInsertRowid);
         providerChannelId = Number(db.prepare('INSERT INTO provider_channels (provider_id,remote_stream_id,name) VALUES (?,?,?)').run(providerId, 123, 'Security channel').lastInsertRowid);

@@ -57,9 +57,10 @@ fi
 # Create an initial admin password so it is always visible in non-interactive installs
 if [ ! -f ".env" ]; then
     echo ">> Setting up .env file..."
-    cp .env.example .env
+    install -m 600 .env.example .env
     echo ">> .env file created. Please configure it later if needed."
 fi
+chmod 600 .env
 
 if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?AI_CODEX_ENABLED([[:space:]]*=|:[[:space:]]+)' .env; then
     printf '\nAI_CODEX_ENABLED=true\n' >> .env
@@ -85,7 +86,6 @@ fi
 # Set permissions
 echo ">> Setting correct permissions..."
 chown -R iptv-manager:iptv-manager "$INSTALL_DIR"
-chmod -R 755 "$INSTALL_DIR"
 
 # Create systemd service
 SERVICE_FILE="/etc/systemd/system/iptv-manager.service"

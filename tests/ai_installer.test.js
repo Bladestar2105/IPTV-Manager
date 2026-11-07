@@ -21,8 +21,10 @@ function harness() {
   const stub = (name, body) => fs.writeFileSync(path.join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
   stub('id', '[ "$1" = "-u" ] && echo "${TEST_UID:-0}"; exit 0');
   stub('apt-get', 'echo "apt-get $*" >> "$TEST_LOG"; [ "$*" != update ] || exit "${OPTIONAL_APT_STATUS:-${APT_STATUS:-0}}"; exit "${APT_STATUS:-0}"');
-  stub('npm', 'echo "npm $*" >> "$TEST_LOG"; [ "$2" != --global ] || exit "${GLOBAL_NPM_STATUS:-0}"; [ "$1" != "-v" ] || echo 11.0.0');
-  stub('runuser', 'echo "runuser $*" >> "$TEST_LOG"; exit "${PREFLIGHT_STATUS:-0}"');
+  stub('npm', 'echo "npm $*" >> "$TEST_LOG"; [ "$2" != --global ] || exit "${GLOBAL_NPM_STATUS:-0}"; [ "$1" != ci ] || mkdir -p node_modules; [ "$1" != "-v" ] || echo 11.0.0');
+  stub('runuser', 'echo "runuser $*" >> "$TEST_LOG"; shift 3; if [ "$1" = node ]; then exit "${PREFLIGHT_STATUS:-0}"; fi; exec "$@"');
+  stub('sudo', 'echo "unexpected sudo" >&2; exit 127');
+  stub('git', 'echo "git $*" >> "$TEST_LOG"; [ "$1" != "$FAIL_STEP" ] || exit 23; if [ "$1" = rev-parse ]; then echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; elif [ "$1" = archive ]; then tar -cf - -T /dev/null; fi');
   const enabled = path.join(directory, 'apparmor-enabled');
   fs.writeFileSync(enabled, 'N\n');
   const helper = path.join(directory, 'install-ai-runtime.sh');
@@ -71,6 +73,8 @@ describe('AI runtime installers', () => {
     const fixture = path.join(h.directory, 'repository');
     fs.mkdirSync(path.join(fixture, 'scripts'), { recursive: true });
     fs.copyFileSync(h.helper, path.join(fixture, 'scripts/install-ai-runtime.sh'));
+    fs.chmodSync(path.join(fixture, 'scripts/install-ai-runtime.sh'), 0o755);
+    fs.writeFileSync(path.join(fixture, 'README.md'), 'public documentation', { mode: 0o644 });
     const before = `INITIAL_ADMIN_PASSWORD=installer-test\n${setting}`;
     fs.writeFileSync(path.join(fixture, '.env.example'), before);
     h.stub('curl', 'exit 0');
@@ -96,6 +100,9 @@ describe('AI runtime installers', () => {
     expect(result.status, result.stderr).toBe(0);
     if (failure !== 'apt') expect(h.commands()).toContain('npm install --global @openai/codex@0.154.0');
     expect(fs.readFileSync(path.join(install, '.env'), 'utf8')).toBe(setting ? before : `${before}\nAI_CODEX_ENABLED=true\n`);
+    expect(fs.statSync(path.join(install, '.env')).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.join(install, 'README.md')).mode & 0o777).toBe(0o644);
+    expect(fs.statSync(path.join(install, 'scripts/install-ai-runtime.sh')).mode & 0o777).toBe(0o755);
     expect(fs.readFileSync(service, 'utf8')).toContain('User=iptv-manager\n');
     expect(h.commands()).toContain('npm ci --omit=dev');
     expect(h.commands()).toContain('systemctl start iptv-manager');
@@ -120,8 +127,6 @@ describe('AI runtime installers', () => {
     fs.writeFileSync(path.join(install, '.env'), before);
     fs.writeFileSync(path.join(install, 'db.sqlite'), 'existing data');
     h.stub('node', '[ "$1" = "-p" ] && echo 24 || echo v24.0.0');
-    h.stub('sudo', 'shift 2; exec "$@"');
-    h.stub('git', 'echo "git $*" >> "$TEST_LOG"');
     h.stub('systemctl', 'echo "systemctl $*" >> "$TEST_LOG"');
     h.stub('chown', 'echo "chown $*" >> "$TEST_LOG"');
     h.stub('hostname', 'echo 127.0.0.1');
@@ -151,5 +156,25 @@ describe('AI runtime installers', () => {
       expect(result.stdout).toContain('WARNING: ChatGPT is unavailable');
       expect(result.stdout).not.toContain('Completed Successfully');
     }
+  });
+
+  it.each(['fetch', 'merge', 'dependencies'])('keeps or restarts the running service after %s fails and reports failure', failure => {
+    const h = harness();
+    const install = path.join(h.directory, 'application');
+    fs.mkdirSync(install);
+    h.stub('node', '[ "$1" = "-p" ] && echo 24 || echo v24.0.0');
+    h.stub('npm', 'echo "npm $*" >> "$TEST_LOG"; if [ "$1" = ci ]; then [ "$FAIL_STEP" != dependencies ] || exit 24; mkdir -p node_modules; fi');
+    h.stub('systemctl', 'echo "systemctl $*" >> "$TEST_LOG"');
+    h.stub('chown', 'exit 0');
+    const filename = path.join(h.directory, 'update.sh');
+    fs.writeFileSync(filename, fs.readFileSync(path.join(root, 'scripts/update.sh'), 'utf8')
+      .replace('"$EUID"', '"$(id -u)"')
+      .replace('INSTALL_DIR="/opt/iptv-manager"', `INSTALL_DIR="${install}"`));
+    const result = h.run(filename, { FAIL_STEP: failure });
+    expect(result.status, result.stderr).toBe(failure === 'dependencies' ? 24 : 23);
+    const commands = h.commands();
+    expect(commands).toContain(`git ${failure === 'merge' ? 'merge' : 'fetch'}`);
+    if (commands.includes('systemctl stop')) expect(commands.trim().endsWith('systemctl start iptv-manager')).toBe(true);
+    expect(result.stdout).not.toContain('Update Finished');
   });
 });

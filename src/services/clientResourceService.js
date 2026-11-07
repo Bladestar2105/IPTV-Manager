@@ -295,7 +295,8 @@ export async function resolveClientResource(req) {
     if (payload.playbackId) payload.cookieJar = currentPlaybackCookieJar(payload);
     return {
       ...payload, url: parsed.href, ...(alternatives.length ? { alternatives } : {}),
-      user: { ...authorizedUser, max_connections: user.max_connections },
+      user: { ...authorizedUser, ...(payload.admin ? { is_admin: true } : {}),
+        ...(payload.sourceToken ? { resource_token: payload.sourceToken } : {}), max_connections: user.max_connections },
       providerId: payload.currentIcon ? channel?.provider_id : payload.providerId,
     };
   } catch { return null; }

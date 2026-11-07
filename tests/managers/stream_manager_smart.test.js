@@ -77,7 +77,7 @@ describe('StreamManager Smart Limits', () => {
       // 3. User 1, Channel B, 1.1.1.1 (from '4')
       // Total 3
       expect(count).toBe(3);
-      expect(mockRedis.hGetAll).toHaveBeenCalledOnce();
+      expect(mockRedis.hGetAll).toHaveBeenCalledTimes(2);
     });
 
     it('should identify active sessions correctly', async () => {
@@ -92,7 +92,7 @@ describe('StreamManager Smart Limits', () => {
     });
 
     it('uses an atomic compare-and-delete for the Redis user index', async () => {
-      mockRedis.hGet.mockResolvedValue(JSON.stringify({ user_id: 1, ip: '1.1.1.1' }));
+      mockRedis.hGet.mockResolvedValue(JSON.stringify({ user_id: 1, ip: '1.1.1.1', owner_id: streamManager.ownerId }));
 
       await streamManager.remove('old-stream');
 

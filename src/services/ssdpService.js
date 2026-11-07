@@ -28,7 +28,7 @@ export function refreshSsdpCache() {
 
         const now = Date.now();
         if (cachedIps.length === 0 || now - lastIpUpdate > 60000) {
-            // ⚡ Bolt: Cache network interfaces to avoid expensive synchronous os.networkInterfaces() calls on every UDP packet
+            // Refresh interface addresses at most once per minute for discovery responses.
             cachedIps = getInterfaceAddresses();
             lastIpUpdate = now;
         }

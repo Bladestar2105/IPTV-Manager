@@ -26,6 +26,7 @@ vi.mock('../../src/services/authService.js', () => ({ getXtreamUser: async () =>
 vi.mock('../../src/services/geoIpService.js', () => ({ isIpAllowedForUser: () => true }));
 vi.mock('../../src/services/logoResolver.js', () => ({ getEpgLogo: () => null, getLogoCacheHash: () => 'image', registerProviderCachedIcon: vi.fn() }));
 vi.mock('../../src/services/streamManager.js', () => ({ default: {
+    reserve: vi.fn(async (_id, _user, _name, _ip, _res, providers) => ({ provider: providers[0] })),
     add: vi.fn(), remove: vi.fn(), touch: vi.fn(), cleanupUser: vi.fn(), cleanupSession: vi.fn(),
     isSessionActive: async () => false, getUserConnectionCount: async () => 0,
     getProviderConnectionCount: async () => 0, localStreams: new Map(),

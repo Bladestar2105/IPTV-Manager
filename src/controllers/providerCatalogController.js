@@ -1,6 +1,6 @@
 import { rewriteClientMetadata } from '../services/clientResourceService.js';
 import db from '../database/db.js';
-import { fetchSafe, readBodyWithLimit } from '../utils/network.js';
+import { discardBody, fetchSafe, readBodyWithLimit } from '../utils/network.js';
 import { decrypt } from '../utils/crypto.js';
 import { isAdultCategory } from '../utils/helpers.js';
 
@@ -100,7 +100,7 @@ export const getProviderCategories = async (req, res) => {
         // fetchSafe bounds only the wait for the headers; a panel that answers
         // and then stalls its body would otherwise hang this request forever.
         categories = await readBodyWithLimit(resp, { as: 'json', timeoutMs: 60000, maxBytes: 64 * 1024 * 1024 });
-      }
+      } else { discardBody(resp); }
     } catch (e) {
       console.error('Failed to fetch categories:', e);
     }
@@ -113,15 +113,13 @@ export const getProviderCategories = async (req, res) => {
     if(type === 'movie') streamType = 'movie';
     if(type === 'series') streamType = 'series';
 
-    // ⚡ Bolt: Extract category IDs and use an IN clause to fetch channel counts only for relevant categories.
-    // Also remove redundant DISTINCT and ORDER BY to reduce SQLite overhead.
+    // Count local channels only for categories returned by the provider.
     const categoryIds = categories.map(cat => Number(cat.category_id)).filter(id => id > 0);
     const localCatsMap = new Map();
 
     if (categoryIds.length > 0) {
       const placeholders = Array(categoryIds.length).fill('?').join(',');
-      // ⚡ Bolt: Replace .all() with .iterate() to eliminate intermediate V8 array allocation overhead
-      // 🎯 Why: Iterating over potentially massive datasets avoids unnecessary memory usage and garbage collection spikes.
+      // Build the lookup without retaining a second array of count rows.
       const stmt = db.prepare(`
         SELECT original_category_id,
                COUNT(*) as channel_count

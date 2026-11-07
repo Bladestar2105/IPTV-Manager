@@ -157,9 +157,7 @@ describe('EPG Utilities', () => {
     });
 
     it('should return 0.0 for completely different strings exceeding limit', () => {
-      // "abc" vs "xyz" -> distance 3. max(len) = 3. limit = 3*(1-0) = 3.
-      // wait, logic is: limit = floor(len * (1 - threshold)). default threshold 0 -> limit = len.
-      // dist 3 <= limit 3. similarity = 1 - 3/3 = 0.
+      // With the default threshold, distance 3 over length 3 gives zero similarity.
       expect(getSimilarity('abc', 'xyz')).toBe(0);
     });
 

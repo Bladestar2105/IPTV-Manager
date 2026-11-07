@@ -19,9 +19,7 @@ const DEFAULT_RATE_LIMITS = {
   }
 };
 
-// The sixth copy of the same parse-check-warn. It was a correct one, but it
-// accepted shapes the documented contract refuses — `1e3`, `0x10`, `5.0` — and
-// keeping a private copy is how the five before it drifted apart.
+// Rate-limit settings use the shared plain-integer configuration contract.
 const positiveIntegerEnv = (name, defaultValue) =>
   resolveBudget(process.env[name], defaultValue, 1, Number.MAX_SAFE_INTEGER, name);
 

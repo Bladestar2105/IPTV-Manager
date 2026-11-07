@@ -66,14 +66,16 @@ export async function authUser(username, password) {
     const cacheKey = crypto.createHash('sha256').update(`${u}:${p}`).digest('hex');
     if (authCache.has(cacheKey)) {
       const cached = authCache.get(cacheKey);
-      if (Date.now() < cached.expiry) {
+      const expires = expiryEpoch(cached.user.expiry_date);
+      if (Date.now() < cached.expiry && (!expires || expires > Date.now() / 1000)) {
         return cached.user;
       }
       authCache.delete(cacheKey);
     }
 
     const user = db.prepare('SELECT * FROM users WHERE username = ? AND is_active = 1').get(u);
-    if (!user) {
+    const expires = expiryEpoch(user?.expiry_date);
+    if (!user || (expires && expires <= Date.now() / 1000)) {
         await preventTimingAttack(p);
         return null;
     }
@@ -187,7 +189,7 @@ export async function getXtreamUser(req, { fresh = false } = {}) {
     // 0. Check Token Cache
     if (!fresh && !isStalkerToken && tokenCache.has(token)) {
       const cached = tokenCache.get(token);
-      if (Date.now() < cached.expiry) {
+      if (Date.now() < cached.expiry && !cached.user?.is_share_guest) {
         if (cached.requiredSessionId) {
           const cookieSession = getCookie(req, 'player_session');
           if (cookieSession === cached.requiredSessionId) {
@@ -207,7 +209,7 @@ export async function getXtreamUser(req, { fresh = false } = {}) {
       let requiredSessionId = null;
 
       // 1. Check temporary tokens
-      const row = db.prepare('SELECT user_id, session_id FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
+      const row = db.prepare('SELECT user_id, session_id, expires_at FROM temporary_tokens WHERE token = ? AND expires_at > ?').get(token, now);
 
       let userToCache = null;
       let stalkerRow = null;
@@ -275,11 +277,11 @@ export async function getXtreamUser(req, { fresh = false } = {}) {
       }
 
       // Cache the result
-      if (!fresh && !isStalkerToken && !stalkerRow && (userToCache || row)) {
+      if (!fresh && !isStalkerToken && !stalkerRow && !userToCache?.is_share_guest && (userToCache || row)) {
           tokenCache.set(token, {
               user: userToCache, // This is the user object (or null if not found/deleted), independent of session check
               requiredSessionId: requiredSessionId,
-              expiry: Date.now() + AUTH_CACHE_TTL
+              expiry: Math.min(Date.now() + AUTH_CACHE_TTL, row?.expires_at ? Number(row.expires_at) * 1000 : Infinity)
           });
       }
     }
@@ -288,6 +290,19 @@ export async function getXtreamUser(req, { fresh = false } = {}) {
   // Only try username/password if token auth didn't succeed
   if (!user && username && password) {
     user = await authUser(username, password);
+  }
+
+  // Cached credentials never cache current access: other workers can revoke it.
+  if (user) {
+    const current = db.prepare('SELECT * FROM users WHERE id = ? AND is_active = 1').get(user.id);
+    const expires = expiryEpoch(current?.expiry_date);
+    if (!current || (expires && expires <= Date.now() / 1000) ||
+        Number(current.token_version || 0) !== Number(user.token_version || 0) ||
+        (token && user.hdhr_token === token && (!current.hdhr_enabled || current.hdhr_token !== token))) {
+      user = null;
+    } else {
+      user = { ...user, ...current };
+    }
   }
 
   // Apply IP Region Lock
