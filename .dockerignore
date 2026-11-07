@@ -23,3 +23,6 @@ npm-debug.log
 
 # Private bare-metal update staging and retained recovery dependencies
 .update.*
+
+# Local-only Superpowers planning artifacts
+**/superpowers/plans/

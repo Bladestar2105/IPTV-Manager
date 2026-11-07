@@ -99,6 +99,8 @@ const STREAM_MAX_AGE_MS = resolveBudget(
 // A session removed by another worker's stale sweep leaves this worker's entry
 // behind, so the map is pruned instead of growing for the process lifetime.
 const STREAM_TOUCH_MAP_LIMIT = 10000;
+const STREAM_STALE_CLEANUP_CONCURRENCY = 4;
+const STREAM_STALE_CLEANUP_RETRY_MS = 30000;
 // Half the inactivity timeout, so a session can never expire because its
 // refresh was throttled. With the sweep switched off there is nothing to stay
 // under, and the derived default is floored rather than clamped to it.
@@ -137,6 +139,8 @@ class StreamManager {
     this.pendingTerminations = new Map();
     this.unreachableTerminations = new Map();
     this.sessionPredecessors = new Map();
+    this.staleCleanupPending = new Map();
+    this.staleCleanupRetryAt = new Map();
     this.localStreams = new Map();
     this.lastTouchAt = new Map();
   }
@@ -569,9 +573,24 @@ class StreamManager {
     if (this.redis) {
       try {
         const all = await this.getAll();
-        const staleIds = all.filter(stream => this.isStale(stream, now)).map(stream => stream.id);
-        for (const staleId of staleIds) {
-          await this.remove(staleId);
+        for (const [id, retryAt] of this.staleCleanupRetryAt) {
+          if (retryAt <= now && !this.staleCleanupPending.has(id)) this.staleCleanupRetryAt.delete(id);
+        }
+        for (const stream of all) {
+          if (!this.isStale(stream, now)) continue;
+          if (stream.owner_id === this.ownerId || (!stream.owner_id && this.localStreams.has(stream.id))) {
+            await this.remove(stream.id);
+            continue;
+          }
+          if (this.staleCleanupPending.has(stream.id) || this.staleCleanupRetryAt.has(stream.id) ||
+              this.staleCleanupPending.size >= STREAM_STALE_CLEANUP_CONCURRENCY || this.staleCleanupRetryAt.size >= STREAM_TOUCH_MAP_LIMIT) continue;
+          // Foreign-owner ACKs must not hold up accounting or a new reservation.
+          this.staleCleanupRetryAt.set(stream.id, now + STREAM_STALE_CLEANUP_RETRY_MS);
+          const pending = this.remove(stream.id)
+            .then(removed => { if (removed) this.staleCleanupRetryAt.delete(stream.id); })
+            .catch(error => console.error('Redis stale stream termination error:', error.message))
+            .finally(() => this.staleCleanupPending.delete(stream.id));
+          this.staleCleanupPending.set(stream.id, pending);
         }
       } catch (e) {
         console.error('Redis stale cleanup error:', e);
@@ -623,13 +642,7 @@ class StreamManager {
     if (this.redis) {
       try {
         const all = await this.redis.hGetAll(REDIS_KEY_STREAMS);
-        const parsed = Object.values(all).map(json => JSON.parse(json));
-        const now = Date.now();
-        const active = [];
-        for (const stream of parsed) {
-          if (!this.isStale(stream, now) || !await this.remove(stream.id)) active.push(stream);
-        }
-        return active;
+        return Object.values(all).map(json => JSON.parse(json));
       } catch (e) {
         console.error('Redis GetAll Error:', e);
         if (strict) throw e;
@@ -647,7 +660,7 @@ class StreamManager {
   }
 
   async getUserConnectionCount(userId) {
-    if (!this.redis) await this.cleanupStaleStreams();
+    await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {
@@ -683,7 +696,7 @@ class StreamManager {
 
   async getProviderConnectionCount(providerId) {
     if (!providerId) return 0;
-    if (!this.redis) await this.cleanupStaleStreams();
+    await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {
@@ -712,7 +725,7 @@ class StreamManager {
   }
 
   async isSessionActive(userId, ip, channelName, providerId) {
-    if (!this.redis) await this.cleanupStaleStreams();
+    await this.cleanupStaleStreams();
 
     if (this.redis) {
       try {

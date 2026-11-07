@@ -19,5 +19,8 @@ playwright-report/
 .DS_Store
 .worktrees/
 
+# Superpowers planning artifacts stay local and are never published
+**/superpowers/plans/
+
 # Private bare-metal update staging and retained recovery dependencies
 .update.*

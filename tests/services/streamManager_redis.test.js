@@ -41,6 +41,7 @@ describe.skipIf(!process.env.REDIS_TEST_BINARY)('StreamManager with real Redis a
     for (const manager of [owner, other]) {
       manager.localStreams.clear(); manager.lastTouchAt.clear();
       manager.sessionPredecessors.clear();
+      manager.staleCleanupPending.clear(); manager.staleCleanupRetryAt.clear();
     }
   });
   afterAll(async () => {
@@ -157,6 +158,82 @@ describe.skipIf(!process.env.REDIS_TEST_BINARY)('StreamManager with real Redis a
       await owner.startRedisControl();
     }
   }, 10000);
+
+  it('reads stale unreachable sessions promptly without releasing their capacity', async () => {
+    for (const id of ['stale-a', 'stale-b']) {
+      await owner.reserve(id, { ...user, max_connections: 0 }, id, id, null, [{ id: 1, max_connections: 0 }], { dedupe: false });
+    }
+    for (const id of ['stale-a', 'stale-b']) {
+      const record = JSON.parse(await owner.redis.hGet('iptv:streams', id));
+      record.start_time = record.last_activity = Date.now() - 300000;
+      await owner.redis.hSet('iptv:streams', id, JSON.stringify(record));
+    }
+    await owner.redisSubscriber.unsubscribe(`iptv:stream_control:${owner.ownerId}`);
+    const remove = vi.spyOn(other, 'remove');
+    try {
+      const started = performance.now();
+      expect(await other.getAll()).toHaveLength(2);
+      expect(performance.now() - started).toBeLessThan(500);
+      expect(remove).not.toHaveBeenCalled();
+      const counted = performance.now();
+      expect(await other.getUserConnectionCount(1)).toBe(2);
+      expect(await other.getProviderConnectionCount(1)).toBe(2);
+      expect(await other.isSessionActive(1, 'stale-a', 'stale-a', 1)).toBe(true);
+      expect(await other.reserve('blocked', user, 'New', 'ip', null, [provider], { dedupe: false })).not.toHaveProperty('provider');
+      expect(performance.now() - counted).toBeLessThan(500);
+      expect(await other.redis.hLen('iptv:streams')).toBe(2);
+    } finally {
+      await Promise.all(other.staleCleanupPending?.values() || []);
+      await owner.redisSubscriber.close();
+      await owner.startRedisControl();
+    }
+  }, 20000);
+
+  it('bounds foreign stale cleanup and avoids overlapping or immediate repeat attempts', async () => {
+    const old = Date.now() - 300000;
+    for (let i = 0; i < 8; i++) {
+      await owner.redis.hSet('iptv:streams', `stale-${i}`, JSON.stringify({ id: `stale-${i}`, user_id: 1,
+        channel_name: `Stale ${i}`, ip: 'ip', provider_id: 1, start_time: old, last_activity: old,
+        owner_id: `offline-${i}`, worker_pid: 2147483647 }));
+    }
+    let blocking = true;
+    const finish = [];
+    const remove = vi.spyOn(other, 'remove').mockImplementation(() => blocking
+      ? new Promise(resolve => { finish.push(resolve); }) : Promise.resolve(false));
+    try {
+      const started = performance.now();
+      await Promise.all([other.cleanupStaleStreams(), other.cleanupStaleStreams()]);
+      expect(performance.now() - started).toBeLessThan(500);
+      expect(remove).toHaveBeenCalledTimes(4);
+      finish.splice(0).forEach(resolve => resolve(false));
+      await Promise.all(other.staleCleanupPending.values());
+      await other.cleanupStaleStreams();
+      expect(remove).toHaveBeenCalledTimes(8);
+      expect(new Set(remove.mock.calls.map(([id]) => id)).size).toBe(8);
+      finish.splice(0).forEach(resolve => resolve(false));
+      await Promise.all(other.staleCleanupPending.values());
+      await other.cleanupStaleStreams();
+      expect(remove).toHaveBeenCalledTimes(8);
+      expect(await other.getUserConnectionCount(1)).toBe(8);
+      expect(await other.redis.hLen('iptv:streams')).toBe(8);
+    } finally {
+      blocking = false;
+      finish.forEach(resolve => resolve(false));
+      await Promise.all(other.staleCleanupPending.values());
+    }
+  });
+
+  it('still releases a stale local child before checking capacity', async () => {
+    const resource = { destroyed: false, destroy: vi.fn() };
+    await owner.reserve('local-child', user, 'A', 'ip', resource, [provider]);
+    const record = JSON.parse(await owner.redis.hGet('iptv:streams', 'local-child'));
+    record.start_time = record.last_activity = Date.now() - 300000;
+    await owner.redis.hSet('iptv:streams', 'local-child', JSON.stringify(record));
+    resource.destroyed = true;
+    expect(await owner.getUserConnectionCount(1)).toBe(0);
+    expect(resource.destroy).toHaveBeenCalledOnce();
+    expect(await owner.redis.hExists('iptv:streams', 'local-child')).toBeFalsy();
+  });
 
   it('does not bypass a live owner that replied with a negative acknowledgement', async () => {
     await owner.reserve('alive', user, 'A', 'ip', null, [provider]);

@@ -102,6 +102,8 @@ the same preflight in the built image with the supplied restricted profiles
 before publishing. Neither check signs in or submits a model request. This
 prevents a missing/blocked real sandbox from being mistaken for passing mock
 tests. A real Proxmox host remains a separate manual acceptance requirement.
+The package workflow pins Ubuntu 24.04 so a rolling `ubuntu-latest` image
+change cannot silently replace the native sandbox validation environment.
 
 Node.js 24 or newer is the supported runtime. `better-sqlite3` is a native
 dependency and `geoip-lite` requires Node.js 24+, so reinstall dependencies with
@@ -542,7 +544,9 @@ actual owner invalidation, escaped administrator markup, wildcard CORS, and
 updater rollback with real temporary Git repositories. Redis cleanup never
 infers process death from a missing reply; explicit administrative orphan
 recovery requires the exact recorded identity and prior operator confirmation
-that the instance stopped.
+that the instance stopped. Redis accounting reads never wait for remote owner
+acknowledgements; stale-owner termination attempts run in a bounded background
+batch with a retry pause while unacknowledged rows remain counted.
 
 ### Web-player catalog loading
 
