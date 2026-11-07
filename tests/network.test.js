@@ -297,38 +297,22 @@ describe('fetchSafe', () => {
     helpers.isSafeUrl.mockResolvedValue(true);
     fetch.mockResolvedValue({ ok: true, status: 200, headers: { get: () => null } });
 
-    // We need to capture the agent function passed to fetch
+    // Inspect the agent selector passed to node-fetch.
     await fetchSafe(httpUrl);
     const httpCallArgs = fetch.mock.calls[0][1];
     const httpAgentFn = httpCallArgs.agent;
 
-    // Verify it returns httpAgent for http protocol
-    // Note: The agent function takes a parsed URL object.
+    // node-fetch supplies a parsed URL to the selector.
     const mockParsedHttpUrl = new URL(httpUrl);
-    // In actual node-fetch usage, it might pass a parsed URL object.
-    // Let's verify what our implementation does:
-    // agent: (_parsedUrl) => (_parsedUrl.protocol === 'https:' ? httpsAgent : httpAgent)
-
-    // We can import the agents to compare reference, but they are not exported from network.js easily
-    // (unless we export them or mock the module to check internal usage).
-    // Alternatively, we verify the logic of the function passed.
 
     expect(httpAgentFn(mockParsedHttpUrl)).toBeDefined();
-    // We can't strictly compare to the un-exported httpAgent instance without rewiring.
-    // However, we can check if it distinguishes protocols.
-
-    // Let's try https
     fetch.mockClear();
     await fetchSafe(httpsUrl);
     const httpsCallArgs = fetch.mock.calls[0][1];
     const httpsAgentFn = httpsCallArgs.agent;
     const mockParsedHttpsUrl = new URL(httpsUrl);
 
-    // Ensure the function behaves differently or returns different agents
-    // Since we mocked network.js partially, the internal agents are real instances created in the module scope?
-    // Actually, when we import { fetchSafe } from '../src/utils/network.js', the module executes.
-    // The agents are created.
-    // We can just verify the agent function logic.
+    // HTTP and HTTPS URLs must select distinct protocol-specific agents.
 
     const agentForHttp = httpsAgentFn(new URL('http://test.com'));
     const agentForHttps = httpsAgentFn(new URL('https://test.com'));

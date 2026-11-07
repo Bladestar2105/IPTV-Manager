@@ -164,8 +164,7 @@ describe('EPG Mapping Category Mode', () => {
             const req = { body: { category_id: 1 }, user: { id: 2, is_admin: false, username: 'user' }, ip: '127.0.0.1' };
             const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
 
-            // We need to mock loadAllEpgChannels or the worker
-            // But let's see if it works with the real implementation if we have epgDb setup
+            // Exercise the real matcher against the EPG fixture above.
             await epgController.autoMapping(req, res);
 
             const mappings = db.prepare("SELECT * FROM epg_channel_mappings").all();

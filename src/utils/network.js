@@ -40,13 +40,10 @@ const MIN_MAX_DURATION_MS = 1000;
 
 /**
  * Hard upper bound for the wait for response headers across a whole redirect
- * chain. Explicitly NOT the body: see fetchSafe below for why bounding that by
- * default cut live streams at the deadline.
+ * chain. Bodies use separate caller-owned budgets so live streams can continue.
  *
- * This gates every outgoing request in the application, so it has a floor: a
- * value of `10` — which is what `10m` parses to — would abort every fetch after
- * ten milliseconds, and the resulting AbortError is indistinguishable from a
- * genuine upstream timeout.
+ * Require plain integer milliseconds and a one-second minimum to avoid
+ * accidentally configuring an unusably short request budget.
  */
 export function resolveMaxRequestDurationMs(raw = process.env.HTTP_MAX_REQUEST_MS) {
   return resolveBudget(raw, DEFAULT_MAX_DURATION_MS, MIN_MAX_DURATION_MS, Number.MAX_SAFE_INTEGER, 'HTTP_MAX_REQUEST_MS');

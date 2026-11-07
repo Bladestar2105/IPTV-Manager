@@ -18,7 +18,6 @@ if (!fs.existsSync(EPG_CACHE_DIR)) {
     fs.mkdirSync(EPG_CACHE_DIR, { recursive: true });
 }
 
-// Encryption Setup (Matching server.js)
 let ENCRYPTION_KEY;
 if (fs.existsSync(SECRET_KEY_PATH)) {
     ENCRYPTION_KEY = fs.readFileSync(SECRET_KEY_PATH, 'utf8').trim();

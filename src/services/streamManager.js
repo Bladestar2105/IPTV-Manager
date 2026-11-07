@@ -285,8 +285,7 @@ class StreamManager {
         await this.redis.hSet(REDIS_KEY_STREAMS, id, json);
         // Set User Index for fast cleanup
         await this.redis.set(`${REDIS_PREFIX_USER}${user.id}:${ip}`, id);
-        // Optional: Expire index after 24h to prevent trash?
-        // Actually, cleanup removes it.
+        // remove() clears the index only if it still points to this session.
       } catch (e) {
         console.error('Redis Add Error:', e);
       }
@@ -484,10 +483,9 @@ class StreamManager {
       const previous = this.lastTouchAt.get(id) || 0;
       if (now - previous < STREAM_TOUCH_MIN_INTERVAL_MS) return;
     }
-    // Claim the window before the write, so concurrent progress events cannot
-    // pile up behind an in-flight one — the Redis path awaits two round trips
-    // here, and every caller is fire-and-forget. A write that then fails hands
-    // the window back below.
+    // Claim the window before the asynchronous Redis write so concurrent
+    // progress events cannot queue duplicate heartbeats. A failed write
+    // shortens the retry window below.
     this.lastTouchAt.set(id, now);
 
     let written = true;
@@ -664,15 +662,13 @@ class StreamManager {
 
     if (this.redis) {
       try {
-        // Since we don't have a direct index for count, we filter getAll.
-        // Optimization: Maintain a separate counter in Redis if performance becomes an issue.
+        // Count the ledger, including foreign sessions awaiting termination.
         const all = await this.getAll();
         const userStreams = all.filter(s => s.user_id === userId);
 
         // Smart Counting: Count unique sessions (Content + IP + Provider)
         // This allows a single user to open multiple connections (sockets) for the same content
         // on the same IP without consuming multiple "slots".
-        // Optimization: Use template strings instead of JSON.stringify for significantly faster Set operations
         const uniqueSessions = new Set(userStreams.map(s =>
           `${s.channel_name}|${s.ip}|${s.provider_id}`
         ));
@@ -703,7 +699,6 @@ class StreamManager {
         const all = await this.getAll();
         const providerStreams = all.filter(s => s.provider_id === providerId);
         // Smart Counting: Count unique sessions (Channel + IP + User)
-        // Optimization: Use template strings instead of JSON.stringify for significantly faster Set operations
         const uniqueSessions = new Set(providerStreams.map(s =>
           `${s.channel_name}|${s.ip}|${s.user_id}`
         ));

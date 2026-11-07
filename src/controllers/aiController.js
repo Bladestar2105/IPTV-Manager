@@ -42,8 +42,8 @@ export const programs = handle(async req => {
     ({provider_channel_id,title,description,start,stop,local_start,timezone,program})),truncated:result.truncated};
 });
 
-// Personal ChatGPT account link. Every endpoint is owner-only, never returns a
-// token and binds the attempt to the caller's current session.
+// Personal ChatGPT links remain owner-scoped; login completion is bound to
+// the originating bearer session, and credentials stay on the server.
 const bearer = req => (req.get('Authorization') || '').split(' ')[1] || null;
 // Authentication already verified this token; only its expiry is read here.
 const sessionExpiry = req => jwt.decode(bearer(req))?.exp * 1000;

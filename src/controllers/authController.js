@@ -87,7 +87,7 @@ export const login = async (req, res) => {
           // Legacy/Xtream password (encrypted or plaintext)
           const decrypted = decrypt(user.password);
 
-          // Prevent timing attacks by comparing hashes of equal length
+          // Compare equal-length digests with timingSafeEqual.
           const safeDecrypted = typeof decrypted === 'string' ? decrypted : crypto.randomBytes(32).toString('hex');
           const safePassword = typeof password === 'string' ? password : '';
           const a = crypto.createHash('sha256').update(safeDecrypted).digest();
@@ -268,7 +268,7 @@ export const changePassword = async (req, res) => {
     } else {
         const decrypted = decrypt(user.password);
 
-        // Prevent timing attacks by comparing hashes of equal length
+        // Compare equal-length digests with timingSafeEqual.
         const safeDecrypted = typeof decrypted === 'string' ? decrypted : crypto.randomBytes(32).toString('hex');
         const safePassword = typeof oldPassword === 'string' ? oldPassword : '';
         const a = crypto.createHash('sha256').update(safeDecrypted).digest();
@@ -283,7 +283,7 @@ export const changePassword = async (req, res) => {
     const newPasswordStored = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
     // Update password
-    // Also clear force_password_change flag if it was set
+    // Clear the administrator's force_password_change flag when applicable.
     // Increment token_version to invalidate old JWTs
     if (isAdmin) {
        db.prepare(`UPDATE ${table} SET password = ?, force_password_change = 0, token_version = token_version + 1 WHERE id = ?`).run(newPasswordStored, userId);

@@ -181,7 +181,7 @@ export const proxyLive = async (req, res) => {
 
     const wantsTranscode = (req.query.transcode === 'true');
 
-    // Optimization: Skip streamManager overhead for playlist requests (unless transcoding)
+    // Plain HLS playlists defer capacity accounting to their media resource requests.
     if (reqExt !== 'm3u8' || wantsTranscode) {
         if (!await reserveChannelSession(connectionId, user, channel, req, res, channel.name, {
           cleanupUser: true,
@@ -400,7 +400,6 @@ export const proxySegment = async (req, res) => {
   }
 };
 
-// --- Movie Proxy ---
 // --- Timeshift Proxy ---
 export const proxyTimeshift = async (req, res) => {
   const connectionId = crypto.randomUUID();

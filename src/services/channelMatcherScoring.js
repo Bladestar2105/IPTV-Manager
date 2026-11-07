@@ -119,13 +119,13 @@ export class ChannelMatcherScoring extends ChannelMatcherBase {
 
   extractNumbers(str) {
       if (!str) return [];
-      // Look for digits, but ignore standard resolutions like 1080, 720, 2k, 4k that might have leaked through
+      // Normalize each digit group by removing leading zeroes.
       const matches = str.match(/\d+/g);
       return matches ? matches.map(num => parseInt(num, 10).toString()) : [];
   }
 
   findExactMatch(parsed, checkNumbers) {
-    // Optimization: Use baseNameIndex for O(1) lookup
+    // Restrict the scan to candidates with this normalized base name.
     const candidates = this.baseNameIndex.get(parsed.baseName);
     if (!candidates) return undefined;
 
@@ -136,7 +136,7 @@ export class ChannelMatcherScoring extends ChannelMatcherBase {
   }
 
   findCandidatesByBaseName(baseName, checkNumbers) {
-    // Optimization: Use baseNameIndex for O(1) lookup
+    // Restrict the scan to candidates with this normalized base name.
     const candidates = this.baseNameIndex.get(baseName);
     if (!candidates) return [];
 
@@ -278,7 +278,7 @@ export class ChannelMatcherScoring extends ChannelMatcherBase {
 
   /**
    * Calculates Dice Coefficient (Sørensen–Dice index) for string similarity.
-   * Legacy method kept for backward compatibility.
+   * Uses exact bigram sets rather than the hashed signatures used for candidate pruning.
    */
   calculateDiceCoefficient(a, b) {
     if (!a || !b) return 0;
@@ -294,10 +294,7 @@ export class ChannelMatcherScoring extends ChannelMatcherBase {
    * Calculates Dice Coefficient using pre-computed bigram sets.
    */
   calculateDiceCoefficientSets(bigramsA, bigramsB) {
-    if (bigramsA.size === 0 && bigramsB.size === 0) return 0; // Both empty -> 0 similarity? Or 1?
-    // If both strings were empty, bigrams empty. Empty strings are equal?
-    // Original logic: if (a===b) return 1.
-    // If we handle empty case outside, here return 0.
+    if (bigramsA.size === 0 && bigramsB.size === 0) return 0; // No bigrams to compare.
 
     let intersection = 0;
     // Iterate smaller set for performance
@@ -359,7 +356,7 @@ export class ChannelMatcherScoring extends ChannelMatcherBase {
       // 1024 bits = 32 x 32-bit integers
       const sig = new Uint32Array(32);
       for (const val of bigrams) {
-          // Optimized hash for packed integer (matches approx old behavior: 31*c1 + c2)
+          // Hash the two packed UTF-16 code units into the 1024-bit signature.
           let h = (31 * (val >>> 16) + (val & 0xFFFF));
           h = h & 1023;
 

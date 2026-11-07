@@ -31,10 +31,7 @@ const STAGE_STALE_IMPORT_FACTOR = 4;
 const DEFAULT_IMPORT_BODY_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function resolveImportBodyTimeoutMs(raw = process.env.EPG_IMPORT_BODY_TIMEOUT_MS) {
-    // The floor is a guard against 0, not a policy: an operator who sets a
-    // second knows what they are asking for. A value that is not a plain
-    // integer is refused instead of floored — `30m` used to resolve to 1000 ms
-    // and kill every import a second in, silently.
+    // Accept plain integer milliseconds with a one-second minimum; reject unit suffixes.
     return resolveBudget(raw, DEFAULT_IMPORT_BODY_TIMEOUT_MS, 1000,
         Number.MAX_SAFE_INTEGER, 'EPG_IMPORT_BODY_TIMEOUT_MS');
 }

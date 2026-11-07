@@ -37,10 +37,7 @@ async function measureLoopDelay(fn) {
   const end = performance.now();
   const duration = end - start;
 
-  // Expected ticks is duration (ms).
-  // If ticks is much lower, event loop was blocked.
-  // Blocking Ratio: (duration - ticks) / duration
-  // 0 = no blocking, 1 = full blocking
+  // shortcut: ticks also depend on timer scheduling; use a delay histogram before publishing latency figures.
 
   return {
     duration,
@@ -50,9 +47,7 @@ async function measureLoopDelay(fn) {
 }
 
 async function runSync() {
-  // Simulate concurrent requests reaching the point of writing
-  // In a real server, requests come in async, but the write blocks everything.
-  // So we just iterate and write.
+  // Sequential writes occupy this event loop until the loop finishes.
   for (let i = 0; i < FILE_COUNT; i++) {
     const filePath = path.join(BENCH_DIR, `sync_${i}.png`);
     try {
@@ -62,9 +57,7 @@ async function runSync() {
 }
 
 async function runAsync() {
-  // Simulate concurrent requests
-  // In async mode, we can fire off many writes and await them.
-  // We use the "safe" approach: write to temp, then rename.
+  // Compare concurrent writes that publish each completed file by renaming it.
   const promises = [];
   for (let i = 0; i < FILE_COUNT; i++) {
     const filePath = path.join(BENCH_DIR, `async_${i}.png`);

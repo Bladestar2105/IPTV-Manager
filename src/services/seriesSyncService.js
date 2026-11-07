@@ -12,8 +12,8 @@ import { resolveBudget } from '../utils/env.js';
 // Xtream get.php playlists list every episode of every series. Episodes are
 // not included in get_series, so they are fetched per series via
 // get_series_info and cached in provider_series_episodes. The last_modified
-// value from get_series (stored in provider_channels.metadata) gates
-// refetching, so after the initial run only changed series are re-fetched.
+// value from get_series (stored in provider_channels.metadata) avoids refetching
+// unchanged series; series without that value are checked again weekly.
 //
 // Episode data is stored per upstream panel and series. Playable URLs use a
 // persistent compact alias bound to the exact authorized series assignment;
@@ -21,9 +21,8 @@ import { resolveBudget } from '../utils/env.js';
 // remain usable only when they resolve to one authorized cached episode.
 
 const EPISODE_SYNC_CONCURRENCY = 3;
-// An upstream that stops answering does not recover within one run. Grinding
-// through tens of thousands of series against it costs one timeout each, keeps
-// the request slots busy and floods the log; the next scheduled sync retries.
+// Stop repeated failures against an unresponsive account instead of spending
+// one timeout per queued series; a later sync can retry.
 const EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES = resolveBudget(
   process.env.EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES, 25, 5, Number.MAX_SAFE_INTEGER,
   'EPISODE_SYNC_MAX_CONSECUTIVE_FAILURES');

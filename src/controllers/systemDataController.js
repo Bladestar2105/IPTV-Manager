@@ -58,7 +58,6 @@ export const exportData = (req, res) => {
 
     if (usersToExport.length > 0) {
        const userIds = usersToExport.map(u => u.id);
-       // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
        const userPlaceholders = Array(userIds.length).fill('?').join(',');
 
        const providers = db.prepare(`SELECT * FROM providers WHERE user_id IN (${userPlaceholders})`).all(...userIds);
@@ -71,7 +70,6 @@ export const exportData = (req, res) => {
        exportData.providers = providers;
 
        if (providerIds.length > 0) {
-          // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
           const provPlaceholders = Array(providerIds.length).fill('?').join(',');
 
           const channels = db.prepare(`SELECT * FROM provider_channels WHERE provider_id IN (${provPlaceholders})`).all(...providerIds);
@@ -183,8 +181,7 @@ async function decodeImportFile(tempPath, password) {
 
   let jsonStr;
   try {
-    // Security: Use maxOutputLength to prevent Zip Bomb / DoS attacks
-    // Limit to 200MB of uncompressed JSON data
+    // Bound decompressed JSON to 200 MiB before parsing it.
     jsonStr = zlib.gunzipSync(compressed, { maxOutputLength: 200 * 1024 * 1024 }).toString('utf8');
   } catch {
     return { error: { error: 'Decompression failed or file too large.' } };
@@ -283,7 +280,7 @@ export const importData = async (req, res) => {
       const existingUsers = db.prepare('SELECT id, username FROM users').all();
       const existingUserMap = new Map(existingUsers.map(u => [u.username, u.id]));
 
-      // ⚡ Bolt: Hoist prepared statements to prevent query recompilation inside loops
+      // Reuse the insert statement across imported users.
       const insertUserStmt = db.prepare(`
         INSERT INTO users (username, password, is_active, webui_access, provider_access, hdhr_enabled, hdhr_token, otp_enabled, otp_secret, max_connections, expiry_date, allowed_countries, notes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

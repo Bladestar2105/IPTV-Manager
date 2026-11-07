@@ -4,7 +4,7 @@ import { LOCALES as NUMBER_LOCALES, ToNumbers } from 'to-numbers';
 // Optimization: Pre-compile regex patterns to avoid re-compilation on every match
 export const CHANNEL_NAME_PATTERNS = [
   // "| DE | Arte", "[EN] CNN", "|FR| TF1", "(DE) RTL", "┃DE┃ SKY"
-  // Added unicode ranges for Box Drawing (\u2500-\u257F), Block Elements (\u2580-\u259F), Geometric Shapes (\u25A0-\u25FF)
+  // Accept box-drawing, block-element and geometric-shape separators.
   /^[\|\-_\.\[\]\(\)\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]+\s*([A-Z]{2,3})\s*[\-_\.\|:\]\)\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]+\s*(.+)$/i,
 
   // "DE: Arte", "EN: CNN", "DE| RTL", "DE - RTL", "DE┃ RTL"
@@ -14,7 +14,6 @@ export const CHANNEL_NAME_PATTERNS = [
   /^(.+?)\s+([A-Z]{2,3})$/i,
 
   // "Arte (German)", "CNN (EN)", "Eurosport 1 [ENG]"
-  // Fixed regex: removed extra backslashes to correctly match parenthesis
   /^(.+?)\s*[\(\[]([^\)\]]+)[\)\]]$/i,
 
   // "Arte_DE", "CNN-INT", "Eurosport1.FR", "DE| RTL", "Arte┃DE"
@@ -24,7 +23,7 @@ export const CHANNEL_NAME_PATTERNS = [
   /^([A-Z]{2,3})[\-_\.\|:\u2500-\u257F\u2580-\u259F\u25A0-\u25FF]\s*(.+)$/i,
 ];
 
-// Optimization: Pre-compute language map once
+// Common ISO 639-2 aliases supplement the ISO 639-1 language names below.
 function getISO6392Code(iso6391Code) {
   // Mapping für häufige Codes
   const mapping = {

@@ -3,10 +3,7 @@ services:
     image: ghcr.io/bladestar2105/iptv-manager:latest
     container_name: iptv-manager
     restart: unless-stopped
-    # The primary runs a synchronous WAL checkpoint, and the first one after an
-    # upgrade can have a multi-gigabyte log to drain. Docker's default 10s would
-    # SIGKILL the container in the middle of it, which is exactly the abandoned
-    # state the startup sweeps then have to clean up.
+    # Allow an in-flight WAL checkpoint and worker cleanup to finish before SIGKILL.
     stop_grace_period: 90s
     # Self-contained for Portainer Web Editor; Docker's default security applies.
     # Personal ChatGPT accounts: add docker-compose.chatgpt.yml after host setup.
@@ -14,8 +11,7 @@ services:
       - "0.0.0.0:3000:3000"
     volumes:
       - ./data:/data
-    # Without a limit the JSON log file grows without bound and older output is
-    # never rotated away, so a past incident cannot be reconstructed.
+    # Bound container log disk usage while keeping recent rotated output.
     logging:
       driver: json-file
       options:

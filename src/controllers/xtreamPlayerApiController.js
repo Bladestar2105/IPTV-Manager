@@ -90,9 +90,7 @@ export const playerApi = async (req, res) => {
     }
 
     const getUserCategoriesByType = (type) => {
-      // ⚡ Bolt: Replace .all().map() with .iterate() to eliminate intermediate V8 array allocation overhead
-      // 🎯 Why: Using .all().map() creates intermediate arrays. iterate() streams rows directly from SQLite.
-      // 📊 Impact: Lowers peak memory usage and garbage collection pressure when processing large category lists.
+      // Build categories without retaining a second array of database rows.
       let query = `
         SELECT DISTINCT cat.*
         FROM user_categories cat
@@ -146,13 +144,10 @@ export const playerApi = async (req, res) => {
           query += ' AND cat.id = ?';
           params.push(Number(categoryId));
       }
-      // ⚡ Bolt: Include cat.sort_order in the ORDER BY clause to fully utilize the composite index idx_cat_user_sort
-      // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
+      // Preserve category order before channel order within each category.
       query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
-      // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-      // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
-      // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+      // streamJsonResponse iterates rows without retaining the complete query result.
       const stmt = db.prepare(query);
 
       const nowStr = now.toString();
@@ -193,13 +188,10 @@ export const playerApi = async (req, res) => {
           query += ' AND cat.id = ?';
           params.push(Number(categoryId));
       }
-      // ⚡ Bolt: Include cat.sort_order in the ORDER BY clause to fully utilize the composite index idx_cat_user_sort
-      // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
+      // Preserve category order before channel order within each category.
       query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
-      // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-      // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
-      // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+      // streamJsonResponse iterates rows without retaining the complete query result.
       const stmt = db.prepare(query);
 
       const nowStr = now.toString();
@@ -240,13 +232,10 @@ export const playerApi = async (req, res) => {
           query += ' AND cat.id = ?';
           params.push(Number(categoryId));
       }
-      // ⚡ Bolt: Include cat.sort_order in the ORDER BY clause to fully utilize the composite index idx_cat_user_sort
-      // This eliminates an expensive temporary B-tree sorting pass for tens of thousands of channels
+      // Preserve category order before channel order within each category.
       query += ' ORDER BY cat.sort_order ASC, uc.sort_order ASC';
 
-      // ⚡ Bolt: Replace .all() with .iterate() to stream rows directly from SQLite.
-      // 🎯 Why: Loading massive lists of channel objects into V8 memory at once can cause memory spikes.
-      // 📊 Impact: Reduces peak memory usage and iterates rows as they are returned.
+      // streamJsonResponse iterates rows without retaining the complete query result.
       const stmt = db.prepare(query);
 
       return streamJsonResponse(res, stmt, params, (ch, i) => {
@@ -475,11 +464,11 @@ export const playerApi = async (req, res) => {
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
       if (!epgId) return res.json({epg_listings: []});
 
-      // ⚡ Bolt: Remove await since getEpgPrograms now returns a synchronous iterator
+      // getEpgPrograms returns a synchronous SQLite iterator.
       const programs = getEpgPrograms(epgId, limit);
 
       const listings = [];
-      // ⚡ Bolt: Iterate directly over the SQLite generator and use pre-formatted dates
+      // Use the shared EPG formatter for consistent flags and date fields.
       for (const p of programs) {
           listings.push(formatXtreamEpgListing(p, epgId));
       }

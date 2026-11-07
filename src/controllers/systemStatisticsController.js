@@ -45,8 +45,7 @@ export const getStatistics = async (req, res) => {
 
     const allStreams = await streamManager.getAll();
 
-    // ⚡ Bolt: Hoist the prepared statement outside the loop to prevent parsing/compiling the SQL on every iteration.
-    // This provides a massive speedup without the memory overhead of fetching tens of thousands of channels.
+    // Reuse the logo lookup statement for active streams.
     const getChannelStmt = db.prepare(`
       SELECT pc.logo, pc.epg_channel_id, map.epg_channel_id as manual_epg_id, p.use_mapped_epg_icon
       FROM provider_channels pc
@@ -96,7 +95,7 @@ export const getStatistics = async (req, res) => {
     const primaryFs = fsSize.find(fs => fs.mount === '/') || fsSize[0] || {};
     const primaryNet = netStats.find(net => net.operstate === 'up') || netStats[0] || {};
 
-    // Calculate total bandwidth since app start
+    // Subtract the startup network-counter sample when it is available.
     let rxTotal = primaryNet.rx_bytes || 0;
     let txTotal = primaryNet.tx_bytes || 0;
     if (initialNetStats) {

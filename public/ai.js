@@ -12,8 +12,7 @@ window.aiUI = (() => {
   let codex = {available: false, reason: null}, login = null, loginTimer, accountState = null;
   // Mirrors the server-side allowlist so an unexpected address is never linked.
   const LOGIN_HOSTS = ['auth.openai.com', 'chatgpt.com', 'auth.chatgpt.com'];
-  // Roughly a minute of retries, well inside the server's two-minute window for
-  // an attempt that is still being watched.
+  // Retry transient failures because an unpolled sign-in expires server-side.
   const MAX_LINK_POLL_FAILURES = 15;
   const root = () => document.getElementById('view-ai');
   const el = id => document.getElementById(`ai-${id}`);

@@ -150,9 +150,9 @@ export async function fetchProviderCatalog(provider) {
                 epg_channel_id: ch.epg_id,
                 category_id: ch.category_id,
                 category_type: ch.stream_type || 'live',
-                metadata: ch.metadata || {}, // Store parsed headers/drm (Optimization: avoid double stringify)
+                metadata: ch.metadata || {}, // Keep headers and DRM metadata parsed until persistence.
                 container_extension: ch.url.includes('.mpd') ? 'mpd' : 'ts',
-                original_url: ch.url // Pass original URL for proxying later?
+                original_url: ch.url // Preserve the M3U playback URL for the Manager proxy.
               };
             });
 

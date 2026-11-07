@@ -54,8 +54,7 @@ export async function updateProviderEpg(providerId, skipPrune = false, { schedul
 
             mainDb.prepare('UPDATE providers SET last_epg_update = ? WHERE id = ?').run(now, providerId);
         } catch (e) {
-            // Even on error, we might want to update last_update to prevent immediate retry loop?
-            // No, let scheduler handle backoff via failedUpdates map.
+            // Preserve the last successful update; scheduled retries use last_epg_attempt.
             throw e;
         }
 
@@ -124,14 +123,8 @@ async function importChannelsFromProvider(providerId) {
 /**
  * Drop programmes whose stop time is older than the retention window.
  *
- * In batches: this runs after every EPG import and hourly from the scheduler
- * worker, so normally it removes an hour or two of expired rows. But it removes
- * whatever accumulated since it last ran, and it does not run while imports are
- * failing — the deployment this was written for had every import dying a second
- * in — so the first successful run after such a stretch faces a backlog of the
- * whole retention window on a multi-gigabyte table. As one statement that is a
- * write lock held for as long as it takes, in a worker that is pumping streams
- * while better-sqlite3 blocks its event loop.
+ * Import completion and hourly maintenance can encounter a large backlog.
+ * Short transactions bound each write lock and synchronous event-loop stall.
  */
 export function pruneOldEpgData(days = 7) {
     const cutoff = Math.floor(Date.now() / 1000) - (days * 86400);
@@ -171,9 +164,7 @@ export function getEpgPrograms(channelId, limit = 1000, options = {}) {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    // ⚡ Bolt: Offload date formatting to SQLite using datetime() and use .iterate() to reduce V8 memory pressure.
-    // 🎯 Why: Creating Date objects and manipulating strings in JS for every program row causes CPU and GC overhead. Loading large lists of program objects into V8 memory at once can cause memory spikes.
-    // 📊 Impact: Significantly speeds up EPG endpoint and reduces memory allocations.
+    // Iterate formatted rows without materializing the entire result in JavaScript.
     return db.prepare(`
         SELECT
             start, stop, title, desc, lang, channel_id,
@@ -251,7 +242,7 @@ export function getEpgProgramsPage(channelId, start, end, limit, offset) {
 
 export function getProgramsNow() {
     const now = Math.floor(Date.now() / 1000);
-    // ⚡ Bolt: Offload grouping to SQLite for faster execution and lower memory usage
+    // Return the grouped JSON directly from SQLite.
     return db.prepare(`
         SELECT json_group_object(channel_id, json(program)) as json_data
         FROM (
@@ -264,11 +255,7 @@ export function getProgramsNow() {
 }
 
 export function getProgramsSchedule(start, end) {
-    // ⚡ Bolt: Aggregate array directly in SQLite using json_group_array
-    // This avoids creating thousands of intermediate objects in V8 memory.
-    // Ensure chronological order via subquery before grouping.
-    // ⚡ Bolt: Use ORDER BY channel_id ASC, start ASC to fully utilize idx_epg_programs_channel_start.
-    // This eliminates two temporary B-trees (one for ORDER BY, one for GROUP BY) during execution.
+    // Order programmes before aggregation so each channel's JSON schedule is chronological.
     return db.prepare(`
         SELECT json_group_object(channel_id, json(programs)) as json_data
         FROM (
@@ -336,18 +323,15 @@ export async function* getEpgXmlForChannels(channelIds, mapLogo = logo => logo) 
     if (!channelIds || channelIds.size === 0) return;
 
     const ids = Array.from(channelIds);
-    const BATCH_SIZE = 900; // SQLite limit
+    const BATCH_SIZE = 900; // Stay below the bind-parameter limit of supported SQLite builds.
 
-    // ⚡ Bolt: Buffer XML strings to avoid massive overhead of individual res.write calls per program
-    // 🎯 Why: Tens of thousands of small `yield` strings severely block the Node event loop and network stack
-    // 📊 Impact: Drastically increases XMLTV generation throughput and lowers CPU usage
+    // Yield buffered XML chunks rather than one fragment per programme.
     let buffer = '';
     const FLUSH_LIMIT = 65536; // 64KB
 
     // 1. Fetch Channels
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
-        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
         const placeholders = Array(batch.length).fill('?').join(',');
         const channels = db.prepare(`
             SELECT id, name, logo, source_type, source_id
@@ -365,24 +349,13 @@ export async function* getEpgXmlForChannels(channelIds, mapLogo = logo => logo) 
         }
     }
 
-    // 2. Fetch Programs (Current + Future + 24h past for catchup?)
-    // User asked for catchup 7 days.
-    // If this is for XMLTV export, we probably want 7 days history if available?
-    // Or just "Now"? Usually XMLTV is for next 24-48h.
-    // But user mentioned catchup.
-    // Let's provide -1 day to +2 days for standard.
-    // Or should I fetch everything in DB?
-    // Since we prune DB to 7 days, returning everything is fine if the client handles it.
-    // Let's stream everything in DB for these channels.
+    // Export all retained programmes for these channels, including catch-up history.
 
     for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
-        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
         const placeholders = Array(batch.length).fill('?').join(',');
 
-        // We need to stream programs to avoid memory issues.
-        // better-sqlite3 iterate() is good for this.
-        // ⚡ Bolt: Offload XMLTV date formatting to SQLite strftime to eliminate V8 Date operations and string concatenations
+        // Format timestamps in SQLite and iterate rows without buffering the full schedule.
         const stmt = db.prepare(`
             SELECT
                 strftime('%Y%m%d%H%M%S +0000', start, 'unixepoch') as xmltv_start,

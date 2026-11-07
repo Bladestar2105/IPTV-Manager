@@ -33,7 +33,7 @@ ENV AI_CODEX_ENABLED=true
 # Create data directory
 RUN mkdir -p /data
 
-# Drop root privileges for runtime
+# Create the account used by the entrypoint.
 RUN addgroup -S app && adduser -S -G app app && chown -R app:app /app /data
 
 # Entrypoint performs compatibility permission fix for mounted volumes, then drops privileges

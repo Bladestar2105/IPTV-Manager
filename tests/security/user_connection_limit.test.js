@@ -136,8 +136,8 @@ describe('User Connection Limit', () => {
 
         await streamController.proxyLive(req, res);
 
-        expect(streamManager.getUserConnectionCount).not.toHaveBeenCalled(); // Should assume check skipped or count called but ignored?
-        // Wait, logic is: if (max > 0) check. So if max=0, it should NOT call getCount.
+        // A zero limit skips the user-count precheck.
+        expect(streamManager.getUserConnectionCount).not.toHaveBeenCalled();
         expect(streamManager.reserve).toHaveBeenCalled();
     });
 
@@ -191,19 +191,11 @@ describe('User Connection Limit', () => {
     });
 
     it('should cleanup user before checking limit for live streams', async () => {
-        // Scenario: User has limit 1. Current active is 1 (same IP).
-        // Request comes from same IP. cleanupUser should run.
-        // We simulate cleanupUser implicitly.
-        // But getActiveConnectionCount should reflect state AFTER cleanup?
-        // Mock sequence:
-        // 1. cleanupUser called.
-        // 2. getUserConnectionCount called.
-        // Since we mock, we can verify call order or just values.
+        // Model a previous session on the same IP that cleanupUser removes.
 
         getXtreamUser.mockResolvedValue({ id: 1, username: 'user1', max_connections: 1 });
 
-        // If cleanupUser works, the count returned by DB would be 0.
-        // So we mock count as 0.
+        // The count after cleanup leaves room for the new reservation.
         streamManager.getUserConnectionCount.mockResolvedValue(0);
 
         const req = {

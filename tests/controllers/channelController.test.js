@@ -61,7 +61,7 @@ describe('Channel Controller - createUserCategory', () => {
         db.pragma('foreign_keys = ON');
 
         // Setup initial users
-        // Note: is_admin is not in users table, it's separate admin_users or managed by webui_access
+        // Administrator identity comes from admin_users; webui_access grants no admin rights.
         db.prepare("INSERT INTO admin_users (id, username, password, is_active) VALUES (1, 'admin', 'admin', 1)").run();
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (2, 'user', 'user', 1)").run();
         db.prepare("INSERT INTO users (id, username, password, is_active) VALUES (3, 'other', 'other', 1)").run();

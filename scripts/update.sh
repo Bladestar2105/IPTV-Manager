@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # IPTV-Manager Update Script for Debian/Ubuntu
-# This script pulls the latest changes, updates dependencies, and restarts the service.
+# Prepare dependencies for the fetched commit before stopping and fast-forwarding the service checkout.
 
 set -e
 set -o pipefail

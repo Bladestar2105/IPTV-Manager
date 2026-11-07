@@ -520,7 +520,7 @@ export async function performSync(providerId, userId, options = {}) {
       return { channelsAdded, channelsUpdated, categoriesAdded, errorMessage, status: 'error' };
     }
 
-    // Check expiry (non-blocking or blocking? blocking is safer to ensure updated data)
+    // Refresh provider expiry before fetching its catalog.
     await checkProviderExpiry(providerId);
 
     // Decrypt password for usage

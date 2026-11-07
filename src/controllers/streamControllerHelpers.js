@@ -162,11 +162,11 @@ export function getSeriesEpisode(encodedId, userId) {
 
 export function getProviderPool(userId, providerUrl) {
     const base = providerUrl.replace(/\/+$/, '');
-    // ⚡ Bolt: Cache prepared statement to eliminate SQLite compilation overhead on hot paths
+    // Reuse the statement across provider-pool lookups.
     if (!stmts.getProviderPool) {
         stmts.getProviderPool = db.prepare('SELECT * FROM providers WHERE user_id = ? AND url LIKE ?');
     }
-    // Fetch all providers for the same user with the same base url
+    // Narrow the candidate set before comparing normalized panel identities.
     const providers = stmts.getProviderPool.all(userId, `${base}%`);
     // Filter strictly by normalized base URL in case of LIKE edge cases
     const sourceKey = providerSourceKey(providerUrl);
@@ -224,11 +224,11 @@ export async function findAvailableProvider(userId, originalProvider, reqIp, ses
     for (const p of pool) {
         let isSessionActive = false;
 
-        // Handle provider object structure differences (from getChannel vs getProvider)
+        // Candidates already use the normalized provider shape.
         const pId = p.id;
         const pMaxConnections = p.max_connections;
 
-        // If the session is already active on this provider with this IP, it's free to use
+        // Requests for the same user/IP/channel session share one capacity slot.
         isSessionActive = await streamManager.isSessionActive(userId, reqIp, sessionName, pId);
         if (isSessionActive) {
             return p;
@@ -766,7 +766,7 @@ export async function fetchWithBackups(primaryUrl, backupUrls, options, { req, r
                 return { response: upstream, successfulUrl: upstream.url || u, selectedUrl: u };
             }
             upstream.body?.destroy?.();
-            // If 404/403/407/etc, we might want to try backup? Yes.
+            // Non-success responses advance to the next backup.
             console.warn(`Connection failed to ${redactUrl(u)}: ${upstream.status}`);
 
             if (upstream.status === 407) {

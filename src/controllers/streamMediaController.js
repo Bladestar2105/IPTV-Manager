@@ -107,11 +107,10 @@ export const proxyMovie = async (req, res) => {
             }, { req, res });
             const successfulUrl = result.response.url || result.successfulUrl || remoteUrl;
 
-            // Release the initial probe connection immediately so it doesn't count against provider limits
+            // Close the probe response before FFmpeg opens its own upstream connection.
             try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
-            // For VOD/MKV, ffmpeg needs to probe. It is much more reliable to let ffmpeg read the URL natively.
-            // Convert headers object to an array of strings for FFmpeg -headers option
+            // Native URL input lets FFmpeg seek while probing container metadata.
             const headerStr = Object.entries(ffmpegUpstreamHeaders(result, transcodeHeaders, remoteUrl)).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');
@@ -281,10 +280,10 @@ export const proxySeries = async (req, res) => {
             }, { req, res });
             const successfulUrl = result.response.url || result.successfulUrl || remoteUrl;
 
-            // Release the initial probe connection immediately so it doesn't count against provider limits
+            // Close the probe response before FFmpeg opens its own upstream connection.
             try { if (result.response && result.response.body && !result.response.body.destroyed) result.response.body.destroy(); } catch {}
 
-            // For Series/MKV, ffmpeg needs to probe. Let ffmpeg read the URL natively.
+            // Native URL input lets FFmpeg seek while probing container metadata.
             const headerStr = Object.entries(ffmpegUpstreamHeaders(result, transcodeHeaders, remoteUrl)).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
 
             res.setHeader('Content-Type', 'video/mp4');

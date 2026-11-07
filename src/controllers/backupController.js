@@ -49,7 +49,6 @@ export const createBackup = (req, res) => {
     let categoryMappings = [];
 
     if (categoryIds.length > 0) {
-      // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
       const placeholders = Array(categoryIds.length).fill('?').join(',');
       userChannels = db.prepare(`SELECT * FROM user_channels WHERE user_category_id IN (${placeholders})`).all(...categoryIds);
       categoryMappings = db.prepare(`SELECT * FROM category_mappings WHERE user_category_id IN (${placeholders})`).all(...categoryIds);
@@ -124,7 +123,6 @@ export const restoreBackup = (req, res) => {
       const currentCategoryIds = currentCategories.map(c => c.id);
 
       if (currentCategoryIds.length > 0) {
-        // ⚡ Bolt: Use Array(n).fill('?').join(',') instead of .map(() => '?') to avoid closure allocation overhead in V8
         const placeholders = Array(currentCategoryIds.length).fill('?').join(',');
         db.prepare(`DELETE FROM user_channels WHERE user_category_id IN (${placeholders})`).run(...currentCategoryIds);
         db.prepare(`UPDATE category_mappings SET user_category_id = NULL, auto_created = 0 WHERE user_category_id IN (${placeholders})`).run(...currentCategoryIds);

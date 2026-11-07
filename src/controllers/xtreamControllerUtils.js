@@ -3,7 +3,7 @@
 export const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
   let str = String(val);
-  // ⚡ Bolt: Fast-path check to avoid expensive regex allocations for strings without newlines
+  // Skip regex replacement when there are no line breaks.
   if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
   if (str.indexOf('"') !== -1) str = str.replace(/"/g, '');
   return str.trim();
@@ -12,7 +12,7 @@ export const sanitizeM3uTag = (val) => {
 export const sanitizeM3uName = (val) => {
   if (val === null || val === undefined) return '';
   let str = String(val);
-  // ⚡ Bolt: Fast-path check to avoid expensive regex allocations for strings without newlines
+  // Skip regex replacement when there are no line breaks.
   if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
   if (str.indexOf(',') !== -1) str = str.replace(/,/g, ' ');
   if (str.indexOf('"') !== -1) str = str.replace(/"/g, '');
@@ -22,7 +22,7 @@ export const sanitizeM3uName = (val) => {
 export const sanitizeMetadata = (val) => {
   if (val === null || val === undefined) return '';
   let str = String(val);
-  // ⚡ Bolt: Fast-path check to avoid expensive regex allocations for strings without newlines
+  // Skip regex replacement when there are no line breaks.
   if (str.indexOf('\n') !== -1 || str.indexOf('\r') !== -1) str = str.replace(/[\r\n]+/g, ' ');
   if (str.indexOf('"') !== -1) str = str.replace(/"/g, "'");
   return str.trim();

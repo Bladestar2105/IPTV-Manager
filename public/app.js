@@ -839,11 +839,7 @@ document.getElementById('stalker-device-form').addEventListener('submit', async 
 async function loadUsers() {
   const requestGeneration = sessionGeneration;
   if (!currentUser || !currentUser.is_admin) {
-      // If user, fake load themselves as selected
-      // Note: for non-admins, API currently doesn't return hdhr_token in /verify-token response
-      // We might need to fetch it or ensure verify-token returns it.
-      // However, /api/verify-token DOES return the user object.
-      // Let's assume verify-token returns necessary fields.
+      // Self-management uses the authenticated profile instead of the admin user list.
       const user = currentUser;
 
       renderUserDetails(user);
@@ -851,7 +847,6 @@ async function loadUsers() {
       // Hide user list and management
       document.getElementById('user-list').innerHTML = `<li class="list-group-item text-muted">${t('managed_by_admin')}</li>`;
 
-      // Update dummy export select
       updateExportUserSelect([user]);
       return;
   }
@@ -1058,7 +1053,7 @@ function showEditUserModal(user) {
   } else {
     document.getElementById('edit-user-expiry-date').value = '';
   }
-  // Checkbox handling: default to true if undefined/null (legacy users), else use value
+  // Profiles without webui_access retain the legacy enabled default.
   const webuiAccess = user.webui_access !== undefined ? user.webui_access === 1 : true;
   document.getElementById('edit-user-webui-access').checked = webuiAccess;
   document.getElementById('edit-user-provider-access').checked = user.provider_access === 1;
@@ -2089,7 +2084,7 @@ async function fetchProviderChannels(reset) {
     if (!currentUser.is_admin) await refreshCurrentUserPermissions();
     if (requestGeneration !== sessionGeneration || !currentUser || select.value !== providerId) return;
 
-    // Handle Response (supports new object structure and legacy array)
+    // Accept paginated responses and legacy arrays.
     let channels = [];
     if (Array.isArray(res)) {
         channels = res;
@@ -2159,7 +2154,7 @@ function renderProviderChannels(channels) {
     
     if (ch.logo) {
       const img = document.createElement('img');
-      img.src = getProxiedUrl(ch.logo); // URL is attribute, relatively safe if protocol checked, but src should be fine
+      img.src = getProxiedUrl(ch.logo);
       img.alt = ch.name; // Accessible alt text
       img.style.width = '20px';
       img.style.height = '20px';
@@ -2198,7 +2193,6 @@ function renderProviderChannels(channels) {
         btn.className = 'btn btn-sm btn-outline-success ms-2';
 
         setTimeout(() => {
-             // Only restore if the button is still in the DOM (though garbage collection handles it, but good practice)
              btn.className = originalClass;
              btn.textContent = originalText;
              btn.disabled = false;
@@ -2745,8 +2739,7 @@ async function showSyncLogs(providerId) {
         // Same reason as the toast: the amber badge needs dark text to be legible.
         const statusText = statusClass === 'warning' ? ' text-dark' : '';
         
-        // error_message can carry text an upstream provider produced, so every
-        // interpolated field is escaped before it becomes markup.
+        // Escape upstream error text before rendering the log markup.
         tr.innerHTML = `
           <td>${escapeHtml(date.toLocaleString())}</td>
           <td><span class="badge bg-${statusClass}${statusText}">${escapeHtml(log.status)}</span></td>
@@ -3741,7 +3734,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global Modal Autofocus
   document.addEventListener('shown.bs.modal', function (event) {
     const modal = event.target;
-    // Prioritize [autofocus], then first visible input
+    // Prefer autofocus, then an enabled field without type="hidden".
     const input = modal.querySelector('[autofocus]') ||
                   modal.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled])');
     if (input) {
@@ -4352,8 +4345,6 @@ async function loadEpgMappingUsersAndCategories() {
             userSelect.appendChild(opt);
         });
 
-        // Auto-select first user or current selection logic if needed
-        // For now, let admin select manually.
         userSelect.onchange = () => loadEpgCategoriesForMapping(userSelect.value);
     } else if (!isAdmin && currentUser) {
         // Non-admin: Load categories for self immediately
@@ -4886,7 +4877,6 @@ async function selectEpgMapping(epgId) {
     bootstrap.Modal.getInstance(document.getElementById('epg-select-modal')).hide();
     loadEpgMappingChannels();
 
-    // Optional: Toast or small notification
   } catch (e) {
     alert(t('errorPrefix') + ' ' + e.message);
   }
@@ -5082,7 +5072,6 @@ async function handleLogin(event) {
 
     if (currentUser.force_password_change) {
         showChangePasswordModal();
-        // Force the modal to be non-closable or just persistent
         alert(t('force_password_change') || 'You must change your password immediately.');
         return;
     }
@@ -5376,8 +5365,7 @@ function showToast(message, type = 'primary') {
     const icon = icons[type] || '';
 
     const el = document.createElement('div');
-    // bg-warning is amber: white on it is about 1.6:1, far below the 4.5:1 floor.
-    // Every other background here is dark enough for white.
+    // Amber warnings need dark text for readable contrast.
     const textClass = type === 'warning' ? 'text-dark' : 'text-white';
     el.className = `toast align-items-center ${textClass} bg-${type} border-0 shadow-lg`;
     el.setAttribute('role', 'alert');
@@ -5500,10 +5488,6 @@ async function createShare() {
 
             document.getElementById('share-link-output').value = res.link;
             if (res.short_link) {
-                // If we have a short link, append it or show it.
-                // For simplicity, let's append it to the message or replace value if preferred.
-                // Let's replace the value to show the short link primarily, or show both?
-                // The UI has one input. Let's show the short link if available as it's nicer.
                 document.getElementById('share-link-output').value = res.short_link;
             }
             document.getElementById('share-result').classList.remove('d-none');

@@ -63,7 +63,7 @@ export class ChannelMatcher extends ChannelMatcherScoring {
       // If there's a mismatch, we let it fall through to the fallback logic where it will be heavily penalized.
     }
 
-    if (candidates.length >= 1) { // Changed to >= 1 to handle the single mismatched candidate falling through
+    if (candidates.length >= 1) { // Includes a single candidate with a mismatched language.
       // 3. Filtere nach Sprache falls vorhanden
       if (parsed.language) {
         const langFiltered = candidates.filter(c => {
@@ -81,7 +81,6 @@ export class ChannelMatcher extends ChannelMatcherScoring {
 
         if (langFiltered.length > 1) {
           // 4. String-Similarity auf den gefilterten Kandidaten
-          // Optimization: Pass parsed object
           const best = this.findBestSimilarity(parsed, langFiltered);
           return {
             epgChannel: best.channel.channel,
@@ -93,7 +92,6 @@ export class ChannelMatcher extends ChannelMatcherScoring {
       }
 
       // 5. Fallback: String-Similarity auf allen Kandidaten
-      // Optimization: Pass parsed object
       const best = this.findBestSimilarity(parsed, candidates);
 
       // Penalty logic for fallback if we requested a specific language
@@ -107,7 +105,7 @@ export class ChannelMatcher extends ChannelMatcherScoring {
 
       const similarityConfidence = best.score * 0.7;
 
-      // Store the best similarity fallback to return if global fuzzy search doesn't find anything better
+      // Accept the base-name fallback only when its language-adjusted confidence is high enough.
       const bestSimilarityFallback = {
         epgChannel: best.channel ? best.channel.channel : null,
         confidence: similarityConfidence,
@@ -115,28 +113,18 @@ export class ChannelMatcher extends ChannelMatcherScoring {
         parsed: parsed
       };
 
-      // If the best candidate from the base name fallback has very low confidence (e.g. because of language penalty)
-      // We should fall through to the global fuzzy search instead of immediately returning a bad match.
+      // An explicit language mismatch has confidence at most 0.07 and falls through.
       if (similarityConfidence > 0.4) {
-          // Wait! Let's double check if we really want to return this.
-          // If we heavily penalized it, the score will be very low (e.g., 1.0 * 0.1 * 0.7 = 0.07).
-          // But what if it was initially very high and we didn't penalize it enough?
-          // If explicitly different language, we shouldn't return it as a good match unless we have to.
-          // With best.score *= 0.1, similarityConfidence is at most 0.07, so it will fall through anyway.
           return bestSimilarityFallback;
       }
-
-      // If confidence is low, we store it and let it fall through to global fuzzy,
-      // but if global fuzzy fails, we should still return the best match we found (or no match if it's really bad)
-      // We'll handle this by letting it fall through.
     }
 
     // 6. Global Fuzzy Fallback (if base name didn't match exactly, or if the match was heavily penalized)
     // Filter all EPG channels by Number Logic First
-    // Optimization: Use index instead of filtering all channels O(N) -> O(1)
+    // Restrict fuzzy candidates to the same number group.
     const potentialCandidates = this.numbersIndex.get(iptvNumsString) || [];
 
-    // Optimization: Prune using binary search on signaturePopcount
+    // Binary-search the sorted signature sizes for the range that can reach the threshold.
     // B >= A * T / (2 - T)
     // B <= A * (2 - T) / T
     const searchPopcount = parsed.signaturePopcount;
@@ -159,8 +147,7 @@ export class ChannelMatcher extends ChannelMatcherScoring {
 
     const fuzzyCandidates = potentialCandidates.slice(startIdx, endIdx);
 
-    // If language is known, prefer that language, but allow others if score is very high
-    // Optimization: Pass parsed object and threshold 0.8, and indicate candidates are sorted by length
+    // Candidates are sorted by signature size, allowing the scorer to stop above its upper bound.
     const bestGlobal = this.findBestSimilarity(parsed, fuzzyCandidates, 0.8, true);
 
     if (bestGlobal.score > 0.8) {
@@ -211,10 +198,7 @@ export class ChannelMatcher extends ChannelMatcherScoring {
         }
     }
 
-    // If we made it here, global fuzzy didn't find a good match either.
-    // If we have a fallback match from earlier, we should use it if it's better than nothing.
-    // However, if we're here, bestSimilarityFallback (if it exists) had confidence <= 0.4.
-    // It's usually better to just return no_match.
+    // Neither the base-name fallback nor global fuzzy match met its confidence threshold.
     return {
       epgChannel: null,
       confidence: 0,

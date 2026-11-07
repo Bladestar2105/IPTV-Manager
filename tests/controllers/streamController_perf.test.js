@@ -141,9 +141,7 @@ vi.mock('../../src/utils/helpers.js', async importOriginal => ({
   providerSourceKey: vi.fn((url) => String(url || '').replace(/\/+$/, '')),
 }));
 
-// We don't mock ffmpeg here because it's not strictly needed for m3u8 logic test,
-// but for transcode test it might fail if ffmpeg-static is missing.
-// Ideally we should mock fluent-ffmpeg too.
+// Exercise transcode setup without starting FFmpeg.
 vi.mock('fluent-ffmpeg', () => {
     return {
         default: vi.fn(() => ({
@@ -442,10 +440,8 @@ describe('Stream Controller Performance (proxyLive)', () => {
     expect(streamManager.cleanupUser).not.toHaveBeenCalled();
     expect(streamManager.reserve).not.toHaveBeenCalled();
 
-    // We DO call remove for .m3u8 explicitly just before early return to ensure cleanup
-    // We can check if remove was called, or just ignore it if it doesn't hurt.
+    // Finishing the manifest still runs idempotent session cleanup.
     expect(streamManager.remove).toHaveBeenCalled();
-    // The main assertion is that add/cleanupUser are not called to save overhead.
 
     vi.useRealTimers();
   });
