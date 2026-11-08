@@ -157,23 +157,29 @@ export async function executeFeature(actor,payload,{infer,signal,progress,remain
   const previous=payload.conversation_id&&['list','search'].includes(payload.feature)?getConversation(actor,payload.conversation_id,payload.feature):null;
   if(previous && previous.user_id!==userId) fail('AI_FORBIDDEN',403);
   let list=null;
+  const listPrompt=safeText(payload.prompt,2001).trim();
   // Empty-prompt editor actions retain their existing scoped review behavior.
-  if(payload.feature==='list' && (safeText(payload.prompt,2001).trim() || previous)) {
+  if(payload.feature==='list' && (listPrompt || previous)) {
     const scope=listScope(payload);
     if(previous && (!previous.list || hash(previous.list.scope)!==hash(scope))) fail('AI_INVALID_CONVERSATION',409);
     const request=listRequest(payload.prompt,previous?.list.request);
     signal?.throwIfAborted();
-    const planningRequest={messages:[{role:'system',content:SYSTEM+' '+LIST_PLANNING_INSTRUCTIONS},
-      {role:'user',content:JSON.stringify({feature:'list',list_request:request,previous_selection:previous?.list.selection||null,explicit_scope:scope,language})}],schema:listSelectionSchema};
-    if(JSON.stringify(planningRequest.messages).length>64000) fail('AI_CONTEXT_TOO_LARGE');
-    const reply=boundedReply(await infer(planningRequest));
-    signal?.throwIfAborted();
-    if(previous) getConversation(actor,previous.id,'list');
-    list={request,selection:validateListSelection(reply.data.selection,scope),scope};
+    let selection=previous?.list.selection;
+    if(!previous || listPrompt) {
+      const planningRequest={messages:[{role:'system',content:SYSTEM+' '+LIST_PLANNING_INSTRUCTIONS},
+        {role:'user',content:JSON.stringify({feature:'list',list_request:request,previous_selection:selection||null,explicit_scope:scope,language})}],schema:listSelectionSchema};
+      if(JSON.stringify(planningRequest.messages).length>64000) fail('AI_CONTEXT_TOO_LARGE');
+      const reply=boundedReply(await infer(planningRequest));
+      signal?.throwIfAborted();
+      if(previous) getConversation(actor,previous.id,'list');
+      selection=reply.data.selection;
+    }
+    list={request,selection:validateListSelection(selection,scope),scope};
     payload={...payload,prompt:request};
   }
-  const candidateLimit=list&&remainingCalls?Math.min(MAX_CANDIDATES,Math.max(0,remainingCalls())*LIST_REVIEW_BATCH_SIZE):MAX_CANDIDATES;
+  const candidateLimit=list&&remainingCalls?Math.max(0,remainingCalls())*LIST_REVIEW_BATCH_SIZE:Infinity;
   const context=buildContext(actor,payload,list?.selection,candidateLimit);
+  if(list) context.coverage.required_review_calls=Math.ceil(context.coverage.total/LIST_REVIEW_BATCH_SIZE);
   const result={feature:payload.feature,summary:'',coverage:context.coverage,
     _authorization:{owner_key:ownerKey(actor),user_id:context.userId,refs:context.refs},
     ...(list?{list_request:list.request,selection:list.selection}:{})};

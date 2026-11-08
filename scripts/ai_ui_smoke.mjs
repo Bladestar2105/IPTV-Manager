@@ -412,29 +412,46 @@ try {
     assert.match(await page.locator('#view-ai [data-i18n="ai_intro"]').innerText(), /experimental|experimentell|expérimental|πειραματικ/i);
   }
   await page.locator('#ai-feature').selectOption('list');
-  nextJobResult = {feature: 'list', summary: 'Narrow the matching set', conversation_id: 'list-one',
+  const listNarrowResult = {feature: 'list', summary: 'Too many matching candidates; narrow the list request or select a smaller scope.', conversation_id: 'list-one',
     list_request: 'Create Fussball from Live-TV; leave other lists alone.',
-    coverage: {processed: 0, total: 900, partial: true, requires_narrowing: true, candidate_limit: 240, next_offset: null}};
+    coverage: {processed: 0, total: 694, partial: true, requires_narrowing: true, candidate_limit: 240, review_limit: 240, expanded_candidate_limit: 800, budget_limited: false, required_review_calls: 18, next_offset: null}};
+  nextJobResult = listNarrowResult;
   await page.locator('#ai-prompt').fill('Create Fussball from Live-TV; leave other lists alone.');
   await page.locator('#ai-run').click();
-  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  await page.locator('#ai-result [data-i18n="ai_narrowList"]').waitFor();
   assert.equal(await page.locator('#ai-next').count(), 0, 'large list selections cannot start unbounded continuation jobs');
   assert.equal(await page.locator('#ai-apply').count(), 0, 'narrowing has no partial proposal to apply');
   assert.match(await page.locator('#ai-result').innerText(), /Create Fussball from Live-TV/);
+  assert.equal(await page.locator('#ai-review-more').isVisible(), true, 'an affordable matching set offers explicit expanded review');
+  assert.match(await page.locator('#ai-review-more').innerText(), /18/);
   await page.locator('#ai-prompt').fill('Only German-language channels');
   await page.locator('#ai-run').click();
-  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  await page.locator('#ai-result [data-i18n="ai_narrowList"]').waitFor();
   assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, 'list-one', 'list refinements preserve their original task');
+  nextJobResult = {feature: 'list', summary: 'Expanded candidates reviewed', conversation_id: 'list-expanded', coverage: {processed: 694, total: 694, partial: false}};
+  await page.locator('#ai-review-more').click();
+  await page.getByText('Expanded candidates reviewed', {exact: true}).waitFor();
+  const expandedListInput = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
+  assert.equal(expandedListInput.conversation_id, 'list-one');
+  assert.equal(expandedListInput.full_list, true);
+  assert.equal(expandedListInput.prompt, '', 'expanded review reuses the validated plan without paying for another planning request');
   await page.locator('#ai-new-list').click();
   assert.equal(await page.locator('#ai-prompt').inputValue(), '');
+  assert.equal(await page.locator('#ai-full-list').isChecked(), false, 'a new task restores the economical default');
+  nextJobResult = {...listNarrowResult, coverage: {...listNarrowResult.coverage, candidate_limit: 120, expanded_candidate_limit: 120, budget_limited: true}};
   await page.locator('#ai-prompt').fill('A new independent list');
   await page.locator('#ai-run').click();
-  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  await page.locator('#ai-result [data-i18n="ai_listBudget"]').waitFor();
+  assert.equal(await page.locator('#ai-review-more').count(), 0, 'insufficient call budget cannot be solved by raising the page limit');
+  assert.equal(await page.locator('#ai-result pre').count(), 0, 'a blocked list shows a useful message without empty arrays or internal JSON');
+  assert.equal(await page.locator('#ai-result [data-i18n="ai_partial"]').count(), 0, 'one accurate budget message replaces the duplicate partial-review warning');
+  assert.doesNotMatch(await page.locator('#ai-result').innerText(), /Too many matching candidates/);
   assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'New list clears the prior task');
+  nextJobResult = listNarrowResult;
   await page.locator('summary[data-i18n="ai_scope"]').click();
   await page.locator('#ai-category-id').fill('123');
   await page.locator('#ai-run').click();
-  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  await page.locator('#ai-result [data-i18n="ai_narrowList"]').waitFor();
   assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'changing explicit category scope clears prior list intent');
   await page.locator('#ai-category-id').fill('');
   nextJobResult = null;

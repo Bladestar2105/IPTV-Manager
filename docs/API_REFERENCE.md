@@ -162,6 +162,9 @@ Send that conversation ID with a refinement to retain the original task and
 its constraints; omit it to start a new task. Search and list conversations
 are separate, user-bound states. A refinement creates a fresh proposal and
 does not apply or merge a previous one.
+For a list continuation with an empty `prompt`, the saved request and validated
+selection are reused without another planning call. Ownership, explicit scope,
+source references and current catalog authorization are rechecked.
 
 List candidate review is bounded to 240 rows by default, or up to 2,000 with
 `full_list:true`. The remaining owner/connection/function call budget further
@@ -169,6 +172,11 @@ limits candidate review to 40 candidates per remaining call. If the matching set
 `coverage.requires_narrowing:true` reports the matching `total`, the
 `candidate_limit` and zero `processed` rows. No candidate-review calls or
 partial proposal are made; refine the request or explicitly raise the limit.
+`review_limit` reports the configured 240/2,000 limit,
+`expanded_candidate_limit` reports the expanded limit allowed by the remaining
+budget, `required_review_calls` reports the number of candidate-review calls,
+and `budget_limited` distinguishes inadequate hourly capacity from the configured
+candidate limit. Cached continuations blocked by either limit make no model call.
 Planned lists do not offer automatic next-page inference. Local retrieval has
 no model-token cost; the planning and candidate-review requests consume the
 existing connection budget and may incur provider usage.

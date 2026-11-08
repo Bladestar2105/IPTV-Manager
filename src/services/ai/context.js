@@ -96,7 +96,7 @@ export function checkReferences(actor, userId, refs, { version = true } = {}) {
   }
 }
 
-export function buildContext(actor, payload, selection = null, candidateLimit = MAX_CANDIDATES) {
+export function buildContext(actor, payload, selection = null, candidateLimit = Infinity) {
   const userId = targetUser(actor, payload.user_id);
   const selectedIds = ids(payload.selected_ids);
   const channelIds = ids(payload.channel_ids ?? (payload.provider_channel_id ? [payload.provider_channel_id] : []));
@@ -134,7 +134,9 @@ export function buildContext(actor, payload, selection = null, candidateLimit = 
   }
   const sql = `${channelSelect} WHERE ${clauses.join(' AND ')}`;
   const total = db.prepare(`SELECT COUNT(*) AS total FROM (${sql})`).get(params).total;
-  const limit=Math.min(payload.full_list===true?MAX_CANDIDATES:240,selection?candidateLimit:MAX_CANDIDATES);
+  const reviewLimit=payload.full_list===true?MAX_CANDIDATES:240;
+  const expandedCandidateLimit=Math.min(MAX_CANDIDATES,candidateLimit);
+  const limit=Math.min(reviewLimit,selection?expandedCandidateLimit:MAX_CANDIDATES);
   const requiresNarrowing=Boolean(selection && total>limit);
   const rows = requiresNarrowing?[]:db.prepare(`${sql} ORDER BY pc.id,uc.id LIMIT @limit OFFSET @offset`).all({...params,limit,offset});
   if (!selection && channelIds.some(id => !rows.some(row => row.provider_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
@@ -144,7 +146,8 @@ export function buildContext(actor, payload, selection = null, candidateLimit = 
   const refs = rows.map(row=>reference(row,editing,Boolean(row.is_hidden)));
   return { userId,rows,refs,categories,items:rows.map(publicChannel),
     coverage:{processed:rows.length,total,offset,partial:offset>0||offset+rows.length<total,next_offset:!selection&&offset+rows.length<total?offset+rows.length:null,
-      ...(selection?{requires_narrowing:requiresNarrowing,candidate_limit:limit}:{})} };
+      ...(selection?{requires_narrowing:requiresNarrowing,candidate_limit:limit,review_limit:reviewLimit,
+        expanded_candidate_limit:expandedCandidateLimit,budget_limited:total>candidateLimit}:{})} };
 }
 
 // Walk the authorized catalog locally so a page boundary cannot conceal a duplicate.

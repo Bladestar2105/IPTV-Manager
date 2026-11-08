@@ -99,7 +99,7 @@ window.aiUI = (() => {
     // including the interval before POST /jobs returns its ID.
     const linking = submittingLink || login?.status === 'pending';
     const busy = submittingJob || Boolean(jobId) || linking || pendingContextWrites.size > 0;
-    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'category-id', 'new-search', 'new-list', ...contextWriteButtons]) {
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'category-id', 'new-search', 'new-list', 'review-more', ...contextWriteButtons]) {
       if (el(id)) el(id).disabled = busy;
     }
     for (const id of ['history', 'changes']) el(id)?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
@@ -746,7 +746,7 @@ window.aiUI = (() => {
       else await poll();
     });
     button(box, 'new-search', 'newSearch', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; filterBaseline = {}; nextOffset = 0; el('filters').value = '{}'; el('prompt').value = ''; });
-    button(box, 'new-list', 'newList', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; nextOffset = 0; el('prompt').value = ''; });
+    button(box, 'new-list', 'newList', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; nextOffset = 0; el('prompt').value = ''; el('full-list').checked = false; });
     progress(box, 'work');
     node('div', el('work-progress'), undefined, 'small mt-1').id = 'ai-work-activity';
     const results = node('section', box); results.id = 'ai-result'; results.setAttribute('aria-live', 'polite'); results.tabIndex = -1;
@@ -854,16 +854,31 @@ window.aiUI = (() => {
   async function showResult(result, allowContinuation = true) {
     const resultStamp = beginResult();
     const box = el('result');
+    const coverage = result.coverage || {};
+    const blockedList = result.feature === 'list' && coverage.requires_narrowing;
     label('h3', box, 'result', 'h5');
-    if (result.summary || (!result.text && !result.tags?.length)) {
+    if (!blockedList && (result.summary || (!result.text && !result.tags?.length))) {
       node('p', box, result.summary || tr(result.explanation_unavailable ? 'localOnly' : 'empty'));
     }
-    const coverage = result.coverage || {};
     if (result.list_request) {
       label('h4', box, 'listRequest', 'h6'); node('p', box, result.list_request);
       label('p', box, 'listSelectionScope', 'small text-muted');
     }
-    if (coverage.requires_narrowing) label('p', box, 'narrowList', 'alert alert-warning');
+    if (blockedList) {
+      const budgetLimited = coverage.budget_limited ?? coverage.candidate_limit < 240;
+      label('p', box, budgetLimited ? 'listBudget' : 'narrowList', 'alert alert-warning');
+      const limits = node('p', box);
+      label('span', limits, 'matchedCandidates'); node('span', limits, `: ${coverage.total} · `);
+      label('span', limits, 'reviewLimit'); node('span', limits, `: ${coverage.candidate_limit}`);
+      if (allowContinuation && result.conversation_id && !budgetLimited &&
+          coverage.total <= coverage.expanded_candidate_limit && coverage.candidate_limit < coverage.expanded_candidate_limit) {
+        const more = button(box, 'review-more', 'reviewMore', () => {
+          el('full-list').checked = true; el('prompt').value = ''; nextOffset = 0; return startJob();
+        }, 'primary');
+        more.removeAttribute('data-i18n'); more.replaceChildren();
+        label('span', more, 'reviewMore'); node('span', more, ` · ${coverage.required_review_calls} `); label('span', more, 'modelCalls');
+      }
+    }
     for (const [key, shown, total] of [
       ['analyzedCount', coverage.processed, coverage.total],
       ['itemPreviewCount', coverage.items_shown, coverage.items_total],
@@ -872,9 +887,11 @@ window.aiUI = (() => {
       ['diffPreviewCount', result.diff?.preview?.shown, result.diff?.preview?.total]
     ]) {
       if (!Number.isFinite(shown) || !Number.isFinite(total)) continue;
+      if (blockedList && total === 0) continue;
       const count = node('p', box); label('span', count, key); node('span', count, `: ${shown} / ${total}`);
     }
     for (const key of ['items', 'findings', 'diff', 'text', 'coverage']) {
+      if (blockedList && ['items', 'coverage'].includes(key)) continue;
       if (key === 'findings' && result.feature === 'diagnose' && Array.isArray(result.findings)) {
         for (const certainty of ['proven', 'possible', 'unknown']) {
           const findings = result.findings.filter(finding => finding.certainty === certainty);
@@ -890,7 +907,7 @@ window.aiUI = (() => {
     filterBaseline = allowContinuation ? result.filters || {} : {};
     if (!allowContinuation) nextOffset = 0;
     el('filters').value = printable(filterBaseline);
-    if (coverage.partial || coverage.results_partial || coverage.epg_review_partial || coverage.diagnostic_entries_partial) {
+    if (!blockedList && (coverage.partial || coverage.results_partial || coverage.epg_review_partial || coverage.diagnostic_entries_partial)) {
       label('p', box, 'partial', 'alert alert-warning');
       if (allowContinuation && !coverage.requires_narrowing && Number.isInteger(result.coverage.next_offset)) button(box, 'next', 'next', () => { nextOffset = result.coverage.next_offset; return startJob(); });
     }

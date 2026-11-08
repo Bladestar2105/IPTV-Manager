@@ -66,6 +66,14 @@ category creation and assignments. Identical assignments from repeated source
 appearances are combined; conflicting edits are rejected. The accumulated list
 instruction is bounded to 2,000 characters.
 
+When the normal 240-candidate limit is the only obstacle, the result offers
+**Start expanded review** with its required model-call count. This is an
+explicit increase in usage. It reuses the validated task and selection without
+another planning call and searches the current authorized catalog again.
+An insufficient hourly call budget has a separate message; increasing the
+candidate limit cannot bypass it. **New list task** restores the economical
+default. Empty list continuations that are still too large make no model call.
+
 User access lists support multiple selections with Ctrl/Cmd-click. Empty access
 lists grant no users access. Previously saved selections that no longer appear
 in the administrator user list are labeled unavailable rather than silently

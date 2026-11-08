@@ -111,6 +111,54 @@ describe('planned list retrieval',()=>{
     expect(result.coverage).toMatchObject({processed:narrowing?0:count,total:count,candidate_limit:80,requires_narrowing:narrowing,next_offset:null});
   });
 
+  it.each([[3,120,true],[19,240,false]])('distinguishes the configured review limit from %i remaining calls',async(calls,limit,budgetLimited)=>{
+    db.transaction(()=>{for(let i=1;i<=694;i++) channel(i,`DAZN ${i}`);})();
+    const result=await executeFeature(user,{feature:'list',prompt:request},{remainingCalls:()=>calls,infer:model(football,{review:()=>{throw new Error('The oversized set must not be reviewed');}})});
+    expect(result.coverage).toMatchObject({total:694,processed:0,review_limit:240,expanded_candidate_limit:calls*40,candidate_limit:limit,budget_limited:budgetLimited,requires_narrowing:true,required_review_calls:18});
+  });
+
+  it('continues a cached list with explicit full review using the saved instruction and selection without a planner call',async()=>{
+    db.transaction(()=>{for(let i=1;i<=241;i++) channel(i,`DAZN ${i}`);})();
+    const first=await executeFeature(user,{feature:'list',prompt:request},{infer:model(football)});
+    expect(first.coverage.requires_narrowing).toBe(true);
+    let reviews=0,seen=0;
+    const continued=await executeFeature(user,{feature:'list',conversation_id:first.conversation_id,prompt:'',full_list:true},{remainingCalls:()=>7,infer:async input=>{
+      const data=JSON.parse(input.messages[1].content);
+      expect(data.items).toBeDefined();expect(data.prompt).toBe(request);reviews++;seen+=data.items.length;
+      return {data:{summary:'Reviewed',actions:[]}};
+    }});
+    expect(reviews).toBe(7);expect(seen).toBe(241);
+    expect(continued).toMatchObject({list_request:request,selection:football,coverage:{processed:241,total:241,review_limit:2000,candidate_limit:280,expanded_candidate_limit:280,budget_limited:false,requires_narrowing:false,required_review_calls:7}});
+    expect(continued.conversation_id).not.toBe(first.conversation_id);
+    expect(getConversation(user,first.conversation_id).list.request).toBe(request);
+  });
+
+  it('reevaluates an oversized cached continuation locally without any inference call',async()=>{
+    db.transaction(()=>{for(let i=1;i<=241;i++) channel(i,`DAZN ${i}`);})();
+    const first=await executeFeature(user,{feature:'list',prompt:request},{infer:model(football)});
+    channel(242,'DAZN 242');
+    const continued=await executeFeature(user,{feature:'list',conversation_id:first.conversation_id,prompt:' ',full_list:true},{remainingCalls:()=>3,infer:async()=>{throw new Error('A cached oversized continuation must not infer');}});
+    expect(continued.coverage).toMatchObject({processed:0,total:242,review_limit:2000,expanded_candidate_limit:120,candidate_limit:120,budget_limited:true,requires_narrowing:true});
+    expect(continued.proposal_id).toBeUndefined();
+  });
+
+  it('revalidates cached continuation ownership, scope, references and stored selection without inference',async()=>{
+    channel(1,'DAZN',{category:1001});
+    const first=await executeFeature(user,{feature:'list',prompt:request},{infer:model(football)});
+    const payload={feature:'list',conversation_id:first.conversation_id,prompt:'',full_list:true};
+    const options={infer:async()=>{throw new Error('Invalid cached state must not infer');}};
+    await expect(executeFeature(other,payload,options)).rejects.toThrow(/AI_NOT_FOUND/);
+    await expect(executeFeature(user,{...payload,category_id:1001},options)).rejects.toThrow(/AI_INVALID_CONVERSATION/);
+    db.prepare("UPDATE provider_channels SET name='Changed DAZN' WHERE id=1").run();
+    await expect(executeFeature(user,payload,options)).rejects.toThrow(/AI_STALE_SOURCE/);
+    db.prepare("UPDATE provider_channels SET name='DAZN' WHERE id=1").run();
+    db.prepare('UPDATE user_channels SET authorization_revoked=1').run();
+    await expect(executeFeature(user,payload,options)).rejects.toThrow(/AI_SOURCE_UNAVAILABLE/);
+    db.prepare('UPDATE user_channels SET authorization_revoked=0').run();
+    db.prepare("UPDATE ai_conversations SET data_json=json_set(data_json,'$.list.selection.type','program') WHERE id=?").run(first.conversation_id);
+    await expect(executeFeature(user,payload,options)).rejects.toThrow(/AI_INVALID_SELECTION/);
+  });
+
   it('reviews a complete explicit full list in at most 40 records per request',async()=>{
     db.transaction(()=>{for(let i=1;i<=241;i++) channel(i,`DAZN ${i}`);})();
     let processed=0,reviews=0;
