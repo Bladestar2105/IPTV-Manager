@@ -166,7 +166,7 @@ const MAX_STREAM_BYTES = 512 * 1024;
 // more than what is left of the turn's own deadline.
 const THREAD_START_TIMEOUT_MS = 30000;
 
-export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000, verify }) {
+export async function runTurn(session, { model, messages, schema, structured = true, maxTokens = 2048, signal, timeoutMs = 120000, verify, onProgress }) {
     const { developer, text } = turnInput(messages, schema);
     // One deadline for the whole turn: starting the thread, submitting it and
     // waiting for its completion. Giving each phase the full budget would let a
@@ -197,10 +197,16 @@ export async function runTurn(session, { model, messages, schema, structured = t
         throw codexError('AI_CODEX_POLICY_MISMATCH', 'Codex loaded unexpected instruction sources.');
     }
 
-    const state = { done: null, items: [], usage: null, message: null, streamed: 0, overBudget: false };
+    const state = { done: null, items: [], usage: null, message: null, streamed: 0, overBudget: false, progressError: null };
     const byteBudget = MAX_STREAM_BYTES;
     session.onTurnEvent = (method, params) => {
         if (params?.threadId && params.threadId !== threadId) return;
+        // Only event types become activity; provider text and reasoning stay private.
+        // Notification listeners cannot throw into the protocol's stdout event handler.
+        if (!state.progressError) try {
+            if (method === 'turn/started' || method === 'item/started' && params?.item?.type === 'reasoning') onProgress?.({stage:'waiting'});
+            if (method === 'item/agentMessage/delta' || method === 'item/completed' && params?.item?.type === 'agentMessage') onProgress?.({stage:'receiving'});
+        } catch (error) { state.progressError = error || codexError('AI_CANCELLED', 'Progress reporting was interrupted.'); }
         if (method === 'item/agentMessage/delta') {
             const chunk = typeof params?.delta === 'string' ? params.delta : typeof params?.text === 'string' ? params.text : '';
             state.streamed += Buffer.byteLength(chunk);
@@ -241,7 +247,7 @@ export async function runTurn(session, { model, messages, schema, structured = t
         throw error;
     }
 
-    while (!state.done && Date.now() < deadline) {
+    while (!state.done && !state.progressError && Date.now() < deadline) {
         if (signal?.aborted) {
             await session.client.request('turn/interrupt', { threadId, turnId: turn?.turn?.id || '' }, { timeoutMs: 5000 }).catch(() => null);
             throw codexError('AI_TIMEOUT', 'The Codex turn was cancelled.', 504);
@@ -258,6 +264,10 @@ export async function runTurn(session, { model, messages, schema, structured = t
         await new Promise(resolve => { const timer = setTimeout(resolve, TURN_POLL_MS); timer.unref?.(); });
     }
     session.onTurnEvent = null;
+    if (state.progressError) {
+        await session.client.request('turn/interrupt', { threadId, turnId: turn?.turn?.id || '' }, { timeoutMs: 5000 }).catch(() => null);
+        throw state.progressError;
+    }
     if (!state.done) {
         await session.client.request('turn/interrupt', { threadId, turnId: turn?.turn?.id || '' }, { timeoutMs: 5000 }).catch(() => null);
         throw codexError('AI_TIMEOUT', 'The Codex turn did not complete in time.', 504);

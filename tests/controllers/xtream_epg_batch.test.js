@@ -1,11 +1,14 @@
 import { Writable } from 'node:stream';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { mockDb } = vi.hoisted(() => ({
+const { mockDb, refreshProviderArchive } = vi.hoisted(() => ({
+  refreshProviderArchive: vi.fn().mockResolvedValue(true),
   mockDb: {
     prepare: vi.fn(),
   },
 }));
+
+vi.mock('../../src/services/providerArchiveService.js', () => ({ refreshProviderArchive }));
 
 vi.mock('../../src/database/db.js', () => ({
   default: mockDb,
@@ -81,6 +84,51 @@ describe('xtreamController get_epg_batch', () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ['inside a thirty-day archive', 20, 30, 1, 1],
+    ['outside archive', 31, 30, 1, 0],
+    ['disabled archive', 20, 30, 0, 0],
+    ['invalid duration', 1, -1, 1, 0],
+    ['fractional duration', 1, 1.5, 1, 0],
+    ['current programme', 0, 30, 1, 0],
+    ['future programme', -1, 30, 1, 0],
+  ])('sets archive flags for %s', (_name, age, days, enabled, expected) => {
+    const now = Date.now() / 1000;
+    expect(formatXtreamEpgListing({ start: now - age * 86400, stop: now - age * 86400 + 3600 }, 'news', {
+      tv_archive: enabled, tv_archive_duration: days,
+    }).has_archive).toBe(expected);
+  });
+
+  it.each(['get_simple_date_table', 'get_simple_data_table', 'get_epg_batch'])('passes the channel archive window through %s', async action => {
+    req.query.action = action;
+    req.query.stream_id = '101';
+    req.query.stream_ids = '101';
+    const now = Date.now() / 1000;
+    const programme = { start: now - 20 * 86400, stop: now - 20 * 86400 + 3600, title: 'Old show' };
+    getXtreamUser.mockResolvedValue({ id: 7, is_share_guest: false });
+    const channel = { user_channel_id: 101, epg_channel_id: 'news', tv_archive: 1, tv_archive_duration: 30 };
+    mockDb.prepare.mockReturnValue({ get: () => channel, all: () => [channel] });
+    getEpgPrograms.mockReturnValue([programme]);
+    getEpgProgramsForChannels.mockReturnValue(new Map([['news', [programme]]]));
+
+    await playerApi(req, res);
+
+    const response = action === 'get_epg_batch' ? res.body()['101'] : res.json.mock.calls[0][0];
+    expect(response.epg_listings[0].has_archive).toBe(1);
+    if (action !== 'get_epg_batch') expect(refreshProviderArchive).toHaveBeenCalledWith(101, 7, expect.any(Function));
+  });
+
+  it('never fetches upstream history for a channel excluded from a share', async () => {
+    req.query = { action: 'get_simple_data_table', stream_id: '101' };
+    getXtreamUser.mockResolvedValue({ id: 7, is_share_guest: true, allowed_channels: [102] });
+    mockDb.prepare.mockReturnValue({ get: () => ({ epg_channel_id: 'news', tv_archive: 1, tv_archive_duration: 30 }) });
+
+    await playerApi(req, res);
+
+    expect(refreshProviderArchive).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({ epg_listings: [] });
+  });
 
   it.each([
     ['ended at the current time', 1777701600, 1777707000, 0],

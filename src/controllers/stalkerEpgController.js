@@ -1,6 +1,7 @@
 import db from '../database/db.js';
 import { getEpgPrograms, getEpgProgramsForChannels } from '../services/epgService.js';
-import { formatStalkerDateTime, MAX_ARCHIVE_DAYS } from '../utils/stalker.js';
+import { formatStalkerDateTime } from '../utils/stalker.js';
+import { getArchiveDays, isArchiveProgram } from '../utils/archive.js';
 import { value } from './stalkerContentController.js';
 
 const MAX_EPG_PERIOD_HOURS = 168;
@@ -15,8 +16,7 @@ export function archiveProgramId(channelId, start, stop) {
 function mapEpgProgram(channel, program, now) {
   const start = Number(program.start);
   const stop = Number(program.stop);
-  const archiveDays = Math.min(Math.max(Number(channel.tv_archive_duration) || 0, 0), MAX_ARCHIVE_DAYS);
-  const archived = Boolean(channel.tv_archive) && stop <= now && start >= now - archiveDays * 86400;
+  const archived = isArchiveProgram(channel, program, now);
   return {
     id: archiveProgramId(channel.id, start, stop),
     ch_id: String(channel.id),
@@ -186,9 +186,7 @@ export function getEpgInfo(session, params) {
   `).all(session.user_id);
 
   const maxArchiveDays = channels.reduce(
-    (max, channel) => channel.tv_archive
-      ? Math.max(max, Math.min(Number(channel.tv_archive_duration) || 0, MAX_ARCHIVE_DAYS))
-      : max,
+    (max, channel) => Math.max(max, getArchiveDays(channel)),
     0
   );
   const start = now - maxArchiveDays * 86400;
@@ -235,5 +233,5 @@ export function getEpgInfo(session, params) {
     );
   }
 
-  return { data };
+  return { data, ...(totalPrograms >= MAX_EPG_PROGRAMS_PER_RESPONSE || perChannelLimitReached ? { truncated: true } : {}) };
 }

@@ -9,7 +9,8 @@ vi.mock('../src/database/db.js', async () => {
   const { default: Db } = await import('better-sqlite3');
   const database = new Db(':memory:');
   database.exec(`CREATE TABLE epg_sources(id INTEGER PRIMARY KEY, last_attempt INTEGER DEFAULT 0, last_update INTEGER DEFAULT 0, is_updating INTEGER DEFAULT 0);
-    CREATE TABLE providers(id INTEGER PRIMARY KEY, last_epg_attempt INTEGER DEFAULT 0, last_epg_update INTEGER DEFAULT 0);`);
+    CREATE TABLE providers(id INTEGER PRIMARY KEY, last_epg_attempt INTEGER DEFAULT 0, last_epg_update INTEGER DEFAULT 0);
+    CREATE TABLE provider_channels(id INTEGER PRIMARY KEY, tv_archive INTEGER DEFAULT 0, tv_archive_duration INTEGER DEFAULT 0);`);
   return { default: database };
 });
 vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.fn() }));

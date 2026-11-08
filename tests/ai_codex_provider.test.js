@@ -241,6 +241,24 @@ describe('personal ChatGPT adapter availability', () => {
         expect(Date.now() - started).toBeLessThan(1300);
     }, 30000);
 
+    it('reports only safe activity stages from allowlisted turn events',async()=>{
+        const progress=[];
+        const session={paths:{workDir:dataDir},sink:{violations:[]},client:{request:async method=>{
+            if(method==='thread/start') return {thread:{id:'progress-thread'},approvalPolicy:'untrusted',sandbox:{type:'readOnly'}};
+            if(method==='turn/start') {
+                session.onTurnEvent('item/agentMessage/delta',{threadId:'someone-else',delta:'private other thread'});
+                session.onTurnEvent('item/reasoning/textDelta',{threadId:'progress-thread',delta:'private reasoning'});
+                session.onTurnEvent('unknown/provider/message',{text:'arbitrary provider text'});
+                session.onTurnEvent('turn/started',{threadId:'progress-thread'});
+                session.onTurnEvent('item/agentMessage/delta',{threadId:'progress-thread',delta:'private reply text'});
+                session.onTurnEvent('turn/completed',{threadId:'progress-thread',turn:{status:'completed',items:[{type:'agentMessage',text:'{"ok":true}'}]}});
+                return {turn:{id:'progress-turn'}};
+            }
+        }}};
+        await client.runTurn(session,{model:'fixture',messages:[],schema,onProgress:value=>progress.push(value)});
+        expect(progress).toEqual([{stage:'waiting'},{stage:'receiving'}]);
+    });
+
     it('rechecks access immediately before submitting a billable turn', async () => {
         const turnRecordPath = path.join(dataDir, `turn-${Date.now()}.txt`);
         // Starting the thread takes long enough for access to change, and a
@@ -1374,6 +1392,13 @@ describe('personal ChatGPT connection privacy', () => {
         const created = jobs.createJob(user, { feature: 'search', prompt: 'x' }, 'manual-key-00001');
         expect(created.status).toBe('queued');
         jobs.cancelJob(user, created.id);
+    });
+
+    it.each([['search',180000],['list',600000]])('gives ChatGPT %s enough bounded time for its provider calls',async(feature,timeout)=>{
+        await withModel();
+        const created=jobs.createJob(user,{feature},`budget-${feature}-key`);
+        expect(JSON.parse(db.prepare('SELECT input_json FROM ai_jobs WHERE id=?').get(created.id).input_json)._timeout).toBe(timeout);
+        jobs.cancelJob(user,created.id);
     });
 
     it('refuses to queue a request for an unlinked account and binds a queued job to it', async () => {

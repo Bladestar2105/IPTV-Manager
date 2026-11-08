@@ -147,7 +147,7 @@ async function aggregateDiagnosis(actor,payload,{infer,signal}) {
   return authorizeResult(actor,payload,result);
 }
 
-export async function executeFeature(actor,payload,{infer,signal}={}) {
+export async function executeFeature(actor,payload,{infer,signal,progress}={}) {
   if(!['list','cleanup','duplicates','epg','sync','search','diagnose','text'].includes(payload.feature)) fail('AI_INVALID_FEATURE');
   if(actor.is_admin && payload.feature==='diagnose' && payload.user_id==null) return aggregateDiagnosis(actor,payload,{infer,signal});
   const context=buildContext(actor,payload),timezone=timezoneName(payload.timezone||'UTC');
@@ -173,6 +173,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
     const instructions='Return only required list edits. For duplicates only hide_channel actions on clear duplicates; preserve regional, language and time-shift differences. Technical labels in names are clues, not measured quality. Reuse planned_categories keys without declaring them again; new categories require unique keys.'+
       (payload.feature==='list'?' For thematic list suggestions, use channel names and general knowledge of channel brands, not only literal keyword matches. Evaluate every supplied record and include every matching numbered or quality variant. This permission is only for proposed grouping, not claims about current broadcasts, rights or availability.':'');
     // Bounded pages cover small complete lists; larger lists explicitly return a continuation offset.
+    progress?.({stage:'processing',processed:0,total:context.items.length});
     for(let i=0;i<context.items.length;) {
       let batch=context.items.slice(i,i+80),data;
       while(true) {
@@ -197,6 +198,7 @@ export async function executeFeature(actor,payload,{infer,signal}={}) {
       actions.push(...batchActions);
       (batchActions.length||payload.feature!=='list'?summaries:unchangedSummaries).push(safeText(reply.data.summary,1000));
       i+=batch.length;
+      progress?.({stage:'processing',processed:i,total:context.items.length});
     }
     result.summary=(summaries.length?summaries:unchangedSummaries).join('\n').slice(0,2000);
     signal?.throwIfAborted();

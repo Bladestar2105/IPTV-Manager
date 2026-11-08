@@ -2,7 +2,7 @@ import db from '../database/db.js';
 import { getEpgProgramsForChannels } from '../services/epgService.js';
 import { normalizeContainerExtension } from '../utils/containerExtension.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
-import { MAX_ARCHIVE_DAYS } from '../utils/stalker.js';
+import { isArchiveProgram } from '../utils/archive.js';
 import {
   getOrCreateSeriesEpisodeAlias,
   prepareSeriesEpisodeAliases
@@ -110,8 +110,7 @@ function createArchiveLink(req, session, command) {
     WHERE uc.id = ? AND cat.user_id = ? AND cat.type = 'live' AND pc.stream_type = 'live'
   `).get(channelId, session.user_id);
   const now = Math.floor(Date.now() / 1000);
-  const archiveDays = Math.min(Number(channel?.tv_archive_duration) || 0, MAX_ARCHIVE_DAYS);
-  if (!channel?.tv_archive || !channel.epg_id || stop > now || start < now - archiveDays * 86400) {
+  if (!channel?.epg_id || !isArchiveProgram(channel, { start, stop }, now)) {
     return emptyLink();
   }
 

@@ -26,7 +26,6 @@ export function expiryEpoch(value) {
 }
 
 export const STALKER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-export const MAX_ARCHIVE_DAYS = 14;
 const dateTimeFormatters = new Map();
 
 function dateTimeFormatter(timeZone) {

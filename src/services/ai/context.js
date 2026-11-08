@@ -42,6 +42,7 @@ export function targetUser(actor, userId) {
   return id;
 }
 
+// Correlating the category check avoids catalog-by-category probes when counting rows.
 const channelSelect = `SELECT pc.id AS provider_channel_id, pc.provider_id, pc.name, pc.stream_type,
   pc.epg_channel_id, pc.plot, pc.genre, pc.episode_run_time, pc.original_category_id,
   uc.id AS user_channel_id, uc.user_category_id, uc.custom_name, uc.sort_order,
@@ -49,7 +50,7 @@ const channelSelect = `SELECT pc.id AS provider_channel_id, pc.provider_id, pc.n
   cat.name AS category_name, cat.is_adult, map.epg_channel_id AS manual_epg_id
   FROM provider_channels pc JOIN providers p ON p.id=pc.provider_id
   LEFT JOIN user_channels uc ON uc.provider_channel_id=pc.id
-    AND uc.user_category_id IN (SELECT id FROM user_categories WHERE user_id=@userId)
+    AND EXISTS (SELECT 1 FROM user_categories owner_cat WHERE owner_cat.id=uc.user_category_id AND owner_cat.user_id=@userId)
   LEFT JOIN user_categories cat ON cat.id=uc.user_category_id
   LEFT JOIN epg_channel_mappings map ON map.provider_channel_id=pc.id`;
 

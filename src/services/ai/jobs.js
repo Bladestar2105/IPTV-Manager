@@ -5,12 +5,17 @@ import { safeText } from './context.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
 const JOB_TIMEOUT = 120000;
+const CHATGPT_JOB_TIMEOUT = 180000;
 const LARGE_JOB_TIMEOUT = 600000;
 const HISTORY_AGE = 7 * 86400000;
 const running = new Map();
 
 function fail(status, code) {
   throw Object.assign(new Error(code), {status, code});
+}
+
+function historyCutoff(key) {
+  return db.prepare("SELECT json_extract(data_json,'$._history_cleared_at') AS cutoff FROM ai_preferences WHERE owner_key = ?").get(key)?.cutoff || 0;
 }
 
 export function ownerKey(actor) {
@@ -73,7 +78,9 @@ export function createJob(actor, input, idempotencyKey = randomUUID(), {automati
   payload.language ??= access.preferences.language;
   payload.timezone ??= access.preferences.timezone;
   const account = accountBinding(access.connection.id);
-  const inputJson = JSON.stringify({...payload,connection_id:access.connection.id,_timeout:payload.full_list === true ? LARGE_JOB_TIMEOUT : JOB_TIMEOUT,
+  const timeout = payload.full_list === true || (access.connection.provider === 'chatgpt_account' && ['list','cleanup','duplicates'].includes(payload.feature))
+    ? LARGE_JOB_TIMEOUT : access.connection.provider === 'chatgpt_account' ? CHATGPT_JOB_TIMEOUT : JOB_TIMEOUT;
+  const inputJson = JSON.stringify({...payload,connection_id:access.connection.id,_timeout:timeout,
     _actor_version:fresh.token_version,_model_id:access.preferences.model_id || access.connection.model_id,
     ...(account ? {_account:account} : {})});
   expireJobs();
@@ -86,7 +93,7 @@ export function createJob(actor, input, idempotencyKey = randomUUID(), {automati
     const active = db.prepare("SELECT owner_key, connection_id FROM ai_jobs WHERE status IN ('queued','running')").all();
     if (active.filter(job => job.owner_key === ownerKey(fresh)).length >= 2 ||
         active.filter(job => job.connection_id === access.connection.id).length >= 3 || active.length >= 20) fail(429,'ai_busy');
-    const now = Date.now();
+    const now = Math.max(Date.now(),historyCutoff(ownerKey(fresh)) + 1);
     const id = randomUUID();
     db.prepare(`INSERT INTO ai_jobs
       (id,owner_key,user_id,feature,connection_id,connection_version,status,input_json,idempotency_key,created_at,updated_at)
@@ -111,8 +118,11 @@ async function runJob(id) {
   const actor = {id:Number(actorId),is_admin:kind === 'admin'};
   const controller = new AbortController();
   running.set(id,controller);
+  const deadlineAt = Date.now() + (input._timeout || JOB_TIMEOUT);
   const deadline = setTimeout(() => controller.abort({code:'AI_TIMEOUT'}),input._timeout || JOB_TIMEOUT);
   const check = (requireModel = job.feature !== 'diagnose') => {
+    // Synchronous catalog work can delay timers; recheck the clock before sending.
+    if (!controller.signal.aborted && Date.now() >= deadlineAt) controller.abort({code:'AI_TIMEOUT'});
     if (controller.signal.aborted) throw controller.signal.reason;
     const state = db.prepare('SELECT status FROM ai_jobs WHERE id = ?').get(id);
     if (state?.status !== 'running') fail(409,'ai_cancelled');
@@ -134,17 +144,35 @@ async function runJob(id) {
     try { check(); } catch (error) { controller.abort(error); }
   },500);
   monitor.unref();
+  let activity;
+  const progress = update => {
+    if (!['preparing','waiting','receiving','processing','validating'].includes(update?.stage)) return;
+    const next = {stage:update.stage,...(activity?.total === undefined ? {} : {processed:activity.processed,total:activity.total})};
+    if (update.processed !== undefined || update.total !== undefined) {
+      if (!Number.isSafeInteger(update.processed) || !Number.isSafeInteger(update.total) ||
+          update.processed < 0 || update.processed > update.total || update.total > 2000) return;
+      Object.assign(next,{processed:update.processed,total:update.total});
+    }
+    const now = Date.now();
+    if (activity?.stage === next.stage && activity.processed === next.processed && activity.total === next.total && now - activity.updated_at < 500) return;
+    check();
+    activity = {...next,updated_at:now};
+    // Activity must not renew the fixed overall deadline or mutate idempotent input.
+    db.prepare("UPDATE ai_jobs SET progress_json = ? WHERE id = ? AND status = 'running'").run(JSON.stringify(activity),id);
+  };
   try {
     check();
+    progress({stage:'preparing'});
     const {executeFeature,authorizeResult} = await import('./features.js');
     const result = await executeFeature(actor,input,{
-      signal:controller.signal,jobId:id,
+      signal:controller.signal,jobId:id,progress,
       infer:async ({messages,schema}) => {
         const fresh = check(true);
         db.prepare('UPDATE ai_jobs SET request_started_at = ? WHERE id = ?').run(Date.now(),id);
+        progress({stage:'waiting'});
         let response;
         try {
-          response = await runInference(fresh,job.feature,{messages,schema,signal:controller.signal,connectionId:job.connection_id});
+          response = await runInference(fresh,job.feature,{messages,schema,signal:controller.signal,connectionId:job.connection_id,onProgress:progress,historyAt:job.created_at,verify:()=>check(true)});
         } catch (error) {
           // Only this request's successful model invalidation advances the expected snapshot.
           if (job.feature === 'diagnose' && error.code === 'AI_MODEL_UNAVAILABLE' &&
@@ -155,6 +183,7 @@ async function runJob(id) {
         return response;
       }
     });
+    progress({stage:'validating'});
     const fresh = check();
     await authorizeResult(fresh,input,result);
     check();
@@ -181,6 +210,7 @@ export async function getJob(actor, id) {
   if (!row) fail(404,'ai_not_found');
   const fresh = currentActor(actor);
   const output = {id:row.id,status:row.status,feature:row.feature,created_at:row.created_at,updated_at:row.updated_at,error_code:row.error_code};
+  if (row.progress_json) output.progress = JSON.parse(row.progress_json);
   if (row.result_json) {
     requireAiFeatureAccess(fresh,row.feature);
     const {authorizeResult} = await import('./features.js');
@@ -210,8 +240,11 @@ export function clearHistory(actor) {
   const key = ownerKey(currentActor(actor));
   for (const row of db.prepare("SELECT id FROM ai_jobs WHERE owner_key = ? AND status IN ('queued','running')").all(key)) cancelJob(actor,row.id);
   db.transaction(() => {
+    const row = db.prepare('SELECT data_json FROM ai_preferences WHERE owner_key = ?').get(key);
+    const prefs = {...(row ? JSON.parse(row.data_json) : {}),_history_cleared_at:Math.max(Date.now(),historyCutoff(key) + 1)};
+    db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES(?,?) ON CONFLICT(owner_key) DO UPDATE SET data_json=excluded.data_json').run(key,JSON.stringify(prefs));
     for (const table of ['ai_jobs','ai_conversations','ai_enrichments']) db.prepare(`DELETE FROM ${table} WHERE owner_key = ?`).run(key);
-  })();
+  }).immediate();
   return {success:true};
 }
 
@@ -219,8 +252,8 @@ export function getUsage(actor) {
   currentActor(actor);
   expireJobs();
   const rows = db.prepare(`SELECT connection_id,feature,model,status,prompt_tokens,completion_tokens,created_at
-    FROM ai_usage WHERE owner_key = ? AND created_at > ? ORDER BY created_at DESC LIMIT 200`)
-    .all(ownerKey(actor),Date.now() - 30 * 86400000);
+    FROM ai_usage WHERE owner_key = ? AND created_at > ? AND COALESCE(history_at,created_at) > ? ORDER BY created_at DESC LIMIT 200`)
+    .all(ownerKey(actor),Date.now() - 30 * 86400000,historyCutoff(ownerKey(actor)));
   return {calls:rows.length,prompt_tokens:rows.some(r => r.prompt_tokens === null) ? null : rows.reduce((s,r) => s + r.prompt_tokens,0),
     completion_tokens:rows.some(r => r.completion_tokens === null) ? null : rows.reduce((s,r) => s + r.completion_tokens,0),
     price:null,window_days:30,truncated:rows.length === 200,requests:rows};

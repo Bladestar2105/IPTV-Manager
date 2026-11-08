@@ -1,6 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import { gzipSync } from 'node:zlib';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const { fetchSafe } = vi.hoisted(() => ({ fetchSafe: vi.fn() }));
 // Keep the real module's other exports: epgImportService derives its staging
@@ -10,10 +13,14 @@ vi.mock('../src/utils/network.js', async importOriginal => ({
   fetchSafe,
 }));
 vi.mock('../src/database/db.js', () => ({
-  default: { prepare: () => ({ run: () => ({ changes: 0 }), get: () => undefined, all: () => [] }) },
+  default: { prepare: () => ({ run: () => ({ changes: 0 }), get: () => ({ archive_days: 14 }), all: () => [] }) },
   initDb: vi.fn(),
 }));
 vi.mock('../src/services/logoResolver.js', () => ({ invalidateEpgLogosCache: vi.fn() }));
+
+// Staging-count assertions must not see imports running in other test files.
+const dataDir = mkdtempSync(join(tmpdir(), 'iptv-staged-import-'));
+process.env.DATA_DIR = dataDir;
 
 const {
   importEpgFromUrl, stagingTableNames, dropOrphanedStagingTables, stagingTableStartedAt,
@@ -70,6 +77,78 @@ describe('staged EPG import', () => {
   afterAll(() => {
     epgDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
     epgDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(SOURCE_TYPE, SOURCE_ID);
+    epgDb.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('imports the full advertised two-week archive instead of only yesterday', async () => {
+    fetchSafe.mockResolvedValue({ ok: true, body: Readable.from([xml([
+      { start: future(-13 * 24), stop: future(-13 * 24 + 1), title: 'Thirteen days ago' },
+      { start: future(-15 * 24), stop: future(-15 * 24 + 1), title: 'Outside archive' },
+    ])]) });
+
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+
+    expect(epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ? ORDER BY start')
+      .all(SOURCE_TYPE, SOURCE_ID)).toEqual([{ title: 'Thirteen days ago' }]);
+  });
+
+  it('keeps completed archive programmes when the next feed contains only the current schedule', async () => {
+    fetchSafe.mockResolvedValueOnce({ ok: true, body: Readable.from([xml([
+      { start: future(-12), stop: future(-11), title: 'Recorded history' },
+      { start: future(1), stop: future(2), title: 'Old future schedule' },
+    ])]) });
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+    fetchSafe.mockResolvedValueOnce({ ok: true, body: Readable.from([xml([
+      { start: future(3), stop: future(4), title: 'New future schedule' },
+    ])]) });
+
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+
+    expect(epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ? ORDER BY start')
+      .all(SOURCE_TYPE, SOURCE_ID)).toEqual([{ title: 'Recorded history' }, { title: 'New future schedule' }]);
+  });
+
+  it('replaces corrected past entries and current entries while expiring old and removed-channel history', async () => {
+    fetchSafe.mockResolvedValueOnce({ ok: true, body: Readable.from([xml([
+      { start: future(-12), stop: future(-11), title: 'Original past' },
+      { start: future(-1), stop: future(1), title: 'Old current' },
+    ])]) });
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+    const insert = epgDb.prepare('INSERT INTO epg_programs (channel_id, source_type, source_id, start, stop, title) VALUES (?, ?, ?, ?, ?, ?)');
+    const now = Math.floor(Date.now() / 1000);
+    insert.run('ch1', SOURCE_TYPE, SOURCE_ID, now - 16 * 86400, now - 15 * 86400, 'Expired');
+    epgDb.prepare('INSERT INTO epg_channels (id, source_type, source_id) VALUES (?, ?, ?)').run('removed', SOURCE_TYPE, SOURCE_ID);
+    insert.run('removed', SOURCE_TYPE, SOURCE_ID, now - 7200, now - 3600, 'Removed channel');
+    fetchSafe.mockResolvedValueOnce({ ok: true, body: Readable.from([xml([
+      { start: future(-12), stop: future(-11), title: 'Corrected past' },
+      { start: future(-1), stop: future(1), title: 'Corrected current' },
+    ])]) });
+
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+
+    expect(epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ? ORDER BY start')
+      .all(SOURCE_TYPE, SOURCE_ID)).toEqual([{ title: 'Corrected past' }, { title: 'Corrected current' }]);
+  });
+
+  it('keeps the advertised archive when hourly pruning requests the seven-day baseline', async () => {
+    const { pruneOldEpgData, getEpgXmlForChannels } = await import('../src/services/epgService.js');
+    fetchSafe.mockResolvedValueOnce({ ok: true, body: Readable.from([xml([
+      { start: future(-13 * 24), stop: future(-13 * 24 + 1), title: 'Archive' },
+    ])]) });
+    await importEpgFromUrl('https://epg.example/guide.xml', SOURCE_TYPE, SOURCE_ID);
+    const now = Math.floor(Date.now() / 1000);
+    epgDb.prepare('INSERT INTO epg_programs (channel_id, source_type, source_id, start, stop, title) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('ch1', SOURCE_TYPE, SOURCE_ID, now - 16 * 86400, now - 15 * 86400, 'Expired');
+
+    pruneOldEpgData(7);
+
+    expect(epgDb.prepare('SELECT title FROM epg_programs WHERE source_type = ? AND source_id = ?')
+      .all(SOURCE_TYPE, SOURCE_ID)).toEqual([{ title: 'Archive' }]);
+    let exported = '';
+    for await (const chunk of getEpgXmlForChannels(new Set(['ch1']))) exported += chunk;
+    expect(exported).toContain('<title>Archive</title>');
+    expect(exported).not.toContain('<title>Expired</title>');
   });
 
   it('replaces the data of a source on a successful import', async () => {

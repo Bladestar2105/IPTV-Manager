@@ -11,6 +11,7 @@ import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
+import { getEpgRetentionDays, getProviderEpgChannels } from './epgRetentionService.js';
 
 function decodeXmlIfNeeded(value) {
     if (!value) return '';
@@ -283,7 +284,7 @@ function dropStagingTables(database, stage) {
  * Replace the live rows of one source with the staged import, in one
  * transaction. Until this runs, the previous EPG data stays queryable.
  */
-function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq) {
+function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq, retentionCutoff, now) {
     const count = sql => Number(database.prepare(sql).get()?.c) || 0;
     return immediateTransaction(database, () => {
         // Per-run staging tables keep two overlapping imports from dropping each
@@ -315,14 +316,33 @@ function promoteStagedEpg(database, stage, sourceType, sourceId, runSeq) {
             throw new Error('EPG feed delivered no channels or programmes; keeping the previous data');
         }
 
-        database.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
+        if (sourceType === 'provider') {
+            // API history may use a current manual EPG ID absent from the provider's XMLTV feed.
+            const currentIds = getProviderEpgChannels(sourceId).map(channel => channel.epg_channel_id);
+            database.prepare(`INSERT OR IGNORE INTO ${stage.channels}
+                (id, name, logo, source_type, source_id, updated_at)
+                SELECT c.id, c.name, c.logo, c.source_type, c.source_id, c.updated_at
+                FROM epg_channels c
+                WHERE c.source_type = ? AND c.source_id = ?
+                    AND c.id IN (SELECT value FROM json_each(?))
+                    AND EXISTS (SELECT 1 FROM epg_programs p
+                        WHERE p.channel_id = c.id AND p.source_type = c.source_type AND p.source_id = c.source_id
+                            AND p.stop <= ? AND p.stop >= ? AND p.stop > p.start)`)
+                .run(sourceType, sourceId, JSON.stringify(currentIds), now, retentionCutoff);
+        }
+
+        // Completed history survives rolling feeds; current/future rows still follow the latest snapshot.
+        database.prepare(`DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?
+            AND (stop > ? OR stop < ? OR stop <= start
+                OR channel_id NOT IN (SELECT id FROM ${stage.channels}))`)
+            .run(sourceType, sourceId, now, retentionCutoff);
         database.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?').run(sourceType, sourceId);
         database.prepare(`
             INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
             SELECT id, name, logo, source_type, source_id, updated_at FROM ${stage.channels}
         `).run();
         database.prepare(`
-            INSERT OR IGNORE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
+            INSERT OR REPLACE INTO epg_programs (channel_id, source_type, source_id, start, stop, title, desc, lang)
             SELECT channel_id, source_type, source_id, start, stop, title, desc, lang FROM ${stage.programs}
         `).run();
         database.prepare(`
@@ -372,6 +392,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
         if (!response.ok) { discardBody(response); throw new Error(`HTTP ${response.status}`); }
 
         const now = Math.floor(Date.now() / 1000);
+        const retentionCutoff = now - getEpgRetentionDays() * 86400;
 
         createStagingTables(importDb, stage);
 
@@ -546,7 +567,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
                     const start = parseXmltvDate(attrs.start);
                     const stop = parseXmltvDate(attrs.stop);
 
-                    if (stop > now - 86400) {
+                    if (Number.isFinite(start) && Number.isFinite(stop) && stop > start && stop > retentionCutoff) {
                         currentProgram = {
                             channelId: attrs.channel,
                             sourceType,
@@ -664,7 +685,7 @@ export async function importEpgFromUrl(url, sourceType, sourceId) {
             WHERE channel_id NOT IN (SELECT id FROM ${stage.channels})
         `).run();
 
-        const imported = promoteStagedEpg(importDb, stage, sourceType, sourceId, runSeq);
+        const imported = promoteStagedEpg(importDb, stage, sourceType, sourceId, runSeq, retentionCutoff, now);
         if (imported.superseded) {
             console.info(`⏭️ EPG import for ${sourceType} ${sourceId} superseded by a newer run; older snapshot discarded`);
             if (sourceType === 'custom') {

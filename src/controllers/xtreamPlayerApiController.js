@@ -3,6 +3,8 @@ import db from '../database/db.js';
 import { immediateTransaction } from '../database/sqliteWrites.js';
 import { getXtreamUser } from '../services/authService.js';
 import { getEpgPrograms } from '../services/epgService.js';
+import { refreshProviderArchive } from '../services/providerArchiveService.js';
+import { getArchiveDays } from '../utils/archive.js';
 import { streamBatchEpgResponse } from './xtreamBatchEpgResponse.js';
 import { decrypt } from '../utils/crypto.js';
 import { getBaseUrl, providerSourceKey } from '../utils/helpers.js';
@@ -448,7 +450,7 @@ export const playerApi = async (req, res) => {
       if (!streamId) return res.json({epg_listings: []});
 
       const channel = db.prepare(`
-        SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+        SELECT pc.epg_channel_id, pc.tv_archive, pc.tv_archive_duration, map.epg_channel_id as manual_epg_id
         FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -470,7 +472,7 @@ export const playerApi = async (req, res) => {
       const listings = [];
       // Use the shared EPG formatter for consistent flags and date fields.
       for (const p of programs) {
-          listings.push(formatXtreamEpgListing(p, epgId));
+          listings.push(formatXtreamEpgListing(p, epgId, channel));
       }
 
       return res.json({epg_listings: listings});
@@ -482,18 +484,35 @@ export const playerApi = async (req, res) => {
 
       if (!streamId) return res.json({epg_listings: []});
 
-      const channel = db.prepare(`
-        SELECT pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+      const channelQuery = db.prepare(`
+        SELECT pc.epg_channel_id, pc.tv_archive, pc.tv_archive_duration, map.epg_channel_id as manual_epg_id
         FROM authorized_user_channels uc
         JOIN provider_channels pc ON pc.id = uc.provider_channel_id
         JOIN user_categories cat ON cat.id = uc.user_category_id
         LEFT JOIN epg_channel_mappings map ON map.provider_channel_id = pc.id
         WHERE uc.id = ? AND cat.user_id = ? AND uc.is_hidden = 0
-      `).get(streamId, user.id);
+      `);
+      let channel = channelQuery.get(streamId, user.id);
 
       if (!channel) return res.json({epg_listings: []});
       if (shareScope.allowedSet && !shareScope.allowedSet.has(Number(streamId))) {
         return res.json({epg_listings: []});
+      }
+
+      if (getArchiveDays(channel) > 0) {
+        const authorizeRequest = async () => {
+          const currentUser = await getXtreamUser(req, { fresh: true });
+          if (!currentUser || Number(currentUser.id) !== Number(user.id)
+            || Number(currentUser.token_version || 0) !== Number(user.token_version || 0)
+            || Boolean(currentUser.is_share_guest) !== Boolean(user.is_share_guest)) return false;
+          const currentScope = getShareScope(currentUser);
+          return !currentScope.isExpired && (!currentScope.allowedSet || currentScope.allowedSet.has(streamId));
+        };
+        if (!await refreshProviderArchive(streamId, user.id, authorizeRequest) || !await authorizeRequest()) {
+          return res.json({epg_listings: []});
+        }
+        channel = channelQuery.get(streamId, user.id);
+        if (!channel) return res.json({epg_listings: []});
       }
 
       const epgId = channel.manual_epg_id || channel.epg_channel_id;
@@ -502,7 +521,7 @@ export const playerApi = async (req, res) => {
       const programs = getEpgPrograms(epgId, limit, { includePast: true });
       const listings = [];
       for (const p of programs) {
-        listings.push(formatXtreamEpgListing(p, epgId));
+        listings.push(formatXtreamEpgListing(p, epgId, channel));
       }
 
       return res.json({epg_listings: listings});
@@ -521,7 +540,7 @@ export const playerApi = async (req, res) => {
         const chunk = streamIds.slice(offset, offset + 900);
         const placeholders = chunk.map(() => '?').join(',');
         channels.push(...db.prepare(`
-          SELECT uc.id as user_channel_id, pc.epg_channel_id, map.epg_channel_id as manual_epg_id
+          SELECT uc.id as user_channel_id, pc.epg_channel_id, pc.tv_archive, pc.tv_archive_duration, map.epg_channel_id as manual_epg_id
           FROM authorized_user_channels uc
           JOIN provider_channels pc ON pc.id = uc.provider_channel_id
           JOIN user_categories cat ON cat.id = uc.user_category_id
@@ -534,7 +553,7 @@ export const playerApi = async (req, res) => {
       for (const channel of channels) {
         const epgId = channel.manual_epg_id || channel.epg_channel_id;
         if (!epgId) continue;
-        channelsByStreamId.set(Number(channel.user_channel_id), epgId);
+        channelsByStreamId.set(Number(channel.user_channel_id), { ...channel, epgId });
       }
 
       const { start, end } = getBatchDateRange(req.query.date);

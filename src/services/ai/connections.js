@@ -154,26 +154,29 @@ export function updateAiSettings(actor,input) {
 }
 export function getPreferences(actor) { freshActor(actor); return preferences(actor); }
 export function savePreferences(actor,input) {
-    freshActor(actor); inputObject(input); const old=preferences(actor), policy=settings();
-    const next={...old, enabled:bool(input.enabled,old.enabled),auto_sync_summary:bool(input.auto_sync_summary,old.auto_sync_summary)};
-    if (input.connection_id !== undefined) {
-        if (input.connection_id !== null && !canUse(actor,loadConnection(input.connection_id),policy)) throw aiError('AI_FORBIDDEN',403);
-        next.connection_id=input.connection_id; if (next.connection_id !== old.connection_id) next.model_id=null;
-    }
-    if (input.model_id !== undefined) {
-        if (input.model_id !== null) {
-            const c=next.connection_id && loadConnection(next.connection_id);
-            if (!canUse(actor,c,policy) || !MODEL_ID.test(input.model_id) || !testedProfile(c,input.model_id) || (c.owner_key !== ownerKey(actor) && input.model_id !== c.model_id)) throw aiError('AI_MODEL_REQUIRED');
+    // Serialize with history clearing so a concurrent save cannot restore an old cutoff.
+    return db.transaction(()=>{
+        freshActor(actor); inputObject(input); const old=preferences(actor), policy=settings();
+        const next={...old, enabled:bool(input.enabled,old.enabled),auto_sync_summary:bool(input.auto_sync_summary,old.auto_sync_summary)};
+        if (input.connection_id !== undefined) {
+            if (input.connection_id !== null && !canUse(actor,loadConnection(input.connection_id),policy)) throw aiError('AI_FORBIDDEN',403);
+            next.connection_id=input.connection_id; if (next.connection_id !== old.connection_id) next.model_id=null;
         }
-        next.model_id=input.model_id;
-    }
-    if (input.language !== undefined) { if (!['de','en','fr','el'].includes(input.language)) throw aiError('AI_INVALID_INPUT'); next.language=input.language; }
-    if (input.timezone !== undefined) {
-        try { if (typeof input.timezone !== 'string' || input.timezone.length>100) throw new Error(); new Intl.DateTimeFormat('en',{timeZone:input.timezone}); } catch { throw aiError('AI_INVALID_INPUT'); }
-        next.timezone=input.timezone;
-    }
-    db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES(?,?) ON CONFLICT(owner_key) DO UPDATE SET data_json=excluded.data_json').run(ownerKey(actor),JSON.stringify(next));
-    return next;
+        if (input.model_id !== undefined) {
+            if (input.model_id !== null) {
+                const c=next.connection_id && loadConnection(next.connection_id);
+                if (!canUse(actor,c,policy) || !MODEL_ID.test(input.model_id) || !testedProfile(c,input.model_id) || (c.owner_key !== ownerKey(actor) && input.model_id !== c.model_id)) throw aiError('AI_MODEL_REQUIRED');
+            }
+            next.model_id=input.model_id;
+        }
+        if (input.language !== undefined) { if (!['de','en','fr','el'].includes(input.language)) throw aiError('AI_INVALID_INPUT'); next.language=input.language; }
+        if (input.timezone !== undefined) {
+            try { if (typeof input.timezone !== 'string' || input.timezone.length>100) throw new Error(); new Intl.DateTimeFormat('en',{timeZone:input.timezone}); } catch { throw aiError('AI_INVALID_INPUT'); }
+            next.timezone=input.timezone;
+        }
+        db.prepare('INSERT INTO ai_preferences(owner_key,data_json) VALUES(?,?) ON CONFLICT(owner_key) DO UPDATE SET data_json=excluded.data_json').run(ownerKey(actor),JSON.stringify(next));
+        return next;
+    }).immediate();
 }
 export function listConnections(actor) {
     freshActor(actor); const policy=settings();
@@ -393,7 +396,7 @@ export function pruneUsage() {
         .run(Date.now()-30*86400000);
 }
 
-function reserve(access,feature,model,timeout=AI_TIMEOUT_MS) {
+function reserve(access,feature,model,timeout=AI_TIMEOUT_MS,historyAt) {
     return db.transaction(()=>{
         const now=Date.now();
         // A crashed worker's reservation expires only after its own strict request
@@ -407,33 +410,36 @@ function reserve(access,feature,model,timeout=AI_TIMEOUT_MS) {
         if (limits.owner_count>=60 || limits.connection_count>=180 || limits.feature_count>=30) throw aiError('AI_RATE_LIMIT',429);
         pruneUsage();
         const id=randomUUID();
-        db.prepare("INSERT INTO ai_usage(id,owner_key,connection_id,feature,model,status,created_at,expires_at) VALUES(?,?,?,?,?,'running',?,?)").run(id,access.owner_key,access.connection.id,feature,model,now,now+timeout+10000);
+        const displayTime=historyAt ?? Math.max(now,(access.preferences._history_cleared_at || 0)+1);
+        db.prepare("INSERT INTO ai_usage(id,owner_key,connection_id,feature,model,status,created_at,expires_at,history_at) VALUES(?,?,?,?,?,'running',?,?,?)").run(id,access.owner_key,access.connection.id,feature,model,now,now+timeout+10000,displayTime);
         return id;
     }).immediate();
 }
 // One orchestrator for every provider: the same reservation, call budget, outage
 // breaker, connection-version checks and usage bookkeeping. Providers only
 // supply the transport and return a normalized result.
-async function call(actor,feature,connectionId,operation,payload,signal,validate) {
+async function call(actor,feature,connectionId,operation,payload,signal,validate,{onProgress,historyAt,verify}={}) {
     const access=requireAiAccess(actor,feature,connectionId), connection=loadConnection(access.connection.id);
     // Gated on the billable path only: local reads of stored results stay
     // independent of the current sign-in state.
     requireLinkedAccount(connection);
     const model=payload?.model || null;
-    const reservation=reserve(access,feature,model,providerTimeout(connection,operation));
+    const reservation=reserve(access,feature,model,providerTimeout(connection,operation),historyAt);
     try {
         const response=await adapterFor(connection).execute({
-            connection,settings:access.settings,ownerKey:access.owner_key,operation,payload,signal,
+            connection,settings:access.settings,ownerKey:access.owner_key,operation,payload,signal,onProgress,
             // The version this caller was authenticated with, compared again in
             // the transaction that grants a provider its runtime.
             tokenVersion:Number.isInteger(actor?.token_version)?actor.token_version:undefined,
             beforeSend:()=>{
+                verify?.();
                 const current=requireAiAccess(actor,feature,connection.id);
                 if (current.connection.version !== access.connection.version || JSON.stringify(current.settings)!==JSON.stringify(access.settings)) throw aiError('AI_CONNECTION_CHANGED',409);
             }
         });
         const usage=response.usage || {prompt_tokens:null,completion_tokens:null};
         db.prepare('UPDATE ai_usage SET prompt_tokens=?,completion_tokens=? WHERE id=?').run(usage.prompt_tokens,usage.completion_tokens,reservation);
+        onProgress?.({stage:'receiving'});
         const current=requireAiAccess(actor,feature,connection.id);
         if (current.connection.version !== access.connection.version) throw aiError('AI_CONNECTION_CHANGED',409);
         const data=validate(response.result);
@@ -552,8 +558,8 @@ async function runModelTests(actor,id,c,input,batch) {
     return {models,recommended_model_id:compatible.find(model=>model.id===c.model_id)?.id
         || compatible.find(model=>model.id===catalogDefault)?.id || compatible[0]?.id || null};
 }
-export async function runInference(actor,feature,{messages,schema,signal,connectionId}={}) {
+export async function runInference(actor,feature,{messages,schema,signal,connectionId,onProgress,historyAt,verify}={}) {
     const access=requireAiAccess(actor,feature,connectionId), c=loadConnection(access.connection.id), model=access.preferences.model_id;
     return call(actor,feature,c.id,'chat',{model,messages,schema,structured:c.capabilities[model].structured,maxTokens:2048},signal,
-        response=>parseStructured(response,schema));
+        response=>parseStructured(response,schema),{onProgress,historyAt,verify});
 }

@@ -18,6 +18,8 @@ try {
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
   let nextJobResult = null;
+  let historyCleared = false;
+  let nextJobProgress = {stage: 'processing', processed: 100, total: 2000};
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
   let cancelGate, releaseJobCreation, jobCreationRequested;
   let delayJobCreation = true;
@@ -115,7 +117,7 @@ try {
       if (pollErrorOnce) { pollErrorOnce = false; await route.fulfill({status: 503, json: {code: 'AI_UNAVAILABLE'}}); return; }
       pollCount++;
       if (nextJobError && pollCount > 1) data = {id: `j${jobCount}`, status: 'failed', error_code: nextJobError};
-      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', result: nextJobResult || {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
+      else data = {id: `j${jobCount}`, status: cancelNext || pollCount === 1 ? 'running' : 'completed', created_at: Date.now() - 45000, progress: nextJobProgress, result: nextJobResult || {feature: 'list', summary: '<img src=x onerror="window.hostile=true">', proposal_id: 'p1', conversation_id: 'search1', filters: {query: 'news', language: 'en'}, coverage: {processed: 2000, total: 2000, partial: false, items_shown: 20, items_total: 2000}}};
     } else if (path.endsWith('/cancel')) {
       if (cancelGate?.path === path) {
         const gate = cancelGate;
@@ -151,9 +153,9 @@ try {
     }
     else if (path === '/rules') data = method === 'GET' ? [] : {id: 'r1', ...body, preview: [{before: 'old', after: 'new'}]};
     else if (path === '/rules/r1') data = {id: 'r1', ...body, preview: [{before: 'old', after: 'new'}]};
-    else if (path === '/jobs') data = [{id: 'historyA', feature: 'list'}, {id: 'historyB', feature: 'list'}, {id: 'historyRead', feature: 'diagnose'}];
-    else if (path === '/usage') data = {prompt_tokens: null};
-    else if (path === '/history') data = {deleted: true};
+    else if (path === '/jobs') data = historyCleared ? [] : [{id: 'historyA', feature: 'list'}, {id: 'historyB', feature: 'list'}, {id: 'historyRead', feature: 'diagnose'}];
+    else if (path === '/usage') data = {requests: historyCleared ? 0 : 8, calls: historyCleared ? 0 : 12, prompt_tokens: null};
+    else if (path === '/history') { historyCleared = true; data = {deleted: true}; }
     else if (!url.pathname.startsWith('/api/ai')) data = [];
     else { status = 404; data = {code: 'AI_NOT_FOUND'}; }
     await route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
@@ -346,9 +348,13 @@ try {
   assert(localFeedback.y >= runButton.y && localFeedback.y - runButton.y < 160, 'progress is beside the job controls, not only at the top of the page');
   delayJobCreation = false; releaseJobCreation();
   await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
+  assert.match(await page.locator('#ai-work-progress').innerText(), /Processing list/);
+  assert.match(await page.locator('#ai-work-progress').innerText(), /Analyzed items: 100 \/ 2000/);
+  assert.match(await page.locator('#ai-work-progress').innerText(), /Elapsed: 45 s/);
   await page.locator('#ai-action-a1').waitFor();
   assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_completed');
   assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), false);
+  assert.equal(await page.locator('#ai-work-activity').innerText(), '', 'completed status removes stale in-flight progress');
   assert.equal(await page.locator('#ai-result img').count(), 0);
   assert.equal(await page.locator('#ai-proposal script').count(), 0);
   assert.equal(await page.evaluate(() => window.hostile), undefined);
@@ -437,12 +443,17 @@ try {
   await page.locator('#ai-new-search').click();
   assert.equal(await page.locator('#ai-filters').inputValue(), '{}');
   cancelNext = true;
+  nextJobProgress = {stage: 'raw provider secret <img src=x>', processed: 300, total: 200};
   await page.locator('#ai-run').click();
+  await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_running');
+  assert.doesNotMatch(await page.locator('#ai-work-progress').innerText(), /raw provider secret|Analyzed items/);
+  assert.equal(await page.locator('#ai-work-progress img').count(), 0);
   await page.locator('#ai-cancel').click();
   const resetSearch = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
   assert.equal(resetSearch.conversation_id, undefined);
   assert.deepEqual(resetSearch.filters, {});
   await page.waitForFunction(() => document.getElementById('ai-work-status').dataset.i18n === 'ai_cancelled');
+  nextJobProgress = {stage: 'waiting', processed: 0, total: 2000};
   for (const terminalStatus of ['completed', 'failed']) {
     cancelNext = true;
     await page.locator('#ai-run').click();
@@ -514,9 +525,6 @@ try {
   assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').length, postsBeforeRetry, 'retrying status never resubmits an inference job');
   assert(requests.filter(r => r.path === retryJob && r.method === 'GET').length >= 3, 'polling resumes for the same job through completion');
   await page.locator('details').filter({has: page.locator('#ai-clear-history')}).locator('summary').click();
-  await page.locator('#ai-clear-history').click();
-  await page.waitForFunction(() => document.getElementById('ai-history-status').dataset.i18n === 'ai_saved');
-  assert(requests.some(r => r.path === '/history' && r.method === 'DELETE'));
   await page.locator('#ai-refresh-history').click();
   await page.locator('#ai-history-historyA').waitFor();
   await page.locator('#ai-history-historyA').click();
@@ -545,11 +553,21 @@ try {
   for (const certainty of ['proven', 'possible', 'unknown']) assert.equal(await page.locator(`#ai-result h4[data-i18n="ai_${certainty}"]`).count(), 1, 'diagnosis separates facts, hypotheses and unknowns');
   assert.match(await page.locator('#ai-result').innerText(), /not implemented measurements/);
   assert.equal(await page.locator('#ai-proposal').innerText(), '', 'read-only result removes earlier actionable proposal');
+  await page.locator('summary[data-i18n="ai_changeHistory"]').click();
   await page.locator('#ai-change-ruleChange').click();
   await page.locator('#ai-undo').waitFor();
   assert.match(await page.locator('#ai-result').innerText(), /Rule-generated name/);
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/changes/ruleChange/undo')), page.locator('#ai-undo').click()]);
   assert.equal(requests.filter(r => r.path.endsWith('/undo')).at(-1).path, '/changes/ruleChange/undo', 'automatic rule change can be inspected and undone without a job');
+  assert.match(await page.locator('#ai-history-usage').innerText(), /"requests": 8/);
+  assert.match(await page.locator('[data-i18n="ai_clearHistoryHint"]').innerText(), /quota/);
+  await page.locator('#ai-clear-history').click();
+  await page.waitForFunction(() => document.getElementById('ai-history-status').dataset.i18n === 'ai_saved');
+  assert(requests.some(r => r.path === '/history' && r.method === 'DELETE'));
+  assert.equal(await page.locator('#ai-history-historyA').count(), 0, 'cleared job history stays empty after automatic refresh');
+  assert.equal(await page.locator('#ai-changes #ai-change-ruleChange').isVisible(), true, 'retained Undo records remain in their separate section');
+  assert.match(await page.locator('#ai-history-usage').innerText(), /"requests": 0/);
+  assert.match(await page.locator('#ai-history-usage').innerText(), /"calls": 0/);
   cancelNext = false;
   await page.locator('#ai-feature').selectOption('text');
   await page.locator('#ai-text-source').selectOption('epg');

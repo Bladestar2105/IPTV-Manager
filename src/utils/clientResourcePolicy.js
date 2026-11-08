@@ -35,3 +35,9 @@ export function directMetadataUrl(value, base, requestContext) {
     return url.href;
   } catch { return null; }
 }
+
+export function sanitizeClientMetadataText(value) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s<>"'\u0000-\u001f]+/gi,
+    url => directMetadataUrl(url, 'https://metadata.invalid') ? url : '[redacted]');
+}

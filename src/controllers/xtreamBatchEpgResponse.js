@@ -8,7 +8,8 @@ export const streamBatchEpgResponse = async (res, channelsByStreamId, start, end
   async function* body() {
     yield '{';
     let firstChannel = true;
-    for (const [streamId, epgId] of channelsByStreamId) {
+    for (const [streamId, channel] of channelsByStreamId) {
+      const { epgId } = channel;
       yield `${firstChannel ? '' : ','}${JSON.stringify(String(streamId))}:{"epg_listings":[`;
       firstChannel = false;
       let count = 0;
@@ -16,7 +17,7 @@ export const streamBatchEpgResponse = async (res, channelsByStreamId, start, end
         const pageSize = Math.min(128, limit - count);
         const programs = getEpgProgramsPage(epgId, start, end, pageSize, count);
         for (const program of programs) {
-          yield `${count > 0 ? ',' : ''}${JSON.stringify(formatXtreamEpgListing(program, epgId))}`;
+          yield `${count > 0 ? ',' : ''}${JSON.stringify(formatXtreamEpgListing(program, epgId, channel))}`;
           count++;
         }
         // Release each SQLite read before yielding to other requests or slow clients.

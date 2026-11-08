@@ -389,6 +389,36 @@ lock.
 
 ## EPG Downloads
 
+EPG history retention is at least seven days and automatically grows to the
+longest enabled provider channel's valid `tv_archive_duration` (in whole days).
+The import filter and hourly cleanup use the same window; a provider advertising
+14 or 30 days is not reduced to one or seven days. Since EPG IDs and custom
+sources can be shared across providers, this retention window applies to all
+EPG sources. Longer advertised windows increase `epg.db` storage accordingly.
+Rolling XMLTV imports preserve completed programmes inside that window for
+channels still present in the feed. New feed rows replace matching historical
+entries, and current/future schedules follow the new snapshot. Removed channels
+and expired history are deleted. XMLTV exports include retained history.
+Provider XMLTV refreshes also keep completed API history and its cached channel
+identity for current effective EPG mappings whose IDs are absent from the feed.
+This exception ends when the mapping or provider channel is removed or changed,
+or when the last completed programme expires.
+An immediate manual EPG refresh imports any older history the feed still offers.
+When a client requests an authorized channel's Xtream simple EPG table, Manager
+also supplements missing completed history from that provider's EPG API. These
+lookups are limited to one per provider channel per minute across workers, with
+10-second header and body budgets and an 8 MiB body limit. Successful results
+are saved without replacing custom EPG entries or the current/future schedule,
+and later XMLTV exports include them. XMLTV downloads themselves trigger no
+per-channel provider requests. Failed lookups preserve the local guide; Manager
+cannot recreate programmes missing from both the upstream feed and its EPG API.
+Providers without an XMLTV URL also retain completed cached history during their
+channel-only refresh, using the current effective manual or native EPG mapping.
+That refresh removes expired history, removed mappings and stale current/future
+rows atomically; a failed refill preserves the previous rows. Backfill rechecks
+account, token and share access before saving or returning results, redacts
+non-public resource URLs from text and accepts only bounded language tags.
+
 Every EPG download attempt is recorded in the main database immediately before
 the upstream request, including attempts that receive HTTP errors or fail during
 local parsing/import. Automatic updates wait the configured source/provider

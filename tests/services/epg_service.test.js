@@ -152,7 +152,8 @@ describe('epgService - getLastEpgUpdate', () => {
             ok: true,
             body: stream
         });
-        mainDb.prepare.mockReturnValue({ run: vi.fn() });
+        mainDb.prepare.mockImplementation(sql => sql.includes('AS archive_days')
+            ? { get: () => ({ archive_days: 14 }) } : { run: vi.fn() });
 
         await importEpgFromUrl('https://mock.url/self-signed.xml', 'custom', 3);
 

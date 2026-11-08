@@ -863,6 +863,7 @@ describe('Stalker/MAG portal flow', () => {
       expect(response.status).toBe(200);
       expect(durationMs).toBeLessThan(20_000);
       expect(memory.heapUsed - heapBefore).toBeLessThan(512 * 1024 * 1024);
+      expect(response.body.js.truncated === true).toBe(scenario.startsWith('41-dense'));
       return response.body.js.data;
     };
 
@@ -1237,6 +1238,33 @@ describe('Stalker/MAG portal flow', () => {
       .send({ enabled: false })
       .expect(200);
     expect((await requestEpoch(archivedProgramStart, 60)).status).toBe(401);
+  });
+
+  it('offers the full thirty-day provider archive in EPG, links and epoch playback', async () => {
+    await registerDevice();
+    const token = await handshake();
+    const start = Math.floor(Date.now() / 1000) - 20 * 86400;
+    const stop = start + 3600;
+    db.prepare('UPDATE provider_channels SET tv_archive_duration = 30 WHERE provider_id = ? AND remote_stream_id = 1').run(providerId);
+    epgDb.prepare(`INSERT INTO epg_programs (channel_id, source_type, source_id, start, stop, title)
+      VALUES (?, 'custom', ?, ?, ?, 'Twenty days ago')`).run(epgIds[0], epgSourceId, start, stop);
+    try {
+      const epg = await request(server).get('/server/load.php')
+        .query({ type: 'itv', action: 'get_epg_info', token, period: 1 });
+      const programme = epg.body.js.data[String(authorizedChannelIds[0])].find(row => row.start_timestamp === start);
+      expect(programme).toMatchObject({ mark_archive: 1 });
+      const link = await request(server).get('/server/load.php').query({
+        type: 'tv_archive', action: 'create_link', token,
+        cmd: `auto /media/stalker_archive_${authorizedChannelIds[0]}_${start}_${stop}.mpg`,
+      });
+      expect(link.body.js.cmd).toContain(`/timeshift/token/auth/60/epoch-${start}/`);
+      // An unavailable fixture upstream returns 502 after successful archive validation.
+      const playback = await request(server).get(`/timeshift/token/auth/60/epoch-${start}/${authorizedChannelIds[0]}.ts`).query({ token });
+      expect(playback.status).toBe(502);
+    } finally {
+      db.prepare('UPDATE provider_channels SET tv_archive_duration = 7 WHERE provider_id = ? AND remote_stream_id = 1').run(providerId);
+      epgDb.prepare('DELETE FROM epg_programs WHERE channel_id = ? AND start = ?').run(epgIds[0], start);
+    }
   });
 
   it('enforces the create_link module type matrix', async () => {
