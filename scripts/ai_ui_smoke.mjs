@@ -13,7 +13,8 @@ try {
   const page = await browser.newPage();
   page.setDefaultTimeout(8000);
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
-  let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
+  const defaultSystemPrompt = 'Help with the requested IPTV library task. Be concise.';
+  let settings = {system_prompt: defaultSystemPrompt, default_system_prompt: defaultSystemPrompt, system_prompt_max_length: 4000, enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
@@ -45,7 +46,7 @@ try {
     else if (path === '/settings') {
       if (method === 'PUT') {
         if (policyGate) { policyGate.started(); await new Promise(resolve => { policyGate.release = resolve; }); }
-        settings = body;
+        settings = {...settings, ...body};
       }
       data = settings;
     }
@@ -182,11 +183,31 @@ try {
   assert.equal(await page.locator('#ai-provider-id').count(), 0, 'unsupported provider scope must not be offered');
   assert.equal(requests.filter(r => /discover|test/.test(r.path)).length, 0, 'opening never contacts a model');
   await page.locator('details').filter({has: page.locator('#ai-policy-enabled')}).locator('summary').click();
+  assert.equal(await page.locator('#ai-system-prompt').inputValue(), defaultSystemPrompt);
+  assert.equal(await page.locator('#ai-system-prompt').getAttribute('maxlength'), '4000');
+  const writesBeforeInvalidPrompt = requests.filter(request => request.path === '/settings' && request.method === 'PUT').length;
+  await page.locator('#ai-system-prompt').evaluate(prompt => { prompt.value = 'x'.repeat(4001); prompt.dispatchEvent(new Event('input')); });
+  await page.locator('#ai-save-policy').click();
+  await page.waitForFunction(() => document.getElementById('ai-policy-status')?.dataset.i18n === 'ai_invalid');
+  assert.equal(requests.filter(request => request.path === '/settings' && request.method === 'PUT').length, writesBeforeInvalidPrompt, 'overlong instructions are rejected before Save sends a request');
+  await page.locator('#ai-system-prompt').fill('Prefer concise <b>plain text</b> selections.');
+  assert.match(await page.locator('#ai-system-prompt-count').innerText(), /44 \/ 4000/);
+  const writesBeforeReset = requests.filter(request => request.path === '/settings' && request.method === 'PUT').length;
+  await page.locator('#ai-reset-system-prompt').click();
+  assert.equal(await page.locator('#ai-system-prompt').inputValue(), defaultSystemPrompt);
+  assert.equal(requests.filter(request => request.path === '/settings' && request.method === 'PUT').length, writesBeforeReset, 'reset only edits the form until Save');
+  await page.locator('#ai-system-prompt').fill('Use a short selection style.');
   await page.locator('#ai-policy-enabled').check();
   await page.locator('#ai-allowed-users').selectOption(['2', '3']);
   await page.locator('#ai-save-policy').click();
   await page.locator('#ai-connection').waitFor();
   assert.deepEqual(settings.allowed_user_ids, [3, 2], 'grant selections submit stable user IDs');
+  assert.equal(settings.system_prompt, 'Use a short selection style.', 'Save sends the plain prompt field');
+  assert.equal(await page.locator('#ai-system-prompt').inputValue(), settings.system_prompt);
+  await page.locator('#ai-reset-system-prompt').click();
+  await page.locator('#ai-save-policy').click();
+  await page.waitForFunction(expected => document.getElementById('ai-system-prompt')?.value === expected && document.getElementById('ai-save-policy')?.disabled === false, defaultSystemPrompt);
+  assert.equal(settings.system_prompt, defaultSystemPrompt, 'reset is persisted only by Save');
   await page.locator('#ai-enabled').check();
   await page.locator('#ai-connection').selectOption('new');
   await page.locator('#ai-connection-users').selectOption(['2', '3']);
@@ -670,6 +691,8 @@ try {
   preferences.model_id = 'previous-admin-model';
   const userListRequests = requests.filter(request => request.path === '/api/users').length;
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; await aiUI.open(); });
+  assert.equal(await page.locator('#ai-system-prompt').count(), 0, 'normal users have no system prompt editor');
+  assert.equal(await page.locator('#ai-reset-system-prompt').count(), 0);
   assert.equal(requests.filter(request => request.path === '/api/users').length, userListRequests, 'normal users never load administrator user choices');
   assert.equal(await page.locator('#ai-user').count(), 0, 'normal users cannot select another library');
   assert.equal(await page.locator('#ai-key').count(), 0, 'borrowed setup never asks for keys');

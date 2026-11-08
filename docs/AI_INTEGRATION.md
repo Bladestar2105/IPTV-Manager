@@ -58,13 +58,28 @@ planning and candidate review still do. Names and country/category tags are
 language clues, not verification of audio language or current programming.
 Unfamiliar brands or incomplete metadata can leave relevant channels outside
 the selected scope; inspect the preview before confirming.
-Planned lists review at most 40 candidates per model request so dense assignment
-proposals fit the existing answer budget. Thus a default-size review needs at
-most six candidate-review calls, plus planning; existing connection limits
+New thematic lists use a compact selection of supplied IDs, with up to 80
+candidates per review call. Manager creates the category and assignment proposal
+locally through the existing authorization, preview and Undo checks. Repeated
+appearances of the same source are reviewed once. General editing tasks retain
+the action contract and up to 40 candidates per request. Long escaped labels or
+custom instructions can require smaller batches; the loaded set is checked
+against message and remaining call limits before review starts. Existing connection limits
 still apply. Proposal and Apply capacity is bounded to 4,000 actions, including
 category creation and assignments. Identical assignments from repeated source
 appearances are combined; conflicting edits are rejected. The accumulated list
 instruction is bounded to 2,000 characters.
+
+German language clues recognize common catalog markers such as `DE -`, `DE|`
+and `[DE]` without relying on a new spelling guess each turn. Explicit movie
+year/decade requests filter by a valid provider date, or an unambiguous year in
+the original title; unknown years do not satisfy that range. Category names
+alone do not establish a release year. Provider ratings and year provenance
+are supplied as catalog clues and rechecked before applying a proposal. They
+are not independently verified IMDb scores, release dates or audio tracks.
+There is no external IMDb lookup. Structured API profiles send the answer
+schema through the response format; JSON fallback profiles retain textual
+schema instructions. Responses are validated locally in either case.
 
 When the normal 240-candidate limit is the only obstacle, the result offers
 **Start expanded review** with its required model-call count. This is an
@@ -87,6 +102,27 @@ compatibility and selection. A manual profile change also invalidates them,
 unless you explicitly adopt a model successfully tested with that exact profile.
 Model recommendations reflect observed compatibility, not a price/quality
 ranking. There is no automatic fallback to a different provider or credential.
+
+### Administrator system instructions
+
+Administrators can edit one global **AI system instructions** field under
+**Administrator permissions**. It controls response and selection style for
+AI tasks on either connection type. The default asks for concise help with the
+requested IPTV library task, the requested JSON format, and the user's preferred
+language. No prompt variables or executable templates are supported.
+
+The limit is 4,000 characters. Save rejects non-text values, overlong text and
+control characters other than tabs and line breaks; it never truncates them.
+**Reset to default** edits the field; choose **Save** to persist it. Saving blank
+or whitespace-only text also restores the default. Unrelated policy changes
+retain the saved instructions. Only administrators can read or change this field.
+
+Fixed instructions always precede the editable text: catalog/source content is
+untrusted data, only supplied records and IDs may be used, unsupported facts must
+remain unknown, and changes need explicit confirmation. URLs, credentials,
+tools, code execution and administrative changes remain restricted. The requested
+JSON contract, current access rights, quotas and server validation still apply;
+custom instructions cannot grant permissions or bypass these checks.
 
 ### Model discovery and bounded compatibility tests
 

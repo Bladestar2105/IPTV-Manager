@@ -7,6 +7,7 @@ import { aiError, normalizeBaseUrl, validateJson, AI_TIMEOUT_MS } from './transp
 import { adapterFor, providerOf, normalizeProvider, providerTimeout, DEFAULT_PROVIDER, MODEL_ID } from './providers/index.js';
 import { readCredentialRecord } from './codex/credentials.js';
 import { codexReadinessSnapshot } from './codex/readiness.js';
+import { DEFAULT_SYSTEM_PROMPT, MAX_SYSTEM_PROMPT_LENGTH } from './prompts.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
 const DEFAULT_SETTINGS = { enabled: false, allow_own_connections: false, allowed_user_ids: [], functions: FEATURES, internal_targets: [] };
@@ -139,18 +140,22 @@ function testedProfile(connection,model) {
 
 export function getAiSettings(actor) {
     freshActor(actor); const policy=settings();
-    return actor.is_admin ? policy : { enabled:policy.enabled, allow_own_connections:policy.allow_own_connections, allowed:policy.allowed_user_ids.includes(actor.id), functions:policy.functions };
+    return actor.is_admin ? { ...policy, system_prompt:typeof policy.system_prompt === 'string' && policy.system_prompt.trim() ? policy.system_prompt : DEFAULT_SYSTEM_PROMPT, default_system_prompt:DEFAULT_SYSTEM_PROMPT, system_prompt_max_length:MAX_SYSTEM_PROMPT_LENGTH } : { enabled:policy.enabled, allow_own_connections:policy.allow_own_connections, allowed:policy.allowed_user_ids.includes(actor.id), functions:policy.functions };
 }
 export function updateAiSettings(actor,input) {
     freshActor(actor); if (!actor.is_admin) throw aiError('AI_FORBIDDEN',403); inputObject(input);
     const old=settings();
-    const policy={ enabled:bool(input.enabled,old.enabled), allow_own_connections:bool(input.allow_own_connections,old.allow_own_connections), allowed_user_ids:ids(input.allowed_user_ids,old.allowed_user_ids), functions:functions(input.functions,old.functions), internal_targets:old.internal_targets };
+    const policy={ enabled:bool(input.enabled,old.enabled), allow_own_connections:bool(input.allow_own_connections,old.allow_own_connections), allowed_user_ids:ids(input.allowed_user_ids,old.allowed_user_ids), functions:functions(input.functions,old.functions), internal_targets:old.internal_targets, system_prompt:old.system_prompt ?? '' };
+    if (input.system_prompt !== undefined) {
+        if (typeof input.system_prompt !== 'string' || input.system_prompt.length > MAX_SYSTEM_PROMPT_LENGTH || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(input.system_prompt)) throw aiError('AI_INVALID_INPUT');
+        policy.system_prompt=input.system_prompt.trim() ? input.system_prompt : '';
+    }
     if (input.internal_targets !== undefined) {
         if (!Array.isArray(input.internal_targets) || input.internal_targets.length>20) throw aiError('AI_INVALID_INPUT');
         policy.internal_targets=[...new Set(input.internal_targets.map(normalizeBaseUrl))];
     }
     db.prepare("INSERT INTO settings(key,value) VALUES('ai_policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(policy));
-    return policy;
+    return getAiSettings(actor);
 }
 export function getPreferences(actor) { freshActor(actor); return preferences(actor); }
 export function savePreferences(actor,input) {

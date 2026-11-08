@@ -274,9 +274,20 @@ window.aiUI = (() => {
     field(box, 'own-allowed', 'ownAllowed', 'checkbox', settings.allow_own_connections);
     userSelect(box, 'allowed-users', 'users', settings.allowed_user_ids || [], true);
     field(box, 'targets', 'targets', 'textarea', (settings.internal_targets || []).join('\n'));
+    const prompt = field(box, 'system-prompt', 'systemPrompt', 'textarea', settings.system_prompt || '');
+    prompt.rows = 5; prompt.maxLength = settings.system_prompt_max_length || 4000;
+    const hint = label('p', box, 'systemPromptHelp', 'form-text'); hint.id = 'ai-system-prompt-help';
+    const count = node('p', box, undefined, 'form-text');
+    label('span', count, 'systemPromptCharacters');
+    const counter = node('span', count); counter.id = 'ai-system-prompt-count';
+    prompt.setAttribute('aria-describedby', `${hint.id} ${counter.id}`);
+    const updateCount = () => { counter.textContent = `: ${prompt.value.length} / ${prompt.maxLength}`; };
+    prompt.addEventListener('input', updateCount); updateCount();
+    button(box, 'reset-system-prompt', 'resetSystemPrompt', () => { prompt.value = settings.default_system_prompt || ''; updateCount(); });
     featureChecks(box, 'policy-function', settings.functions || []);
     button(box, 'save-policy', 'save', async () => {
-      settings = await api('/settings', 'PUT', {enabled: checked('policy-enabled'), allow_own_connections: checked('own-allowed'), allowed_user_ids: ids('allowed-users'), functions: selectedFeatures('policy-function'), internal_targets: value('targets').split('\n').map(s => s.trim()).filter(Boolean)});
+      if (prompt.value.length > prompt.maxLength || !prompt.checkValidity()) { prompt.focus(); throw {code: 'AI_INVALID_INPUT'}; }
+      settings = await api('/settings', 'PUT', {enabled: checked('policy-enabled'), allow_own_connections: checked('own-allowed'), allowed_user_ids: ids('allowed-users'), functions: selectedFeatures('policy-function'), internal_targets: value('targets').split('\n').map(s => s.trim()).filter(Boolean), system_prompt: prompt.value});
       await open(true);
       el('policy-progress').closest('details').open = true;
       status(settings.enabled ? 'saved' : 'off', 'policy');

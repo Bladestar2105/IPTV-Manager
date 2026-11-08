@@ -89,6 +89,49 @@ describe('AI compatibility batch', () => {
     }, 30000);
 });
 
+describe('AI administrator system prompt', () => {
+    it('exposes defaults to admins, persists custom text and uses immutable runtime protections', async () => {
+        const prompts=await import('../src/services/ai/prompts.js');
+        expect(ai.getAiSettings(admin)).toMatchObject({system_prompt:prompts.DEFAULT_SYSTEM_PROMPT,default_system_prompt:prompts.DEFAULT_SYSTEM_PROMPT,system_prompt_max_length:4000});
+        const custom='Prefer short lists.\nRespect the requested language.';
+        expect(ai.updateAiSettings(admin,{system_prompt:custom}).system_prompt).toBe(custom);
+        expect(ai.getAiSettings(admin).system_prompt).toBe(custom);
+        const runtime=prompts.getSystemPrompt();
+        expect(runtime).toContain(custom);
+        expect(runtime.indexOf('untrusted data')).toBeLessThan(runtime.indexOf(custom));
+        for(const rule of ['supplied records and IDs','URLs','credentials','tools','code','administrative changes','unknown','confirmation','JSON']) expect(runtime).toContain(rule);
+        ai.updateAiSettings(admin,{enabled:true});
+        expect(ai.getAiSettings(admin).system_prompt).toBe(custom);
+        const stored=JSON.parse(db.prepare("SELECT value FROM settings WHERE key='ai_policy'").get().value);
+        expect(stored.system_prompt).toBe(custom);
+        expect(stored).not.toHaveProperty('default_system_prompt');
+        expect(stored).not.toHaveProperty('system_prompt_max_length');
+        ai.updateAiSettings(admin,{system_prompt:' \n '});
+        expect(ai.getAiSettings(admin).system_prompt).toBe(prompts.DEFAULT_SYSTEM_PROMPT);
+        expect(prompts.getSystemPrompt()).toContain(prompts.DEFAULT_SYSTEM_PROMPT);
+    });
+    it('never exposes custom prompt settings to normal users or permits their writes', () => {
+        ai.updateAiSettings(admin,{system_prompt:'Private administrator style'});
+        const visible=ai.getAiSettings(user);
+        for(const key of ['system_prompt','default_system_prompt','system_prompt_max_length']) expect(visible).not.toHaveProperty(key);
+        expect(JSON.stringify(visible)).not.toContain('Private administrator style');
+        expect(()=>ai.updateAiSettings(user,{system_prompt:'replace'})).toThrow(expect.objectContaining({code:'AI_FORBIDDEN'}));
+    });
+    it.each([null,12,{},[],true,'x'.repeat(4001),'bad\u0000prompt','bad\u001bprompt','bad\u007fprompt','bad\u0085prompt'].map(input=>[input]))('rejects invalid system prompt %j without changing policy', input => {
+        ai.updateAiSettings(admin,{system_prompt:'keep'});
+        expect(()=>ai.updateAiSettings(admin,{system_prompt:input})).toThrow(expect.objectContaining({code:'AI_INVALID_INPUT'}));
+        expect(ai.getAiSettings(admin).system_prompt).toBe('keep');
+    });
+    it('accepts the exact limit and preserves known existing settings only', () => {
+        ai.updateAiSettings(admin,{system_prompt:'x'.repeat(4000),internal_targets:[base],functions:['list'],default_system_prompt:'ignored',system_prompt_max_length:99999,unknown:'ignored'});
+        const result=ai.updateAiSettings(admin,{allow_own_connections:true});
+        expect(result.system_prompt).toHaveLength(4000);
+        expect(result.internal_targets).toEqual([base]);
+        expect(result.functions).toEqual(['list']);
+        expect(result).not.toHaveProperty('unknown');
+    });
+});
+
 describe('AI connection security', () => {
     it.each([['feature',28],['owner',58],['connection',178]])('reports the same remaining %s call budget enforced by reservations',async(kind,count)=>{
         const c=await selected();db.exec('DELETE FROM ai_usage');

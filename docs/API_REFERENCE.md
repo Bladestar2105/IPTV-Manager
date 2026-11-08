@@ -83,6 +83,17 @@ Model selection requires a successful compatibility test. Shared-connection
 users cannot edit, discover or test the owner's connection or retrieve its key.
 Server policy defaults to disabled, and each user must opt in separately.
 
+For administrators, `GET /api/ai/settings` also returns `system_prompt` (the
+effective editable text), `default_system_prompt`, and `system_prompt_max_length`
+(`4000`). These fields and custom text are omitted from normal-user responses.
+Administrator `PUT /api/ai/settings` accepts optional plain-text `system_prompt`:
+omission preserves it, and blank/whitespace-only text resets the default. Values
+longer than 4,000 characters, non-strings, and control characters other than tab,
+CR and LF are rejected with `AI_INVALID_INPUT`; text is never truncated. Derived
+default/limit fields are read-only and are not persisted. The UI reset button
+requires an explicit Save. Fixed trust/data, JSON, confirmation, authorization,
+quota and server-validation rules remain mandatory for customized prompts.
+
 Proposal Apply and rule POST/PUT operations do not require an available model
 connection or tested model. They make no provider request and retain current
 account, Web UI, server/personal AI and feature authorization, ownership,
@@ -165,10 +176,17 @@ does not apply or merge a previous one.
 For a list continuation with an empty `prompt`, the saved request and validated
 selection are reused without another planning call. Ownership, explicit scope,
 source references and current catalog authorization are rechecked.
+Selection may include validated inclusive `year_from` / `year_to` movie bounds;
+legacy selections without them remain valid. Dates come from valid provider
+metadata or an unambiguous original-title year, with provenance. Relevant movie
+items include `release_year`, `year_source`, `provider_rating` and `rating_source`.
+Ratings are provider-supplied, not verified IMDb values. Metadata used by a
+proposal is checked again on result/proposal reads and Apply.
 
 List candidate review is bounded to 240 rows by default, or up to 2,000 with
 `full_list:true`. The remaining owner/connection/function call budget further
-limits candidate review to 40 candidates per remaining call. If the matching set exceeds this bound,
+limits candidate review to 80 candidates per remaining call for a new thematic
+category, or 40 for a general editing plan. If the matching set exceeds this bound,
 `coverage.requires_narrowing:true` reports the matching `total`, the
 `candidate_limit` and zero `processed` rows. No candidate-review calls or
 partial proposal are made; refine the request or explicitly raise the limit.
@@ -180,8 +198,12 @@ candidate limit. Cached continuations blocked by either limit make no model call
 Planned lists do not offer automatic next-page inference. Local retrieval has
 no model-token cost; the planning and candidate-review requests consume the
 existing connection budget and may incur provider usage.
-Planned lists use at most 40 candidates per review request and retain at most
-2,000 characters of accumulated instruction. An invalid or oversized selection
+New thematic category plans use a compact selected-ID answer and server-built
+category/assignment actions. Other list edits retain the full action contract.
+Loaded compact requests are partitioned to fit message limits before any review
+call; unusually long escaped labels or custom instructions can increase
+`required_review_calls`. Counts for a set not yet loaded are an estimate.
+Planned lists retain at most 2,000 characters of accumulated instruction. An invalid or oversized selection
 fails validation rather than widening scope or replaying requests.
 Stored proposals and Apply confirmations accept at most 4,000 actions, including
 category creation. Repeated identical assignments to the same destination are
