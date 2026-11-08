@@ -1,4 +1,4 @@
-import { fail, MAX_CANDIDATES } from './context.js';
+import { fail, MAX_PROPOSAL_ACTIONS } from './context.js';
 
 const FEATURE_ACTIONS = {
   list: ['create_category','rename_category','assign_channel','rename_channel','hide_channel','reorder_channel'],
@@ -30,6 +30,6 @@ export function proposalSchema(feature) {
 }
 export function validateFeatureActions(feature,actions) {
   const allowed=actionTypes(feature);
-  if(!Array.isArray(actions)||actions.length>MAX_CANDIDATES) fail('AI_INVALID_ACTIONS');
+  if(!Array.isArray(actions)||actions.length>MAX_PROPOSAL_ACTIONS) fail('AI_INVALID_ACTIONS');
   if(actions.some(action=>!action||typeof action!=='object'||Array.isArray(action)||!allowed.includes(action.type))) fail('AI_INVALID_ACTION');
 }

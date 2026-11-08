@@ -27,6 +27,14 @@ beforeEach(()=>{
 });
 afterAll(()=>{db?.close();fs.rmSync(dir,{recursive:true,force:true});});
 const rename=()=>createProposal(actor,payload,[{type:'rename_channel',user_channel_id:1111,value:'News'}],'Clean');
+it('bounds aggregate proposal actions and confirmation IDs independently of candidate count',async()=>{
+  const {validateFeatureActions,proposalSchema}=await import('../src/services/ai/proposalContract.js');
+  expect(()=>validateFeatureActions('list',Array.from({length:4000},()=>({type:'assign_channel'})))).not.toThrow();
+  expect(()=>createProposal(actor,{...payload,feature:'list'},Array.from({length:4001},()=>({type:'assign_channel',provider_channel_id:911,category_id:1011})))).toThrow(/AI_INVALID_ACTIONS/);
+  expect(()=>applyProposal(actor,'unread',{action_ids:Array.from({length:4001},(_,i)=>`action-${i}`),idempotency_key:'over-capacity'})).toThrow(/AI_INVALID_CONFIRMATION/);
+  expect(proposalSchema('list').properties.actions.maxItems).toBe(80);
+  expect(db.prepare('SELECT COUNT(*) AS n FROM ai_proposals').get().n).toBe(0);
+});
 it.each([
   ['cleanup',{type:'create_category',key:'new',name:'New',category_type:'live'}],
   ['cleanup',{type:'assign_channel',provider_channel_id:912,category_id:1011}],

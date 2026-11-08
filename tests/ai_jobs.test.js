@@ -7,11 +7,13 @@ import http from 'node:http';
 // Exercise the persisted job/transport boundary. The feature itself is covered
 // against real catalog data in ai_features.test.js.
 vi.mock('../src/services/ai/features.js',()=>({
-  executeFeature:async (actor,input,{infer,progress})=>{
+  executeFeature:async (actor,input,{infer,progress,remainingCalls})=>{
     reportProgress=progress;
+    reportRemainingCalls=remainingCalls;
     progress?.({stage:'processing',processed:0,total:2,reasoning:'private fixture text'});
     beforeInference?.();
     const answer=await infer({messages:[{role:'user',content:'Synthetic check'}],schema:{type:'object',properties:{ok:{type:'boolean'}},required:['ok'],additionalProperties:false}});
+    afterInference?.();
     return {feature:input.feature,summary:answer.data.ok?'Ready':'Failed',_authorization:{owner_key:`user:${actor.id}`}};
   },
   authorizeResult:(_actor,_input,result)=>result
@@ -19,7 +21,7 @@ vi.mock('../src/services/ai/features.js',()=>({
 
 const dataDir=mkdtempSync(join(tmpdir(),'iptv-ai-jobs-'));
 process.env.DATA_DIR=dataDir;
-let db,api,jobs,actor,connection,server,requests=0,hold=false,pending=[],reportProgress,beforeInference;
+let db,api,jobs,actor,connection,server,requests=0,hold=false,pending=[],reportProgress,reportRemainingCalls,beforeInference,afterInference;
 const pause=()=>new Promise(resolve=>setTimeout(resolve,10));
 const until=async predicate=>{for(let i=0;i<200;i++){if(await predicate())return;await pause();}throw new Error('Timed out waiting for synthetic job: '+JSON.stringify(db.prepare('SELECT status,error_code FROM ai_jobs').all()));};
 const release=()=>{for(const send of pending.splice(0))send();};
@@ -51,6 +53,16 @@ afterAll(async()=>{
 });
 
 describe('durable bounded AI jobs',()=>{
+  it('passes the current connection budget into feature orchestration',async()=>{
+    const remaining=[];
+    beforeInference=()=>{expect(reportRemainingCalls).toBeTypeOf('function');remaining.push(reportRemainingCalls());};
+    afterInference=()=>remaining.push(reportRemainingCalls());
+    try {
+      const job=jobs.createJob(actor,{feature:'diagnose'},'remaining-budget-job');
+      await until(()=>db.prepare('SELECT status FROM ai_jobs WHERE id=?').get(job.id).status==='completed');
+      expect(remaining).toEqual([30,29]);
+    } finally {beforeInference=null;afterInference=null;}
+  });
   it('serializes history clearing before reading preferences from another worker',async()=>{
     const {openDbConnection}=await import('../src/database/db.js');
     const writer=openDbConnection();

@@ -5,6 +5,31 @@ import epgDb from '../../database/epgDb.js';
 
 export const RETENTION_MS = 30 * 86400000;
 export const MAX_CANDIDATES = 2000;
+export const MAX_PROPOSAL_ACTIONS = MAX_CANDIDATES * 2;
+db.function('ai_lower',{deterministic:true},value=>String(value??'').toLowerCase());
+function movieYear(releaseDate,name) {
+  const date=String(releaseDate??'').trim();
+  if(/^(?:18|19|20)\d{2}$|^2100$/.test(date)) return {year:Number(date),source:'provider'};
+  if(/^(?:18|19|20)\d{2}-\d{2}-\d{2}$|^2100-\d{2}-\d{2}$/.test(date)) {
+    const time=Date.parse(date+'T00:00:00Z');
+    if(Number.isFinite(time) && new Date(time).toISOString().slice(0,10)===date) return {year:Number(date.slice(0,4)),source:'provider'};
+  }
+  const years=[...new Set(Array.from(String(name??'').matchAll(/(?<![\p{L}\p{N}])((?:18|19|20)\d{2}|2100)(?![\p{L}\p{N}])/gu),match=>Number(match[1])))];
+  return years.length===1?{year:years[0],source:'title'}:{year:null,source:null};
+}
+db.function('ai_movie_year',{deterministic:true},(date,name)=>movieYear(date,name).year);
+function languageClues(terms) {
+  const german=/^(?:(?:german|germany|deutsch|deutschland|de)(?:\s*[-|:]|\s*)|\[de\]|\(de\))$/i;
+  if(!terms.some(term=>german.test(term))) return terms;
+  return [...new Set([...terms.filter(term=>!german.test(term)),'German','Germany','Deutsch','DE -','DE-','DE |','DE|','DE:','DE :','[DE]','(DE)'])];
+}
+function movieMetadata(row,name) {
+  const {year,source}=movieYear(row.releaseDate,name);
+  const rating=String(row.rating??'').trim();
+  const numeric=/^\d+(?:\.\d+)?$/.test(rating)?Number(rating):NaN;
+  const valid=Number.isFinite(numeric)&&numeric>=0&&numeric<=10;
+  return {release_year:year,year_source:source,provider_rating:valid?numeric:null,rating_source:valid?'provider':null};
+}
 export const ownerKey = actor => `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
 export const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function fail(code, status = 400) {
@@ -92,16 +117,28 @@ export function checkReferences(actor, userId, refs, { version = true } = {}) {
     const row = channelRecord(actor, userId, ref.channel_id, {editing:ref.editing,assignmentId:ref.assignment_id,allowHidden:ref.allow_hidden});
     if (version && ref.hash !== hash(row)) fail('AI_STALE_SOURCE', 409);
   }
+  if(version) checkMetadataReferences(refs);
+}
+// Call only after authenticating the source IDs, including compact result references.
+export function checkMetadataReferences(refs) {
+  if(!Array.isArray(refs) || refs.length>MAX_CANDIDATES*3) fail('AI_INVALID_RESULT');
+  const lookup=db.prepare('SELECT rating,releaseDate FROM provider_channels WHERE id=?');
+  for(const ref of refs) if(ref.metadata_hash!==undefined) {
+    const metadata=lookup.get(positiveId(ref.channel_id));
+    if(!metadata) fail('AI_SOURCE_UNAVAILABLE',409);
+    if(ref.metadata_hash!==hash(metadata)) fail('AI_STALE_SOURCE',409);
+  }
 }
 
-export function buildContext(actor, payload) {
+export function buildContext(actor, payload, selection = null, candidateLimit = Infinity) {
   const userId = targetUser(actor, payload.user_id);
   const selectedIds = ids(payload.selected_ids);
   const channelIds = ids(payload.channel_ids ?? (payload.provider_channel_id ? [payload.provider_channel_id] : []));
   const selectedDiagnosis = payload.feature === 'diagnose' && (selectedIds.length > 0 || channelIds.length > 0);
   const editing = ['list','cleanup','duplicates'].includes(payload.feature) || selectedDiagnosis;
-  const offset = Number(payload.offset || 0);
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) fail('AI_INVALID_OFFSET');
+  const requestedOffset = Number(payload.offset || 0);
+  if (!Number.isSafeInteger(requestedOffset) || requestedOffset < 0 || requestedOffset > 1000000) fail('AI_INVALID_OFFSET');
+  const offset=selection?0:requestedOffset;
   const params = {userId};
   const clauses = [editing
     ? `(uc.id IN (SELECT id FROM authorized_user_channels) OR (p.user_id=@userId AND uc.id IS NULL))`
@@ -114,17 +151,44 @@ export function buildContext(actor, payload) {
   }
   if (channelIds.length) clauses.push(`pc.id IN (${channelIds.map((id,i)=>{params['id'+i]=id;return '@id'+i;}).join(',')})`);
   if (payload.category_id) { params.categoryId=positiveId(payload.category_id); clauses.push('uc.user_category_id=@categoryId'); }
+  if(selection) {
+    if(channelIds.length) {
+      const scoped=db.prepare(`${channelSelect} WHERE ${clauses.join(' AND ')}`).all(params);
+      if(channelIds.some(id=>!scoped.some(row=>row.provider_channel_id===id))) fail('AI_SOURCE_UNAVAILABLE',409);
+    }
+    if(selection.type) {params.selectionType=selection.type;clauses.push('pc.stream_type=@selectionType');}
+    for(const key of ['terms','language_terms']) if(selection[key].length) {
+      const terms=key==='language_terms'?languageClues(selection[key]):selection[key];
+      const fields=['pc.name','uc.custom_name','cat.name','pc.genre'];
+      clauses.push(`(${terms.map((term,i)=>{
+        const param=`${key}${i}`;params[param]=term.toLowerCase();
+        const lower=Buffer.byteLength(term)===term.length?'lower':'ai_lower';
+        return fields.map(field=>`instr(${lower}(COALESCE(${field},'')),@${param})>0`).join(' OR ');
+      }).join(' OR ')})`);
+    }
+    if(selection.year_from!=null) {
+      params.yearFrom=selection.year_from;params.yearTo=selection.year_to;
+      clauses.push("pc.stream_type='movie' AND ai_movie_year(pc.releaseDate,pc.name) BETWEEN @yearFrom AND @yearTo");
+    }
+  }
   const sql = `${channelSelect} WHERE ${clauses.join(' AND ')}`;
   const total = db.prepare(`SELECT COUNT(*) AS total FROM (${sql})`).get(params).total;
-  const limit=payload.full_list===true?MAX_CANDIDATES:240;
-  const rows = db.prepare(`${sql} ORDER BY pc.id,uc.id LIMIT @limit OFFSET @offset`).all({...params,limit,offset});
-  if (channelIds.some(id => !rows.some(row => row.provider_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
+  const reviewLimit=payload.full_list===true?MAX_CANDIDATES:240;
+  const expandedCandidateLimit=Math.min(MAX_CANDIDATES,candidateLimit);
+  const limit=Math.min(reviewLimit,selection?expandedCandidateLimit:MAX_CANDIDATES);
+  const requiresNarrowing=Boolean(selection && total>limit);
+  const rows = requiresNarrowing?[]:db.prepare(`${sql} ORDER BY pc.id,uc.id LIMIT @limit OFFSET @offset`).all({...params,limit,offset});
+  if (!selection && channelIds.some(id => !rows.some(row => row.provider_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
   if (selectedDiagnosis && selectedIds.some(id => !rows.some(row => row.user_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
   const categories = db.prepare('SELECT id,name,type,sort_order,is_adult FROM user_categories WHERE user_id=? ORDER BY sort_order,id LIMIT 500').all(userId)
     .map(row=>({...row,name:safeText(row.name,160)}));
-  const refs = rows.map(row=>reference(row,editing,Boolean(row.is_hidden)));
-  return { userId,rows,refs,categories,items:rows.map(publicChannel),
-    coverage:{processed:rows.length,total,offset,partial:offset>0||offset+rows.length<total,next_offset:offset+rows.length<total?offset+rows.length:null} };
+  const movieIds=[...new Set(rows.filter(row=>payload.feature==='list' && row.stream_type==='movie').map(row=>row.provider_channel_id))];
+  const metadata=new Map(movieIds.length?db.prepare(`SELECT id,rating,releaseDate FROM provider_channels WHERE id IN (${movieIds.map(()=>'?').join(',')})`).all(...movieIds).map(({id,...value})=>[id,value]):[]);
+  const refs = rows.map(row=>({...reference(row,editing,Boolean(row.is_hidden)),...(metadata.has(row.provider_channel_id)?{metadata_hash:hash(metadata.get(row.provider_channel_id))}:{})}));
+  return { userId,rows,refs,categories,items:rows.map(row=>({...publicChannel(row),...(metadata.has(row.provider_channel_id)?movieMetadata(metadata.get(row.provider_channel_id),row.name):{})})),
+    coverage:{processed:rows.length,total,offset,partial:offset>0||offset+rows.length<total,next_offset:!selection&&offset+rows.length<total?offset+rows.length:null,
+      ...(selection?{requires_narrowing:requiresNarrowing,candidate_limit:limit,review_limit:reviewLimit,
+        expanded_candidate_limit:expandedCandidateLimit,budget_limited:total>candidateLimit}:{})} };
 }
 
 // Walk the authorized catalog locally so a page boundary cannot conceal a duplicate.

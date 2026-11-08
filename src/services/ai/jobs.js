@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import db from '../../database/db.js';
-import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage, allowsUnattendedWork, requireLinkedConnection, accountBinding } from './connections.js';
+import { requireAiAccess, requireAiFeatureAccess, runInference, pruneUsage, allowsUnattendedWork, requireLinkedConnection, accountBinding, remainingInferenceCalls } from './connections.js';
 import { safeText } from './context.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
@@ -166,6 +166,7 @@ async function runJob(id) {
     const {executeFeature,authorizeResult} = await import('./features.js');
     const result = await executeFeature(actor,input,{
       signal:controller.signal,jobId:id,progress,
+      remainingCalls:()=>remainingInferenceCalls(check(true),job.feature,job.connection_id),
       infer:async ({messages,schema}) => {
         const fresh = check(true);
         db.prepare('UPDATE ai_jobs SET request_started_at = ? WHERE id = ?').run(Date.now(),id);

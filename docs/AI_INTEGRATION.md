@@ -38,6 +38,57 @@ can use familiar names such as Sky Sport Bundesliga and DAZN to propose matches
 from the authorized catalog, including numbered and quality variants. Review
 the suggested entries before confirming the list.
 
+The list assistant first interprets the request in one small model call, then
+searches the authorized catalog locally using media type and literal topic,
+brand and language/name clues. Only matching candidates are sent for review;
+the full provider catalog is not sent to the model. A short follow-up such as
+**“Only German-language channels”** retains the original football task and its
+instructions to preserve other lists. **New list task** clears that context.
+Changing the target user or explicit channel/category scope starts a new task.
+Each refinement produces a fresh preview; it does not apply or merge an older
+proposal.
+
+The default review limit is 240 candidates. The expanded option allows up to
+2,000 and can consume more usage. The remaining owner/connection/function call
+budget can lower this limit before candidate review starts. If more candidates match, the assistant
+reports the count and asks for a narrower task before reviewing candidates or
+creating a partial list. It does not automatically process the entire catalog
+in paid model calls. Local database searching consumes no model tokens;
+planning and candidate review still do. Names and country/category tags are
+language clues, not verification of audio language or current programming.
+Unfamiliar brands or incomplete metadata can leave relevant channels outside
+the selected scope; inspect the preview before confirming.
+New thematic lists use a compact selection of supplied IDs, with up to 80
+candidates per review call. Manager creates the category and assignment proposal
+locally through the existing authorization, preview and Undo checks. Repeated
+appearances of the same source are reviewed once. General editing tasks retain
+the action contract and up to 40 candidates per request. Long escaped labels or
+custom instructions can require smaller batches; the loaded set is checked
+against message and remaining call limits before review starts. Existing connection limits
+still apply. Proposal and Apply capacity is bounded to 4,000 actions, including
+category creation and assignments. Identical assignments from repeated source
+appearances are combined; conflicting edits are rejected. The accumulated list
+instruction is bounded to 2,000 characters.
+
+German language clues recognize common catalog markers such as `DE -`, `DE|`
+and `[DE]` without relying on a new spelling guess each turn. Explicit movie
+year/decade requests filter by a valid provider date, or an unambiguous year in
+the original title; unknown years do not satisfy that range. Category names
+alone do not establish a release year. Provider ratings and year provenance
+are supplied as catalog clues and rechecked before applying a proposal. They
+are not independently verified IMDb scores, release dates or audio tracks.
+There is no external IMDb lookup. Structured API profiles send the answer
+schema through the response format; JSON fallback profiles retain textual
+schema instructions. Responses are validated locally in either case.
+
+When the normal 240-candidate limit is the only obstacle, the result offers
+**Start expanded review** with its required model-call count. This is an
+explicit increase in usage. It reuses the validated task and selection without
+another planning call and searches the current authorized catalog again.
+An insufficient hourly call budget has a separate message; increasing the
+candidate limit cannot bypass it. **New list task** restores the economical
+default. Empty list continuations that are still too large make no model call.
+
 User access lists support multiple selections with Ctrl/Cmd-click. Empty access
 lists grant no users access. Previously saved selections that no longer appear
 in the administrator user list are labeled unavailable rather than silently
@@ -51,6 +102,27 @@ compatibility and selection. A manual profile change also invalidates them,
 unless you explicitly adopt a model successfully tested with that exact profile.
 Model recommendations reflect observed compatibility, not a price/quality
 ranking. There is no automatic fallback to a different provider or credential.
+
+### Administrator system instructions
+
+Administrators can edit one global **AI system instructions** field under
+**Administrator permissions**. It controls response and selection style for
+AI tasks on either connection type. The default asks for concise help with the
+requested IPTV library task, the requested JSON format, and the user's preferred
+language. No prompt variables or executable templates are supported.
+
+The limit is 4,000 characters. Save rejects non-text values, overlong text and
+control characters other than tabs and line breaks; it never truncates them.
+**Reset to default** edits the field; choose **Save** to persist it. Saving blank
+or whitespace-only text also restores the default. Unrelated policy changes
+retain the saved instructions. Only administrators can read or change this field.
+
+Fixed instructions always precede the editable text: catalog/source content is
+untrusted data, only supplied records and IDs may be used, unsupported facts must
+remain unknown, and changes need explicit confirmation. URLs, credentials,
+tools, code execution and administrative changes remain restricted. The requested
+JSON contract, current access rights, quotas and server validation still apply;
+custom instructions cannot grant permissions or bypass these checks.
 
 ### Model discovery and bounded compatibility tests
 
@@ -276,8 +348,11 @@ Canceled or uncertain submitted requests are not blindly retried.
 - Responses are limited to 512 KiB; inference requests set a 2,048-token
   output ceiling. Truncated, oversized or malformed outputs are rejected.
 - Default catalog analysis examines up to 240 entries; explicit large-list
-  processing uses pages of up to 2,000. Follow the displayed continuation to
-  process later pages. A partial page never claims the whole list was checked.
+  processing uses pages of up to 2,000. Prompted list creation selects locally
+  before review and requires narrowing when matches exceed its candidate or
+  remaining call budget; it does not automatically page model requests.
+  Other paged features offer continuation to process later pages.
+  A partial page never claims the whole list was checked.
   Cross-page duplicate grouping uses the authorized local catalog.
 - EPG matching examines at most 5,000 source records; search returns at most
   100 results and examines at most 5,000 program rows using stable pages under

@@ -7,6 +7,7 @@ import { aiError, normalizeBaseUrl, validateJson, AI_TIMEOUT_MS } from './transp
 import { adapterFor, providerOf, normalizeProvider, providerTimeout, DEFAULT_PROVIDER, MODEL_ID } from './providers/index.js';
 import { readCredentialRecord } from './codex/credentials.js';
 import { codexReadinessSnapshot } from './codex/readiness.js';
+import { DEFAULT_SYSTEM_PROMPT, MAX_SYSTEM_PROMPT_LENGTH } from './prompts.js';
 
 const FEATURES = ['list','cleanup','duplicates','epg','sync','search','diagnose','text'];
 const DEFAULT_SETTINGS = { enabled: false, allow_own_connections: false, allowed_user_ids: [], functions: FEATURES, internal_targets: [] };
@@ -139,18 +140,22 @@ function testedProfile(connection,model) {
 
 export function getAiSettings(actor) {
     freshActor(actor); const policy=settings();
-    return actor.is_admin ? policy : { enabled:policy.enabled, allow_own_connections:policy.allow_own_connections, allowed:policy.allowed_user_ids.includes(actor.id), functions:policy.functions };
+    return actor.is_admin ? { ...policy, system_prompt:typeof policy.system_prompt === 'string' && policy.system_prompt.trim() ? policy.system_prompt : DEFAULT_SYSTEM_PROMPT, default_system_prompt:DEFAULT_SYSTEM_PROMPT, system_prompt_max_length:MAX_SYSTEM_PROMPT_LENGTH } : { enabled:policy.enabled, allow_own_connections:policy.allow_own_connections, allowed:policy.allowed_user_ids.includes(actor.id), functions:policy.functions };
 }
 export function updateAiSettings(actor,input) {
     freshActor(actor); if (!actor.is_admin) throw aiError('AI_FORBIDDEN',403); inputObject(input);
     const old=settings();
-    const policy={ enabled:bool(input.enabled,old.enabled), allow_own_connections:bool(input.allow_own_connections,old.allow_own_connections), allowed_user_ids:ids(input.allowed_user_ids,old.allowed_user_ids), functions:functions(input.functions,old.functions), internal_targets:old.internal_targets };
+    const policy={ enabled:bool(input.enabled,old.enabled), allow_own_connections:bool(input.allow_own_connections,old.allow_own_connections), allowed_user_ids:ids(input.allowed_user_ids,old.allowed_user_ids), functions:functions(input.functions,old.functions), internal_targets:old.internal_targets, system_prompt:old.system_prompt ?? '' };
+    if (input.system_prompt !== undefined) {
+        if (typeof input.system_prompt !== 'string' || input.system_prompt.length > MAX_SYSTEM_PROMPT_LENGTH || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(input.system_prompt)) throw aiError('AI_INVALID_INPUT');
+        policy.system_prompt=input.system_prompt.trim() ? input.system_prompt : '';
+    }
     if (input.internal_targets !== undefined) {
         if (!Array.isArray(input.internal_targets) || input.internal_targets.length>20) throw aiError('AI_INVALID_INPUT');
         policy.internal_targets=[...new Set(input.internal_targets.map(normalizeBaseUrl))];
     }
     db.prepare("INSERT INTO settings(key,value) VALUES('ai_policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(policy));
-    return policy;
+    return getAiSettings(actor);
 }
 export function getPreferences(actor) { freshActor(actor); return preferences(actor); }
 export function savePreferences(actor,input) {
@@ -396,6 +401,14 @@ export function pruneUsage() {
         .run(Date.now()-30*86400000);
 }
 
+function availableCalls(access,feature,now=Date.now()) {
+    const counts=db.prepare('SELECT SUM(owner_key=?) AS owner_count,SUM(connection_id=?) AS connection_count,SUM(owner_key=? AND feature=?) AS feature_count FROM ai_usage WHERE created_at>?').get(access.owner_key,access.connection.id,access.owner_key,feature,now-3600000);
+    return Math.max(0,Math.min(60-(counts.owner_count||0),180-(counts.connection_count||0),30-(counts.feature_count||0)));
+}
+export function remainingInferenceCalls(actor,feature,connectionId=null) {
+    return availableCalls(requireAiAccess(actor,feature,connectionId),feature);
+}
+
 function reserve(access,feature,model,timeout=AI_TIMEOUT_MS,historyAt) {
     return db.transaction(()=>{
         const now=Date.now();
@@ -406,8 +419,7 @@ function reserve(access,feature,model,timeout=AI_TIMEOUT_MS,historyAt) {
         const recent=db.prepare('SELECT status,error_code FROM ai_usage WHERE connection_id=? AND created_at>? ORDER BY created_at DESC,rowid DESC LIMIT 3').all(access.connection.id,now-300000);
         if (recent.length===3 && recent.every(row=>['AI_UNAVAILABLE','AI_TIMEOUT'].includes(row.error_code))) throw aiError('AI_PAUSED',429);
         if (db.prepare("SELECT count(*) AS n FROM ai_usage WHERE status='running' AND (owner_key=? OR connection_id=?)").get(access.owner_key,access.connection.id).n) throw aiError('AI_BUSY',409);
-        const limits=db.prepare('SELECT SUM(owner_key=?) AS owner_count,SUM(connection_id=?) AS connection_count,SUM(owner_key=? AND feature=?) AS feature_count FROM ai_usage WHERE created_at>?').get(access.owner_key,access.connection.id,access.owner_key,feature,now-3600000);
-        if (limits.owner_count>=60 || limits.connection_count>=180 || limits.feature_count>=30) throw aiError('AI_RATE_LIMIT',429);
+        if (!availableCalls(access,feature,now)) throw aiError('AI_RATE_LIMIT',429);
         pruneUsage();
         const id=randomUUID();
         const displayTime=historyAt ?? Math.max(now,(access.preferences._history_cleared_at || 0)+1);

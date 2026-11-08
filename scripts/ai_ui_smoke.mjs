@@ -13,11 +13,13 @@ try {
   const page = await browser.newPage();
   page.setDefaultTimeout(8000);
   const features = ['list', 'cleanup', 'duplicates', 'epg', 'sync', 'search', 'diagnose', 'text'];
-  let settings = {enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
+  const defaultSystemPrompt = 'Help with the requested IPTV library task. Be concise.';
+  let settings = {system_prompt: defaultSystemPrompt, default_system_prompt: defaultSystemPrompt, system_prompt_max_length: 4000, enabled: false, allow_own_connections: true, allowed_user_ids: [2, 99], functions: features, internal_targets: []};
   let preferences = {enabled: false, connection_id: null, model_id: null};
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
   let nextJobResult = null;
+  let historicalRunningReads = 0;
   let historyCleared = false;
   let nextJobProgress = {stage: 'processing', processed: 100, total: 2000};
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
@@ -44,7 +46,7 @@ try {
     else if (path === '/settings') {
       if (method === 'PUT') {
         if (policyGate) { policyGate.started(); await new Promise(resolve => { policyGate.release = resolve; }); }
-        settings = body;
+        settings = {...settings, ...body};
       }
       data = settings;
     }
@@ -131,11 +133,12 @@ try {
     else if (path.endsWith('/apply')) { assert.deepEqual(body.action_ids.slice(0, 2), ['a0', 'a1']); assert(body.idempotency_key.length <= 200); data = {change_id: 'change1', status: 'applied'}; }
     else if (/^\/jobs\/history/.test(path)) {
       const id = path.split('/').at(-1);
-      data = {id, status: 'completed', result: id === 'historyRead' ? {feature: 'diagnose', summary: 'Read-only result', findings: [
+      if (id === 'historyRunning' && historicalRunningReads++ === 0) data = {id, status: 'running'};
+      else data = {id, status: 'completed', result: id === 'historyRead' ? {feature: 'diagnose', summary: 'Read-only result', findings: [
         {code: 'local_user_connections', certainty: 'proven', value: {limit_reached: true}},
         {code: 'new_connection_may_be_blocked', certainty: 'possible'},
         {code: 'protocol_export_delivery', certainty: 'unknown', reason: 'not_measured'}
-      ]} : {feature: 'list', summary: id, proposal_id: id}};
+      ]} : {feature: 'list', summary: id, proposal_id: id === 'historyRunning' ? undefined : id, conversation_id: 'historical-list', list_request: 'Historical football task'}};
     }
     else if (/^\/proposals\/history/.test(path)) {
       const id = path.split('/').at(-1);
@@ -153,7 +156,7 @@ try {
     }
     else if (path === '/rules') data = method === 'GET' ? [] : {id: 'r1', ...body, preview: [{before: 'old', after: 'new'}]};
     else if (path === '/rules/r1') data = {id: 'r1', ...body, preview: [{before: 'old', after: 'new'}]};
-    else if (path === '/jobs') data = historyCleared ? [] : [{id: 'historyA', feature: 'list'}, {id: 'historyB', feature: 'list'}, {id: 'historyRead', feature: 'diagnose'}];
+    else if (path === '/jobs') data = historyCleared ? [] : [{id: 'historyA', feature: 'list'}, {id: 'historyB', feature: 'list'}, {id: 'historyRead', feature: 'diagnose'}, {id: 'historyRunning', feature: 'list'}];
     else if (path === '/usage') data = {requests: historyCleared ? 0 : 8, calls: historyCleared ? 0 : 12, prompt_tokens: null};
     else if (path === '/history') { historyCleared = true; data = {deleted: true}; }
     else if (!url.pathname.startsWith('/api/ai')) data = [];
@@ -180,11 +183,31 @@ try {
   assert.equal(await page.locator('#ai-provider-id').count(), 0, 'unsupported provider scope must not be offered');
   assert.equal(requests.filter(r => /discover|test/.test(r.path)).length, 0, 'opening never contacts a model');
   await page.locator('details').filter({has: page.locator('#ai-policy-enabled')}).locator('summary').click();
+  assert.equal(await page.locator('#ai-system-prompt').inputValue(), defaultSystemPrompt);
+  assert.equal(await page.locator('#ai-system-prompt').getAttribute('maxlength'), '4000');
+  const writesBeforeInvalidPrompt = requests.filter(request => request.path === '/settings' && request.method === 'PUT').length;
+  await page.locator('#ai-system-prompt').evaluate(prompt => { prompt.value = 'x'.repeat(4001); prompt.dispatchEvent(new Event('input')); });
+  await page.locator('#ai-save-policy').click();
+  await page.waitForFunction(() => document.getElementById('ai-policy-status')?.dataset.i18n === 'ai_invalid');
+  assert.equal(requests.filter(request => request.path === '/settings' && request.method === 'PUT').length, writesBeforeInvalidPrompt, 'overlong instructions are rejected before Save sends a request');
+  await page.locator('#ai-system-prompt').fill('Prefer concise <b>plain text</b> selections.');
+  assert.match(await page.locator('#ai-system-prompt-count').innerText(), /44 \/ 4000/);
+  const writesBeforeReset = requests.filter(request => request.path === '/settings' && request.method === 'PUT').length;
+  await page.locator('#ai-reset-system-prompt').click();
+  assert.equal(await page.locator('#ai-system-prompt').inputValue(), defaultSystemPrompt);
+  assert.equal(requests.filter(request => request.path === '/settings' && request.method === 'PUT').length, writesBeforeReset, 'reset only edits the form until Save');
+  await page.locator('#ai-system-prompt').fill('Use a short selection style.');
   await page.locator('#ai-policy-enabled').check();
   await page.locator('#ai-allowed-users').selectOption(['2', '3']);
   await page.locator('#ai-save-policy').click();
   await page.locator('#ai-connection').waitFor();
   assert.deepEqual(settings.allowed_user_ids, [3, 2], 'grant selections submit stable user IDs');
+  assert.equal(settings.system_prompt, 'Use a short selection style.', 'Save sends the plain prompt field');
+  assert.equal(await page.locator('#ai-system-prompt').inputValue(), settings.system_prompt);
+  await page.locator('#ai-reset-system-prompt').click();
+  await page.locator('#ai-save-policy').click();
+  await page.waitForFunction(expected => document.getElementById('ai-system-prompt')?.value === expected && document.getElementById('ai-save-policy')?.disabled === false, defaultSystemPrompt);
+  assert.equal(settings.system_prompt, defaultSystemPrompt, 'reset is persisted only by Save');
   await page.locator('#ai-enabled').check();
   await page.locator('#ai-connection').selectOption('new');
   await page.locator('#ai-connection-users').selectOption(['2', '3']);
@@ -335,7 +358,7 @@ try {
   assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_queued', 'submission must show progress before the server responds');
   assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), true);
   assert.equal(await page.locator('#ai-run').isDisabled(), true);
-  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
+  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'category-id', 'new-search', 'new-list', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
     assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot abandon an in-flight job submission`);
   }
   await page.locator('#nav-ai').click();
@@ -409,7 +432,50 @@ try {
       .map(item => item.dataset.i18n)), [], `AI labels use the selected ${lang} translations`);
     assert.match(await page.locator('#view-ai [data-i18n="ai_intro"]').innerText(), /experimental|experimentell|expérimental|πειραματικ/i);
   }
+  await page.locator('#ai-feature').selectOption('list');
+  const listNarrowResult = {feature: 'list', summary: 'Too many matching candidates; narrow the list request or select a smaller scope.', conversation_id: 'list-one',
+    list_request: 'Create Fussball from Live-TV; leave other lists alone.',
+    coverage: {processed: 0, total: 694, partial: true, requires_narrowing: true, candidate_limit: 240, review_limit: 240, expanded_candidate_limit: 800, budget_limited: false, required_review_calls: 18, next_offset: null}};
+  nextJobResult = listNarrowResult;
+  await page.locator('#ai-prompt').fill('Create Fussball from Live-TV; leave other lists alone.');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-result [data-i18n="ai_narrowList"]').waitFor();
+  assert.equal(await page.locator('#ai-next').count(), 0, 'large list selections cannot start unbounded continuation jobs');
+  assert.equal(await page.locator('#ai-apply').count(), 0, 'narrowing has no partial proposal to apply');
+  assert.match(await page.locator('#ai-result').innerText(), /Create Fussball from Live-TV/);
+  assert.equal(await page.locator('#ai-review-more').isVisible(), true, 'an affordable matching set offers explicit expanded review');
+  assert.match(await page.locator('#ai-review-more').innerText(), /18/);
+  await page.locator('#ai-prompt').fill('Only German-language channels');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-result [data-i18n="ai_narrowList"]').waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, 'list-one', 'list refinements preserve their original task');
+  nextJobResult = {feature: 'list', summary: 'Expanded candidates reviewed', conversation_id: 'list-expanded', coverage: {processed: 694, total: 694, partial: false}};
+  await page.locator('#ai-review-more').click();
+  await page.getByText('Expanded candidates reviewed', {exact: true}).waitFor();
+  const expandedListInput = requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body;
+  assert.equal(expandedListInput.conversation_id, 'list-one');
+  assert.equal(expandedListInput.full_list, true);
+  assert.equal(expandedListInput.prompt, '', 'expanded review reuses the validated plan without paying for another planning request');
+  await page.locator('#ai-new-list').click();
+  assert.equal(await page.locator('#ai-prompt').inputValue(), '');
+  assert.equal(await page.locator('#ai-full-list').isChecked(), false, 'a new task restores the economical default');
+  nextJobResult = {...listNarrowResult, coverage: {...listNarrowResult.coverage, candidate_limit: 120, expanded_candidate_limit: 120, budget_limited: true}};
+  await page.locator('#ai-prompt').fill('A new independent list');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-result [data-i18n="ai_listBudget"]').waitFor();
+  assert.equal(await page.locator('#ai-review-more').count(), 0, 'insufficient call budget cannot be solved by raising the page limit');
+  assert.equal(await page.locator('#ai-result pre').count(), 0, 'a blocked list shows a useful message without empty arrays or internal JSON');
+  assert.equal(await page.locator('#ai-result [data-i18n="ai_partial"]').count(), 0, 'one accurate budget message replaces the duplicate partial-review warning');
+  assert.doesNotMatch(await page.locator('#ai-result').innerText(), /Too many matching candidates/);
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'New list clears the prior task');
+  nextJobResult = listNarrowResult;
   await page.locator('summary[data-i18n="ai_scope"]').click();
+  await page.locator('#ai-category-id').fill('123');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-result [data-i18n="ai_narrowList"]').waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'changing explicit category scope clears prior list intent');
+  await page.locator('#ai-category-id').fill('');
+  nextJobResult = null;
   await page.locator('#ai-channel-ids').fill('5,6');
   await page.locator('#ai-pinned').fill('6');
   await page.locator('#ai-keep-first').fill('1');
@@ -535,6 +601,20 @@ try {
   await page.waitForFunction(() => !document.getElementById('ai-history-historyA').disabled);
   assert.equal(await page.locator('#ai-undo').count(), 1, 'late history cannot append another Undo');
   assert.match(await page.locator('#ai-proposal').innerText(), /Proposal historyB/);
+  await page.locator('#ai-feature').selectOption('search');
+  await page.locator('#ai-history-historyB').click();
+  await page.locator('#ai-undo').waitFor();
+  await page.locator('#ai-prompt').fill('An independent search after viewing history');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-action-a1').waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'viewing a historical list cannot attach its conversation to the current search');
+  await page.locator('#ai-history-historyRunning').click();
+  await page.getByText('Historical football task', {exact: true}).waitFor();
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-action-a1').waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'a historical job completing during status polling stays display-only');
+  await page.locator('#ai-history-historyB').click();
+  await page.locator('#ai-undo').waitFor();
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/undo')), page.locator('#ai-undo').click()]);
   assert.equal(requests.filter(r => r.path.endsWith('/undo')).at(-1).path, '/changes/changeB/undo', 'late change A cannot redirect visible B Undo');
   await page.locator('#ai-history-historyA').click();
@@ -611,6 +691,8 @@ try {
   preferences.model_id = 'previous-admin-model';
   const userListRequests = requests.filter(request => request.path === '/api/users').length;
   await page.evaluate(async () => { aiUI.clear(); currentUser = {id: 2, is_admin: false}; await aiUI.open(); });
+  assert.equal(await page.locator('#ai-system-prompt').count(), 0, 'normal users have no system prompt editor');
+  assert.equal(await page.locator('#ai-reset-system-prompt').count(), 0);
   assert.equal(requests.filter(request => request.path === '/api/users').length, userListRequests, 'normal users never load administrator user choices');
   assert.equal(await page.locator('#ai-user').count(), 0, 'normal users cannot select another library');
   assert.equal(await page.locator('#ai-key').count(), 0, 'borrowed setup never asks for keys');
