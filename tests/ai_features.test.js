@@ -17,6 +17,7 @@ beforeAll(async () => {
   (await import('../src/database/epgDb.js')).initEpgDb();
   ({ executeFeature, authorizeResult } = await import('../src/services/ai/features.js'));
   ({ getConversation, getEnrichment } = await import('../src/services/ai/library.js'));
+
 });
 
 beforeEach(() => {
@@ -37,6 +38,14 @@ beforeEach(() => {
 afterAll(() => { epg?.close(); db?.close(); fs.rmSync(dataDir, {recursive:true,force:true}); });
 
 describe('authorized AI features', () => {
+  it('reports only completed catalog batches as processed',async()=>{
+    for(let i=0;i<80;i++) db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Sports ${i}`);
+    const updates=[];
+    await executeFeature(user,{feature:'list',full_list:true},{progress:value=>updates.push(value),infer:infer({summary:'Reviewed',actions:[]})});
+    expect(updates.filter(value=>value.stage==='processing')).toEqual([
+      {stage:'processing',processed:0,total:82},{stage:'processing',processed:80,total:82},{stage:'processing',processed:82,total:82}
+    ]);
+  });
   it.each([0,1,-1])('keeps no-change batch summaries only when the whole proposal is empty (changed batch=%s)',async changedBatch=>{
     for(let i=0;i<80;i++) db.prepare('INSERT INTO provider_channels(id,provider_id,remote_stream_id,name) VALUES(?,801,?,?)').run(2000+i,2000+i,`Sports ${i}`);
     let batch=0;
@@ -584,5 +593,27 @@ describe('authorized AI features', () => {
     }});
     expect(count).toBe(80);expect(result.coverage.partial).toBe(false);
     process.stdout.write(`AI maximum-metadata message ${maxMessages}\n`);
+  });
+  it('prepares a bounded page without multiplying unrelated catalog rows by user categories',async()=>{
+    const {buildContext,checkReferences}=await import('../src/services/ai/context.js');
+    db.exec(`WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<199)
+      INSERT INTO user_categories(id,user_id,name) SELECT 2000+i,701,'Category '||i FROM n;
+      WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<250000)
+      INSERT INTO provider_channels(id,provider_id,remote_stream_id,name)
+        SELECT 10000+i,CASE WHEN i<=42000 THEN 801 ELSE 802 END,10000+i,'Channel '||i FROM n;
+      INSERT INTO user_channels(user_category_id,provider_channel_id,sort_order,assignment_origin)
+        SELECT CASE WHEN id<=52000 THEN 2001+(id%199) ELSE 1002 END,id,id,'manual'
+        FROM provider_channels WHERE id>10000 AND id<=220000;
+      INSERT INTO user_channels(user_category_id,provider_channel_id,granted_by_admin,assignment_origin)
+        VALUES(1001,903,1,'manual');`);
+    const started=performance.now();
+    const context=buildContext(user,{feature:'list'});
+    checkReferences(user,701,context.refs);
+    const elapsed=performance.now()-started;
+    expect(context.coverage).toMatchObject({processed:240,total:42003,partial:true,next_offset:240});
+    expect(context.items.some(item=>item.provider_channel_id===903)).toBe(true);
+    expect(context.items.every(item=>item.provider_id===801 || item.provider_channel_id===903)).toBe(true);
+    expect(elapsed).toBeLessThan(2000);
+    process.stdout.write(`AI large-catalog preparation ${Math.round(elapsed)} ms\n`);
   });
 });

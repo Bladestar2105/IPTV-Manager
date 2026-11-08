@@ -1,4 +1,5 @@
 // Shared helpers for Xtream-compatible controllers.
+import { isArchiveProgram } from '../utils/archive.js';
 
 export const sanitizeM3uTag = (val) => {
   if (val === null || val === undefined) return '';
@@ -30,7 +31,7 @@ export const sanitizeMetadata = (val) => {
 
 export const encodeXtreamEpgText = (val) => val ? Buffer.from(String(val)).toString('base64') : '';
 
-export const formatXtreamEpgListing = (program, epgId) => {
+export const formatXtreamEpgListing = (program, epgId, channel) => {
   const now = Date.now() / 1000;
   return {
     id: String(program.start),
@@ -44,7 +45,7 @@ export const formatXtreamEpgListing = (program, epgId) => {
     start_timestamp: String(program.start),
     stop_timestamp: String(program.stop),
     now_playing: now >= Number(program.start) && now < Number(program.stop) ? 1 : 0,
-    has_archive: 0
+    has_archive: isArchiveProgram(channel, program, now) ? 1 : 0
   };
 };
 

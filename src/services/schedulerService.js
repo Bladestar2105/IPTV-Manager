@@ -164,7 +164,7 @@ export function startCleanupScheduler() {
       db.prepare('DELETE FROM blocked_ips WHERE expires_at < ?').run(now);
       db.prepare('DELETE FROM shared_links WHERE end_time IS NOT NULL AND end_time < ?').run(now);
 
-      pruneOldEpgData(7);
+      pruneOldEpgData();
     } catch (e) {
       console.error('Cleanup error:', e);
     }

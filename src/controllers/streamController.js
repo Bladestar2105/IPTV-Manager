@@ -12,6 +12,7 @@ import { rewriteHlsManifest, rewriteDashManifest, isClientManifest } from '../ut
 import { DEFAULT_USER_AGENT } from '../config/constants.js';
 
 import { formatXtreamTimeshiftStart, getEffectiveTimeshiftTimezone, isSupportedEpoch } from '../utils/timezone.js';
+import { isArchiveProgram } from '../utils/archive.js';
 
 import {
   attachResponseCleanup,
@@ -430,7 +431,6 @@ export const proxyTimeshift = async (req, res) => {
 
     if (epochStart !== null) {
       const now = Math.floor(Date.now() / 1000);
-      const archiveDays = Math.min(Math.max(Number(channel.tv_archive_duration) || 0, 0), 14);
       let archiveProgram;
       try {
         const { getEpgProgramsForChannels } = await import('../services/epgService.js');
@@ -447,7 +447,7 @@ export const proxyTimeshift = async (req, res) => {
         ? Math.min(Math.max(Math.ceil((archiveStop - archiveStart) / 60), 1), 1440)
         : 0;
       if (
-        !channel.tv_archive ||
+        !isArchiveProgram(channel, archiveProgram, now) ||
         !archiveProgram ||
         !isSupportedEpoch(archiveStart) ||
         !isSupportedEpoch(archiveStop) ||
@@ -455,7 +455,6 @@ export const proxyTimeshift = async (req, res) => {
         archiveStop <= archiveStart ||
         archiveStop > now ||
         epochStart > now ||
-        epochStart < now - archiveDays * 86400 ||
         expectedDuration !== durationNumber
       ) {
         return res.sendStatus(404);

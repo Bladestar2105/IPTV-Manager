@@ -810,8 +810,28 @@ authentication modes have separate cache entries.
 Xtream EPG listings from `get_short_epg`, `get_simple_date_table`,
 `get_simple_data_table` and `get_epg_batch` include numeric `now_playing`
 and `has_archive` flags. `now_playing` is `1` from the programme's start
-until (but not including) its stop time, otherwise `0`. `has_archive` is
-currently `0`; these listings do not advertise catch-up playback.
+until (but not including) its stop time, otherwise `0`. `has_archive` is `1`
+only for a valid completed programme whose start is inside that channel's
+provider-advertised catch-up window. `tv_archive_duration` is measured in days;
+positive whole-day windows are honored in full, including windows above 14 days.
+Disabled catch-up, invalid durations, current/future programmes and expired
+programmes have `has_archive: 0`.
+
+For a visible authorized live channel with catch-up enabled,
+`get_simple_data_table` and `get_simple_date_table` lazily supplement missing
+completed history from that channel's provider. This also covers installations
+whose older XMLTV imports discarded archive days. Provider identities and
+resource URLs are not forwarded: responses keep the Manager EPG identity and
+recompute archive flags from the current channel window. Saved history becomes
+available in later XMLTV exports. Each lookup is limited to a 10-second header
+budget and a 10-second, 8 MiB body budget, with one lookup per provider channel
+per minute across workers. Concurrent requests share an in-flight lookup.
+Provider failures retain the available local guide; providers may supply less
+EPG history than the advertised playback window.
+Account, token and current share access are revalidated before saving fetched
+history and before returning the guide. Imported titles and descriptions redact
+URLs unless the central public metadata policy permits them; language values
+must be valid bounded language tags.
 
 `get_epg_batch` returns all requested distinct positive stream IDs that have
 an EPG mapping and are visible to the authenticated user or share. There is no
@@ -943,15 +963,17 @@ number are present. `tv_archive` accepts only the opaque archive command emitted
 for an authorized EPG row. Cross-module commands return `nothing_to_play`.
 
 Epoch-based internal catch-up links are accepted only for completed EPG
-programmes inside the configured archive window. Formatted Xtream timeshift
+programmes inside the provider-advertised archive window, without a separate
+14-day server cap. Formatted Xtream timeshift
 starts remain supported.
 
 Bulk EPG clamps `period` to 168 hours. The response window determines a maximum
 of four programme rows per hour, capped at 500 rows per channel, with a global
 20,000-row cap. Channel keys remain present with empty arrays. EPG channel IDs
 and programme start times provide deterministic selection order; once the
-global cap is reached, later rows remain omitted and a counts-only warning is
-logged. The application has no existing global HTTP compression middleware, so
+global cap is reached, later rows remain omitted, `truncated: true` is returned,
+and a counts-only warning is logged. Date-scoped pages and scoped bulk requests
+can retrieve older days across the full advertised archive window. The application has no existing global HTTP compression middleware, so
 this PR adds no isolated compression dependency; bounded database iteration and
 response limits are used instead.
 
@@ -969,7 +991,7 @@ programme fields. `truncated: true` inside `js` reports actual clipping at 500
 rows per channel or 20,000 overall; clients must not treat that as a complete
 refresh. Empty authorized channels retain an empty array. Any partial or invalid
 scope returns `{ js: { error: 'invalid_epg_request' } }` and never expands to all
-channels. Without any of these parameters, legacy bulk behavior is unchanged.
+channels. Without any of these parameters, the legacy bounded bulk response is used.
 
 Archived EPG rows are marked only when the channel has catch-up enabled and the
 programme remains inside its configured archive window. Their opaque

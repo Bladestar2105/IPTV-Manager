@@ -59,8 +59,10 @@ const { updateProviderEpg } = await import('../../src/services/epgService.js');
 mainDb.exec(`
   CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT, epg_enabled INTEGER, epg_url TEXT, last_epg_update INTEGER);
   CREATE TABLE provider_channels (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id INTEGER, epg_channel_id TEXT, name TEXT, logo TEXT
+    id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id INTEGER, epg_channel_id TEXT, name TEXT, logo TEXT,
+    tv_archive INTEGER DEFAULT 1, tv_archive_duration INTEGER DEFAULT 14
   );
+  CREATE TABLE epg_channel_mappings (provider_channel_id INTEGER PRIMARY KEY, epg_channel_id TEXT);
 `);
 epgDb.exec(`
   CREATE TABLE epg_channels (
@@ -80,6 +82,7 @@ const channelIds = () => epgDb.prepare(
 describe('provider EPG channel import', () => {
   beforeEach(() => {
     failure.afterRows = null;
+    mainDb.prepare('DELETE FROM epg_channel_mappings').run();
     mainDb.prepare('DELETE FROM provider_channels').run();
     mainDb.prepare('DELETE FROM providers').run();
     epgDb.prepare('DELETE FROM epg_channels').run();
@@ -117,5 +120,43 @@ describe('provider EPG channel import', () => {
     await updateProviderEpg(1, true);
 
     expect(epgDb.prepare("SELECT COUNT(*) c FROM epg_channels WHERE source_id = 2").get().c).toBe(1);
+  });
+
+  it('preserves completed mapped archive history during a channel-only refresh and a later failure', async () => {
+    await updateProviderEpg(1, true);
+    const channel = mainDb.prepare("SELECT id FROM provider_channels WHERE epg_channel_id = 'ch1'").get();
+    mainDb.prepare("INSERT INTO epg_channel_mappings VALUES (?, 'mapped-ch1')").run(channel.id);
+    const now = Math.floor(Date.now() / 1000);
+    epgDb.exec("INSERT INTO epg_channels (id, source_type, source_id) VALUES ('mapped-ch1', 'provider', 1), ('removed', 'provider', 1)");
+    const insert = epgDb.prepare("INSERT INTO epg_programs (channel_id, source_type, source_id, start, stop, title) VALUES (?, 'provider', 1, ?, ?, ?)");
+    insert.run('mapped-ch1', now - 13 * 86400, now - 13 * 86400 + 3600, 'Retained mapped archive');
+    insert.run('mapped-ch1', now - 16 * 86400, now - 15 * 86400, 'Expired');
+    insert.run('mapped-ch1', now - 60, now + 60, 'Stale current');
+    insert.run('mapped-ch1', now + 3600, now + 7200, 'Stale future');
+    insert.run('ch1', now - 7200, now - 3600, 'Unmapped native');
+    insert.run('removed', now - 7200, now - 3600, 'Removed channel');
+
+    await updateProviderEpg(1, true);
+
+    expect(channelIds()).toEqual(['ch2', 'ch3', 'ch4', 'mapped-ch1']);
+    const titles = () => epgDb.prepare("SELECT title FROM epg_programs WHERE source_type = 'provider' AND source_id = 1").all();
+    expect(titles()).toEqual([{ title: 'Retained mapped archive' }]);
+    failure.afterRows = 2;
+    await expect(updateProviderEpg(1, true)).rejects.toMatchObject({ code: 'SQLITE_BUSY' });
+    expect(titles()).toEqual([{ title: 'Retained mapped archive' }]);
+    expect(channelIds()).toEqual(['ch2', 'ch3', 'ch4', 'mapped-ch1']);
+  });
+
+  it('removes source history after the last provider channel is removed', async () => {
+    await updateProviderEpg(1, true);
+    const now = Math.floor(Date.now() / 1000);
+    epgDb.prepare("INSERT INTO epg_programs (channel_id, source_type, source_id, start, stop, title) VALUES ('ch1', 'provider', 1, ?, ?, 'Removed')")
+      .run(now - 7200, now - 3600);
+    mainDb.prepare('DELETE FROM provider_channels').run();
+
+    await updateProviderEpg(1, true);
+
+    expect(channelIds()).toEqual([]);
+    expect(epgDb.prepare('SELECT COUNT(*) AS c FROM epg_programs').get().c).toBe(0);
   });
 });

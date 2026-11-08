@@ -72,8 +72,13 @@ Documented provider profiles are handled as follows:
 Setup and request controls show their current status beside the action, with a
 spinner while a request is queued or running. Model-test selection is validated
 before saving preferences, keys or connection sharing. Rejected empty or oversized
-selections leave those settings unchanged. If a status read fails, use **Refresh
-status** beside the request controls to resume polling the same job. This only
+selections leave those settings unchanged. Running jobs also show a localized
+stage, elapsed time, and validated processed/total item counts when available.
+Stages describe preparation, waiting for the model, receiving an answer, list
+processing, and local validation. Progress never exposes provider response text,
+reasoning, credentials, token counts or an estimated percentage. If a status read
+fails, use **Refresh status** beside the request controls to resume polling the
+same job. This only
 reads status and never submits a new model request. A cancellation that reaches
 the server after completion displays the actual completed result or failure.
 
@@ -258,11 +263,16 @@ Canceled or uncertain submitted requests are not blindly retried.
 - At most 60 calls per owner/hour, 180 per connection/hour and 30 per
   owner/function/hour. Discovery and synthetic tests count as setup calls.
   Limits include failed submissions, not only successful answers.
-- Provider requests time out after 30 seconds. Normal jobs have a 2-minute
-  deadline, explicit large analyses 10 minutes; queued jobs expire after
+- External API calls time out after 30 seconds. Their normal jobs have a
+  2-minute deadline. ChatGPT inference calls have a 170-second provider budget,
+  including runtime startup. ChatGPT list, cleanup, duplicate and explicit full-list
+  jobs have a 10-minute total budget; other ChatGPT jobs have 3 minutes.
+  Explicit large analyses have a 10-minute deadline; queued jobs expire after
   30 minutes. Three consecutive connection failures/5xx/timeouts within five
   minutes pause a connection temporarily; expected capability, model, credential
   and permission rejections do not count as connection outages.
+  Catalog batches run in sequence, so a large analysis can reach its total
+  deadline before all selected rows are reviewed. Timed-out calls are not retried.
 - Responses are limited to 512 KiB; inference requests set a 2,048-token
   output ceiling. Truncated, oversized or malformed outputs are rejected.
 - Default catalog analysis examines up to 240 entries; explicit large-list
@@ -295,8 +305,13 @@ Canceled or uncertain submitted requests are not blindly retried.
   per table per rule batch, preserving enabled rules and current Undo records.
 
 Clear History cancels pending personal jobs and removes job history,
-conversations and enrichments. Change/undo records remain for their retention
-period; reusable rules are managed separately. Provider-reported token counts
+conversations and enrichments, and clears the displayed usage history for that
+owner. Refreshing the history cannot restore those earlier usage totals. Raw
+usage records remain until normal expiry so clearing history cannot reset quota
+limits, release an active request reservation or erase outage evidence.
+Change/undo records remain for their retention period in the separate **Changes
+and Undo** section, which stays available after clearing; reusable rules are
+managed separately. Provider-reported token counts
 are shown where available; missing counts and prices are **unknown**. There is
 no configured tariff or promise of an exact monetary cap. A submitted request
 may already have incurred a charge even if it is canceled locally.

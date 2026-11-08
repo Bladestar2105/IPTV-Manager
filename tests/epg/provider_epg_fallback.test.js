@@ -89,6 +89,7 @@ describe('updateProviderEpg', () => {
 
         mockMainDb.prepare.mockImplementation((query) => {
             if (query.includes('FROM providers')) return { get: mockGetProvider };
+            if (query.includes('AS archive_days')) return { get: () => ({ archive_days: 14 }) };
             if (query.includes('FROM provider_channels')) return { all: mockGetChannels };
             return { run: vi.fn() };
         });
@@ -111,10 +112,11 @@ describe('updateProviderEpg', () => {
 
         // Mock provider fetch
         const mockGetProvider = vi.fn().mockReturnValue({ id: providerId, epg_url: epgUrl, epg_enabled: 1 });
-        const mockGetChannels = vi.fn(); // Should not be called
+        const mockGetChannels = vi.fn().mockReturnValue([]);
 
         mockMainDb.prepare.mockImplementation((query) => {
             if (query.includes('FROM providers')) return { get: mockGetProvider };
+            if (query.includes('AS archive_days')) return { get: () => ({ archive_days: 14 }) };
             if (query.includes('FROM provider_channels')) return { all: mockGetChannels };
             return { run: vi.fn() };
         });
@@ -122,6 +124,9 @@ describe('updateProviderEpg', () => {
         await updateProviderEpg(providerId, true);
 
         expect(mockGetProvider).toHaveBeenCalled();
-        expect(mockGetChannels).not.toHaveBeenCalled();
+        // XMLTV promotion reads current mapping identities to retain API history,
+        // but must not run the catalog-only VALUES refill path.
+        expect(mockGetChannels).toHaveBeenCalledWith(providerId);
+        expect(mockImportDb.prepare.mock.calls.some(([sql]) => /INSERT OR REPLACE INTO epg_channels[\s\S]*VALUES/.test(sql))).toBe(false);
     });
 });

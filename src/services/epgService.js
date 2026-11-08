@@ -5,6 +5,7 @@ import { EPG_DB_PATH } from '../config/constants.js';
 import { openSqliteConnection } from '../database/sqliteConnection.js';
 import { deleteInBatches, formatDbError, immediateTransaction } from '../database/sqliteWrites.js';
 import { invalidateEpgLogosCache } from './logoResolver.js';
+import { getEpgRetentionDays, getProviderEpgChannels } from './epgRetentionService.js';
 
 import { importEpgFromUrl } from './epgImportService.js';
 
@@ -63,23 +64,20 @@ export async function updateProviderEpg(providerId, skipPrune = false, { schedul
 }
 
 async function importChannelsFromProvider(providerId) {
-    const channels = mainDb.prepare(`
-        SELECT DISTINCT epg_channel_id, name, logo
-        FROM provider_channels
-        WHERE provider_id = ? AND epg_channel_id IS NOT NULL AND epg_channel_id != ''
-    `).all(providerId);
-
-    if (channels.length === 0) return;
+    const channels = getProviderEpgChannels(providerId);
 
     // Foreign keys stay OFF for the same reason as in epgImportService:
     // `INSERT OR REPLACE INTO epg_channels` would cascade into epg_programs.
     const importDb = openSqliteConnection(EPG_DB_PATH, { foreignKeys: false });
     const now = Math.floor(Date.now() / 1000);
+    const retentionCutoff = now - getEpgRetentionDays() * 86400;
     const sourceType = 'provider';
     const sourceId = providerId;
 
     try {
-        const deletePrograms = importDb.prepare('DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?');
+        const deletePrograms = importDb.prepare(`DELETE FROM epg_programs WHERE source_type = ? AND source_id = ?
+            AND (stop > ? OR stop < ? OR stop <= start OR channel_id NOT IN (
+                SELECT id FROM epg_channels WHERE source_type = ? AND source_id = ?))`);
         const deleteChannels = importDb.prepare('DELETE FROM epg_channels WHERE source_type = ? AND source_id = ?');
         const insertChannel = importDb.prepare(`
             INSERT OR REPLACE INTO epg_channels (id, name, logo, source_type, source_id, updated_at)
@@ -93,7 +91,6 @@ async function importChannelsFromProvider(providerId) {
         // succeeded. The rows come from a local query, so the whole thing is
         // repeatable and belongs in one transaction.
         const replaceChannels = immediateTransaction(importDb, () => {
-            deletePrograms.run(sourceType, sourceId);
             deleteChannels.run(sourceType, sourceId);
             for (const ch of channels) {
                 insertChannel.run({
@@ -105,6 +102,7 @@ async function importChannelsFromProvider(providerId) {
                     updatedAt: now
                 });
             }
+            deletePrograms.run(sourceType, sourceId, now, retentionCutoff, sourceType, sourceId);
         });
         replaceChannels();
 
@@ -127,7 +125,7 @@ async function importChannelsFromProvider(providerId) {
  * Short transactions bound each write lock and synchronous event-loop stall.
  */
 export function pruneOldEpgData(days = 7) {
-    const cutoff = Math.floor(Date.now() / 1000) - (days * 86400);
+    const cutoff = Math.floor(Date.now() / 1000) - getEpgRetentionDays(days) * 86400;
     const removed = deleteInBatches(db, 'epg_programs', 'stop < ?', [cutoff]);
     if (removed > 0) console.info(`🧹 Pruned ${removed} old EPG programs`);
 }

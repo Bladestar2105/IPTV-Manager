@@ -101,12 +101,13 @@ window.aiUI = (() => {
     for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', ...contextWriteButtons]) {
       if (el(id)) el(id).disabled = busy;
     }
-    el('history')?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
+    for (const id of ['history', 'changes']) el(id)?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
     if (el('run')) el('run').disabled = submittingJob || linking || pendingContextWrites.size > 0;
     if (el('link-start')) el('link-start').disabled = busy || pendingContextWrites.size > 0;
   }
   function status(key, scope = 'work') {
     updateJobControls();
+    el(`${scope}-activity`)?.replaceChildren();
     const item = el(`${scope}-status`) || el('status');
     if (!item) return;
     item.hidden = false; item.dataset.i18n = `ai_${key}`; item.textContent = tr(key);
@@ -115,6 +116,19 @@ window.aiUI = (() => {
       box.hidden = false;
       const busy = ['queued', 'running'].includes(key);
       box.setAttribute('aria-busy', String(busy)); box.querySelector('.spinner-border').hidden = !busy;
+    }
+  }
+  function jobProgress(job) {
+    const box = el('work-activity');
+    const progress = job.progress || {};
+    if (['preparing', 'waiting', 'receiving', 'processing', 'validating'].includes(progress.stage)) {
+      label('div', box, `stage_${progress.stage}`);
+    }
+    if (Number.isSafeInteger(progress.processed) && progress.processed >= 0 && Number.isSafeInteger(progress.total) && progress.total >= progress.processed) {
+      const count = node('div', box); label('span', count, 'analyzedCount'); node('span', count, `: ${progress.processed} / ${progress.total}`);
+    }
+    if (Number.isFinite(job.created_at) && job.created_at > 0) {
+      const elapsed = node('div', box); label('span', elapsed, 'elapsed'); node('span', elapsed, `: ${Math.max(0, Math.floor((Date.now() - job.created_at) / 1000))} s`);
     }
   }
   function errorKey(error) {
@@ -731,6 +745,7 @@ window.aiUI = (() => {
     });
     button(box, 'new-search', 'newSearch', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; filterBaseline = {}; nextOffset = 0; el('filters').value = '{}'; el('prompt').value = ''; });
     progress(box, 'work');
+    node('div', el('work-progress'), undefined, 'small mt-1').id = 'ai-work-activity';
     const results = node('section', box); results.id = 'ai-result'; results.setAttribute('aria-live', 'polite'); results.tabIndex = -1;
     const preview = node('section', box); preview.id = 'ai-proposal';
     for (const id of ['user', 'channel-ids']) el(id)?.addEventListener('input', () => {
@@ -830,7 +845,7 @@ window.aiUI = (() => {
       jobId = null; status('completed'); await showResult(job.result || {});
     } else if (['failed', 'cancelled', 'interrupted'].includes(job.status)) {
       jobId = null; status(job.status === 'cancelled' ? 'cancelled' : errorKey({code: job.error_code}));
-    } else { status(job.status === 'queued' ? 'queued' : 'running'); timer = setTimeout(() => run(poll), 1200); }
+    } else { status(job.status === 'queued' ? 'queued' : 'running'); jobProgress(job); timer = setTimeout(() => run(poll), 1200); }
   }
   async function showResult(result) {
     const resultStamp = beginResult();
@@ -998,9 +1013,17 @@ window.aiUI = (() => {
   }
   function buildHistory() {
     const box = section('history');
-    button(box, 'refresh-history', 'refresh', async () => {
+    label('p', box, 'clearHistoryHint', 'small text-muted');
+    const changeBox = section('changeHistory');
+    label('p', changeBox, 'changesHint', 'small text-muted');
+    node('div', changeBox).id = 'ai-changes';
+    let historyGeneration = 0;
+    const refreshHistory = async () => {
+      const stamp = ++historyGeneration;
       const [jobs, changes, usage] = await Promise.all([api('/jobs'), api('/changes'), api('/usage')]);
+      if (stamp !== historyGeneration) return;
       el('history').replaceChildren();
+      el('changes').replaceChildren();
       for (const job of list(jobs, 'jobs')) {
         button(el('history'), `history-${job.id}`, features.includes(job.feature) ? job.feature : 'result', async () => {
           const resultStamp = beginResult(); clearTimeout(timer); jobId = null;
@@ -1012,7 +1035,7 @@ window.aiUI = (() => {
         });
       }
       for (const change of list(changes, 'changes')) {
-        const row = node('div', el('history'), undefined, 'border rounded p-2 mb-2');
+        const row = node('div', el('changes'), undefined, 'border rounded p-2 mb-2');
         label('span', row, features.includes(change.feature) ? change.feature : 'result'); node('span', row, ' · ');
         label('span', row, change.status === 'undone' ? 'undone' : 'applied');
         if (change.created_at) node('p', row, new Date(change.created_at).toLocaleString());
@@ -1031,14 +1054,17 @@ window.aiUI = (() => {
           result.focus();
         });
       }
-      node('pre', el('history'), JSON.stringify(usage, (_key, item) => item === null ? tr('unknown') : item, 2));
-    });
+      node('pre', el('history'), JSON.stringify(usage, (_key, item) => item === null ? tr('unknown') : item, 2)).id = 'ai-history-usage';
+    };
+    button(box, 'refresh-history', 'refresh', refreshHistory);
     button(box, 'clear-history', 'clearHistory', async () => {
       if (!confirm(tr('confirmDelete'))) return;
+      historyGeneration++;
       await api('/history', 'DELETE');
       beginResult();
       conversationId = null; filterBaseline = {}; jobId = null; clearTimeout(timer);
-      el('history').replaceChildren(); el('result').replaceChildren(); el('filters').value = '{}'; status('saved', 'history');
+      el('history').replaceChildren(); el('result').replaceChildren(); el('filters').value = '{}';
+      await refreshHistory(); status('saved', 'history');
     }, 'outline-danger');
     progress(box, 'history');
     node('div', box).id = 'ai-history';
