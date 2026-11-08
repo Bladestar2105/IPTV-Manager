@@ -16,6 +16,12 @@ never have to infer a typo from the symptom.
 - `PORT`: HTTP port. Defaults to `3000`.
 - `NODE_ENV`: Enables production behavior such as secure cookies when set to
   `production`.
+- `FFMPEG_BIN`: Optional absolute FFmpeg executable path, supplied in the process
+  environment before startup. Docker sets `/opt/ffmpeg/ffmpeg`; its build prepares
+  the pinned binary plus original README/LICENSE before installing dependencies.
+  Manual Linux installs can use the same [verified preparation flow](DEVELOPMENT.md#pinned-linux-ffmpeg-installation).
+  Retain the override at runtime; putting it only in `.env` is too late for the
+  package import. Without an override, the standard `ffmpeg-static` path is used.
 - `DATA_DIR`: Directory for runtime databases, secrets, uploads, and cache.
   Defaults to the repository root in local runs. Docker sets `DATA_DIR=/data`.
 - `JWT_EXPIRES_IN`: Admin JWT lifetime. Defaults to `30d`.

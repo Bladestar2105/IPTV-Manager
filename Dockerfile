@@ -14,9 +14,11 @@ RUN if [ "$INSTALL_AI_CODEX_SANDBOX" = "true" ]; then \
 
 # Copy package files
 COPY package.json package-lock.json ./
+COPY scripts/prepare-ffmpeg.mjs ./scripts/prepare-ffmpeg.mjs
 
-# Install dependencies
-RUN npm ci --omit=dev
+# Keep the verified binary and original upstream notices outside npm's install tree.
+ENV FFMPEG_BIN=/opt/ffmpeg/ffmpeg
+RUN node scripts/prepare-ffmpeg.mjs && npm ci --omit=dev
 
 # Copy application code
 COPY src ./src

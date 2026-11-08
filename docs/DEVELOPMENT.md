@@ -21,6 +21,42 @@ If dependencies change, keep `package.json` and `package-lock.json` in sync.
 Do not commit a separate `pnpm-lock.yaml`: npm is the supported package manager,
 and a second lockfile can retain vulnerable versions that deployments do not use.
 
+### Pinned Linux FFmpeg installation
+
+The package workflow and Docker build prepare the unchanged `ffmpeg-static`
+5.3.0 / `b6.1.1` binary before `npm ci`. `scripts/prepare-ffmpeg.mjs` fetches the
+binary archive, original README and original LICENSE by their fixed public
+GitHub release asset IDs. Every compressed/text download must match its pinned
+byte count and SHA-256. Redirects are restricted to official HTTPS GitHub release
+CDN hosts; no token, mirror or TLS exception is used. Downloads are streamed,
+the gzip is unpacked, and the ELF class/machine must match the selected Linux
+architecture (`x64`, `ia32`, `arm64` or `arm`). A failed download or validation
+cleans its staging directory and leaves the existing executable untouched.
+
+For a manual Linux installation, run as the account that will run the app:
+
+```bash
+export FFMPEG_BIN="$HOME/.local/share/iptv-manager/ffmpeg/ffmpeg"
+node scripts/prepare-ffmpeg.mjs
+npm ci
+npm start
+```
+
+Keep that same `FFMPEG_BIN` in the actual process environment for subsequent
+starts (for example, the service's `Environment=` setting). The override is
+read when `ffmpeg-static` is imported, so setting it only in `.env` is too late.
+Without this override, existing installations retain the normal package path.
+The preparer is Linux-only; other platforms keep the normal npm installer.
+`ffmpeg.README` and `ffmpeg.LICENSE` remain beside the binary, byte-for-byte.
+
+CI uses a path under `RUNNER_TEMP`, outside the release archive. Docker keeps
+`FFMPEG_BIN=/opt/ffmpeg/ffmpeg` in the final image, so `npm ci` skips all three
+upstream browser-URL downloads and the non-root runtime uses the same verified
+file. No dependency version or lockfile changes are involved.
+
+Run the download/redirect/checksum/ELF/cleanup and real installer/runtime-path
+regressions with `npm test -- tests/prepare_ffmpeg.test.js tests/app_smoke.test.js`.
+
 EPG download scheduling regressions are covered by
 `tests/epg_download_attempts.test.js` and `tests/scheduler/epg_scheduler.test.js`:
 HTTP/import failures persist the attempt before fetching, retain last-success

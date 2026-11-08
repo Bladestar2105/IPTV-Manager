@@ -150,7 +150,9 @@ sudo ./scripts/update.sh
 
 ### Manual Installation (Development)
 1.  Clone repo and enter it: `git clone https://github.com/Bladestar2105/IPTV-Manager.git && cd IPTV-Manager`
-2.  Install application dependencies: `npm ci`
+2.  Install application dependencies: `npm ci`. Linux installations can first
+    [prepare verified FFmpeg](docs/DEVELOPMENT.md#pinned-linux-ffmpeg-installation)
+    to avoid unreliable upstream browser-URL downloads.
 3.  On Debian/Ubuntu, provision the ChatGPT runtime: `sudo bash scripts/install-ai-runtime.sh`
 4.  Configure: `cp .env.example .env` (edit as needed)
 5.  As the non-root application user, run `npm run check:ai-runtime`, then `npm start`.

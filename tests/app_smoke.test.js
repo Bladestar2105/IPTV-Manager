@@ -90,4 +90,13 @@ describe('application wiring smoke checks', () => {
     expect(workflow).toMatch(/release-package:\n\s+needs:\n\s+- validate\n\s+- build-docker/);
     expect(workflow).toMatch(/name: Push verified Docker image\n\s+if: github.event_name != 'pull_request'/);
   });
+
+  it('prepares pinned FFmpeg before dependency installation and retains the Docker runtime path', () => {
+    const docker = readRepoFile('Dockerfile');
+    const workflow = readRepoFile('.github/workflows/package.yml');
+    expect(docker).toContain('ENV FFMPEG_BIN=/opt/ffmpeg/ffmpeg');
+    expect(docker.indexOf('node scripts/prepare-ffmpeg.mjs')).toBeLessThan(docker.indexOf('npm ci --omit=dev'));
+    expect(workflow.match(/node scripts\/prepare-ffmpeg\.mjs/g)).toHaveLength(2);
+    expect(workflow.match(/echo "FFMPEG_BIN=\$FFMPEG_BIN" >> "\$GITHUB_ENV"/g)).toHaveLength(2);
+  });
 });

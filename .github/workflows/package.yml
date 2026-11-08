@@ -33,6 +33,12 @@ jobs:
       - name: Validate release tag format
         run: node --input-type=module -e 'import { validateReleaseRef } from "./scripts/container-release-retention.mjs"; validateReleaseRef(process.env.GITHUB_REF);'
 
+      - name: Prepare pinned FFmpeg
+        run: |
+          export FFMPEG_BIN="$RUNNER_TEMP/iptv-manager-ffmpeg/ffmpeg"
+          node scripts/prepare-ffmpeg.mjs
+          echo "FFMPEG_BIN=$FFMPEG_BIN" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm ci
 
@@ -166,7 +172,11 @@ jobs:
           check-latest: true
 
       - name: Install Dependencies
-        run: npm ci
+        run: |
+          export FFMPEG_BIN="$RUNNER_TEMP/iptv-manager-ffmpeg/ffmpeg"
+          node scripts/prepare-ffmpeg.mjs
+          echo "FFMPEG_BIN=$FFMPEG_BIN" >> "$GITHUB_ENV"
+          npm ci
 
       - name: Create Zip Archive
         run: |
