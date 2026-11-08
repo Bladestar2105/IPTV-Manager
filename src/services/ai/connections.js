@@ -396,6 +396,14 @@ export function pruneUsage() {
         .run(Date.now()-30*86400000);
 }
 
+function availableCalls(access,feature,now=Date.now()) {
+    const counts=db.prepare('SELECT SUM(owner_key=?) AS owner_count,SUM(connection_id=?) AS connection_count,SUM(owner_key=? AND feature=?) AS feature_count FROM ai_usage WHERE created_at>?').get(access.owner_key,access.connection.id,access.owner_key,feature,now-3600000);
+    return Math.max(0,Math.min(60-(counts.owner_count||0),180-(counts.connection_count||0),30-(counts.feature_count||0)));
+}
+export function remainingInferenceCalls(actor,feature,connectionId=null) {
+    return availableCalls(requireAiAccess(actor,feature,connectionId),feature);
+}
+
 function reserve(access,feature,model,timeout=AI_TIMEOUT_MS,historyAt) {
     return db.transaction(()=>{
         const now=Date.now();
@@ -406,8 +414,7 @@ function reserve(access,feature,model,timeout=AI_TIMEOUT_MS,historyAt) {
         const recent=db.prepare('SELECT status,error_code FROM ai_usage WHERE connection_id=? AND created_at>? ORDER BY created_at DESC,rowid DESC LIMIT 3').all(access.connection.id,now-300000);
         if (recent.length===3 && recent.every(row=>['AI_UNAVAILABLE','AI_TIMEOUT'].includes(row.error_code))) throw aiError('AI_PAUSED',429);
         if (db.prepare("SELECT count(*) AS n FROM ai_usage WHERE status='running' AND (owner_key=? OR connection_id=?)").get(access.owner_key,access.connection.id).n) throw aiError('AI_BUSY',409);
-        const limits=db.prepare('SELECT SUM(owner_key=?) AS owner_count,SUM(connection_id=?) AS connection_count,SUM(owner_key=? AND feature=?) AS feature_count FROM ai_usage WHERE created_at>?').get(access.owner_key,access.connection.id,access.owner_key,feature,now-3600000);
-        if (limits.owner_count>=60 || limits.connection_count>=180 || limits.feature_count>=30) throw aiError('AI_RATE_LIMIT',429);
+        if (!availableCalls(access,feature,now)) throw aiError('AI_RATE_LIMIT',429);
         pruneUsage();
         const id=randomUUID();
         const displayTime=historyAt ?? Math.max(now,(access.preferences._history_cleared_at || 0)+1);

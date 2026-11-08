@@ -18,6 +18,7 @@ try {
   let connections = [], discoverFails = false, jobCount = 0, pollCount = 0, cancelNext = false, nextJobError = null, cancelResult = 'cancelled', pollErrorOnce = false;
   let discoverError = {status: 502, code: 'AI_UNAVAILABLE'};
   let nextJobResult = null;
+  let historicalRunningReads = 0;
   let historyCleared = false;
   let nextJobProgress = {stage: 'processing', processed: 100, total: 2000};
   let discoveredModels = [{id: 'chat-one'}, {id: 'chat-two'}, {id: 'chat-three'}, {id: 'chat-four'}];
@@ -131,11 +132,12 @@ try {
     else if (path.endsWith('/apply')) { assert.deepEqual(body.action_ids.slice(0, 2), ['a0', 'a1']); assert(body.idempotency_key.length <= 200); data = {change_id: 'change1', status: 'applied'}; }
     else if (/^\/jobs\/history/.test(path)) {
       const id = path.split('/').at(-1);
-      data = {id, status: 'completed', result: id === 'historyRead' ? {feature: 'diagnose', summary: 'Read-only result', findings: [
+      if (id === 'historyRunning' && historicalRunningReads++ === 0) data = {id, status: 'running'};
+      else data = {id, status: 'completed', result: id === 'historyRead' ? {feature: 'diagnose', summary: 'Read-only result', findings: [
         {code: 'local_user_connections', certainty: 'proven', value: {limit_reached: true}},
         {code: 'new_connection_may_be_blocked', certainty: 'possible'},
         {code: 'protocol_export_delivery', certainty: 'unknown', reason: 'not_measured'}
-      ]} : {feature: 'list', summary: id, proposal_id: id}};
+      ]} : {feature: 'list', summary: id, proposal_id: id === 'historyRunning' ? undefined : id, conversation_id: 'historical-list', list_request: 'Historical football task'}};
     }
     else if (/^\/proposals\/history/.test(path)) {
       const id = path.split('/').at(-1);
@@ -153,7 +155,7 @@ try {
     }
     else if (path === '/rules') data = method === 'GET' ? [] : {id: 'r1', ...body, preview: [{before: 'old', after: 'new'}]};
     else if (path === '/rules/r1') data = {id: 'r1', ...body, preview: [{before: 'old', after: 'new'}]};
-    else if (path === '/jobs') data = historyCleared ? [] : [{id: 'historyA', feature: 'list'}, {id: 'historyB', feature: 'list'}, {id: 'historyRead', feature: 'diagnose'}];
+    else if (path === '/jobs') data = historyCleared ? [] : [{id: 'historyA', feature: 'list'}, {id: 'historyB', feature: 'list'}, {id: 'historyRead', feature: 'diagnose'}, {id: 'historyRunning', feature: 'list'}];
     else if (path === '/usage') data = {requests: historyCleared ? 0 : 8, calls: historyCleared ? 0 : 12, prompt_tokens: null};
     else if (path === '/history') { historyCleared = true; data = {deleted: true}; }
     else if (!url.pathname.startsWith('/api/ai')) data = [];
@@ -335,7 +337,7 @@ try {
   assert.equal(await page.locator('#ai-work-status').getAttribute('data-i18n'), 'ai_queued', 'submission must show progress before the server responds');
   assert.equal(await page.locator('#ai-work-progress .spinner-border').isVisible(), true);
   assert.equal(await page.locator('#ai-run').isDisabled(), true);
-  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
+  for (const id of ['connection', 'feature', 'user', 'channel-ids', 'category-id', 'new-search', 'new-list', 'save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish']) {
     assert.equal(await page.locator(`#ai-${id}`).isDisabled(), true, `${id} cannot abandon an in-flight job submission`);
   }
   await page.locator('#nav-ai').click();
@@ -409,7 +411,33 @@ try {
       .map(item => item.dataset.i18n)), [], `AI labels use the selected ${lang} translations`);
     assert.match(await page.locator('#view-ai [data-i18n="ai_intro"]').innerText(), /experimental|experimentell|expérimental|πειραματικ/i);
   }
+  await page.locator('#ai-feature').selectOption('list');
+  nextJobResult = {feature: 'list', summary: 'Narrow the matching set', conversation_id: 'list-one',
+    list_request: 'Create Fussball from Live-TV; leave other lists alone.',
+    coverage: {processed: 0, total: 900, partial: true, requires_narrowing: true, candidate_limit: 240, next_offset: null}};
+  await page.locator('#ai-prompt').fill('Create Fussball from Live-TV; leave other lists alone.');
+  await page.locator('#ai-run').click();
+  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  assert.equal(await page.locator('#ai-next').count(), 0, 'large list selections cannot start unbounded continuation jobs');
+  assert.equal(await page.locator('#ai-apply').count(), 0, 'narrowing has no partial proposal to apply');
+  assert.match(await page.locator('#ai-result').innerText(), /Create Fussball from Live-TV/);
+  await page.locator('#ai-prompt').fill('Only German-language channels');
+  await page.locator('#ai-run').click();
+  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, 'list-one', 'list refinements preserve their original task');
+  await page.locator('#ai-new-list').click();
+  assert.equal(await page.locator('#ai-prompt').inputValue(), '');
+  await page.locator('#ai-prompt').fill('A new independent list');
+  await page.locator('#ai-run').click();
+  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'New list clears the prior task');
   await page.locator('summary[data-i18n="ai_scope"]').click();
+  await page.locator('#ai-category-id').fill('123');
+  await page.locator('#ai-run').click();
+  await page.getByText('Narrow the matching set', {exact: true}).waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'changing explicit category scope clears prior list intent');
+  await page.locator('#ai-category-id').fill('');
+  nextJobResult = null;
   await page.locator('#ai-channel-ids').fill('5,6');
   await page.locator('#ai-pinned').fill('6');
   await page.locator('#ai-keep-first').fill('1');
@@ -535,6 +563,20 @@ try {
   await page.waitForFunction(() => !document.getElementById('ai-history-historyA').disabled);
   assert.equal(await page.locator('#ai-undo').count(), 1, 'late history cannot append another Undo');
   assert.match(await page.locator('#ai-proposal').innerText(), /Proposal historyB/);
+  await page.locator('#ai-feature').selectOption('search');
+  await page.locator('#ai-history-historyB').click();
+  await page.locator('#ai-undo').waitFor();
+  await page.locator('#ai-prompt').fill('An independent search after viewing history');
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-action-a1').waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'viewing a historical list cannot attach its conversation to the current search');
+  await page.locator('#ai-history-historyRunning').click();
+  await page.getByText('Historical football task', {exact: true}).waitFor();
+  await page.locator('#ai-run').click();
+  await page.locator('#ai-action-a1').waitFor();
+  assert.equal(requests.filter(r => r.path === '/jobs' && r.method === 'POST').at(-1).body.conversation_id, undefined, 'a historical job completing during status polling stays display-only');
+  await page.locator('#ai-history-historyB').click();
+  await page.locator('#ai-undo').waitFor();
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/undo')), page.locator('#ai-undo').click()]);
   assert.equal(requests.filter(r => r.path.endsWith('/undo')).at(-1).path, '/changes/changeB/undo', 'late change A cannot redirect visible B Undo');
   await page.locator('#ai-history-historyA').click();

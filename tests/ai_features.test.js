@@ -144,7 +144,10 @@ describe('authorized AI features', () => {
   });
   it('only transmits own safe current candidates and invalidates a revoked result', async () => {
     let sent;
-    const result = await executeFeature(user,{feature:'list',prompt:'Organize'}, {infer:async request => { sent=JSON.stringify(request); return {data:{summary:'Ready',actions:[]},model:'synthetic'}; }});
+    const result = await executeFeature(user,{feature:'list',prompt:'Organize'}, {infer:async request => {
+      if(!JSON.parse(request.messages[1].content).items) return {data:{selection:{type:'live',terms:[],language_terms:[]}},model:'synthetic'};
+      sent=JSON.stringify(request); return {data:{summary:'Ready',actions:[]},model:'synthetic'};
+    }});
     expect(sent).toContain('DE | News');
     expect(sent).not.toContain('Private channel');
     expect(sent).not.toContain('secret.invalid');
@@ -586,7 +589,9 @@ describe('authorized AI features', () => {
       for(let i=0;i<499;i++) db.prepare('INSERT INTO user_categories(id,user_id,name) VALUES(?,701,?)').run(5000+i,text(160));})();
     let count=0,maxMessages=0;
     const result=await executeFeature(user,{feature:'list',full_list:true,prompt:text(2000)},{infer:async request=>{
-      const content=JSON.parse(request.messages[1].content);count+=content.items.length;
+      const content=JSON.parse(request.messages[1].content);
+      if(!content.items) return {data:{selection:{type:'live',terms:[],language_terms:[]}},model:'test'};
+      count+=content.items.length;
       maxMessages=Math.max(maxMessages,JSON.stringify(request.messages).length);
       expect(JSON.stringify(request.messages).length).toBeLessThanOrEqual(64000);
       return {data:{summary:'Reviewed',actions:[]},model:'test'};

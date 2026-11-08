@@ -5,6 +5,8 @@ import epgDb from '../../database/epgDb.js';
 
 export const RETENTION_MS = 30 * 86400000;
 export const MAX_CANDIDATES = 2000;
+export const MAX_PROPOSAL_ACTIONS = MAX_CANDIDATES * 2;
+db.function('ai_lower',{deterministic:true},value=>String(value??'').toLowerCase());
 export const ownerKey = actor => `${actor.is_admin ? 'admin' : 'user'}:${actor.id}`;
 export const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function fail(code, status = 400) {
@@ -94,14 +96,15 @@ export function checkReferences(actor, userId, refs, { version = true } = {}) {
   }
 }
 
-export function buildContext(actor, payload) {
+export function buildContext(actor, payload, selection = null, candidateLimit = MAX_CANDIDATES) {
   const userId = targetUser(actor, payload.user_id);
   const selectedIds = ids(payload.selected_ids);
   const channelIds = ids(payload.channel_ids ?? (payload.provider_channel_id ? [payload.provider_channel_id] : []));
   const selectedDiagnosis = payload.feature === 'diagnose' && (selectedIds.length > 0 || channelIds.length > 0);
   const editing = ['list','cleanup','duplicates'].includes(payload.feature) || selectedDiagnosis;
-  const offset = Number(payload.offset || 0);
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) fail('AI_INVALID_OFFSET');
+  const requestedOffset = Number(payload.offset || 0);
+  if (!Number.isSafeInteger(requestedOffset) || requestedOffset < 0 || requestedOffset > 1000000) fail('AI_INVALID_OFFSET');
+  const offset=selection?0:requestedOffset;
   const params = {userId};
   const clauses = [editing
     ? `(uc.id IN (SELECT id FROM authorized_user_channels) OR (p.user_id=@userId AND uc.id IS NULL))`
@@ -114,17 +117,34 @@ export function buildContext(actor, payload) {
   }
   if (channelIds.length) clauses.push(`pc.id IN (${channelIds.map((id,i)=>{params['id'+i]=id;return '@id'+i;}).join(',')})`);
   if (payload.category_id) { params.categoryId=positiveId(payload.category_id); clauses.push('uc.user_category_id=@categoryId'); }
+  if(selection) {
+    if(channelIds.length) {
+      const scoped=db.prepare(`${channelSelect} WHERE ${clauses.join(' AND ')}`).all(params);
+      if(channelIds.some(id=>!scoped.some(row=>row.provider_channel_id===id))) fail('AI_SOURCE_UNAVAILABLE',409);
+    }
+    if(selection.type) {params.selectionType=selection.type;clauses.push('pc.stream_type=@selectionType');}
+    for(const key of ['terms','language_terms']) if(selection[key].length) {
+      const fields=['pc.name','uc.custom_name','cat.name','pc.genre'];
+      clauses.push(`(${selection[key].map((term,i)=>{
+        const param=`${key}${i}`;params[param]=term.toLowerCase();
+        const lower=Buffer.byteLength(term)===term.length?'lower':'ai_lower';
+        return fields.map(field=>`instr(${lower}(COALESCE(${field},'')),@${param})>0`).join(' OR ');
+      }).join(' OR ')})`);
+    }
+  }
   const sql = `${channelSelect} WHERE ${clauses.join(' AND ')}`;
   const total = db.prepare(`SELECT COUNT(*) AS total FROM (${sql})`).get(params).total;
-  const limit=payload.full_list===true?MAX_CANDIDATES:240;
-  const rows = db.prepare(`${sql} ORDER BY pc.id,uc.id LIMIT @limit OFFSET @offset`).all({...params,limit,offset});
-  if (channelIds.some(id => !rows.some(row => row.provider_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
+  const limit=Math.min(payload.full_list===true?MAX_CANDIDATES:240,selection?candidateLimit:MAX_CANDIDATES);
+  const requiresNarrowing=Boolean(selection && total>limit);
+  const rows = requiresNarrowing?[]:db.prepare(`${sql} ORDER BY pc.id,uc.id LIMIT @limit OFFSET @offset`).all({...params,limit,offset});
+  if (!selection && channelIds.some(id => !rows.some(row => row.provider_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
   if (selectedDiagnosis && selectedIds.some(id => !rows.some(row => row.user_channel_id === id))) fail('AI_SOURCE_UNAVAILABLE',409);
   const categories = db.prepare('SELECT id,name,type,sort_order,is_adult FROM user_categories WHERE user_id=? ORDER BY sort_order,id LIMIT 500').all(userId)
     .map(row=>({...row,name:safeText(row.name,160)}));
   const refs = rows.map(row=>reference(row,editing,Boolean(row.is_hidden)));
   return { userId,rows,refs,categories,items:rows.map(publicChannel),
-    coverage:{processed:rows.length,total,offset,partial:offset>0||offset+rows.length<total,next_offset:offset+rows.length<total?offset+rows.length:null} };
+    coverage:{processed:rows.length,total,offset,partial:offset>0||offset+rows.length<total,next_offset:!selection&&offset+rows.length<total?offset+rows.length:null,
+      ...(selection?{requires_narrowing:requiresNarrowing,candidate_limit:limit}:{})} };
 }
 
 // Walk the authorized catalog locally so a page boundary cannot conceal a duplicate.

@@ -152,9 +152,37 @@ including unselected actions. Invalid legacy proposals fail before any mutation.
 EPG mappings require `feature: "epg"`, current EPG permission and source evidence;
 list/cleanup cannot carry them. Feature revocation after preview rejects Apply.
 
-`full_list:true` raises the bounded page size. Follow `coverage.next_offset`
-with `offset`; retain the reported partial status until the requested scope has
-actually been examined. Search accepts `conversation_id` and explicit `filters`
+For a prompted `list` request, one bounded planning call derives literal topic,
+channel-brand and language/name clues. The server searches the authorized
+catalog locally before limiting candidates; unrelated catalog rows are never
+sent to the model. The selection is based on naming clues, not verified audio
+language, broadcasts or an exhaustive semantic classification.
+`list` results include `selection`, `list_request` and `conversation_id`.
+Send that conversation ID with a refinement to retain the original task and
+its constraints; omit it to start a new task. Search and list conversations
+are separate, user-bound states. A refinement creates a fresh proposal and
+does not apply or merge a previous one.
+
+List candidate review is bounded to 240 rows by default, or up to 2,000 with
+`full_list:true`. The remaining owner/connection/function call budget further
+limits candidate review to 40 candidates per remaining call. If the matching set exceeds this bound,
+`coverage.requires_narrowing:true` reports the matching `total`, the
+`candidate_limit` and zero `processed` rows. No candidate-review calls or
+partial proposal are made; refine the request or explicitly raise the limit.
+Planned lists do not offer automatic next-page inference. Local retrieval has
+no model-token cost; the planning and candidate-review requests consume the
+existing connection budget and may incur provider usage.
+Planned lists use at most 40 candidates per review request and retain at most
+2,000 characters of accumulated instruction. An invalid or oversized selection
+fails validation rather than widening scope or replaying requests.
+Stored proposals and Apply confirmations accept at most 4,000 actions, including
+category creation. Repeated identical assignments to the same destination are
+combined during planned-list aggregation; conflicting edits remain invalid.
+
+For other paged features, `full_list:true` raises the bounded page size.
+Follow `coverage.next_offset` with `offset`; retain the reported partial status
+until the requested scope has actually been examined.
+Search accepts `conversation_id` and explicit `filters`
 patches with `query`, `type`, `genre`, `language`, `region`, `start`, `end`,
 `max_duration` and `interests`. Null/empty values remove a filter. Program times
 must have an explicit UTC offset; time windows are bounded to 14 days. Text

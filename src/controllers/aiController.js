@@ -126,7 +126,7 @@ export const deleteConversation = handle(async req => {
 export const followup = handle(async req => {
   const {getConversation} = await import('../services/ai/library.js');
   const conversation = await getConversation(req.user,req.params.id);
-  return jobs.createJob(req.user,{...req.body,feature:'search',user_id:conversation.user_id,conversation_id:req.params.id},req.get('Idempotency-Key') || req.body.idempotency_key);
+  return jobs.createJob(req.user,{...req.body,feature:conversation.feature,user_id:conversation.user_id,conversation_id:req.params.id},req.get('Idempotency-Key') || req.body.idempotency_key);
 });
 export const getEnrichment = handle(async req => {
   const {getEnrichment} = await import('../services/ai/library.js');

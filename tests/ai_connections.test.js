@@ -90,6 +90,20 @@ describe('AI compatibility batch', () => {
 });
 
 describe('AI connection security', () => {
+    it.each([['feature',28],['owner',58],['connection',178]])('reports the same remaining %s call budget enforced by reservations',async(kind,count)=>{
+        const c=await selected();db.exec('DELETE FROM ai_usage');
+        const insert=db.prepare("INSERT INTO ai_usage(id,owner_key,connection_id,feature,status,created_at) VALUES(?,?,?,?,'completed',?)");
+        for(let i=0;i<count;i++) insert.run(`remaining-${i}`,kind==='connection'?'user:999':'admin:1',c.id,kind==='owner'?'search':'list',Date.now());
+        insert.run('outside-hour','admin:1',c.id,'list',Date.now()-3600001);
+        expect(ai.remainingInferenceCalls(admin,'list',c.id)).toBe(2);
+        await ai.runInference(admin,'list',{connectionId:c.id,messages:[],schema});
+        expect(ai.remainingInferenceCalls(admin,'list',c.id)).toBe(1);
+        await ai.runInference(admin,'list',{connectionId:c.id,messages:[],schema});
+        expect(ai.remainingInferenceCalls(admin,'list',c.id)).toBe(0);
+        const sent=requests.length;
+        await expect(ai.runInference(admin,'list',{connectionId:c.id,messages:[],schema})).rejects.toHaveProperty('code','AI_RATE_LIMIT');
+        expect(requests).toHaveLength(sent);
+    });
     it('normalizes known suffixes while retaining proxy prefixes', () => {
         expect(transport.normalizeBaseUrl('https://example.com/proxy/v1/chat/completions/')).toBe('https://example.com/proxy/v1');
         expect(transport.normalizeBaseUrl('https://example.com')).toBe('https://example.com/v1');

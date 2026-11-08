@@ -5,6 +5,7 @@ import { proposalSchema } from './proposalContract.js';
 import { getConversation, saveConversation, saveEnrichment, getEnrichment } from './library.js';
 import { validateFilters, timezoneName, searchLocally, verifyPrograms, epgEvidence, verifyEpgProgramCatalog } from './searchAndEpg.js';
 import { localDiagnosis, unknownDiagnostics } from './diagnostics.js';
+import { listScope, listRequest, validateListSelection, listSelectionSchema, LIST_PLANNING_INSTRUCTIONS } from './listSelection.js';
 
 const string=(max=200)=>({type:'string',maxLength:max});
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
@@ -13,6 +14,7 @@ const explanationSchema=object({summary:string(2000)});
 const filterProperties={query:nullable(string()),type:nullable({type:'string',enum:['live','movie','series','program']}),genre:nullable(string(100)),language:nullable(string(30)),region:nullable(string(80)),start:nullable(string(60)),end:nullable(string(60)),max_duration:nullable({type:'number',minimum:1,maximum:1440}),interests:nullable({type:'array',items:string(80),maxItems:8})};
 const searchSchema=object({summary:string(2000),filters:object(filterProperties),clear_filters:{type:'array',items:{type:'string',enum:Object.keys(filterProperties)},maxItems:10}});
 const textSchema=object({text:string(6000),tags:{type:'array',items:string(60),maxItems:12}});
+const LIST_REVIEW_BATCH_SIZE=40;
 
 // The exact answer contract each feature validates locally, exposed so tests can
 // assert real output shapes rather than a copy of them.
@@ -147,13 +149,34 @@ async function aggregateDiagnosis(actor,payload,{infer,signal}) {
   return authorizeResult(actor,payload,result);
 }
 
-export async function executeFeature(actor,payload,{infer,signal,progress}={}) {
+export async function executeFeature(actor,payload,{infer,signal,progress,remainingCalls}={}) {
   if(!['list','cleanup','duplicates','epg','sync','search','diagnose','text'].includes(payload.feature)) fail('AI_INVALID_FEATURE');
   if(actor.is_admin && payload.feature==='diagnose' && payload.user_id==null) return aggregateDiagnosis(actor,payload,{infer,signal});
-  const context=buildContext(actor,payload),timezone=timezoneName(payload.timezone||'UTC');
   const language=typeof payload.language==='string'&&payload.language.length<=30?payload.language:'en';
+  const timezone=timezoneName(payload.timezone||'UTC'),userId=targetUser(actor,payload.user_id);
+  const previous=payload.conversation_id&&['list','search'].includes(payload.feature)?getConversation(actor,payload.conversation_id,payload.feature):null;
+  if(previous && previous.user_id!==userId) fail('AI_FORBIDDEN',403);
+  let list=null;
+  // Empty-prompt editor actions retain their existing scoped review behavior.
+  if(payload.feature==='list' && (safeText(payload.prompt,2001).trim() || previous)) {
+    const scope=listScope(payload);
+    if(previous && (!previous.list || hash(previous.list.scope)!==hash(scope))) fail('AI_INVALID_CONVERSATION',409);
+    const request=listRequest(payload.prompt,previous?.list.request);
+    signal?.throwIfAborted();
+    const planningRequest={messages:[{role:'system',content:SYSTEM+' '+LIST_PLANNING_INSTRUCTIONS},
+      {role:'user',content:JSON.stringify({feature:'list',list_request:request,previous_selection:previous?.list.selection||null,explicit_scope:scope,language})}],schema:listSelectionSchema};
+    if(JSON.stringify(planningRequest.messages).length>64000) fail('AI_CONTEXT_TOO_LARGE');
+    const reply=boundedReply(await infer(planningRequest));
+    signal?.throwIfAborted();
+    if(previous) getConversation(actor,previous.id,'list');
+    list={request,selection:validateListSelection(reply.data.selection,scope),scope};
+    payload={...payload,prompt:request};
+  }
+  const candidateLimit=list&&remainingCalls?Math.min(MAX_CANDIDATES,Math.max(0,remainingCalls())*LIST_REVIEW_BATCH_SIZE):MAX_CANDIDATES;
+  const context=buildContext(actor,payload,list?.selection,candidateLimit);
   const result={feature:payload.feature,summary:'',coverage:context.coverage,
-    _authorization:{owner_key:ownerKey(actor),user_id:context.userId,refs:context.refs}};
+    _authorization:{owner_key:ownerKey(actor),user_id:context.userId,refs:context.refs},
+    ...(list?{list_request:list.request,selection:list.selection}:{})};
   const requestFor=(data,schema,instructions='')=>({messages:[{role:'system',content:SYSTEM+' '+instructions},{role:'user',content:JSON.stringify({feature:payload.feature,prompt:safeText(payload.prompt,2000),language,timezone,now:new Date().toISOString(),...data})}],schema});
   const ask=async(data,schema,instructions='')=>{
     signal?.throwIfAborted();
@@ -169,13 +192,14 @@ export async function executeFeature(actor,payload,{infer,signal,progress}={}) {
   if(['list','cleanup','duplicates'].includes(payload.feature)) {
     const groups=payload.feature==='duplicates'?duplicateGroups(actor,context):null;
     if(groups) result.findings=groups.map(({items,...group})=>({...group,provider_channel_ids:items.map(item=>item.provider_channel_id)}));
-    const actions=[],summaries=[],unchangedSummaries=[];
+    const actions=[],summaries=[],unchangedSummaries=[],assignments=new Set();
     const instructions='Return only required list edits. For duplicates only hide_channel actions on clear duplicates; preserve regional, language and time-shift differences. Technical labels in names are clues, not measured quality. Reuse planned_categories keys without declaring them again; new categories require unique keys.'+
       (payload.feature==='list'?' For thematic list suggestions, use channel names and general knowledge of channel brands, not only literal keyword matches. Evaluate every supplied record and include every matching numbered or quality variant. This permission is only for proposed grouping, not claims about current broadcasts, rights or availability.':'');
-    // Bounded pages cover small complete lists; larger lists explicitly return a continuation offset.
+    // Planned lists review only a complete bounded match set; legacy editor actions keep paging.
     progress?.({stage:'processing',processed:0,total:context.items.length});
     for(let i=0;i<context.items.length;) {
-      let batch=context.items.slice(i,i+80),data;
+      // Planned grouping needs room for assignments plus category declarations in the 2048-token reply.
+      let batch=context.items.slice(i,i+(list?LIST_REVIEW_BATCH_SIZE:80)),data;
       while(true) {
         const batchIds=new Set(batch.map(item=>item.user_channel_id));
         const relevant=context.categories.filter(cat=>batch.some(item=>item.category_id===cat.id));
@@ -193,17 +217,27 @@ export async function executeFeature(actor,payload,{infer,signal,progress}={}) {
       validateProposalCandidates(reply.data.actions,data.items,data.categories.map(category=>category.id),data.planned_categories);
       // A later batch may repeat a planned declaration. Reuse only an identical
       // declaration; conflicting keys still fail normal proposal validation.
-      const batchActions=reply.data.actions.filter(action=>action.type!=='create_category'||!data.planned_categories.some(planned=>
-        planned.key===action.key&&planned.name===action.name&&planned.category_type===action.category_type));
+      const batchActions=reply.data.actions.filter(action=>{
+        if(action.type==='create_category' && data.planned_categories.some(planned=>
+          planned.key===action.key&&planned.name===action.name&&planned.category_type===action.category_type)) return false;
+        if(payload.feature==='list' && action.type==='assign_channel') {
+          const key=JSON.stringify([action.provider_channel_id,action.category_id??null,action.category_key??null]);
+          if(assignments.has(key)) return false;
+          assignments.add(key);
+        }
+        return true;
+      });
       actions.push(...batchActions);
       (batchActions.length||payload.feature!=='list'?summaries:unchangedSummaries).push(safeText(reply.data.summary,1000));
       i+=batch.length;
       progress?.({stage:'processing',processed:i,total:context.items.length});
     }
     result.summary=(summaries.length?summaries:unchangedSummaries).join('\n').slice(0,2000);
+    if(list && !context.items.length) result.summary=context.coverage.requires_narrowing?'Too many matching candidates; narrow the list request or select a smaller scope.':'No matching candidates were found for these local selection clues.';
     signal?.throwIfAborted();
     if(actions.length) result.proposal_id=createProposal(actor,{...payload,user_id:context.userId},actions,result.summary,context.refs).id;
     result.items=context.items;
+    if(list) result.conversation_id=saveConversation(actor,context.userId,{},context.refs,null,{feature:'list',list});
   } else if(payload.feature==='epg') {
     const evidence=epgEvidence(actor,context,payload);
     result.findings=evidence.findings;result.items=evidence.cases;Object.assign(result.coverage,evidence.coverage);
@@ -227,8 +261,6 @@ export async function executeFeature(actor,payload,{infer,signal,progress}={}) {
       result.coverage.epg_reviewed=Math.min(open.length,80);result.coverage.epg_review_partial=open.length>80;
     }
   } else if(payload.feature==='search') {
-    const previous=payload.conversation_id?getConversation(actor,payload.conversation_id):null;
-    if(previous && previous.user_id!==context.userId) fail('AI_FORBIDDEN',403);
     const reply=await ask({active_filters:previous?.filters||{},available_filters:Object.keys(filterProperties)},searchSchema,
       'Interpret only changed search criteria. Null fields mean unchanged. To explicitly remove a previous filter, put its name in clear_filters. Use absolute ISO timestamps with offsets in the requested timezone for dates like today/tonight; never invent program times. Use type program for schedule queries. Only filter supported known metadata; language/region are usually unknown outside EPG.');
     const updates=Object.fromEntries(Object.entries(reply.data.filters||{}).filter(([,value])=>value!==null));

@@ -38,6 +38,34 @@ can use familiar names such as Sky Sport Bundesliga and DAZN to propose matches
 from the authorized catalog, including numbered and quality variants. Review
 the suggested entries before confirming the list.
 
+The list assistant first interprets the request in one small model call, then
+searches the authorized catalog locally using media type and literal topic,
+brand and language/name clues. Only matching candidates are sent for review;
+the full provider catalog is not sent to the model. A short follow-up such as
+**“Only German-language channels”** retains the original football task and its
+instructions to preserve other lists. **New list task** clears that context.
+Changing the target user or explicit channel/category scope starts a new task.
+Each refinement produces a fresh preview; it does not apply or merge an older
+proposal.
+
+The default review limit is 240 candidates. The expanded option allows up to
+2,000 and can consume more usage. The remaining owner/connection/function call
+budget can lower this limit before candidate review starts. If more candidates match, the assistant
+reports the count and asks for a narrower task before reviewing candidates or
+creating a partial list. It does not automatically process the entire catalog
+in paid model calls. Local database searching consumes no model tokens;
+planning and candidate review still do. Names and country/category tags are
+language clues, not verification of audio language or current programming.
+Unfamiliar brands or incomplete metadata can leave relevant channels outside
+the selected scope; inspect the preview before confirming.
+Planned lists review at most 40 candidates per model request so dense assignment
+proposals fit the existing answer budget. Thus a default-size review needs at
+most six candidate-review calls, plus planning; existing connection limits
+still apply. Proposal and Apply capacity is bounded to 4,000 actions, including
+category creation and assignments. Identical assignments from repeated source
+appearances are combined; conflicting edits are rejected. The accumulated list
+instruction is bounded to 2,000 characters.
+
 User access lists support multiple selections with Ctrl/Cmd-click. Empty access
 lists grant no users access. Previously saved selections that no longer appear
 in the administrator user list are labeled unavailable rather than silently
@@ -276,8 +304,11 @@ Canceled or uncertain submitted requests are not blindly retried.
 - Responses are limited to 512 KiB; inference requests set a 2,048-token
   output ceiling. Truncated, oversized or malformed outputs are rejected.
 - Default catalog analysis examines up to 240 entries; explicit large-list
-  processing uses pages of up to 2,000. Follow the displayed continuation to
-  process later pages. A partial page never claims the whole list was checked.
+  processing uses pages of up to 2,000. Prompted list creation selects locally
+  before review and requires narrowing when matches exceed its candidate or
+  remaining call budget; it does not automatically page model requests.
+  Other paged features offer continuation to process later pages.
+  A partial page never claims the whole list was checked.
   Cross-page duplicate grouping uses the authorized local catalog.
 - EPG matching examines at most 5,000 source records; search returns at most
   100 results and examines at most 5,000 program rows using stable pages under

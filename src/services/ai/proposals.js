@@ -3,7 +3,7 @@ import db from '../../database/db.js';
 import { clearChannelsCache } from '../cacheService.js';
 import { createCategory, addChannel } from '../userListWriteService.js';
 import { isAdultCategory } from '../../utils/helpers.js';
-import { ownerKey, targetUser, positiveId, ids, safeText, fail, hash, channelRecord, reference, checkReferences, verifyEpg, allowedEpgChannels, RETENTION_MS, MAX_CANDIDATES } from './context.js';
+import { ownerKey, targetUser, positiveId, ids, safeText, fail, hash, channelRecord, reference, checkReferences, verifyEpg, allowedEpgChannels, RETENTION_MS, MAX_PROPOSAL_ACTIONS } from './context.js';
 import { verifyEpgProgramCatalog } from './searchAndEpg.js';
 import { requireAiFeatureAccess } from './connections.js';
 import { validateFeatureActions } from './proposalContract.js';
@@ -200,7 +200,7 @@ function validateChannelOrder(diffs,code) {
   for(const id of changed) if(occupied.get(id)) fail(code,409);
 }
 export function applyProposal(actor,id,{action_ids,idempotency_key}={}) {
-  if(!Array.isArray(action_ids)||!action_ids.length||action_ids.length>MAX_CANDIDATES||new Set(action_ids).size!==action_ids.length||typeof idempotency_key!=='string'||!idempotency_key||idempotency_key.length>200) fail('AI_INVALID_CONFIRMATION');
+  if(!Array.isArray(action_ids)||!action_ids.length||action_ids.length>MAX_PROPOSAL_ACTIONS||new Set(action_ids).size!==action_ids.length||typeof idempotency_key!=='string'||!idempotency_key||idempotency_key.length>200) fail('AI_INVALID_CONFIRMATION');
   const outcome=db.transaction(()=>{
     const row=record('ai_proposals',actor,id);
     validateFeatureActions(row.data.feature,row.data.actions);

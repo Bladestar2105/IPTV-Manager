@@ -59,18 +59,23 @@ export function saveRule(actor,input,id=null) {
 }
 export function deleteRule(actor,id) {owned('ai_rules',actor,id);db.prepare('DELETE FROM ai_rules WHERE id=? AND owner_key=?').run(id,ownerKey(actor));return {deleted:true};}
 
-export function saveConversation(actor,userId,filters,refs,id=null) {
-  if(id) owned('ai_conversations',actor,id);
-  const conversationId=id||randomUUID(),data={filters,refs};
+export function saveConversation(actor,userId,filters,refs,id=null,{feature='search',list=null}={}) {
+  if(id) {
+    const previous=getConversation(actor,id,feature);
+    if(previous.user_id!==userId) fail('AI_FORBIDDEN',403);
+  }
+  const conversationId=feature==='list'?randomUUID():id||randomUUID(),data={feature,filters,refs,...(list?{list}:{})};
   db.prepare(`INSERT INTO ai_conversations(id,owner_key,user_id,data_json,updated_at) VALUES(?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at`).run(conversationId,ownerKey(actor),userId,JSON.stringify(data),Date.now());
   return conversationId;
 }
-export function getConversation(actor,id) {
+export function getConversation(actor,id,expectedFeature=null) {
   const row=owned('ai_conversations',actor,id);
   if(row.updated_at<Date.now()-RETENTION_MS) fail('AI_NOT_FOUND',404);
+  const feature=row.data.feature||'search';
+  if(expectedFeature && feature!==expectedFeature) fail('AI_INVALID_CONVERSATION',409);
   checkReferences(actor,row.user_id,row.data.refs);
-  return {id:row.id,user_id:row.user_id,filters:row.data.filters};
+  return {id:row.id,user_id:row.user_id,feature,filters:row.data.filters,...(feature==='list'?{list:row.data.list}:{})};
 }
 export function deleteConversation(actor,id) {owned('ai_conversations',actor,id);db.prepare('DELETE FROM ai_conversations WHERE id=? AND owner_key=?').run(id,ownerKey(actor));return {deleted:true};}
 export function saveEnrichment(actor,userId,channelId,source,{text,tags,language,operation,model,program}) {

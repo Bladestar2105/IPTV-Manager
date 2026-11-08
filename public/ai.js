@@ -6,6 +6,7 @@ window.aiUI = (() => {
   const contextWriteButtons = ['save-policy', 'save-preference', 'delete-connection', 'clear-history', 'discover', 'test', 'finish', 'unlink'];
   const pendingContextWrites = new Set();
   let jobId, proposal, changeId, conversationId, recommendation, nextOffset = 0, resultGeneration = 0;
+  let continueJob = true;
   let appliedActionIds = [];
   let filterBaseline = {};
   let programs = [], programScope = '', programGeneration = 0;
@@ -98,7 +99,7 @@ window.aiUI = (() => {
     // including the interval before POST /jobs returns its ID.
     const linking = submittingLink || login?.status === 'pending';
     const busy = submittingJob || Boolean(jobId) || linking || pendingContextWrites.size > 0;
-    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'new-search', ...contextWriteButtons]) {
+    for (const id of ['connection', 'feature', 'user', 'channel-ids', 'category-id', 'new-search', 'new-list', ...contextWriteButtons]) {
       if (el(id)) el(id).disabled = busy;
     }
     for (const id of ['history', 'changes']) el(id)?.querySelectorAll('button').forEach(control => { control.disabled = busy; });
@@ -729,6 +730,7 @@ window.aiUI = (() => {
       resetPrograms();
       el('filters').parentElement.hidden = select.value !== 'search';
       el('new-search').hidden = select.value !== 'search';
+      el('new-list').hidden = select.value !== 'list';
     });
     button(box, 'run', 'run', () => { nextOffset = 0; return startJob(); }, 'primary');
     button(box, 'refresh-job', 'refreshStatus', () => { status('running'); return poll(); }).hidden = true;
@@ -744,13 +746,14 @@ window.aiUI = (() => {
       else await poll();
     });
     button(box, 'new-search', 'newSearch', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; filterBaseline = {}; nextOffset = 0; el('filters').value = '{}'; el('prompt').value = ''; });
+    button(box, 'new-list', 'newList', () => { beginResult(); clearTimeout(timer); jobId = null; conversationId = null; nextOffset = 0; el('prompt').value = ''; });
     progress(box, 'work');
     node('div', el('work-progress'), undefined, 'small mt-1').id = 'ai-work-activity';
     const results = node('section', box); results.id = 'ai-result'; results.setAttribute('aria-live', 'polite'); results.tabIndex = -1;
     const preview = node('section', box); preview.id = 'ai-proposal';
-    for (const id of ['user', 'channel-ids']) el(id)?.addEventListener('input', () => {
+    for (const id of ['user', 'channel-ids', 'category-id']) el(id)?.addEventListener('input', () => {
       resetPrograms(); beginResult(); clearTimeout(timer); jobId = null;
-      conversationId = null; filterBaseline = {}; el('filters').value = '{}';
+      conversationId = null; filterBaseline = {}; el('filters').value = '{}'; nextOffset = 0;
     });
     el('timezone').addEventListener('input', resetPrograms);
     select.dispatchEvent(new Event('change'));
@@ -787,6 +790,7 @@ window.aiUI = (() => {
       if (!Number.isSafeInteger(result.user_id) || result.user_id <= 0) { el('user').focus(); throw {code: 'AI_TARGET_USER_REQUIRED'}; }
     }
     if (value('category-id')) result.category_id = Number(value('category-id'));
+    if (result.feature === 'list' && conversationId) result.conversation_id = conversationId;
     if (result.feature === 'search') {
       try { result.filters = JSON.parse(value('filters') || '{}'); } catch { throw {code: 'AI_INVALID_INPUT'}; }
       if (!result.filters || Array.isArray(result.filters) || typeof result.filters !== 'object') throw {code: 'AI_INVALID_INPUT'};
@@ -816,7 +820,7 @@ window.aiUI = (() => {
   async function startJob() {
     if (submittingJob || jobId || submittingLink || login?.status === 'pending' || pendingContextWrites.size) return;
     if (!settings.enabled || !preferences.enabled) { status('off'); return; }
-    const input = payload(); input.idempotency_key = newIdempotencyKey();
+    const input = payload(); input.idempotency_key = newIdempotencyKey(); continueJob = true;
     const resultStamp = beginResult(), stamp = generation;
     submittingJob = true;
     status('queued');
@@ -842,12 +846,12 @@ window.aiUI = (() => {
     }
     if (jobId !== id || resultStamp !== resultGeneration) return;
     if (['completed', 'succeeded', 'done'].includes(job.status)) {
-      jobId = null; status('completed'); await showResult(job.result || {});
+      jobId = null; status('completed'); await showResult(job.result || {}, continueJob);
     } else if (['failed', 'cancelled', 'interrupted'].includes(job.status)) {
       jobId = null; status(job.status === 'cancelled' ? 'cancelled' : errorKey({code: job.error_code}));
     } else { status(job.status === 'queued' ? 'queued' : 'running'); jobProgress(job); timer = setTimeout(() => run(poll), 1200); }
   }
-  async function showResult(result) {
+  async function showResult(result, allowContinuation = true) {
     const resultStamp = beginResult();
     const box = el('result');
     label('h3', box, 'result', 'h5');
@@ -855,6 +859,11 @@ window.aiUI = (() => {
       node('p', box, result.summary || tr(result.explanation_unavailable ? 'localOnly' : 'empty'));
     }
     const coverage = result.coverage || {};
+    if (result.list_request) {
+      label('h4', box, 'listRequest', 'h6'); node('p', box, result.list_request);
+      label('p', box, 'listSelectionScope', 'small text-muted');
+    }
+    if (coverage.requires_narrowing) label('p', box, 'narrowList', 'alert alert-warning');
     for (const [key, shown, total] of [
       ['analyzedCount', coverage.processed, coverage.total],
       ['itemPreviewCount', coverage.items_shown, coverage.items_total],
@@ -877,12 +886,13 @@ window.aiUI = (() => {
       if (result[key] !== undefined) node('pre', box, printable(result[key]));
     }
     if (result.feature === 'diagnose') label('p', box, 'diagnosticScope', 'small text-muted');
-    conversationId = result.conversation_id || null;
-    filterBaseline = result.filters || {};
+    conversationId = allowContinuation ? result.conversation_id || null : null;
+    filterBaseline = allowContinuation ? result.filters || {} : {};
+    if (!allowContinuation) nextOffset = 0;
     el('filters').value = printable(filterBaseline);
     if (coverage.partial || coverage.results_partial || coverage.epg_review_partial || coverage.diagnostic_entries_partial) {
       label('p', box, 'partial', 'alert alert-warning');
-      if (Number.isInteger(result.coverage.next_offset)) button(box, 'next', 'next', () => { nextOffset = result.coverage.next_offset; return startJob(); });
+      if (allowContinuation && !coverage.requires_narrowing && Number.isInteger(result.coverage.next_offset)) button(box, 'next', 'next', () => { nextOffset = result.coverage.next_offset; return startJob(); });
     }
     if (result.enrichment_id) {
       const enrichment = await api(`/enrichments/${encodeURIComponent(result.enrichment_id)}`, 'GET', undefined, resultStamp);
@@ -1027,9 +1037,10 @@ window.aiUI = (() => {
       for (const job of list(jobs, 'jobs')) {
         button(el('history'), `history-${job.id}`, features.includes(job.feature) ? job.feature : 'result', async () => {
           const resultStamp = beginResult(); clearTimeout(timer); jobId = null;
+          continueJob = false; conversationId = null; filterBaseline = {}; nextOffset = 0; el('filters').value = '{}';
           const fresh = await api(`/jobs/${encodeURIComponent(job.id)}`, 'GET', undefined, resultStamp);
           if (resultStamp !== resultGeneration) return;
-          if (fresh.result) await showResult(fresh.result);
+          if (fresh.result) await showResult(fresh.result, false);
           else if (['queued', 'running'].includes(fresh.status)) { jobId = fresh.id; await poll(); }
           else status(fresh.status === 'cancelled' ? 'cancelled' : 'failed', 'history');
         });
