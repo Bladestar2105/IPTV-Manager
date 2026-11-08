@@ -103,6 +103,30 @@ describe('pinned FFmpeg preparation', () => {
 });
 
 describe('official GitHub release API downloads', () => {
+    it('reports API rate-limit headers without exposing response bodies or unrelated headers', async () => {
+        const response = new Response('private response details', { status: 403, headers: {
+            'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1794139200', 'x-ratelimit-limit': '60',
+            'retry-after': '120', 'x-private-header': 'secret',
+        } });
+        const message = await downloadAsset(fixture.binary, binary, async () => response).catch(error => error.message);
+        expect(message).toBe('FFmpeg asset download failed (HTTP 403; host=api.github.com; x-ratelimit-remaining=0; x-ratelimit-reset=1794139200; x-ratelimit-limit=60; retry-after=120)');
+        expect(response.bodyUsed).toBe(true);
+        expect(await readdir(directory)).toEqual([]);
+    });
+
+    it('identifies CDN failures without exposing signed query strings, bodies or unsafe header values', async () => {
+        let calls = 0;
+        const response = new Response('https://private.example/?token=secret', { status: 403, headers: {
+            'retry-after': 'https://private.example/secret', 'x-ratelimit-remaining': 'secret',
+        } });
+        const message = await downloadAsset(fixture.binary, binary, async () => ++calls === 1
+            ? new Response(null, { status: 302, headers: { Location: 'https://release-assets.githubusercontent.com/asset?token=secret' } })
+            : response).catch(error => error.message);
+        expect(message).toBe('FFmpeg asset download failed (HTTP 403; host=release-assets.githubusercontent.com)');
+        expect(response.bodyUsed).toBe(true);
+        expect(calls).toBe(2);
+    });
+
     it('follows only the official HTTPS release CDN and requests anonymous octet streams', async () => {
         const calls = [];
         await downloadAsset(fixture.binary, binary, async (url, options) => {

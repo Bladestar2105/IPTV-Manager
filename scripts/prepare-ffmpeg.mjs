@@ -52,7 +52,12 @@ export async function downloadAsset(pin, destination, request = fetch) {
         }
         if (response.status !== 200) {
             await response.body?.cancel();
-            throw new Error(`FFmpeg asset download failed (HTTP ${response.status})`);
+            const host = new URL(url).hostname;
+            const headers = host === 'api.github.com' ? ['x-ratelimit-remaining', 'x-ratelimit-reset', 'x-ratelimit-limit', 'retry-after'].flatMap(name => {
+                const value = response.headers.get(name);
+                return /^\d{1,10}$/.test(value ?? '') ? [`${name}=${value}`] : [];
+            }) : [];
+            throw new Error(`FFmpeg asset download failed (HTTP ${response.status}; host=${host}${headers.length ? '; ' + headers.join('; ') : ''})`);
         }
         const hash = createHash('sha256');
         let bytes = 0;
